@@ -174,3 +174,157 @@ FormationSlot::~FormationSlot()
     }
     units.clear();
 }
+
+static const uint32 UNITS_PER_LINE = 5;
+static const float LINE_SPACING = 0.2;
+static const float UNIT_SPACING = 0.2;
+static const float GROUP_SPACING  = 0.5;
+
+void RaidFormationSlot::InsertAtCenter(FormationUnit* unit)
+{
+    uint32 totalAfterInsert = units.size() + 1;
+    uint32 frontRowSize = std::min(totalAfterInsert, UNITS_PER_LINE);
+    uint32 centerIndex = frontRowSize / 2;
+
+    if (centerIndex >= units.size())
+        units.push_back(unit);
+    else
+        units.insert(units.begin() + centerIndex, unit);
+}
+
+UnitPosition RaidUnitPlacer::Place(FormationUnit *unit, uint32 index, uint32 count)
+{
+    uint32 lineNo = index / UNITS_PER_LINE;
+    uint32 indexInLine = index % UNITS_PER_LINE;
+    uint32 remainingUnits = count - lineNo * UNITS_PER_LINE;
+    uint32 lineSize = std::min(remainingUnits, UNITS_PER_LINE);
+
+    float lineSpacing = range * LINE_SPACING;
+    float unitSpacing = range * UNIT_SPACING;
+
+    float stagger = (lineNo % 2 == 1) ? unitSpacing * 0.5f : 0.0f;
+
+    float lateralAngle = orientation - M_PI / 2.0f;
+
+    float lateralOffset = ((float)indexInLine - (float)(lineSize - 1) / 2.0f) * unitSpacing + stagger;
+
+    float depthOffset = lineSpacing * lineNo;
+
+    float x = cos(lateralAngle) * lateralOffset - cos(orientation) * depthOffset;
+    float y = sin(lateralAngle) * lateralOffset - sin(orientation) * depthOffset;
+
+    return UnitPosition(x, y);
+}
+
+FormationSlot* RaidFormation::FindSlot(Player* member)
+{
+    if (ai->IsTank(member))
+        return &raidTanks;
+    else if (ai->IsHeal(member))
+        return &raidHealers;
+    else if (ai->IsRanged(member))
+        return &raidRanged;
+    else
+        return &raidMelee;
+}
+
+void RaidFormation::FillSlotsExceptMaster()
+{
+    Unit* followTarget = AI_VALUE(Unit*, "follow target");
+    Group* group = bot->GetGroup();
+    GroupReference *gref = group->GetFirstMember();
+    uint32 index = 0;
+    while (gref)
+    {
+        Player* member = gref->getSource();
+        if (ai->IsSafe(member))
+        {
+            if (member == bot)
+                FindSlot(member)->AddLast(botUnit = new FormationUnit(index, false));
+            else if (member != followTarget)
+                FindSlot(member)->AddLast(new FormationUnit(index, false));
+            index++;
+        }
+        gref = gref->next();
+    }
+}
+
+void RaidFormation::AddMasterToSlot()
+{
+    Unit* followTarget = AI_VALUE(Unit*, "follow target");
+    Group* group = bot->GetGroup();
+    GroupReference *gref = group->GetFirstMember();
+    uint32 index = 0;
+    while (gref)
+    {
+        Player* member = gref->getSource();
+
+        if (member == followTarget)
+        {
+            FindSlot(member)->InsertAtCenter(masterUnit = new FormationUnit(index, true));
+            break;
+        }
+
+        gref = gref->next();
+        index++;
+    }
+}
+
+WorldLocation RaidFormation::GetLocationInternal()
+{
+    if (!bot->GetGroup()) return Formation::NullLocation;
+
+    Build();
+
+    Unit* followTarget = AI_VALUE(Unit*, "follow target");
+    if (!ai->IsSafe(followTarget))
+        return Formation::NullLocation;
+
+    float range = ai->GetRange("follow");
+    float orientation = followTarget->GetOrientation();
+
+    float groupSpacing = range * GROUP_SPACING;
+    float lineSpacing = range * LINE_SPACING;
+    const uint32 unitsPerLine= UNITS_PER_LINE;
+
+    auto groupDepth = [groupSpacing, lineSpacing, unitsPerLine](uint32 size) -> float {
+        if (size == 0) return 0;
+        uint32 lines = (size + UNITS_PER_LINE - 1) / UNITS_PER_LINE;
+        return (lines - 1) * lineSpacing + groupSpacing;
+    };
+
+    RaidUnitPlacer placer(orientation, range);
+
+    float offset = 0;
+    raidTanks.PlaceUnits(&placer);
+    raidTanks.Move(-cos(orientation) * offset, -sin(orientation) * offset);
+
+    offset += groupDepth(raidTanks.Size());
+    raidMelee.PlaceUnits(&placer);
+    raidMelee.Move(-cos(orientation) * offset, -sin(orientation) * offset);
+
+    offset += groupDepth(raidMelee.Size());
+    raidRanged.PlaceUnits(&placer);
+    raidRanged.Move(-cos(orientation) * offset, -sin(orientation) * offset);
+
+    offset += groupDepth(raidRanged.Size());
+    raidHealers.PlaceUnits(&placer);
+    raidHealers.Move(-cos(orientation) * offset, -sin(orientation) * offset);
+
+    if (!masterUnit || !botUnit)
+        return Formation::NullLocation;
+
+    float x = followTarget->GetPositionX() - masterUnit->GetX() + botUnit->GetX();
+    float y = followTarget->GetPositionY() - masterUnit->GetY() + botUnit->GetY();
+    float z = followTarget->GetPositionZ();
+
+#ifdef MANGOSBOT_TWO
+    float ground = followTarget->GetMap()->GetHeight(followTarget->GetPhaseMask(), x, y, z + 0.5f);
+#else
+    float ground = followTarget->GetMap()->GetHeight(x, y, z + 0.5f);
+#endif
+    if (ground <= INVALID_HEIGHT)
+        return Formation::NullLocation;
+
+    return WorldLocation(followTarget->GetMapId(), x, y, 0.05f + ground);
+}

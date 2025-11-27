@@ -243,7 +243,7 @@ namespace ai
     {
         if (!bot->GetGroup())  //Select a random formation to copy.
         {
-            std::vector<std::string> formations = { "melee","queue","chaos","circle","line","shield","arrow","near","far"};
+            std::vector<std::string> formations = { "melee","queue","chaos","circle","line","shield","raid","arrow","near","far"};
             FormationValue* value = (FormationValue*)context->GetValue<Formation*>("formation");
             std::string newFormation = formations[urand(0, formations.size() - 1)];
             value->Load(newFormation);

@@ -569,6 +569,11 @@ bool FormationValue::Load(std::string formation)
         if (value) delete value;
         value = new ArrowFormation(ai);
     }
+    else if (formation == "raid")
+    {
+        if (value) delete value;
+        value = new RaidFormation(ai);
+    }
     else if (formation == "near" || formation == "default")
     {
         if (value) delete value;
