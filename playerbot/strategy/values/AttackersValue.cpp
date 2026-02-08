@@ -52,7 +52,7 @@ std::list<ObjectGuid> AttackersValue::Calculate()
             if (player == bot)
                 continue;
 
-            if (player->GetMapId() != bot->GetMapId())
+            if (!ai->IsSafe(player))
                 continue;
 
             if (sServerFacade.GetDistance2d(bot, player) > 10.0f)
@@ -273,6 +273,9 @@ void AttackersValue::AddTargetsOf(Player* player, std::set<Unit*>& targets, std:
         // Filter the units that are valid
         for (Unit* unit : units)
         {
+            if (!ai->IsSafe(unit))
+                continue;
+
             // Prevent checking a target that has already been validated
             if((targets.find(unit) == targets.end()))
             {

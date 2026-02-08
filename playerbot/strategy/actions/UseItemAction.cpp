@@ -674,7 +674,7 @@ bool UseAction::UseItemInternal(Player* requester, uint32 itemId, Unit* unit, Ga
             if (successCast)
             {
                 // Only add cooldown if the spell doesn't use a real item
-                if (itemUsed == nullptr)
+                if (itemUsed == nullptr && HasItemCooldown(itemId))
                 {
                     bot->RemoveSpellCooldown(*spellInfo, false);
                     bot->AddCooldown(*spellInfo, proto, false);
@@ -1235,6 +1235,7 @@ bool UseHearthStoneAction::Execute(Event& event)
     const bool used = UseAction::Execute(event);
     if (used)
     {
+        sPlayerbotAIConfig.logEvent(ai, "UseHearthStoneAction", event.getParam(), event.getSource());
         RESET_AI_VALUE(bool, "combat::self target");
         RESET_AI_VALUE(WorldPosition, "current position");
     }

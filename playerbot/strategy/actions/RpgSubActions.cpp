@@ -210,7 +210,7 @@ bool RpgTaxiAction::Execute(Event& event)
     bot->ResolvePendingMount();
 #endif
 
-    sLog.outString("Bot #%d <%s> is flying from %s to %s (%zu location available)", bot->GetGUIDLow(), bot->GetName(), nodeFrom->name[0], nodeTo->name[0], nodes.size());
+    sLog.outDetail("Bot #%d <%s> is flying from %s to %s (%zu location available)", bot->GetGUIDLow(), bot->GetName(), nodeFrom->name[0], nodeTo->name[0], nodes.size());
     bot->SetMoney(money);
 
     rpg->AfterExecute();
@@ -756,6 +756,9 @@ bool RpgEnchantAction::Execute(Event& event)
     Player* player = guidP.GetPlayer();
 
     if (!player)
+        return false;
+
+    if (!ai->IsSafe(player))
         return false;
 
     std::list<Item*> items = AI_VALUE(std::list<Item*>, "items useful to enchant");
