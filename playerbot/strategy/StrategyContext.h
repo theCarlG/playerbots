@@ -53,6 +53,8 @@
 #include "generic/BlackwingLairDungeonStrategies.h"
 #include "generic/KarazhanDungeonStrategies.h"
 #include "generic/NaxxramasDungeonStrategies.h"
+#include "generic/AQ20DungeonStrategies.h"
+#include "generic/AQ40DungeonStrategies.h"
 
 namespace ai
 {
@@ -171,10 +173,59 @@ namespace ai
             creators["onyxia"] = [](PlayerbotAI* ai) { return new OnyxiaFightStrategy(ai); };
             creators["magmadar"] = [](PlayerbotAI* ai) { return new MagmadarFightStrategy(ai); };
             creators["baron geddon"] = [](PlayerbotAI* ai) { return new BaronGeddonFightStrategy(ai); };
+            creators["lucifron"] = [](PlayerbotAI* ai) { return new LucifronFightStrategy(ai); };
+            creators["gehennas"] = [](PlayerbotAI* ai) { return new GehennasFightStrategy(ai); };
+            creators["garr"] = [](PlayerbotAI* ai) { return new GarrFightStrategy(ai); };
+            creators["shazzrah"] = [](PlayerbotAI* ai) { return new ShazzrahFightStrategy(ai); };
+            creators["sulfuron"] = [](PlayerbotAI* ai) { return new SulfuronFightStrategy(ai); };
+            creators["golemagg"] = [](PlayerbotAI* ai) { return new GolemaggFightStrategy(ai); };
+            creators["majordomo"] = [](PlayerbotAI* ai) { return new MajordomoFightStrategy(ai); };
+            creators["ragnaros"] = [](PlayerbotAI* ai) { return new RagnarosFightStrategy(ai); };
             creators["suppression room"] = [](PlayerbotAI* ai) { return new SuppressionRoomStrategy(ai); };
+            creators["razorgore"] = [](PlayerbotAI* ai) { return new RazorgoreFightStrategy(ai); };
+            creators["vaelastrasz"] = [](PlayerbotAI* ai) { return new VaelastraszFightStrategy(ai); };
+            creators["broodlord"] = [](PlayerbotAI* ai) { return new BroodlordFightStrategy(ai); };
+            creators["firemaw"] = [](PlayerbotAI* ai) { return new FiremawFightStrategy(ai); };
+            creators["ebonroc"] = [](PlayerbotAI* ai) { return new EbonrocFightStrategy(ai); };
+            creators["flamegor"] = [](PlayerbotAI* ai) { return new FlamegorFightStrategy(ai); };
+            creators["chromaggus"] = [](PlayerbotAI* ai) { return new ChromaggusFightStrategy(ai); };
+            creators["nefarian"] = [](PlayerbotAI* ai) { return new NefarianFightStrategy(ai); };
             creators["netherspite"] = [](PlayerbotAI* ai) { return new NetherspiteFightStrategy(ai); };
             creators["prince malchezaar"] = [](PlayerbotAI* ai) { return new PrinceMalchezaarFightStrategy(ai); };
+            creators["anub'rekhan"] = [](PlayerbotAI* ai) { return new AnubRekhanFightStrategy(ai); };
+            creators["faerlina"] = [](PlayerbotAI* ai) { return new FaerlinaFightStrategy(ai); };
+            creators["maexxna"] = [](PlayerbotAI* ai) { return new MaexxnaFightStrategy(ai); };
+            creators["noth"] = [](PlayerbotAI* ai) { return new NothFightStrategy(ai); };
+            creators["heigan"] = [](PlayerbotAI* ai) { return new HeiganFightStrategy(ai); };
+            creators["loatheb"] = [](PlayerbotAI* ai) { return new LoathebFightStrategy(ai); };
+            creators["razuvious"] = [](PlayerbotAI* ai) { return new RazuviousFightStrategy(ai); };
+            creators["gothik"] = [](PlayerbotAI* ai) { return new GothikFightStrategy(ai); };
             creators["four horseman"] = [](PlayerbotAI* ai) { return new FourHorsemanFightStrategy(ai); };
+            creators["patchwerk"] = [](PlayerbotAI* ai) { return new PatchwerkFightStrategy(ai); };
+            creators["grobbulus"] = [](PlayerbotAI* ai) { return new GrobbullusFightStrategy(ai); };
+            creators["gluth"] = [](PlayerbotAI* ai) { return new GluthFightStrategy(ai); };
+            creators["thaddius"] = [](PlayerbotAI* ai) { return new ThaddiusFightStrategy(ai); };
+            creators["sapphiron"] = [](PlayerbotAI* ai) { return new SapphironFightStrategy(ai); };
+            creators["kel'thuzad"] = [](PlayerbotAI* ai) { return new KelThuzadFightStrategy(ai); };
+
+            creators["aq20"] = [](PlayerbotAI* ai) { return new AQ20DungeonStrategy(ai); };
+            creators["kurinnaxx"] = [](PlayerbotAI* ai) { return new KurinnaxxFightStrategy(ai); };
+            creators["rajaxx"] = [](PlayerbotAI* ai) { return new RajaxxFightStrategy(ai); };
+            creators["moam"] = [](PlayerbotAI* ai) { return new MoamFightStrategy(ai); };
+            creators["buru"] = [](PlayerbotAI* ai) { return new BuruFightStrategy(ai); };
+            creators["ayamiss"] = [](PlayerbotAI* ai) { return new AyamissFightStrategy(ai); };
+            creators["ossirian"] = [](PlayerbotAI* ai) { return new OssirianFightStrategy(ai); };
+
+            creators["aq40"] = [](PlayerbotAI* ai) { return new AQ40DungeonStrategy(ai); };
+            creators["skeram"] = [](PlayerbotAI* ai) { return new SkeramFightStrategy(ai); };
+            creators["bug trio"] = [](PlayerbotAI* ai) { return new BugTrioFightStrategy(ai); };
+            creators["sartura"] = [](PlayerbotAI* ai) { return new SarturaFightStrategy(ai); };
+            creators["fankriss"] = [](PlayerbotAI* ai) { return new FankrissFightStrategy(ai); };
+            creators["viscidus"] = [](PlayerbotAI* ai) { return new ViscidusFightStrategy(ai); };
+            creators["huhuran"] = [](PlayerbotAI* ai) { return new HuhuranFightStrategy(ai); };
+            creators["twin emperors"] = [](PlayerbotAI* ai) { return new TwinEmperorsFightStrategy(ai); };
+            creators["ouro"] = [](PlayerbotAI* ai) { return new OuroFightStrategy(ai); };
+            creators["c'thun"] = [](PlayerbotAI* ai) { return new CThunFightStrategy(ai); };
         }
     };
 

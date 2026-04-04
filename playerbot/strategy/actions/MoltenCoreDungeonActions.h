@@ -2,7 +2,6 @@
 #include "DungeonActions.h"
 #include "ChangeStrategyAction.h"
 #include "UseItemAction.h"
-#include "playerbot/strategy/values/HazardsValue.h"
 
 namespace ai
 {
@@ -72,15 +71,120 @@ namespace ai
         BaronGeddonDisableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "disable baron geddon fight strategy", "-baron geddon") {}
     };
 
-    // When this bot has the Living Bomb debuff, move away from party members to avoid chain explosion
-    class BaronGeddonRunAwayAction : public MovementAction
+    class BaronGeddonRunAwayAction : public RunAwayFromGroupAction
     {
     public:
-        BaronGeddonRunAwayAction(PlayerbotAI* ai) : MovementAction(ai, "baron geddon run away") {}
-        bool Execute(Event& event) override;
-        bool isPossible() override;
+        BaronGeddonRunAwayAction(PlayerbotAI* ai) : RunAwayFromGroupAction(ai, "baron geddon run away") {}
+    };
 
-    private:
-        bool IsHazardNearby(const WorldPosition& point, const std::list<HazardPosition>& hazards) const;
+    // Lucifron
+    class LucifronEnableFightStrategyAction : public ChangeAllStrategyAction
+    {
+    public:
+        LucifronEnableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "enable lucifron fight strategy", "+lucifron") {}
+    };
+    class LucifronDisableFightStrategyAction : public ChangeAllStrategyAction
+    {
+    public:
+        LucifronDisableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "disable lucifron fight strategy", "-lucifron") {}
+    };
+
+    // Gehennas
+    class GehennasEnableFightStrategyAction : public ChangeAllStrategyAction
+    {
+    public:
+        GehennasEnableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "enable gehennas fight strategy", "+gehennas") {}
+    };
+    class GehennasDisableFightStrategyAction : public ChangeAllStrategyAction
+    {
+    public:
+        GehennasDisableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "disable gehennas fight strategy", "-gehennas") {}
+    };
+    class GehennasMoveAwayAction : public MoveAwayFromCreature
+    {
+    public:
+        GehennasMoveAwayAction(PlayerbotAI* ai) : MoveAwayFromCreature(ai, "move away from gehennas", 12259, 31.0f) {}
+    };
+
+    // Garr
+    class GarrEnableFightStrategyAction : public ChangeAllStrategyAction
+    {
+    public:
+        GarrEnableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "enable garr fight strategy", "+garr") {}
+    };
+    class GarrDisableFightStrategyAction : public ChangeAllStrategyAction
+    {
+    public:
+        GarrDisableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "disable garr fight strategy", "-garr") {}
+    };
+
+    // Shazzrah
+    class ShazzrahEnableFightStrategyAction : public ChangeAllStrategyAction
+    {
+    public:
+        ShazzrahEnableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "enable shazzrah fight strategy", "+shazzrah") {}
+    };
+    class ShazzrahDisableFightStrategyAction : public ChangeAllStrategyAction
+    {
+    public:
+        ShazzrahDisableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "disable shazzrah fight strategy", "-shazzrah") {}
+    };
+    class ShazzrahMoveAwayAction : public MoveAwayFromCreature
+    {
+    public:
+        ShazzrahMoveAwayAction(PlayerbotAI* ai) : MoveAwayFromCreature(ai, "move away from shazzrah", 12264, 16.0f) {}
+    };
+
+    // Sulfuron Harbinger
+    class SulfuronEnableFightStrategyAction : public ChangeAllStrategyAction
+    {
+    public:
+        SulfuronEnableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "enable sulfuron fight strategy", "+sulfuron") {}
+    };
+    class SulfuronDisableFightStrategyAction : public ChangeAllStrategyAction
+    {
+    public:
+        SulfuronDisableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "disable sulfuron fight strategy", "-sulfuron") {}
+    };
+
+    // Golemagg
+    class GolemaggEnableFightStrategyAction : public ChangeAllStrategyAction
+    {
+    public:
+        GolemaggEnableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "enable golemagg fight strategy", "+golemagg") {}
+    };
+    class GolemaggDisableFightStrategyAction : public ChangeAllStrategyAction
+    {
+    public:
+        GolemaggDisableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "disable golemagg fight strategy", "-golemagg") {}
+    };
+
+    // Majordomo Executus
+    class MajordomoEnableFightStrategyAction : public ChangeAllStrategyAction
+    {
+    public:
+        MajordomoEnableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "enable majordomo fight strategy", "+majordomo") {}
+    };
+    class MajordomoDisableFightStrategyAction : public ChangeAllStrategyAction
+    {
+    public:
+        MajordomoDisableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "disable majordomo fight strategy", "-majordomo") {}
+    };
+
+    // Ragnaros
+    class RagnarosEnableFightStrategyAction : public ChangeAllStrategyAction
+    {
+    public:
+        RagnarosEnableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "enable ragnaros fight strategy", "+ragnaros") {}
+    };
+    class RagnarosDisableFightStrategyAction : public ChangeAllStrategyAction
+    {
+    public:
+        RagnarosDisableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "disable ragnaros fight strategy", "-ragnaros") {}
+    };
+    class RagnarosMoveAwayAction : public MoveAwayFromCreature
+    {
+    public:
+        RagnarosMoveAwayAction(PlayerbotAI* ai) : MoveAwayFromCreature(ai, "move away from ragnaros", 11502, 31.0f) {}
     };
 }

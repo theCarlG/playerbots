@@ -20,6 +20,18 @@ void DungeonStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
         NextAction::array(0, new NextAction("enable blackwing lair strategy", 100.0f), NULL)));
 
     triggers.push_back(new TriggerNode(
+        "enter naxxramas",
+        NextAction::array(0, new NextAction("enable naxxramas strategy", 100.0f), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "enter aq20",
+        NextAction::array(0, new NextAction("enable aq20 strategy", 100.0f), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "enter aq40",
+        NextAction::array(0, new NextAction("enable aq40 strategy", 100.0f), NULL)));
+
+    triggers.push_back(new TriggerNode(
         "enter karazhan",
         NextAction::array(0, new NextAction("enable karazhan strategy", 100.0f), NULL)));
 }
@@ -49,6 +61,30 @@ void DungeonStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
     triggers.push_back(new TriggerNode(
         "leave blackwing lair",
         NextAction::array(0, new NextAction("disable blackwing lair strategy", 100.0f), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "enter naxxramas",
+        NextAction::array(0, new NextAction("enable naxxramas strategy", 100.0f), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "leave naxxramas",
+        NextAction::array(0, new NextAction("disable naxxramas strategy", 100.0f), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "enter aq20",
+        NextAction::array(0, new NextAction("enable aq20 strategy", 100.0f), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "leave aq20",
+        NextAction::array(0, new NextAction("disable aq20 strategy", 100.0f), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "enter aq40",
+        NextAction::array(0, new NextAction("enable aq40 strategy", 100.0f), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "leave aq40",
+        NextAction::array(0, new NextAction("disable aq40 strategy", 100.0f), NULL)));
 
     triggers.push_back(new TriggerNode(
         "enter karazhan",

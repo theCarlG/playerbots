@@ -5,8 +5,91 @@
 #include "Grids/GridNotifiers.h"
 #include "Grids/GridNotifiersImpl.h"
 #include "Grids/CellImpl.h"
+#include "Entities/Player.h"
+#include "Groups/Group.h"
 
 using namespace ai;
+
+bool RunAwayFromGroupAction::Execute(Event& event)
+{
+    Group* group = bot->GetGroup();
+    if (!group)
+        return false;
+
+    float sumX = 0.0f, sumY = 0.0f;
+    int count = 0;
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* member = ref->getSource();
+        if (member && member != bot && member->IsAlive() && member->GetMapId() == bot->GetMapId())
+        {
+            sumX += member->GetPositionX();
+            sumY += member->GetPositionY();
+            ++count;
+        }
+    }
+
+    if (count == 0)
+        return false;
+
+    float dx = bot->GetPositionX() - sumX / count;
+    float dy = bot->GetPositionY() - sumY / count;
+    const float dist = sqrt(dx * dx + dy * dy);
+    if (dist < 0.1f)
+    {
+        const float randomAngle = frand(0.0f, static_cast<float>(2.0 * M_PI));
+        dx = cos(randomAngle);
+        dy = sin(randomAngle);
+    }
+    else
+    {
+        dx /= dist;
+        dy /= dist;
+    }
+
+    const std::list<HazardPosition>& hazards = AI_VALUE(std::list<HazardPosition>, "hazards");
+    const WorldPosition botPosition(bot);
+    const float runDistance = 25.0f;
+    float angle = atan2(dy, dx);
+    const float angleIncrement = static_cast<float>(2.0 * M_PI / 10);
+
+    for (uint8 i = 0; i < 10; i++)
+    {
+        WorldPosition candidate(bot->GetMapId(),
+            bot->GetPositionX() + runDistance * cos(angle),
+            bot->GetPositionY() + runDistance * sin(angle),
+            bot->GetPositionZ(), 0.0f);
+        candidate.setZ(candidate.getHeight());
+
+        if (!IsHazardNearby(candidate, hazards) &&
+            bot->IsWithinLOS(candidate.getX(), candidate.getY(), candidate.getZ() + bot->GetCollisionHeight()) &&
+            botPosition.canPathTo(candidate, bot))
+        {
+            if (MoveTo(bot->GetMapId(), candidate.getX(), candidate.getY(), candidate.getZ(), false, false, false, true))
+                return true;
+        }
+        angle += angleIncrement;
+    }
+
+    return false;
+}
+
+bool RunAwayFromGroupAction::isPossible()
+{
+    if (MovementAction::isPossible())
+        return ai->CanMove();
+    return false;
+}
+
+bool RunAwayFromGroupAction::IsHazardNearby(const WorldPosition& point, const std::list<HazardPosition>& hazards) const
+{
+    for (const HazardPosition& hazard : hazards)
+    {
+        if (point.distance(hazard.first) < hazard.second)
+            return true;
+    }
+    return false;
+}
 
 bool MoveAwayFromHazard::Execute(Event& event)
 {

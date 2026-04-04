@@ -19,6 +19,8 @@
 #include "BlackwingLairDungeonTriggers.h"
 #include "KarazhanDungeonTriggers.h"
 #include "NaxxramasDungeonTriggers.h"
+#include "AQ20DungeonTriggers.h"
+#include "AQ40DungeonTriggers.h"
 #include "GlyphTriggers.h"
 #include "WorldBuffTravelTriggers.h"
 
@@ -313,6 +315,35 @@ namespace ai
             creators["end baron geddon fight"] = [](PlayerbotAI* ai) { return new BaronGeddonEndFightTrigger(ai); };
             creators["has living bomb debuff"] = [](PlayerbotAI* ai) { return new HasLivingBombDebuffTrigger(ai); };
 
+            creators["start lucifron fight"] = [](PlayerbotAI* ai) { return new LucifronStartFightTrigger(ai); };
+            creators["end lucifron fight"] = [](PlayerbotAI* ai) { return new LucifronEndFightTrigger(ai); };
+
+            creators["start gehennas fight"] = [](PlayerbotAI* ai) { return new GehennasStartFightTrigger(ai); };
+            creators["end gehennas fight"] = [](PlayerbotAI* ai) { return new GehennasEndFightTrigger(ai); };
+            creators["gehennas too close"] = [](PlayerbotAI* ai) { return new GehennasTooCloseTrigger(ai); };
+
+            creators["start garr fight"] = [](PlayerbotAI* ai) { return new GarrStartFightTrigger(ai); };
+            creators["end garr fight"] = [](PlayerbotAI* ai) { return new GarrEndFightTrigger(ai); };
+            creators["firesworn hazard"] = [](PlayerbotAI* ai) { return new FireswornHazardTrigger(ai); };
+
+            creators["start shazzrah fight"] = [](PlayerbotAI* ai) { return new ShazzrahStartFightTrigger(ai); };
+            creators["end shazzrah fight"] = [](PlayerbotAI* ai) { return new ShazzrahEndFightTrigger(ai); };
+            creators["shazzrah too close"] = [](PlayerbotAI* ai) { return new ShazzrahTooCloseTrigger(ai); };
+
+            creators["start sulfuron fight"] = [](PlayerbotAI* ai) { return new SulfuronStartFightTrigger(ai); };
+            creators["end sulfuron fight"] = [](PlayerbotAI* ai) { return new SulfuronEndFightTrigger(ai); };
+
+            creators["start golemagg fight"] = [](PlayerbotAI* ai) { return new GolemaggStartFightTrigger(ai); };
+            creators["end golemagg fight"] = [](PlayerbotAI* ai) { return new GolemaggEndFightTrigger(ai); };
+
+            creators["start majordomo fight"] = [](PlayerbotAI* ai) { return new MajordomoStartFightTrigger(ai); };
+            creators["end majordomo fight"] = [](PlayerbotAI* ai) { return new MajordomoEndFightTrigger(ai); };
+
+            creators["start ragnaros fight"] = [](PlayerbotAI* ai) { return new RagnarosStartFightTrigger(ai); };
+            creators["end ragnaros fight"] = [](PlayerbotAI* ai) { return new RagnarosEndFightTrigger(ai); };
+            creators["ragnaros too close"] = [](PlayerbotAI* ai) { return new RagnarosTooCloseTrigger(ai); };
+            creators["sons of flame hazard"] = [](PlayerbotAI* ai) { return new SonsOfFlameHazardTrigger(ai); };
+
             creators["fire protection potion ready"] = [](PlayerbotAI* ai) { return new FireProtectionPotionReadyTrigger(ai); };
 
             creators["mc rune in sight"] = [](PlayerbotAI* ai) { return new MCRuneInSightTrigger(ai); };
@@ -321,6 +352,36 @@ namespace ai
             creators["suppression device need stealth"] = [](PlayerbotAI* ai) { return new SuppressionDeviceNeedStealthTrigger(ai); };
             creators["suppression device in sight"] = [](PlayerbotAI* ai) { return new SuppressionDeviceInSightTrigger(ai); };
             creators["suppression device close"] = [](PlayerbotAI* ai) { return new SuppressionDeviceCloseTrigger(ai); };
+
+            creators["start razorgore fight"] = [](PlayerbotAI* ai) { return new RazorgoreStartFightTrigger(ai); };
+            creators["end razorgore fight"] = [](PlayerbotAI* ai) { return new RazorgoreEndFightTrigger(ai); };
+
+            creators["start vaelastrasz fight"] = [](PlayerbotAI* ai) { return new VaelastraszStartFightTrigger(ai); };
+            creators["end vaelastrasz fight"] = [](PlayerbotAI* ai) { return new VaelastraszEndFightTrigger(ai); };
+            creators["has burning adrenaline"] = [](PlayerbotAI* ai) { return new HasBurningAdrenalineTrigger(ai); };
+
+            creators["start broodlord fight"] = [](PlayerbotAI* ai) { return new BroodlordStartFightTrigger(ai); };
+            creators["end broodlord fight"] = [](PlayerbotAI* ai) { return new BroodlordEndFightTrigger(ai); };
+
+            creators["start firemaw fight"] = [](PlayerbotAI* ai) { return new FiremawStartFightTrigger(ai); };
+            creators["end firemaw fight"] = [](PlayerbotAI* ai) { return new FiremawEndFightTrigger(ai); };
+            creators["firemaw too close"] = [](PlayerbotAI* ai) { return new FiremawTooCloseTrigger(ai); };
+
+            creators["start ebonroc fight"] = [](PlayerbotAI* ai) { return new EbonrocStartFightTrigger(ai); };
+            creators["end ebonroc fight"] = [](PlayerbotAI* ai) { return new EbonrocEndFightTrigger(ai); };
+            creators["ebonroc too close"] = [](PlayerbotAI* ai) { return new EbonrocTooCloseTrigger(ai); };
+
+            creators["start flamegor fight"] = [](PlayerbotAI* ai) { return new FlamegorStartFightTrigger(ai); };
+            creators["end flamegor fight"] = [](PlayerbotAI* ai) { return new FlamegorEndFightTrigger(ai); };
+            creators["flamegor too close"] = [](PlayerbotAI* ai) { return new FlamegorTooCloseTrigger(ai); };
+
+            creators["start chromaggus fight"] = [](PlayerbotAI* ai) { return new ChromaggusStartFightTrigger(ai); };
+            creators["end chromaggus fight"] = [](PlayerbotAI* ai) { return new ChromaggusEndFightTrigger(ai); };
+            creators["chromaggus too close"] = [](PlayerbotAI* ai) { return new ChromaggusTooCloseTrigger(ai); };
+
+            creators["start nefarian fight"] = [](PlayerbotAI* ai) { return new NefarianStartFightTrigger(ai); };
+            creators["end nefarian fight"] = [](PlayerbotAI* ai) { return new NefarianEndFightTrigger(ai); };
+            creators["nefarian too close"] = [](PlayerbotAI* ai) { return new NefarianTooCloseTrigger(ai); };
 
             creators["start netherspite fight"] = [](PlayerbotAI* ai) { return new NetherspiteStartFightTrigger(ai); };
             creators["end netherspite fight"] = [](PlayerbotAI* ai) { return new NetherspiteEndFightTrigger(ai); };
@@ -335,8 +396,91 @@ namespace ai
             creators["end prince malchezaar fight"] = [](PlayerbotAI* ai) { return new PrinceMalchezaarEndFightTrigger(ai); };
             creators["netherspite infernal too close"] = [](PlayerbotAI* ai) { return new NetherspiteInfernalTooCloseTrigger(ai); };
 
+            creators["start anub'rekhan fight"] = [](PlayerbotAI* ai) { return new AnubRekhanStartFightTrigger(ai); };
+            creators["end anub'rekhan fight"] = [](PlayerbotAI* ai) { return new AnubRekhanEndFightTrigger(ai); };
+            creators["start faerlina fight"] = [](PlayerbotAI* ai) { return new FaerlinaStartFightTrigger(ai); };
+            creators["end faerlina fight"] = [](PlayerbotAI* ai) { return new FaerlinaEndFightTrigger(ai); };
+            creators["start maexxna fight"] = [](PlayerbotAI* ai) { return new MaexxnaStartFightTrigger(ai); };
+            creators["end maexxna fight"] = [](PlayerbotAI* ai) { return new MaexxnaEndFightTrigger(ai); };
+            creators["maexxna too close"] = [](PlayerbotAI* ai) { return new MaexxnaTooCloseTrigger(ai); };
+
+            creators["start noth fight"] = [](PlayerbotAI* ai) { return new NothStartFightTrigger(ai); };
+            creators["end noth fight"] = [](PlayerbotAI* ai) { return new NothEndFightTrigger(ai); };
+            creators["noth too close"] = [](PlayerbotAI* ai) { return new NothTooCloseTrigger(ai); };
+            creators["start heigan fight"] = [](PlayerbotAI* ai) { return new HeiganStartFightTrigger(ai); };
+            creators["end heigan fight"] = [](PlayerbotAI* ai) { return new HeiganEndFightTrigger(ai); };
+            creators["start loatheb fight"] = [](PlayerbotAI* ai) { return new LoathebStartFightTrigger(ai); };
+            creators["end loatheb fight"] = [](PlayerbotAI* ai) { return new LoathebEndFightTrigger(ai); };
+
+            creators["start razuvious fight"] = [](PlayerbotAI* ai) { return new RazuviousStartFightTrigger(ai); };
+            creators["end razuvious fight"] = [](PlayerbotAI* ai) { return new RazuviousEndFightTrigger(ai); };
+            creators["start gothik fight"] = [](PlayerbotAI* ai) { return new GothikStartFightTrigger(ai); };
+            creators["end gothik fight"] = [](PlayerbotAI* ai) { return new GothikEndFightTrigger(ai); };
             creators["start four horseman fight"] = [](PlayerbotAI* ai) { return new FourHorsemanStartFightTrigger(ai); };
             creators["end four horseman fight"] = [](PlayerbotAI* ai) { return new FourHorsemanEndFightTrigger(ai); };
+
+            creators["start patchwerk fight"] = [](PlayerbotAI* ai) { return new PatchwerkStartFightTrigger(ai); };
+            creators["end patchwerk fight"] = [](PlayerbotAI* ai) { return new PatchwerkEndFightTrigger(ai); };
+            creators["start grobbulus fight"] = [](PlayerbotAI* ai) { return new GrobbullusStartFightTrigger(ai); };
+            creators["end grobbulus fight"] = [](PlayerbotAI* ai) { return new GrobbullusEndFightTrigger(ai); };
+            creators["has mutating injection"] = [](PlayerbotAI* ai) { return new HasMutatingInjectionTrigger(ai); };
+            creators["start gluth fight"] = [](PlayerbotAI* ai) { return new GluthStartFightTrigger(ai); };
+            creators["end gluth fight"] = [](PlayerbotAI* ai) { return new GluthEndFightTrigger(ai); };
+            creators["gluth too close"] = [](PlayerbotAI* ai) { return new GluthTooCloseTrigger(ai); };
+            creators["start thaddius fight"] = [](PlayerbotAI* ai) { return new ThaddiusStartFightTrigger(ai); };
+            creators["end thaddius fight"] = [](PlayerbotAI* ai) { return new ThaddiusEndFightTrigger(ai); };
+
+            creators["start sapphiron fight"] = [](PlayerbotAI* ai) { return new SapphironStartFightTrigger(ai); };
+            creators["end sapphiron fight"] = [](PlayerbotAI* ai) { return new SapphironEndFightTrigger(ai); };
+            creators["sapphiron too close"] = [](PlayerbotAI* ai) { return new SapphironTooCloseTrigger(ai); };
+            creators["start kel'thuzad fight"] = [](PlayerbotAI* ai) { return new KelThuzadStartFightTrigger(ai); };
+            creators["end kel'thuzad fight"] = [](PlayerbotAI* ai) { return new KelThuzadEndFightTrigger(ai); };
+            creators["kel'thuzad too close"] = [](PlayerbotAI* ai) { return new KelThuzadTooCloseTrigger(ai); };
+
+            creators["enter aq20"] = [](PlayerbotAI* ai) { return new AQ20EnterDungeonTrigger(ai); };
+            creators["leave aq20"] = [](PlayerbotAI* ai) { return new AQ20LeaveDungeonTrigger(ai); };
+            creators["start kurinnaxx fight"] = [](PlayerbotAI* ai) { return new KurinnaxxStartFightTrigger(ai); };
+            creators["end kurinnaxx fight"] = [](PlayerbotAI* ai) { return new KurinnaxxEndFightTrigger(ai); };
+            creators["kurinnaxx too close"] = [](PlayerbotAI* ai) { return new KurinnaxxTooCloseTrigger(ai); };
+            creators["start rajaxx fight"] = [](PlayerbotAI* ai) { return new RajaxxStartFightTrigger(ai); };
+            creators["end rajaxx fight"] = [](PlayerbotAI* ai) { return new RajaxxEndFightTrigger(ai); };
+            creators["rajaxx too close"] = [](PlayerbotAI* ai) { return new RajaxxTooCloseTrigger(ai); };
+            creators["start moam fight"] = [](PlayerbotAI* ai) { return new MoamStartFightTrigger(ai); };
+            creators["end moam fight"] = [](PlayerbotAI* ai) { return new MoamEndFightTrigger(ai); };
+            creators["start buru fight"] = [](PlayerbotAI* ai) { return new BuruStartFightTrigger(ai); };
+            creators["end buru fight"] = [](PlayerbotAI* ai) { return new BuruEndFightTrigger(ai); };
+            creators["start ayamiss fight"] = [](PlayerbotAI* ai) { return new AyamissStartFightTrigger(ai); };
+            creators["end ayamiss fight"] = [](PlayerbotAI* ai) { return new AyamissEndFightTrigger(ai); };
+            creators["ayamiss too close"] = [](PlayerbotAI* ai) { return new AyamissTooCloseTrigger(ai); };
+            creators["start ossirian fight"] = [](PlayerbotAI* ai) { return new OssirianStartFightTrigger(ai); };
+            creators["end ossirian fight"] = [](PlayerbotAI* ai) { return new OssirianEndFightTrigger(ai); };
+            creators["ossirian too close"] = [](PlayerbotAI* ai) { return new OssirianTooCloseTrigger(ai); };
+
+            creators["enter aq40"] = [](PlayerbotAI* ai) { return new AQ40EnterDungeonTrigger(ai); };
+            creators["leave aq40"] = [](PlayerbotAI* ai) { return new AQ40LeaveDungeonTrigger(ai); };
+            creators["start skeram fight"] = [](PlayerbotAI* ai) { return new SkeramStartFightTrigger(ai); };
+            creators["end skeram fight"] = [](PlayerbotAI* ai) { return new SkeramEndFightTrigger(ai); };
+            creators["skeram too close"] = [](PlayerbotAI* ai) { return new SkeramTooCloseTrigger(ai); };
+            creators["start bug trio fight"] = [](PlayerbotAI* ai) { return new BugTrioStartFightTrigger(ai); };
+            creators["end bug trio fight"] = [](PlayerbotAI* ai) { return new BugTrioEndFightTrigger(ai); };
+            creators["start sartura fight"] = [](PlayerbotAI* ai) { return new SarturaStartFightTrigger(ai); };
+            creators["end sartura fight"] = [](PlayerbotAI* ai) { return new SarturaEndFightTrigger(ai); };
+            creators["sartura too close"] = [](PlayerbotAI* ai) { return new SarturaTooCloseTrigger(ai); };
+            creators["start fankriss fight"] = [](PlayerbotAI* ai) { return new FankrissStartFightTrigger(ai); };
+            creators["end fankriss fight"] = [](PlayerbotAI* ai) { return new FankrissEndFightTrigger(ai); };
+            creators["start viscidus fight"] = [](PlayerbotAI* ai) { return new ViscidusStartFightTrigger(ai); };
+            creators["end viscidus fight"] = [](PlayerbotAI* ai) { return new ViscidusEndFightTrigger(ai); };
+            creators["start huhuran fight"] = [](PlayerbotAI* ai) { return new HuhuranStartFightTrigger(ai); };
+            creators["end huhuran fight"] = [](PlayerbotAI* ai) { return new HuhuranEndFightTrigger(ai); };
+            creators["huhuran too close"] = [](PlayerbotAI* ai) { return new HuhuranTooCloseTrigger(ai); };
+            creators["start twin emperors fight"] = [](PlayerbotAI* ai) { return new TwinEmperorsStartFightTrigger(ai); };
+            creators["end twin emperors fight"] = [](PlayerbotAI* ai) { return new TwinEmperorsEndFightTrigger(ai); };
+            creators["start ouro fight"] = [](PlayerbotAI* ai) { return new OuroStartFightTrigger(ai); };
+            creators["end ouro fight"] = [](PlayerbotAI* ai) { return new OuroEndFightTrigger(ai); };
+            creators["ouro too close"] = [](PlayerbotAI* ai) { return new OuroTooCloseTrigger(ai); };
+            creators["start c'thun fight"] = [](PlayerbotAI* ai) { return new CThunStartFightTrigger(ai); };
+            creators["end c'thun fight"] = [](PlayerbotAI* ai) { return new CThunEndFightTrigger(ai); };
+            creators["c'thun too close"] = [](PlayerbotAI* ai) { return new CThunTooCloseTrigger(ai); };
         }
     };
 };

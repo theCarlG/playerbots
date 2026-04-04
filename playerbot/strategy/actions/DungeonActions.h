@@ -26,6 +26,20 @@ namespace ai
         bool IsHazardNearby(const WorldPosition& point, const std::list<HazardPosition>& hazards) const;
     };
 
+    // Base action for any "run away from the group" debuff mechanic (Living Bomb, Burning Adrenaline, etc.)
+    // Moves the bot ~25 yards away from the average position of party members,
+    // using LOS + pathfinding validation to avoid lava/hazards.
+    class RunAwayFromGroupAction : public MovementAction
+    {
+    public:
+        RunAwayFromGroupAction(PlayerbotAI* ai, std::string name = "run away from group") : MovementAction(ai, name) {}
+        bool Execute(Event& event) override;
+        bool isPossible() override;
+
+    private:
+        bool IsHazardNearby(const WorldPosition& point, const std::list<HazardPosition>& hazards) const;
+    };
+
     class MoveAwayFromCreature : public MovementAction
     {
     public:
