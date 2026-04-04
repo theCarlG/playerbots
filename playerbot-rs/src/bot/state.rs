@@ -7,6 +7,7 @@ use std::sync::{Arc, RwLock};
 
 use crate::{
     bot::events::BotEvent,
+    encounters::EncounterFsm,
     engine::{
         blackboard::Blackboard,
         bt_nodes::BtNode,
@@ -98,6 +99,11 @@ pub struct BotState {
     /// Shared group/encounter assignments. None if not in a group.
     pub group_state: Option<Arc<RwLock<GroupState>>>,
 
+    /// Active raid/dungeon encounter FSM. None outside of known instances.
+    /// Created by `encounters::coordinator::encounter_for_zone` when the bot
+    /// enters a known zone; updated each tick before the BT runs.
+    pub encounter: Option<Box<dyn EncounterFsm>>,
+
     /// The root behavior tree. Built once at bot init, never reallocated.
     pub root_tree: Box<dyn BtNode>,
 
@@ -130,6 +136,7 @@ impl BotState {
             events: VecDeque::new(),
             blackboard: Blackboard::default(),
             group_state: None,
+            encounter: None,
             root_tree,
             class,
             spec,

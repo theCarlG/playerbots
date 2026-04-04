@@ -3,12 +3,14 @@
 /// Sequence per tick:
 ///   1. Refresh snapshot (one C++ call)
 ///   2. Throttled refresh of nearby/attacker lists
-///   3. Process push events (update encounter FSM, blackboard)
-///   4. Build TickContext
-///   5. Run the BT tree
-///   6. Advance timers
+///   3. Zone-change check → create/destroy encounter FSM
+///   4. Process push events → update encounter FSM + blackboard
+///   5. Build TickContext
+///   6. Run the BT tree
+///   7. Advance timers
 use crate::{
     bot::state::BotState,
+    encounters::{coordinator, EncounterEvent},
     engine::context::TickContext,
 };
 
@@ -30,25 +32,31 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         bot.last_nearby_refresh_ms = now_ms;
     }
 
-    // 3. Process push events
+    // 3. Zone-change detection — create or destroy encounter FSM.
+    let zone_id = bot.snap.zone_id;
+    let need_new_encounter = match &bot.encounter {
+        None => coordinator::encounter_for_zone(zone_id).is_some(),
+        Some(enc) => enc.is_done(),
+    };
+    if need_new_encounter {
+        bot.encounter = coordinator::encounter_for_zone(zone_id);
+    }
+    // If we left a known zone, clear the FSM.
+    if bot.encounter.is_some() && coordinator::encounter_for_zone(zone_id).is_none() {
+        bot.encounter = None;
+    }
+
+    // 4. Process push events
     process_events(bot, now_ms);
 
-    // 4. Build TickContext and run BT
-    // We need to split borrows: interface + blackboard + timers can't all be borrowed at once
-    // through BotState. We use a local snapshot copy for the context.
+    // 5. Build TickContext and run BT
     let snap = &bot.snap;
     let attackers: &[u64] = &bot.attackers;
     let nearby: &[u64] = &bot.nearby_units;
 
-    let group_state = bot.group_state.as_ref()
-        .and_then(|arc| arc.try_read().ok().map(|_| ()));
-
     let ctx_group = bot.group_state.as_ref()
         .and_then(|arc| arc.try_read().ok());
 
-    // Build the context referencing bot's mutable fields
-    // SAFETY: root_tree does not access blackboard/timers/interface through BotState,
-    // only through TickContext which we construct here with explicit borrows.
     let bot_handle = bot.handle;
     let mut ctx = TickContext {
         snap,
@@ -64,32 +72,58 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         bot_handle,
     };
 
-    // We need to tick the tree but root_tree is in bot. Use a pointer to avoid
-    // the double-borrow. This is safe because root_tree only reads its own
-    // internal node state (Cell-based throttle timestamps) and writes through ctx.
+    // Run the root BT tree via a raw pointer to avoid double-borrow on bot.
     let tree_ptr = &*bot.root_tree as *const dyn crate::engine::bt_nodes::BtNode;
     // SAFETY: root_tree is alive for the duration of this tick; ctx does not hold
     // references into root_tree; root_tree does not hold references into ctx.
     let result = unsafe { (*tree_ptr).tick(&mut ctx) };
     let _ = result; // Running is handled by blackboard state across ticks
 
-    // 6. Advance timers
+    // 7. Advance timers
     bot.timers.advance(now_ms);
 }
 
-fn process_events(bot: &mut BotState, now_ms: u64) {
+fn process_events(bot: &mut BotState, _now_ms: u64) {
+    // Determine boss HP for FSM updates.
+    let boss_hp_pct = {
+        let target = bot.snap.self_.current_target;
+        if target != 0 {
+            let snap = bot.interface.get_unit_snapshot(target);
+            if snap.max_health > 0 {
+                snap.health as f32 / snap.max_health as f32
+            } else { 1.0 }
+        } else { 1.0 }
+    };
+
+    let now_ms = bot.snap.server_time_ms;
+
+    // First pass: convert bot events to encounter events and dispatch.
     while let Some(event) = bot.events.pop_front() {
         use crate::bot::events::BotEvent;
-        match event {
-            BotEvent::UnitDied { victim, killer: _ } => {
-                // If our current target died, clear it
-                if Some(victim) == {
-                    let h = bot.snap.self_unit().current_target;
-                    if h == 0 { None } else { Some(h) }
-                } {
-                    // Target will be cleared naturally by next snapshot refresh
-                }
-                // Track add deaths for encounter FSMs
+
+        let enc_event = match &event {
+            BotEvent::UnitSpellCast { caster, spell_id, target: _, success } =>
+                Some(EncounterEvent::SpellCast {
+                    caster: *caster, spell_id: *spell_id, success: *success
+                }),
+            BotEvent::AuraChanged { unit, spell_id, applied, .. } =>
+                Some(EncounterEvent::AuraChanged {
+                    unit: *unit, spell_id: *spell_id, applied: *applied
+                }),
+            BotEvent::UnitDied { victim, .. } =>
+                Some(EncounterEvent::UnitDied { victim: *victim }),
+            BotEvent::DamageTaken { .. } => None,
+            BotEvent::PacketIn { .. } | BotEvent::PacketOut { .. } => None,
+        };
+
+        // Dispatch to encounter FSM.
+        if let (Some(enc_ev), Some(enc)) = (enc_event, &mut bot.encounter) {
+            enc.update(&enc_ev, boss_hp_pct, now_ms);
+        }
+
+        // Generic blackboard side effects.
+        match &event {
+            BotEvent::UnitDied { victim: _, .. } => {
                 use crate::engine::blackboard::{Key, Value};
                 if let Some(count) = bot.blackboard.get_u32(Key::AddCount) {
                     if count > 0 {
@@ -97,15 +131,20 @@ fn process_events(bot: &mut BotState, now_ms: u64) {
                     }
                 }
             }
-            BotEvent::DamageTaken { damage: _, spell_id: _, dealer: _ } => {
-                // Handled by emergency flee subtree in the BT reading auras/position
-            }
-            BotEvent::AuraChanged { .. } | BotEvent::UnitSpellCast { .. } => {
-                // Encounter FSMs will read these via blackboard or future encounter module.
-                // For now, events are consumed without side effects beyond clearing the queue.
-            }
-            BotEvent::PacketIn { .. } | BotEvent::PacketOut { .. } => {
-                // Packet handlers will be added in later phases.
+            _ => {}
+        }
+    }
+
+    // Regular tick: update encounter FSM with None event (HP polling).
+    if let Some(enc) = &mut bot.encounter {
+        enc.update(&EncounterEvent::None, boss_hp_pct, now_ms);
+    }
+
+    // If bot entered combat, notify encounter FSM.
+    if bot.snap.self_.in_combat {
+        if let Some(enc) = &mut bot.encounter {
+            if !enc.is_active() {
+                enc.update(&EncounterEvent::CombatStarted, boss_hp_pct, now_ms);
             }
         }
     }
