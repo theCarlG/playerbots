@@ -1,1 +1,3 @@
-// TODO: implement class strategy for this class.
+pub mod assassination;
+pub mod combat;
+pub mod subtlety;

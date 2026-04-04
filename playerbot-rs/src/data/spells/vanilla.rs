@@ -33,6 +33,7 @@ pub mod warrior {
     pub const RETALIATION:     u32 = 20230;
 
     // Fury — general
+    pub const BLOODTHIRST:     u32 = 25251; // rank 5 (talent, level 40+)
     pub const WHIRLWIND:       u32 = 1680;
     pub const CLEAVE:          u32 = 11608; // rank 4
     pub const EXECUTE:         u32 = 20662; // rank 5  (target < 20% HP)
@@ -41,6 +42,8 @@ pub mod warrior {
     pub const BERSERKER_RAGE:  u32 = 18499;
 
     // Protection
+    pub const SHIELD_WALL:      u32 = 871;    // 30% damage reduction, 30s (talent)
+    pub const LAST_STAND:       u32 = 12975;  // +30% max HP for 20s (talent)
     pub const SHIELD_BASH:      u32 = 11972;  // rank 3
     pub const SHIELD_BLOCK:     u32 = 2565;
     pub const SUNDER_ARMOR:     u32 = 11597;  // rank 5
@@ -65,6 +68,7 @@ pub mod paladin {
     pub const DIVINE_SHIELD:        u32 = 642;
     pub const LAY_ON_HANDS:         u32 = 10310; // rank 3
     pub const HAMMER_OF_JUSTICE:    u32 = 10308; // rank 4
+    pub const HAMMER_OF_WRATH:      u32 = 24239; // rank 3 (target < 20% HP)
     pub const SEAL_OF_RIGHTEOUSNESS:u32 = 21082; // rank 8
     pub const SEAL_OF_COMMAND:      u32 = 20920; // rank 4
     pub const JUDGEMENT:            u32 = 20271;

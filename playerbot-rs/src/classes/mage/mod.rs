@@ -1,1 +1,3 @@
-// TODO: implement class strategy for this class.
+pub mod arcane;
+pub mod fire;
+pub mod frost;

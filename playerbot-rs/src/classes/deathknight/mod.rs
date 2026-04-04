@@ -1,1 +1,3 @@
-// TODO: implement class strategy for this class.
+pub mod blood;
+pub mod frost;
+pub mod unholy;

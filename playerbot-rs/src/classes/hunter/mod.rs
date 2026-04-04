@@ -1,1 +1,3 @@
-// TODO: implement class strategy for this class.
+pub mod beast_mastery;
+pub mod marksmanship;
+pub mod survival;

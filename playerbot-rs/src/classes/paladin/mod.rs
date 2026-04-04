@@ -1,1 +1,3 @@
-// TODO: implement class strategy for this class.
+pub mod holy;
+pub mod protection;
+pub mod retribution;

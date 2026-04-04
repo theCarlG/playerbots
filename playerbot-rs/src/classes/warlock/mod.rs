@@ -1,1 +1,3 @@
-// TODO: implement class strategy for this class.
+pub mod affliction;
+pub mod demonology;
+pub mod destruction;
