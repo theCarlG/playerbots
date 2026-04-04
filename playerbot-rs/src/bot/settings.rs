@@ -37,30 +37,36 @@ pub enum BehaviorMode {
 pub struct CombatOrder(pub u32);
 
 impl CombatOrder {
-    pub const NONE:        Self = Self(0);
-    pub const TANK:        Self = Self(1 << 0);
-    pub const ASSIST:      Self = Self(1 << 1);
-    pub const PROTECT:     Self = Self(1 << 2);
-    pub const PULL:        Self = Self(1 << 3);
-    pub const THREAT:      Self = Self(1 << 4);
-    pub const PASSIVE:     Self = Self(1 << 5);
-    pub const FURY:        Self = Self(1 << 6);
-    pub const DPS:         Self = Self(1 << 7);
-    pub const CLOSE:       Self = Self(1 << 8);
-    pub const AOE:         Self = Self(1 << 9);
-    pub const GRIND:       Self = Self(1 << 10);
+    pub const NONE: Self = Self(0);
+    pub const TANK: Self = Self(1 << 0);
+    pub const ASSIST: Self = Self(1 << 1);
+    pub const PROTECT: Self = Self(1 << 2);
+    pub const PULL: Self = Self(1 << 3);
+    pub const THREAT: Self = Self(1 << 4);
+    pub const PASSIVE: Self = Self(1 << 5);
+    pub const FURY: Self = Self(1 << 6);
+    pub const DPS: Self = Self(1 << 7);
+    pub const CLOSE: Self = Self(1 << 8);
+    pub const AOE: Self = Self(1 << 9);
+    pub const GRIND: Self = Self(1 << 10);
     pub const TANK_ASSIST: Self = Self(1 << 11);
-    pub const DPS_ASSIST:  Self = Self(1 << 12);
-    pub const PULL_BACK:   Self = Self(1 << 13);
+    pub const DPS_ASSIST: Self = Self(1 << 12);
+    pub const PULL_BACK: Self = Self(1 << 13);
 
     /// True if all bits in `other` are set in `self`.
     pub const fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
     }
 
-    pub fn insert(&mut self, other: Self) { self.0 |= other.0; }
-    pub fn remove(&mut self, other: Self) { self.0 &= !other.0; }
-    pub fn is_empty(self) -> bool { self.0 == 0 }
+    pub fn insert(&mut self, other: Self) {
+        self.0 |= other.0;
+    }
+    pub fn remove(&mut self, other: Self) {
+        self.0 &= !other.0;
+    }
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
 
     /// Parse a flag name from the addon vocabulary. Supports multi-word
     /// forms ("tank assist", "dps assist", "pull back").
@@ -72,8 +78,8 @@ impl CombatOrder {
             // Try 2-word match first (greedy).
             let pair: Self = match (first, second) {
                 ("tank", "assist") => Self::TANK_ASSIST,
-                ("dps",  "assist") => Self::DPS_ASSIST,
-                ("pull", "back")   => Self::PULL_BACK,
+                ("dps", "assist") => Self::DPS_ASSIST,
+                ("pull", "back") => Self::PULL_BACK,
                 _ => Self::NONE,
             };
             if !pair.is_empty() {
@@ -81,17 +87,17 @@ impl CombatOrder {
             }
         }
         let single: Self = match first {
-            "tank"    => Self::TANK,
-            "assist"  => Self::ASSIST,
+            "tank" => Self::TANK,
+            "assist" => Self::ASSIST,
             "protect" => Self::PROTECT,
-            "pull"    => Self::PULL,
-            "threat"  => Self::THREAT,
+            "pull" => Self::PULL,
+            "threat" => Self::THREAT,
             "passive" => Self::PASSIVE,
-            "fury"    => Self::FURY,
-            "dps"     => Self::DPS,
-            "close"   => Self::CLOSE,
-            "aoe"     => Self::AOE,
-            "grind"   => Self::GRIND,
+            "fury" => Self::FURY,
+            "dps" => Self::DPS,
+            "close" => Self::CLOSE,
+            "aoe" => Self::AOE,
+            "grind" => Self::GRIND,
             _ => return None,
         };
         Some((single, 1))
@@ -99,16 +105,22 @@ impl CombatOrder {
 }
 
 impl Default for CombatOrder {
-    fn default() -> Self { Self::ASSIST }
+    fn default() -> Self {
+        Self::ASSIST
+    }
 }
 
 impl std::ops::BitOr for CombatOrder {
     type Output = Self;
-    fn bitor(self, rhs: Self) -> Self { Self(self.0 | rhs.0) }
+    fn bitor(self, rhs: Self) -> Self {
+        Self(self.0 | rhs.0)
+    }
 }
 
 impl std::ops::BitOrAssign for CombatOrder {
-    fn bitor_assign(&mut self, rhs: Self) { self.0 |= rhs.0; }
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
 }
 
 /// Named strategies the bot can toggle at runtime via `nc +x,-y` commands.
@@ -121,21 +133,21 @@ impl std::ops::BitOrAssign for CombatOrder {
 pub struct StrategyFlags(pub u32);
 
 impl StrategyFlags {
-    pub const NONE:            Self = Self(0);
-    pub const RPG:             Self = Self(1 << 0);
-    pub const RPG_BG:          Self = Self(1 << 1);
-    pub const RPG_EXPLORE:     Self = Self(1 << 2);
-    pub const RPG_GUILD:       Self = Self(1 << 3);
+    pub const NONE: Self = Self(0);
+    pub const RPG: Self = Self(1 << 0);
+    pub const RPG_BG: Self = Self(1 << 1);
+    pub const RPG_EXPLORE: Self = Self(1 << 2);
+    pub const RPG_GUILD: Self = Self(1 << 3);
     pub const RPG_MAINTENANCE: Self = Self(1 << 4);
-    pub const RPG_PLAYER:      Self = Self(1 << 5);
-    pub const RPG_QUEST:       Self = Self(1 << 6);
-    pub const RPG_VENDOR:      Self = Self(1 << 7);
-    pub const RTSC:            Self = Self(1 << 8);
-    pub const WBUFF:           Self = Self(1 << 9);
-    pub const GRIND:           Self = Self(1 << 10);
-    pub const FLEE:            Self = Self(1 << 11);
-    pub const EMOTE:           Self = Self(1 << 12);
-    pub const CC:              Self = Self(1 << 13);
+    pub const RPG_PLAYER: Self = Self(1 << 5);
+    pub const RPG_QUEST: Self = Self(1 << 6);
+    pub const RPG_VENDOR: Self = Self(1 << 7);
+    pub const RTSC: Self = Self(1 << 8);
+    pub const WBUFF: Self = Self(1 << 9);
+    pub const GRIND: Self = Self(1 << 10);
+    pub const FLEE: Self = Self(1 << 11);
+    pub const EMOTE: Self = Self(1 << 12);
+    pub const CC: Self = Self(1 << 13);
 
     /// Default set enabled at bot creation. Matches the C++ "defaults"
     /// loadout: reactive flee, RTSC accepting, basic RPG.
@@ -146,39 +158,47 @@ impl StrategyFlags {
     pub const fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
     }
-    pub fn insert(&mut self, other: Self) { self.0 |= other.0; }
-    pub fn remove(&mut self, other: Self) { self.0 &= !other.0; }
+    pub fn insert(&mut self, other: Self) {
+        self.0 |= other.0;
+    }
+    pub fn remove(&mut self, other: Self) {
+        self.0 &= !other.0;
+    }
 
     /// Look up a flag by the name the addon sends. Multi-word names are
     /// joined with a space ("rpg bg", "rpg maintenance").
     pub fn parse_name(name: &str) -> Option<Self> {
         Some(match name.trim() {
-            "rpg"             => Self::RPG,
-            "rpg bg"          => Self::RPG_BG,
-            "rpg explore"     => Self::RPG_EXPLORE,
-            "rpg guild"       => Self::RPG_GUILD,
+            "rpg" => Self::RPG,
+            "rpg bg" => Self::RPG_BG,
+            "rpg explore" => Self::RPG_EXPLORE,
+            "rpg guild" => Self::RPG_GUILD,
             "rpg maintenance" => Self::RPG_MAINTENANCE,
-            "rpg player"      => Self::RPG_PLAYER,
-            "rpg quest"       => Self::RPG_QUEST,
-            "rpg vendor"      => Self::RPG_VENDOR,
-            "rtsc"            => Self::RTSC,
-            "wbuff"           => Self::WBUFF,
-            "grind"           => Self::GRIND,
-            "flee"            => Self::FLEE,
-            "emote"           => Self::EMOTE,
-            "cc"              => Self::CC,
+            "rpg player" => Self::RPG_PLAYER,
+            "rpg quest" => Self::RPG_QUEST,
+            "rpg vendor" => Self::RPG_VENDOR,
+            "rtsc" => Self::RTSC,
+            "wbuff" => Self::WBUFF,
+            "grind" => Self::GRIND,
+            "flee" => Self::FLEE,
+            "emote" => Self::EMOTE,
+            "cc" => Self::CC,
             _ => return None,
         })
     }
 }
 
 impl Default for StrategyFlags {
-    fn default() -> Self { Self::defaults() }
+    fn default() -> Self {
+        Self::defaults()
+    }
 }
 
 impl std::ops::BitOr for StrategyFlags {
     type Output = Self;
-    fn bitor(self, rhs: Self) -> Self { Self(self.0 | rhs.0) }
+    fn bitor(self, rhs: Self) -> Self {
+        Self(self.0 | rhs.0)
+    }
 }
 
 /// How followers arrange themselves around the master when in Follow mode.
@@ -209,15 +229,15 @@ pub enum FollowFormation {
 impl FollowFormation {
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
-            "near"   => Self::Near,
-            "line"   => Self::Line,
+            "near" => Self::Near,
+            "line" => Self::Line,
             "circle" => Self::Circle,
-            "chaos"  => Self::Chaos,
-            "box"    => Self::Box,
-            "queue"  => Self::Queue,
-            "arrow"  => Self::Arrow,
-            "wedge"  => Self::Wedge,
-            "pairs"  => Self::Pairs,
+            "chaos" => Self::Chaos,
+            "box" => Self::Box,
+            "queue" => Self::Queue,
+            "arrow" => Self::Arrow,
+            "wedge" => Self::Wedge,
+            "pairs" => Self::Pairs,
             _ => return None,
         })
     }

@@ -15,18 +15,18 @@ use super::super::{EncounterEvent, EncounterFsm};
 use crate::encounters::bt::Bt::{self, *};
 use crate::ffi::SpellId;
 
-pub const AURA_BROOD_AFFLICTION_BLUE:   SpellId = SpellId(23170);
-pub const AURA_BROOD_AFFLICTION_BLACK:  SpellId = SpellId(23171);
-pub const AURA_BROOD_AFFLICTION_RED:    SpellId = SpellId(23172);
+pub const AURA_BROOD_AFFLICTION_BLUE: SpellId = SpellId(23170);
+pub const AURA_BROOD_AFFLICTION_BLACK: SpellId = SpellId(23171);
+pub const AURA_BROOD_AFFLICTION_RED: SpellId = SpellId(23172);
 pub const AURA_BROOD_AFFLICTION_BRONZE: SpellId = SpellId(23173);
-pub const AURA_BROOD_AFFLICTION_GREEN:  SpellId = SpellId(23174);
-pub const AURA_FRENZY:                  SpellId = SpellId(28371);
+pub const AURA_BROOD_AFFLICTION_GREEN: SpellId = SpellId(23174);
+pub const AURA_FRENZY: SpellId = SpellId(28371);
 
 #[derive(Clone, Debug)]
 pub struct ChromaggusFsm {
     active: bool,
-    done:   bool,
-    bt:     Bt,
+    done: bool,
+    bt: Bt,
 }
 
 impl PartialEq for ChromaggusFsm {
@@ -37,20 +37,24 @@ impl PartialEq for ChromaggusFsm {
 
 impl ChromaggusFsm {
     pub fn new() -> Self {
-        Self { active: false, done: false, bt: Self::build_bt() }
+        Self {
+            active: false,
+            done: false,
+            bt: Self::build_bt(),
+        }
     }
 
     fn build_bt() -> Bt {
         // Ranged stay at 30y to stay out of all breath cones. Melee hug
         // the boss from behind — reactive facing handled by targeting.
-        Sel(vec![
-            Seq(vec![IsRanged, MaintainRange(30.0)]),
-        ])
+        Sel(vec![Seq(vec![IsRanged, MaintainRange(30.0)])])
     }
 }
 
 impl Default for ChromaggusFsm {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EncounterFsm for ChromaggusFsm {
@@ -62,10 +66,18 @@ impl EncounterFsm for ChromaggusFsm {
             _ => {}
         }
     }
-    fn phase_id(&self) -> u32   { u32::from(self.active) }
-    fn is_active(&self) -> bool { self.active }
-    fn is_done(&self)   -> bool { self.done }
-    fn boss_entry(&self) -> u32 { super::ENTRY_CHROMAGGUS }
+    fn phase_id(&self) -> u32 {
+        u32::from(self.active)
+    }
+    fn is_active(&self) -> bool {
+        self.active
+    }
+    fn is_done(&self) -> bool {
+        self.done
+    }
+    fn boss_entry(&self) -> u32 {
+        super::ENTRY_CHROMAGGUS
+    }
     fn phase_bt(&self) -> Option<&Bt> {
         if self.active { Some(&self.bt) } else { None }
     }

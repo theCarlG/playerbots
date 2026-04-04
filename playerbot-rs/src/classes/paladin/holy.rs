@@ -10,7 +10,9 @@ use crate::{
 
 // Any blessing ID we can detect on self; if none present, reapply Wisdom.
 const BLESSING_RANKS: &[SpellId] = &[
-    BLESSING_OF_WISDOM, BLESSING_OF_MIGHT, BLESSING_OF_KINGS,
+    BLESSING_OF_WISDOM,
+    BLESSING_OF_MIGHT,
+    BLESSING_OF_KINGS,
     SpellId(19742), // Greater Blessing of Wisdom
 ];
 
@@ -18,24 +20,19 @@ pub fn build_tree() -> Bt {
     Sel(vec![
         // Emergency: Lay on Hands on anyone dying.
         HealLowest(LAY_ON_HANDS, 0.10),
-
         // Bubble self when critical.
         Seq(vec![HpBelow(0.15), CastOnSelf(DIVINE_SHIELD)]),
-
         // Critical heals.
         HealLowest(HOLY_LIGHT, 0.30),
         HealInjuredParty(HOLY_LIGHT, 0.30),
         HealLowest(HOLY_SHOCK, 0.40),
         HealInjuredParty(HOLY_SHOCK, 0.40),
-
         // Medium heals.
         HealLowest(HOLY_LIGHT, 0.65),
         HealInjuredParty(HOLY_LIGHT, 0.65),
-
         // Efficient top-off.
         HealLowest(FLASH_OF_LIGHT, 0.85),
         HealInjuredParty(FLASH_OF_LIGHT, 0.85),
-
         // Maintain self blessing.
         Seq(vec![
             SelfMissingAnyRank(BLESSING_RANKS),

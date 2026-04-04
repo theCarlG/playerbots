@@ -12,18 +12,20 @@ pub fn build_tree() -> Bt {
         CastOnTarget(INTERCEPT),
         CastOnTarget(CHARGE),
         StickToTarget(5.0),
-
-        Seq(vec![InCombat, Sel(vec![
-            // Emergency fear.
-            Seq(vec![HpBelow(0.15), CastOnTarget(INTIMIDATING_SHOUT)]),
-            // Execute.
-            Seq(vec![TargetHpBelow(0.20), CastOnTarget(EXECUTE)]),
-            // Core damage.
-            CastOnTarget(BLOODTHIRST),
-            CastOnTarget(WHIRLWIND),
-            // Rage dumps (same swing slot).
-            CastOnTarget(HEROIC_STRIKE),
-            Seq(vec![NearbyAtLeast(2), CastOnTarget(CLEAVE)]),
-        ])]),
+        Seq(vec![
+            InCombat,
+            Sel(vec![
+                // Emergency fear.
+                Seq(vec![HpBelow(0.15), CastOnTarget(INTIMIDATING_SHOUT)]),
+                // Execute.
+                Seq(vec![TargetHpBelow(0.20), CastOnTarget(EXECUTE)]),
+                // Core damage.
+                CastOnTarget(BLOODTHIRST),
+                CastOnTarget(WHIRLWIND),
+                // Rage dumps (same swing slot).
+                CastOnTarget(HEROIC_STRIKE),
+                Seq(vec![NearbyAtLeast(2), CastOnTarget(CLEAVE)]),
+            ]),
+        ]),
     ])
 }

@@ -12,7 +12,6 @@
 ///   - Adds: attack nearest hostile (kill Stalagg/Feugen).
 ///   - Polarity: check own charge, move to correct side of room.
 ///   - Normal (Thaddius, no shift): normal rotation.
-
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::encounters::bt::Bt::{self, *};
 use crate::ffi::SpellId;
@@ -22,7 +21,7 @@ pub const AURA_POSITIVE_CHARGE: SpellId = SpellId(29659);
 pub const AURA_NEGATIVE_CHARGE: SpellId = SpellId(29660);
 
 pub const ENTRY_STALAGG: u32 = 15929;
-pub const ENTRY_FEUGEN:  u32 = 15930;
+pub const ENTRY_FEUGEN: u32 = 15930;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThaddiusPhase {
@@ -34,13 +33,13 @@ pub enum ThaddiusPhase {
 
 #[derive(Clone, Debug)]
 pub struct ThaddiusFsm {
-    pub phase:             ThaddiusPhase,
-    pub stalagg_dead:      bool,
-    pub feugen_dead:       bool,
+    pub phase: ThaddiusPhase,
+    pub stalagg_dead: bool,
+    pub feugen_dead: bool,
     pub polarity_shift_ms: u64,
-    done:                  bool,
-    adds_bt:               Bt,
-    polarity_bt:           Bt,
+    done: bool,
+    adds_bt: Bt,
+    polarity_bt: Bt,
 }
 
 impl PartialEq for ThaddiusFsm {
@@ -56,13 +55,13 @@ impl PartialEq for ThaddiusFsm {
 impl ThaddiusFsm {
     pub fn new() -> Self {
         Self {
-            phase:             ThaddiusPhase::Idle,
-            stalagg_dead:      false,
-            feugen_dead:       false,
+            phase: ThaddiusPhase::Idle,
+            stalagg_dead: false,
+            feugen_dead: false,
             polarity_shift_ms: 0,
-            done:              false,
-            adds_bt:           AttackNearest,
-            polarity_bt:       Sel(vec![
+            done: false,
+            adds_bt: AttackNearest,
+            polarity_bt: Sel(vec![
                 // Positive charge → move to safe zone (left side)
                 Seq(vec![HasDebuff(AURA_POSITIVE_CHARGE), MoveToSafeZone]),
                 // Negative charge → move to safe zone (right side)
@@ -71,8 +70,8 @@ impl ThaddiusFsm {
         }
     }
 
-    pub const PHASE_IDLE:     u32 = 0;
-    pub const PHASE_ADDS:     u32 = 1;
+    pub const PHASE_IDLE: u32 = 0;
+    pub const PHASE_ADDS: u32 = 1;
     pub const PHASE_THADDIUS: u32 = 2;
     pub const PHASE_POLARITY: u32 = 3;
 
@@ -80,41 +79,45 @@ impl ThaddiusFsm {
 }
 
 impl Default for ThaddiusFsm {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EncounterFsm for ThaddiusFsm {
     fn update(&mut self, event: &EncounterEvent, _boss_hp: f32, time_ms: u64) {
-        if self.done { return; }
+        if self.done {
+            return;
+        }
 
         match event {
             EncounterEvent::CombatStarted => {
                 self.phase = ThaddiusPhase::Adds;
             }
 
-            EncounterEvent::UnitDied { victim: _ } => {
-                match self.phase {
-                    ThaddiusPhase::Adds => {
-                        if !self.feugen_dead {
-                            self.feugen_dead = true;
-                        } else if !self.stalagg_dead {
-                            self.stalagg_dead = true;
-                        }
-                        if self.stalagg_dead && self.feugen_dead {
-                            self.phase = ThaddiusPhase::Normal;
-                        }
+            EncounterEvent::UnitDied { victim: _ } => match self.phase {
+                ThaddiusPhase::Adds => {
+                    if !self.feugen_dead {
+                        self.feugen_dead = true;
+                    } else if !self.stalagg_dead {
+                        self.stalagg_dead = true;
                     }
-                    ThaddiusPhase::Normal | ThaddiusPhase::PolarityReposition => {
-                        self.done = true;
+                    if self.stalagg_dead && self.feugen_dead {
+                        self.phase = ThaddiusPhase::Normal;
                     }
-                    _ => {}
                 }
-            }
+                ThaddiusPhase::Normal | ThaddiusPhase::PolarityReposition => {
+                    self.done = true;
+                }
+                _ => {}
+            },
 
-            EncounterEvent::SpellCast { spell_id, success: true, .. } => {
-                if *spell_id == SPELL_POLARITY_SHIFT
-                    && self.phase == ThaddiusPhase::Normal
-                {
+            EncounterEvent::SpellCast {
+                spell_id,
+                success: true,
+                ..
+            } => {
+                if *spell_id == SPELL_POLARITY_SHIFT && self.phase == ThaddiusPhase::Normal {
                     self.phase = ThaddiusPhase::PolarityReposition;
                     self.polarity_shift_ms = time_ms;
                 }
@@ -131,7 +134,7 @@ impl EncounterFsm for ThaddiusFsm {
             EncounterEvent::GroupWipe => {
                 self.phase = ThaddiusPhase::Idle;
                 self.stalagg_dead = false;
-                self.feugen_dead  = false;
+                self.feugen_dead = false;
             }
 
             _ => {}
@@ -140,20 +143,26 @@ impl EncounterFsm for ThaddiusFsm {
 
     fn phase_id(&self) -> u32 {
         match self.phase {
-            ThaddiusPhase::Idle               => Self::PHASE_IDLE,
-            ThaddiusPhase::Adds               => Self::PHASE_ADDS,
-            ThaddiusPhase::Normal             => Self::PHASE_THADDIUS,
+            ThaddiusPhase::Idle => Self::PHASE_IDLE,
+            ThaddiusPhase::Adds => Self::PHASE_ADDS,
+            ThaddiusPhase::Normal => Self::PHASE_THADDIUS,
             ThaddiusPhase::PolarityReposition => Self::PHASE_POLARITY,
         }
     }
 
-    fn is_active(&self) -> bool { self.phase != ThaddiusPhase::Idle }
-    fn is_done(&self)   -> bool { self.done }
-    fn boss_entry(&self) -> u32 { super::ENTRY_THADDIUS }
+    fn is_active(&self) -> bool {
+        self.phase != ThaddiusPhase::Idle
+    }
+    fn is_done(&self) -> bool {
+        self.done
+    }
+    fn boss_entry(&self) -> u32 {
+        super::ENTRY_THADDIUS
+    }
 
     fn phase_bt(&self) -> Option<&Bt> {
         match self.phase {
-            ThaddiusPhase::Adds               => Some(&self.adds_bt),
+            ThaddiusPhase::Adds => Some(&self.adds_bt),
             ThaddiusPhase::PolarityReposition => Some(&self.polarity_bt),
             _ => None, // Normal/Idle: normal rotation
         }
@@ -189,9 +198,15 @@ mod tests {
         let mut fsm = ThaddiusFsm::new();
         fsm.phase = ThaddiusPhase::Normal;
 
-        fsm.update(&EncounterEvent::SpellCast {
-            caster: 1, spell_id: SPELL_POLARITY_SHIFT, success: true
-        }, 0.80, 1000);
+        fsm.update(
+            &EncounterEvent::SpellCast {
+                caster: 1,
+                spell_id: SPELL_POLARITY_SHIFT,
+                success: true,
+            },
+            0.80,
+            1000,
+        );
         assert_eq!(fsm.phase, ThaddiusPhase::PolarityReposition);
     }
 
@@ -201,7 +216,11 @@ mod tests {
         fsm.phase = ThaddiusPhase::PolarityReposition;
         fsm.polarity_shift_ms = 1000;
 
-        fsm.update(&EncounterEvent::None, 0.70, 1000 + ThaddiusFsm::REPOSITION_WINDOW_MS + 1);
+        fsm.update(
+            &EncounterEvent::None,
+            0.70,
+            1000 + ThaddiusFsm::REPOSITION_WINDOW_MS + 1,
+        );
         assert_eq!(fsm.phase, ThaddiusPhase::Normal);
     }
 

@@ -19,19 +19,19 @@ pub enum Key {
     LastSafePositionX,
     LastSafePositionY,
     LastSafePositionZ,
-    LastFleeMs,            // server_time_ms of last flee movement
-    ThreatResetNeeded,     // bool: bot lost aggro, should stop attacking
-    PullTimeMs,            // server_time_ms when the current boss was pulled
-    AddCount,              // number of active adds (for encounter scripts)
-    EncounterSafeZone,     // u32: Heigan safe zone (1-4), 0 if not applicable
+    LastFleeMs,        // server_time_ms of last flee movement
+    ThreatResetNeeded, // bool: bot lost aggro, should stop attacking
+    PullTimeMs,        // server_time_ms when the current boss was pulled
+    AddCount,          // number of active adds (for encounter scripts)
+    EncounterSafeZone, // u32: Heigan safe zone (1-4), 0 if not applicable
 
     // ── World behavior keys ─────────────────────────────────────────
-    TravelDestX,           // f32: travel destination
+    TravelDestX, // f32: travel destination
     TravelDestY,
     TravelDestZ,
-    GrindTargetHandle,     // handle: current grind target
-    LastVendorVisitMs,     // u64: when we last vendored
-    LastRepairMs,          // u64: when we last repaired
+    GrindTargetHandle, // handle: current grind target
+    LastVendorVisitMs, // u64: when we last vendored
+    LastRepairMs,      // u64: when we last repaired
 
     // Add new keys above this line. Keep count accurate.
     _Count,

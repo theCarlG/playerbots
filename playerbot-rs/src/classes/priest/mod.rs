@@ -17,9 +17,9 @@ const BUFFS: &[GroupBuff] = &[
 pub fn kit(spec: PlayerSpec) -> ClassKit {
     use PlayerSpec::*;
     let tree = match spec {
-        PriestHoly       => holy::build_tree(),
+        PriestHoly => holy::build_tree(),
         PriestDiscipline => discipline::build_tree(),
-        PriestShadow     => shadow::build_tree(),
+        PriestShadow => shadow::build_tree(),
         _ => unreachable!("non-priest spec passed to priest::kit"),
     };
     ClassKit { tree, buffs: BUFFS }

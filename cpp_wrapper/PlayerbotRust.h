@@ -12,10 +12,32 @@
 #pragma once
 
 #include "playerbot/PlayerbotAIBase.h"
+#include "playerbot/PlayerbotAIConfig.h"
 #include "botffi.h"
 #include "BotBridge.h"
 
 class Player;
+class Unit;
+class Item;
+
+// ── Legacy helpers kept only so the stripped management code compiles ──
+// These replace types that lived on the deleted PlayerbotAI / strategy
+// engine. None of them do anything — all real inventory / cast / gearscore
+// logic now lives in the Rust module.
+
+enum class IterateItemsMask : uint8_t {
+    ITERATE_ITEMS_IN_BAGS  = 1 << 0,
+    ITERATE_ITEMS_IN_EQUIP = 1 << 1,
+    ITERATE_ITEMS_IN_BANK  = 1 << 2,
+    ITERATE_ALL_ITEMS      = 0xFF,
+};
+
+class IterateItemsVisitor {
+public:
+    IterateItemsVisitor() = default;
+    virtual ~IterateItemsVisitor() = default;
+    virtual bool Visit(Item* /*item*/) { return true; }
+};
 
 class PlayerbotRust : public PlayerbotAIBase
 {
@@ -54,8 +76,8 @@ public:
     void HandleMasterIncomingPacket(const WorldPacket& /*packet*/) {}
     void HandleMasterOutgoingPacket(const WorldPacket& /*packet*/) {}
 
-    // ── Command handling (stubbed — will be routed to Rust) ────────────
-    void HandleCommand(uint32 /*type*/, const std::string& /*text*/, Player& /*sender*/, uint32 /*lang*/ = 0) {}
+    // ── Command handling ─────────────────────────────────────────────────
+    void HandleCommand(uint32 type, const std::string& text, Player& sender, uint32 lang = 0);
     void HandleTeleportAck() {}
 
     // ── Accessors ─────────────────────────────────────────────────────────
@@ -76,12 +98,47 @@ public:
     enum class GrouperType { SOLO, MEMBER, LEADER_2, LEADER_3, LEADER_4, LEADER_5 };
     GrouperType GetGrouperType() const { return GrouperType::SOLO; }
     std::string HandleRemoteCommand(const std::string& /*cmd*/) { return ""; }
-    bool HasCheat(uint32_t /*mask*/) const { return false; }
+    bool HasCheat(BotCheatMask /*mask*/) const { return false; }
     void ResetStrategies(bool /*incremental*/ = false) {}
     void AllowActivity(uint32_t /*activity*/, bool /*allow*/) {}
     void SetMaster(Player* /*master*/) {}
     float GetLevelFloat() const { return 0.0f; }
     Unit* GetUnit(ObjectGuid /*guid*/) const { return nullptr; }
+
+    // Stubs for legacy PlayerbotFactory. Inventory iteration, gearscore
+    // calculation, direct spell casting and item enchanting are all owned
+    // by the Rust module now. These keep the factory compiling until it
+    // is ported / removed.
+    void InventoryIterateItems(IterateItemsVisitor* /*v*/, IterateItemsMask /*mask*/) {}
+    uint32_t GetEquipGearScore(Player* /*p*/, bool /*withBags*/, bool /*withBank*/) { return 0; }
+
+    /// Clear the bot's inventory via the Rust factory module.
+    ///   mode = 0: equipped + carried bags (bank left intact)
+    ///   mode = 1: everything including bank
+    /// Porting plan: more factory operations (potions/food/reagents restock,
+    /// gear re-roll) will route through similar FFI entry points as they move
+    /// from C++ PlayerbotFactory into playerbot-rs/src/factory/.
+    void ClearInventoryViaRust(uint8_t mode);
+
+    /// Initialize consumables via the Rust factory module.
+    ///   kind = 0: potions, 1: food, 2: reagents
+    void InitConsumablesViaRust(uint8_t kind);
+
+    /// Wipe a slice of the bot's progression via the Rust factory module.
+    ///   kind = 0: trade skills, 1: spells, 2: quests
+    void ResetProgressionViaRust(uint8_t kind);
+
+    /// Run a miscellaneous factory step via the Rust factory module.
+    ///   kind = 0: cancel auras, 1: init skill tool kit
+    void FactoryMiscViaRust(uint8_t kind);
+    void TellPlayerNoFacing(Player* /*target*/, const std::string& /*msg*/) {}
+    void CastSpell(uint32_t /*spellId*/, Unit* /*target*/) {}
+    void EnchantItemT(uint32_t /*spellId*/, uint8_t /*slot*/, Item* /*item*/) {}
+
+    // ── Global init/shutdown (call from RandomPlayerbotMgr) ─────────────
+    static void InitRustModule();
+    static void ShutdownRustModule();
+    static void WorldUpdate(uint32_t elapsed_ms);
 
 private:
     Player*      m_bot;           // the CMaNGOS Player this AI drives

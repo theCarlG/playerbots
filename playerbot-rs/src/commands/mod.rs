@@ -2,7 +2,6 @@
 ///
 /// Commands arrive as whispers from the master player, parsed by `parser::parse()`,
 /// queued on `BotState::pending_commands`, and applied here before each tick.
-
 pub mod parser;
 
 use crate::bot::settings::{
@@ -18,9 +17,15 @@ pub enum BotCommand {
     SetMode(BehaviorMode),
     SetCombatOrder(CombatOrder),
     /// Additive/subtractive combat order edit (`co +tank -fury`).
-    ApplyCombatOrder { add: CombatOrder, remove: CombatOrder },
+    ApplyCombatOrder {
+        add: CombatOrder,
+        remove: CombatOrder,
+    },
     /// Additive/subtractive strategy toggles (`nc +rtsc,-rpg bg`).
-    ApplyStrategies  { add: StrategyFlags, remove: StrategyFlags },
+    ApplyStrategies {
+        add: StrategyFlags,
+        remove: StrategyFlags,
+    },
     /// Reset strategies back to the default loadout (`reset ai`).
     ResetStrategies,
     SetReactivity(Reactivity),
@@ -48,7 +53,6 @@ pub enum BotCommand {
     // -- RTSC (Real-Time Strategy Control) --
     // Uses spell 30758 cast on ground to communicate positions.
     // The addon/player casts the spell, bot intercepts the target location.
-
     /// Select/deselect this bot for RTSC control.
     RtscSelect,
     RtscCancel,
@@ -95,7 +99,10 @@ pub enum BotCommand {
     /// Party-summon / meeting-stone summon (handled by world behavior module).
     Summon,
     /// Cast a named spell once (parsed via `data::spells` lookup).
-    CastOne { spell: SpellId, on_self: bool },
+    CastOne {
+        spell: SpellId,
+        on_self: bool,
+    },
     /// Set follower formation style.
     SetFormation(crate::bot::settings::FollowFormation),
 
@@ -116,20 +123,28 @@ pub enum BotCommand {
 /// Non-privileged senders are silently ignored.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingCommand {
-    pub sender:     Option<u64>,
+    pub sender: Option<u64>,
     pub privileged: bool,
-    pub command:    BotCommand,
+    pub command: BotCommand,
 }
 
 impl PendingCommand {
     /// Internal/system command — always allowed, no whisper reply possible.
     pub fn internal(command: BotCommand) -> Self {
-        Self { sender: None, privileged: true, command }
+        Self {
+            sender: None,
+            privileged: true,
+            command,
+        }
     }
 
     /// Command from a specific player with a trust level.
     pub fn external(sender: u64, privileged: bool, command: BotCommand) -> Self {
-        Self { sender: Some(sender), privileged, command }
+        Self {
+            sender: Some(sender),
+            privileged,
+            command,
+        }
     }
 }
 
@@ -155,14 +170,14 @@ pub fn process_commands(bot: &mut BotState) {
 fn class_cc_spell(class: crate::bot::state::PlayerClass) -> Option<SpellId> {
     use crate::bot::state::PlayerClass::*;
     Some(match class {
-        Mage    => SpellId(118),    // polymorph
-        Warlock => SpellId(710),    // banish (works on demons/elementals)
-        Priest  => SpellId(605),    // mind control — in practice shackle undead
-        Druid   => SpellId(2637),   // hibernate (beast/dragonkin only; fall back silently)
-        Hunter  => SpellId(1499),   // freezing trap
-        Paladin => SpellId(20066),  // repentance (retri talent; may fail silently)
-        Shaman  => SpellId(8034),   // frostbrand … no single-target CC; hex is wotlk
-        Rogue   => SpellId(6770),   // sap (stealth-only; can_cast will refuse otherwise)
+        Mage => SpellId(118),      // polymorph
+        Warlock => SpellId(710),   // banish (works on demons/elementals)
+        Priest => SpellId(605),    // mind control — in practice shackle undead
+        Druid => SpellId(2637),    // hibernate (beast/dragonkin only; fall back silently)
+        Hunter => SpellId(1499),   // freezing trap
+        Paladin => SpellId(20066), // repentance (retri talent; may fail silently)
+        Shaman => SpellId(8034),   // frostbrand … no single-target CC; hex is wotlk
+        Rogue => SpellId(6770),    // sap (stealth-only; can_cast will refuse otherwise)
         Warrior | DeathKnight => return None,
     })
 }
@@ -170,8 +185,12 @@ fn class_cc_spell(class: crate::bot::state::PlayerClass) -> Option<SpellId> {
 /// Reply to the sender of `pc` — whisper if external, say if internal.
 fn reply(bot: &BotState, pc: &PendingCommand, msg: &str) {
     match pc.sender {
-        Some(guid) => { bot.interface.whisper(guid, msg); }
-        None       => { bot.interface.say(msg, 0); }
+        Some(guid) => {
+            bot.interface.whisper(guid, msg);
+        }
+        None => {
+            bot.interface.say(msg, 0);
+        }
     }
 }
 
@@ -403,10 +422,14 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                     reply(bot, pc, &format!("Travelling to {}", loc.name));
                 }
             } else if s.verbose {
-                reply(bot, pc, &format!(
-                    "Cannot travel to {} from this map (need map {}).",
-                    loc.name, loc.map
-                ));
+                reply(
+                    bot,
+                    pc,
+                    &format!(
+                        "Cannot travel to {} from this map (need map {}).",
+                        loc.name, loc.map
+                    ),
+                );
             }
         }
         BotCommand::Unknown(text) => {
@@ -420,10 +443,10 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
 mod tests {
     use super::*;
     use crate::bot::state::BotState;
-    use crate::engine::context::tests::NullInterface;
     use crate::bot::state::{PlayerClass, PlayerSpec};
-    use crate::ffi::BotRole;
     use crate::engine::bt::Bt;
+    use crate::engine::context::tests::NullInterface;
+    use crate::ffi::BotRole;
 
     fn test_bot() -> BotState {
         BotState::new(
@@ -439,7 +462,10 @@ mod tests {
     #[test]
     fn set_mode_via_command() {
         let mut bot = test_bot();
-        bot.pending_commands.push_back(PendingCommand::internal(BotCommand::SetMode(BehaviorMode::Grind)));
+        bot.pending_commands
+            .push_back(PendingCommand::internal(BotCommand::SetMode(
+                BehaviorMode::Grind,
+            )));
         process_commands(&mut bot);
         assert_eq!(bot.settings.mode, BehaviorMode::Grind);
     }
@@ -448,11 +474,15 @@ mod tests {
     fn blacklist_spell() {
         let mut bot = test_bot();
         let spell = SpellId(100);
-        bot.pending_commands.push_back(PendingCommand::internal(BotCommand::BlacklistSpell(spell)));
+        bot.pending_commands
+            .push_back(PendingCommand::internal(BotCommand::BlacklistSpell(spell)));
         process_commands(&mut bot);
         assert!(bot.settings.spell_blacklist.contains(&spell));
 
-        bot.pending_commands.push_back(PendingCommand::internal(BotCommand::UnblacklistSpell(spell)));
+        bot.pending_commands
+            .push_back(PendingCommand::internal(BotCommand::UnblacklistSpell(
+                spell,
+            )));
         process_commands(&mut bot);
         assert!(!bot.settings.spell_blacklist.contains(&spell));
     }
@@ -463,7 +493,8 @@ mod tests {
         bot.snap.self_.pos.x = 10.0;
         bot.snap.self_.pos.y = 20.0;
         bot.snap.self_.pos.z = 30.0;
-        bot.pending_commands.push_back(PendingCommand::internal(BotCommand::Guard));
+        bot.pending_commands
+            .push_back(PendingCommand::internal(BotCommand::Guard));
         process_commands(&mut bot);
         assert_eq!(bot.settings.mode, BehaviorMode::Guard);
         assert_eq!(bot.settings.guard_position, Some((10.0, 20.0, 30.0)));
@@ -474,7 +505,8 @@ mod tests {
         let mut bot = test_bot();
         bot.settings.mode = BehaviorMode::Grind;
         bot.settings.flee_hp_pct = 0.5;
-        bot.pending_commands.push_back(PendingCommand::internal(BotCommand::Reset));
+        bot.pending_commands
+            .push_back(PendingCommand::internal(BotCommand::Reset));
         process_commands(&mut bot);
         assert_eq!(bot.settings.mode, BehaviorMode::Follow);
         assert_eq!(bot.settings.flee_hp_pct, 0.0);
@@ -483,7 +515,8 @@ mod tests {
     #[test]
     fn heal_threshold_set() {
         let mut bot = test_bot();
-        bot.pending_commands.push_back(PendingCommand::internal(BotCommand::SetHealThreshold(0.70)));
+        bot.pending_commands
+            .push_back(PendingCommand::internal(BotCommand::SetHealThreshold(0.70)));
         process_commands(&mut bot);
         assert!((bot.settings.heal_party_threshold - 0.70).abs() < f32::EPSILON);
     }

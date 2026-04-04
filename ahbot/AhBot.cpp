@@ -964,7 +964,7 @@ void AhBot::LoadRandomBots()
             Field* fields = result->Fetch();
             uint32 guid = fields[0].GetUInt32();
             uint8 race = fields[1].GetUInt8();
-            uint32 auctionHouse = PlayerbotAI::IsOpposing(race, RACE_HUMAN) ? 2 : 1;
+            uint32 auctionHouse = IsAlliance(race) ? 1 : 2;
             bidders[auctionHouse].push_back(guid);
             bidders[3].push_back(guid);
             allBidders.insert(guid);

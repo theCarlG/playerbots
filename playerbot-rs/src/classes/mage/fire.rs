@@ -15,22 +15,23 @@ const FIRE_VULN_MAX: u8 = 5;
 pub fn build_tree() -> Bt {
     Sel(vec![
         MaintainRange(10.0),
-
         Seq(vec![HpBelow(0.20), CastOnSelf(ICE_BLOCK)]),
         Seq(vec![ManaBelow(0.15), CastOnSelf(EVOCATION)]),
-
-        Seq(vec![InCombat, Sel(vec![
-            Seq(vec![TargetIsCasting, CastOnTarget(COUNTERSPELL)]),
-            Seq(vec![TargetHpBelow(0.20), CastOnTarget(FIRE_BLAST)]),
-            // Scorch to stack Fire Vulnerability.
-            Seq(vec![
-                TargetAuraStacksBelow(FIRE_VULNERABILITY, FIRE_VULN_MAX),
+        Seq(vec![
+            InCombat,
+            Sel(vec![
+                Seq(vec![TargetIsCasting, CastOnTarget(COUNTERSPELL)]),
+                Seq(vec![TargetHpBelow(0.20), CastOnTarget(FIRE_BLAST)]),
+                // Scorch to stack Fire Vulnerability.
+                Seq(vec![
+                    TargetAuraStacksBelow(FIRE_VULNERABILITY, FIRE_VULN_MAX),
+                    CastOnTarget(SCORCH),
+                ]),
+                // Main nuke.
+                CastOnTarget(FIREBALL),
+                // Filler.
                 CastOnTarget(SCORCH),
             ]),
-            // Main nuke.
-            CastOnTarget(FIREBALL),
-            // Filler.
-            CastOnTarget(SCORCH),
-        ])]),
+        ]),
     ])
 }

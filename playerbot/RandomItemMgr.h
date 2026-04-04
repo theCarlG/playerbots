@@ -21,6 +21,18 @@ enum RandomItemType
 
 #define MAX_STAT_SCALES 32
 
+// Minimal stub — replaces deleted ItemQualifier helper class.
+struct ItemQualifier {
+    explicit ItemQualifier(Item* /*item*/ = nullptr) {}
+    ItemPrototype const* GetProto() const { return nullptr; }
+    uint32 GetEnchantId() const { return 0; }
+    int32  GetRandomPropertyId() const { return 0; }
+    uint32 GetGem1() const { return 0; }
+    uint32 GetGem2() const { return 0; }
+    uint32 GetGem3() const { return 0; }
+    uint32 GetGem4() const { return 0; }
+};
+
 enum ItemSource
 {
     ITEM_SOURCE_NONE,

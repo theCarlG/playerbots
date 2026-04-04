@@ -23,29 +23,31 @@ const BLOOD_PLAGUE: SpellId = SpellId(55078);
 pub fn build_tree() -> Bt {
     Sel(vec![
         StickToTarget(5.0),
-
         // Self-buff.
         Seq(vec![SelfMissingAura(BONE_SHIELD), CastOnSelf(BONE_SHIELD)]),
-
         // Pull.
         Seq(vec![TargetFartherThan(15.0), CastOnTarget(DEATH_GRIP)]),
-
-        Seq(vec![InCombat, Sel(vec![
-            // Diseases.
-            Seq(vec![TargetMissingAura(FROST_FEVER), CastOnTarget(ICY_TOUCH)]),
-            Seq(vec![TargetMissingAura(BLOOD_PLAGUE), CastOnTarget(PLAGUE_STRIKE)]),
-
-            // Main damage.
-            CastOnTarget(SCOURGE_STRIKE),
-
-            // AoE spread.
-            Seq(vec![NearbyAtLeast(2), CastOnTarget(BLOOD_BOIL)]),
-
-            // RP dump.
-            CastOnTarget(DEATH_COIL),
-
-            // AoE ground.
-            Seq(vec![NearbyAtLeast(2), CastOnSelf(DEATH_AND_DECAY)]),
-        ])]),
+        Seq(vec![
+            InCombat,
+            Sel(vec![
+                // Diseases.
+                Seq(vec![
+                    TargetMissingAura(FROST_FEVER),
+                    CastOnTarget(ICY_TOUCH),
+                ]),
+                Seq(vec![
+                    TargetMissingAura(BLOOD_PLAGUE),
+                    CastOnTarget(PLAGUE_STRIKE),
+                ]),
+                // Main damage.
+                CastOnTarget(SCOURGE_STRIKE),
+                // AoE spread.
+                Seq(vec![NearbyAtLeast(2), CastOnTarget(BLOOD_BOIL)]),
+                // RP dump.
+                CastOnTarget(DEATH_COIL),
+                // AoE ground.
+                Seq(vec![NearbyAtLeast(2), CastOnSelf(DEATH_AND_DECAY)]),
+            ]),
+        ]),
     ])
 }

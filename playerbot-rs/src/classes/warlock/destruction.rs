@@ -14,28 +14,37 @@ const CURSE_OF_AGONY: SpellId = SpellId(11722);
 pub fn build_tree() -> Bt {
     Sel(vec![
         MaintainRange(25.0),
-
         Seq(vec![SelfMissingAura(DEMON_ARMOR), CastOnSelf(DEMON_ARMOR)]),
-        Seq(vec![ManaBelow(0.20), Not(Box::new(HpBelow(0.50))), CastOnSelf(LIFE_TAP)]),
-
-        Seq(vec![InCombat, Sel(vec![
-            // Fire damage amp.
-            Seq(vec![TargetMissingAura(CURSE_OF_ELEMENTS), CastOnTarget(CURSE_OF_ELEMENTS)]),
-
-            // Immolate (required for Conflagrate).
-            Seq(vec![TargetMissingAura(IMMOLATE), CastOnTarget(IMMOLATE)]),
-
-            // Conflagrate burst — consumes Immolate (can_cast gates on it).
-            CastOnTarget(CONFLAGRATE),
-
-            Seq(vec![TargetMissingAura(CORRUPTION), CastOnTarget(CORRUPTION)]),
-            Seq(vec![TargetMissingAura(CURSE_OF_AGONY), CastOnTarget(CURSE_OF_AGONY)]),
-
-            // Execute.
-            Seq(vec![TargetHpBelow(0.20), CastOnTarget(SHADOWBURN)]),
-
-            // Main nuke.
-            CastOnTarget(SHADOW_BOLT),
-        ])]),
+        Seq(vec![
+            ManaBelow(0.20),
+            Not(Box::new(HpBelow(0.50))),
+            CastOnSelf(LIFE_TAP),
+        ]),
+        Seq(vec![
+            InCombat,
+            Sel(vec![
+                // Fire damage amp.
+                Seq(vec![
+                    TargetMissingAura(CURSE_OF_ELEMENTS),
+                    CastOnTarget(CURSE_OF_ELEMENTS),
+                ]),
+                // Immolate (required for Conflagrate).
+                Seq(vec![TargetMissingAura(IMMOLATE), CastOnTarget(IMMOLATE)]),
+                // Conflagrate burst — consumes Immolate (can_cast gates on it).
+                CastOnTarget(CONFLAGRATE),
+                Seq(vec![
+                    TargetMissingAura(CORRUPTION),
+                    CastOnTarget(CORRUPTION),
+                ]),
+                Seq(vec![
+                    TargetMissingAura(CURSE_OF_AGONY),
+                    CastOnTarget(CURSE_OF_AGONY),
+                ]),
+                // Execute.
+                Seq(vec![TargetHpBelow(0.20), CastOnTarget(SHADOWBURN)]),
+                // Main nuke.
+                CastOnTarget(SHADOW_BOLT),
+            ]),
+        ]),
     ])
 }

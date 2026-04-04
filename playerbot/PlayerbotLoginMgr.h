@@ -174,4 +174,4 @@ namespace ai
 	};
 }
 
-#define sPlayerBotLoginMgr MaNGOS::Singleton<PlayerBotLoginMgr>::Instance()
+#define sPlayerBotLoginMgr MaNGOS::Singleton<ai::PlayerBotLoginMgr>::Instance()

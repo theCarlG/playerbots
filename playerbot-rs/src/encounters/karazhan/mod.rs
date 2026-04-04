@@ -18,15 +18,15 @@
 #[cfg(any(feature = "tbc", feature = "wotlk"))]
 use super::{EncounterEvent, EncounterFsm, SimpleFsm};
 
-pub const ENTRY_ATTUMEN:       u32 = 15550;
-pub const ENTRY_MOROES:        u32 = 15687;
-pub const ENTRY_MAIDEN:        u32 = 16457;
-pub const ENTRY_CURATOR:       u32 = 15691;
-pub const ENTRY_ILLHOOF:       u32 = 15688;
+pub const ENTRY_ATTUMEN: u32 = 15550;
+pub const ENTRY_MOROES: u32 = 15687;
+pub const ENTRY_MAIDEN: u32 = 16457;
+pub const ENTRY_CURATOR: u32 = 15691;
+pub const ENTRY_ILLHOOF: u32 = 15688;
 pub const ENTRY_SHADE_OF_ARAN: u32 = 16524;
-pub const ENTRY_NETHERSPITE:   u32 = 15689;
-pub const ENTRY_PRINCE:        u32 = 15690;
-pub const ENTRY_NIGHTBANE:     u32 = 17225;
+pub const ENTRY_NETHERSPITE: u32 = 15689;
+pub const ENTRY_PRINCE: u32 = 15690;
+pub const ENTRY_NIGHTBANE: u32 = 17225;
 
 #[cfg(any(feature = "tbc", feature = "wotlk"))]
 pub struct KarazhanFsm {
@@ -36,13 +36,17 @@ pub struct KarazhanFsm {
 #[cfg(any(feature = "tbc", feature = "wotlk"))]
 impl KarazhanFsm {
     pub fn new() -> Self {
-        Self { simple: SimpleFsm::new(0) }
+        Self {
+            simple: SimpleFsm::new(0),
+        }
     }
 }
 
 #[cfg(any(feature = "tbc", feature = "wotlk"))]
 impl Default for KarazhanFsm {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(any(feature = "tbc", feature = "wotlk"))]
@@ -50,8 +54,16 @@ impl EncounterFsm for KarazhanFsm {
     fn update(&mut self, event: &EncounterEvent, boss_hp: f32, time: u64) {
         self.simple.update(event, boss_hp, time);
     }
-    fn phase_id(&self) -> u32   { self.simple.phase_id() }
-    fn is_active(&self) -> bool  { self.simple.is_active() }
-    fn is_done(&self)   -> bool  { self.simple.is_done() }
-    fn boss_entry(&self) -> u32  { self.simple.boss_entry() }
+    fn phase_id(&self) -> u32 {
+        self.simple.phase_id()
+    }
+    fn is_active(&self) -> bool {
+        self.simple.is_active()
+    }
+    fn is_done(&self) -> bool {
+        self.simple.is_done()
+    }
+    fn boss_entry(&self) -> u32 {
+        self.simple.boss_entry()
+    }
 }

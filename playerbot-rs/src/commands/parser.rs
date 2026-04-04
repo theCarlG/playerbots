@@ -5,10 +5,7 @@
 ///
 /// Design: ~20 clean commands replace the old 70+ redundant C++ commands.
 /// Each command maps to exactly one `BotCommand` variant.
-
-use crate::bot::settings::{
-    BehaviorMode, CombatOrder, FollowFormation, Reactivity, StrategyFlags,
-};
+use crate::bot::settings::{BehaviorMode, CombatOrder, FollowFormation, Reactivity, StrategyFlags};
 use crate::commands::BotCommand;
 use crate::data::spells::lookup_spell_by_name;
 use crate::ffi::SpellId;
@@ -50,8 +47,8 @@ pub fn parse(text: &str) -> Option<BotCommand> {
             }
         }
         "attack" => parse_attack(args),
-        "pull"   => parse_pull(args),
-        "cc"     => parse_cc(args),
+        "pull" => parse_pull(args),
+        "cc" => parse_cc(args),
 
         // -- Movement --
         "come" | "c" => Some(BotCommand::ComeToMe),
@@ -142,9 +139,9 @@ fn parse_combat_order(args: &[&str]) -> Option<BotCommand> {
                 Some('+') => (1i8, &tok[1..]),
                 Some('-') => (-1i8, &tok[1..]),
                 _ => {
-                    return Some(BotCommand::Unknown(
-                        format!("co: expected +/- prefix at `{tok}`"),
-                    ));
+                    return Some(BotCommand::Unknown(format!(
+                        "co: expected +/- prefix at `{tok}`"
+                    )));
                 }
             };
             // Build a small slice starting with the unsigned first word.
@@ -160,16 +157,21 @@ fn parse_combat_order(args: &[&str]) -> Option<BotCommand> {
             }
             match CombatOrder::parse_flag(&window) {
                 Some((flag, consumed)) => {
-                    if sign > 0 { add.insert(flag); } else { remove.insert(flag); }
+                    if sign > 0 {
+                        add.insert(flag);
+                    } else {
+                        remove.insert(flag);
+                    }
                     // `consumed` counts words from `window`. The first word came
                     // from the signed token itself (same `i`); any additional
                     // consumed words came from tokens[i+1..].
                     i += 1 + consumed.saturating_sub(1);
                 }
                 None => {
-                    return Some(BotCommand::Unknown(
-                        format!("co: unknown flag `{}`", window.join(" ")),
-                    ));
+                    return Some(BotCommand::Unknown(format!(
+                        "co: unknown flag `{}`",
+                        window.join(" ")
+                    )));
                 }
             }
         }
@@ -180,10 +182,12 @@ fn parse_combat_order(args: &[&str]) -> Option<BotCommand> {
 
 fn parse_reactivity(args: &[&str]) -> Option<BotCommand> {
     match args.first().copied() {
-        Some("passive")    => Some(BotCommand::SetReactivity(Reactivity::Passive)),
-        Some("defensive")  => Some(BotCommand::SetReactivity(Reactivity::Defensive)),
+        Some("passive") => Some(BotCommand::SetReactivity(Reactivity::Passive)),
+        Some("defensive") => Some(BotCommand::SetReactivity(Reactivity::Defensive)),
         Some("aggressive") => Some(BotCommand::SetReactivity(Reactivity::Aggressive)),
-        _ => Some(BotCommand::Unknown("react: missing level (passive/defensive/aggressive)".into())),
+        _ => Some(BotCommand::Unknown(
+            "react: missing level (passive/defensive/aggressive)".into(),
+        )),
     }
 }
 
@@ -194,36 +198,36 @@ fn parse_go(args: &[&str]) -> Option<BotCommand> {
         let z = args[2].parse::<f32>().ok()?;
         Some(BotCommand::GoTo(x, y, z))
     } else {
-        Some(BotCommand::Unknown("go: need 3 coordinates (go <x> <y> <z>)".into()))
+        Some(BotCommand::Unknown(
+            "go: need 3 coordinates (go <x> <y> <z>)".into(),
+        ))
     }
 }
 
 fn parse_rtsc(args: &[&str]) -> Option<BotCommand> {
     match args.first().copied() {
-        Some("select")    => Some(BotCommand::RtscSelect),
-        Some("cancel")    => Some(BotCommand::RtscCancel),
-        Some("toggle")    => Some(BotCommand::RtscToggle),
-        Some("move")      => {
+        Some("select") => Some(BotCommand::RtscSelect),
+        Some("cancel") => Some(BotCommand::RtscCancel),
+        Some("toggle") => Some(BotCommand::RtscToggle),
+        Some("move") => {
             if args.get(1).copied() == Some("exact") {
                 Some(BotCommand::RtscMoveExact)
             } else {
                 Some(BotCommand::RtscMove)
             }
         }
-        Some("save") => {
-            match args.get(1).copied() {
-                Some("here") => {
-                    let name = args.get(2).unwrap_or(&"default").to_string();
-                    Some(BotCommand::RtscSaveHere(name))
-                }
-                Some("exact") => {
-                    let name = args.get(2).unwrap_or(&"default").to_string();
-                    Some(BotCommand::RtscSave(name))
-                }
-                Some(name) => Some(BotCommand::RtscSave(name.to_string())),
-                None => Some(BotCommand::RtscSave("default".into())),
+        Some("save") => match args.get(1).copied() {
+            Some("here") => {
+                let name = args.get(2).unwrap_or(&"default").to_string();
+                Some(BotCommand::RtscSaveHere(name))
             }
-        }
+            Some("exact") => {
+                let name = args.get(2).unwrap_or(&"default").to_string();
+                Some(BotCommand::RtscSave(name))
+            }
+            Some(name) => Some(BotCommand::RtscSave(name.to_string())),
+            None => Some(BotCommand::RtscSave("default".into())),
+        },
         Some("unsave") => {
             let name = args.get(1).unwrap_or(&"default").to_string();
             Some(BotCommand::RtscUnsave(name))
@@ -232,8 +236,10 @@ fn parse_rtsc(args: &[&str]) -> Option<BotCommand> {
             let name = args.get(1).unwrap_or(&"default").to_string();
             Some(BotCommand::RtscGo(name))
         }
-        Some("show")      => Some(BotCommand::RtscShow),
-        _ => Some(BotCommand::Unknown("rtsc: select/cancel/toggle/move/save/go/show".into())),
+        Some("show") => Some(BotCommand::RtscShow),
+        _ => Some(BotCommand::Unknown(
+            "rtsc: select/cancel/toggle/move/save/go/show".into(),
+        )),
     }
 }
 
@@ -245,17 +251,19 @@ fn parse_rti(token: &str) -> Option<u8> {
         return rest.parse::<u8>().ok().filter(|&n| (1..=8).contains(&n));
     }
     if let Ok(n) = token.parse::<u8>() {
-        if (1..=8).contains(&n) { return Some(n); }
+        if (1..=8).contains(&n) {
+            return Some(n);
+        }
     }
     Some(match token {
-        "star"     => 1,
-        "circle"   => 2,
-        "diamond"  => 3,
+        "star" => 1,
+        "circle" => 2,
+        "diamond" => 3,
         "triangle" => 4,
-        "moon"     => 5,
-        "square"   => 6,
-        "cross" | "x"   => 7,
-        "skull"    => 8,
+        "moon" => 5,
+        "square" => 6,
+        "cross" | "x" => 7,
+        "skull" => 8,
         _ => return None,
     })
 }
@@ -286,7 +294,9 @@ fn parse_pull(args: &[&str]) -> Option<BotCommand> {
             if let Some(icon) = parse_rti(first) {
                 return Some(BotCommand::PullRti(icon));
             }
-            Some(BotCommand::Unknown("pull: need raid target (e.g. `pull skull`)".into()))
+            Some(BotCommand::Unknown(
+                "pull: need raid target (e.g. `pull skull`)".into(),
+            ))
         }
         None => Some(BotCommand::Unknown("pull: need raid target".into())),
     }
@@ -316,26 +326,32 @@ fn parse_strategies(args: &[&str]) -> Option<BotCommand> {
 
     for chunk in joined.split(',') {
         let chunk = chunk.trim();
-        if chunk.is_empty() { continue; }
+        if chunk.is_empty() {
+            continue;
+        }
 
         let (sign, name): (i8, &str) = match chunk.chars().next() {
-            Some('+') => ( 1, chunk[1..].trim()),
+            Some('+') => (1, chunk[1..].trim()),
             Some('-') => (-1, chunk[1..].trim()),
             _ => {
-                return Some(BotCommand::Unknown(
-                    format!("nc: expected +/- prefix on `{chunk}`"),
-                ));
+                return Some(BotCommand::Unknown(format!(
+                    "nc: expected +/- prefix on `{chunk}`"
+                )));
             }
         };
 
         match StrategyFlags::parse_name(name) {
             Some(flag) => {
-                if sign > 0 { add.insert(flag); } else { remove.insert(flag); }
+                if sign > 0 {
+                    add.insert(flag);
+                } else {
+                    remove.insert(flag);
+                }
             }
             None => {
-                return Some(BotCommand::Unknown(
-                    format!("nc: unknown strategy `{name}`"),
-                ));
+                return Some(BotCommand::Unknown(format!(
+                    "nc: unknown strategy `{name}`"
+                )));
             }
         }
     }
@@ -360,7 +376,7 @@ fn parse_cast(args: &[&str]) -> Option<BotCommand> {
     let name = name_tokens.join(" ");
     match lookup_spell_by_name(&name) {
         Some(spell) => Some(BotCommand::CastOne { spell, on_self }),
-        None        => Some(BotCommand::Unknown(format!("cast: unknown spell `{name}`"))),
+        None => Some(BotCommand::Unknown(format!("cast: unknown spell `{name}`"))),
     }
 }
 
@@ -372,7 +388,7 @@ fn parse_formation(args: &[&str]) -> Option<BotCommand> {
     };
     match FollowFormation::from_str(first) {
         Some(f) => Some(BotCommand::SetFormation(f)),
-        None    => Some(BotCommand::Unknown(format!("formation: unknown `{first}`"))),
+        None => Some(BotCommand::Unknown(format!("formation: unknown `{first}`"))),
     }
 }
 
@@ -382,19 +398,27 @@ fn parse_travel(args: &[&str]) -> Option<BotCommand> {
     };
     match crate::data::named_locations::lookup(name) {
         Some(loc) => Some(BotCommand::TravelTo(loc)),
-        None      => Some(BotCommand::Unknown(format!("travel: unknown location `{name}`"))),
+        None => Some(BotCommand::Unknown(format!(
+            "travel: unknown location `{name}`"
+        ))),
     }
 }
 
 fn parse_spell_id(args: &[&str]) -> Option<SpellId> {
-    args.first().and_then(|s| s.parse::<u32>().ok()).map(SpellId)
+    args.first()
+        .and_then(|s| s.parse::<u32>().ok())
+        .map(SpellId)
 }
 
 fn parse_heal_threshold(args: &[&str]) -> Option<BotCommand> {
     match args.first().and_then(|s| s.parse::<f32>().ok()) {
         Some(pct) if (0.0..=1.0).contains(&pct) => Some(BotCommand::SetHealThreshold(pct)),
-        Some(pct) if (1.0..=100.0).contains(&pct) => Some(BotCommand::SetHealThreshold(pct / 100.0)),
-        _ => Some(BotCommand::Unknown("heal: need percentage (0-100 or 0.0-1.0)".into())),
+        Some(pct) if (1.0..=100.0).contains(&pct) => {
+            Some(BotCommand::SetHealThreshold(pct / 100.0))
+        }
+        _ => Some(BotCommand::Unknown(
+            "heal: need percentage (0-100 or 0.0-1.0)".into(),
+        )),
     }
 }
 
@@ -404,19 +428,43 @@ mod tests {
 
     #[test]
     fn parse_mode_commands() {
-        assert_eq!(parse("follow"), Some(BotCommand::SetMode(BehaviorMode::Follow)));
+        assert_eq!(
+            parse("follow"),
+            Some(BotCommand::SetMode(BehaviorMode::Follow))
+        );
         assert_eq!(parse("stay"), Some(BotCommand::SetMode(BehaviorMode::Stay)));
-        assert_eq!(parse("grind"), Some(BotCommand::SetMode(BehaviorMode::Grind)));
-        assert_eq!(parse("quest"), Some(BotCommand::SetMode(BehaviorMode::Quest)));
-        assert_eq!(parse("passive"), Some(BotCommand::SetMode(BehaviorMode::Passive)));
+        assert_eq!(
+            parse("grind"),
+            Some(BotCommand::SetMode(BehaviorMode::Grind))
+        );
+        assert_eq!(
+            parse("quest"),
+            Some(BotCommand::SetMode(BehaviorMode::Quest))
+        );
+        assert_eq!(
+            parse("passive"),
+            Some(BotCommand::SetMode(BehaviorMode::Passive))
+        );
     }
 
     #[test]
     fn parse_combat_orders_bare() {
-        assert_eq!(parse("co tank"),    Some(BotCommand::SetCombatOrder(CombatOrder::TANK)));
-        assert_eq!(parse("co assist"),  Some(BotCommand::SetCombatOrder(CombatOrder::ASSIST)));
-        assert_eq!(parse("co protect"), Some(BotCommand::SetCombatOrder(CombatOrder::PROTECT)));
-        assert_eq!(parse("co pull"),    Some(BotCommand::SetCombatOrder(CombatOrder::PULL)));
+        assert_eq!(
+            parse("co tank"),
+            Some(BotCommand::SetCombatOrder(CombatOrder::TANK))
+        );
+        assert_eq!(
+            parse("co assist"),
+            Some(BotCommand::SetCombatOrder(CombatOrder::ASSIST))
+        );
+        assert_eq!(
+            parse("co protect"),
+            Some(BotCommand::SetCombatOrder(CombatOrder::PROTECT))
+        );
+        assert_eq!(
+            parse("co pull"),
+            Some(BotCommand::SetCombatOrder(CombatOrder::PULL))
+        );
     }
 
     #[test]
@@ -473,19 +521,31 @@ mod tests {
 
     #[test]
     fn parse_reactivity_commands() {
-        assert_eq!(parse("react passive"), Some(BotCommand::SetReactivity(Reactivity::Passive)));
-        assert_eq!(parse("react aggressive"), Some(BotCommand::SetReactivity(Reactivity::Aggressive)));
+        assert_eq!(
+            parse("react passive"),
+            Some(BotCommand::SetReactivity(Reactivity::Passive))
+        );
+        assert_eq!(
+            parse("react aggressive"),
+            Some(BotCommand::SetReactivity(Reactivity::Aggressive))
+        );
     }
 
     #[test]
     fn parse_go_coordinates() {
-        assert_eq!(parse("go 1.0 2.0 3.0"), Some(BotCommand::GoTo(1.0, 2.0, 3.0)));
+        assert_eq!(
+            parse("go 1.0 2.0 3.0"),
+            Some(BotCommand::GoTo(1.0, 2.0, 3.0))
+        );
         assert!(matches!(parse("go 1.0"), Some(BotCommand::Unknown(_))));
     }
 
     #[test]
     fn parse_blacklist() {
-        assert_eq!(parse("blacklist 12345"), Some(BotCommand::BlacklistSpell(SpellId(12345))));
+        assert_eq!(
+            parse("blacklist 12345"),
+            Some(BotCommand::BlacklistSpell(SpellId(12345)))
+        );
         assert_eq!(parse("blacklist"), None);
     }
 
@@ -513,17 +573,35 @@ mod tests {
         assert_eq!(parse("rtsc toggle"), Some(BotCommand::RtscToggle));
         assert_eq!(parse("rtsc move"), Some(BotCommand::RtscMove));
         assert_eq!(parse("rtsc move exact"), Some(BotCommand::RtscMoveExact));
-        assert_eq!(parse("rtsc save here myspot"), Some(BotCommand::RtscSaveHere("myspot".into())));
-        assert_eq!(parse("rtsc save tankpos"), Some(BotCommand::RtscSave("tankpos".into())));
-        assert_eq!(parse("rtsc unsave tankpos"), Some(BotCommand::RtscUnsave("tankpos".into())));
-        assert_eq!(parse("rtsc go tankpos"), Some(BotCommand::RtscGo("tankpos".into())));
+        assert_eq!(
+            parse("rtsc save here myspot"),
+            Some(BotCommand::RtscSaveHere("myspot".into()))
+        );
+        assert_eq!(
+            parse("rtsc save tankpos"),
+            Some(BotCommand::RtscSave("tankpos".into()))
+        );
+        assert_eq!(
+            parse("rtsc unsave tankpos"),
+            Some(BotCommand::RtscUnsave("tankpos".into()))
+        );
+        assert_eq!(
+            parse("rtsc go tankpos"),
+            Some(BotCommand::RtscGo("tankpos".into()))
+        );
         assert_eq!(parse("rtsc show"), Some(BotCommand::RtscShow));
     }
 
     #[test]
     fn case_insensitive() {
-        assert_eq!(parse("FOLLOW"), Some(BotCommand::SetMode(BehaviorMode::Follow)));
-        assert_eq!(parse("Co Tank"), Some(BotCommand::SetCombatOrder(CombatOrder::TANK)));
+        assert_eq!(
+            parse("FOLLOW"),
+            Some(BotCommand::SetMode(BehaviorMode::Follow))
+        );
+        assert_eq!(
+            parse("Co Tank"),
+            Some(BotCommand::SetCombatOrder(CombatOrder::TANK))
+        );
     }
 
     #[test]
@@ -546,9 +624,7 @@ mod tests {
             parse("nc +rtsc,-rpg,-rpg bg,-rpg explore"),
             Some(BotCommand::ApplyStrategies {
                 add: StrategyFlags::RTSC,
-                remove: StrategyFlags::RPG
-                    | StrategyFlags::RPG_BG
-                    | StrategyFlags::RPG_EXPLORE,
+                remove: StrategyFlags::RPG | StrategyFlags::RPG_BG | StrategyFlags::RPG_EXPLORE,
             }),
         );
         assert!(matches!(parse("nc +bogus"), Some(BotCommand::Unknown(_))));
@@ -557,30 +633,36 @@ mod tests {
     #[test]
     fn reset_ai_alias() {
         assert_eq!(parse("reset ai"), Some(BotCommand::ResetStrategies));
-        assert_eq!(parse("reset"),    Some(BotCommand::Reset));
+        assert_eq!(parse("reset"), Some(BotCommand::Reset));
     }
 
     #[test]
     fn panic_aliases() {
-        assert_eq!(parse("flee"),    Some(BotCommand::Flee));
+        assert_eq!(parse("flee"), Some(BotCommand::Flee));
         assert_eq!(parse("runaway"), Some(BotCommand::Flee));
-        assert_eq!(parse("panic"),   Some(BotCommand::Flee));
-        assert_eq!(parse("free"),    Some(BotCommand::Free));
-        assert_eq!(parse("summon"),  Some(BotCommand::Summon));
+        assert_eq!(parse("panic"), Some(BotCommand::Flee));
+        assert_eq!(parse("free"), Some(BotCommand::Free));
+        assert_eq!(parse("summon"), Some(BotCommand::Summon));
     }
 
     #[test]
     fn cast_named_spell() {
         assert_eq!(
             parse("cast taunt"),
-            Some(BotCommand::CastOne { spell: SpellId(355), on_self: false }),
+            Some(BotCommand::CastOne {
+                spell: SpellId(355),
+                on_self: false
+            }),
         );
         assert_eq!(
             parse("cast self bubble"),
-            Some(BotCommand::CastOne { spell: SpellId(642), on_self: true }),
+            Some(BotCommand::CastOne {
+                spell: SpellId(642),
+                on_self: true
+            }),
         );
         assert!(matches!(parse("cast xyzzy"), Some(BotCommand::Unknown(_))));
-        assert!(matches!(parse("cast"),       Some(BotCommand::Unknown(_))));
+        assert!(matches!(parse("cast"), Some(BotCommand::Unknown(_))));
     }
 
     #[test]
@@ -593,7 +675,10 @@ mod tests {
             parse("formation wedge"),
             Some(BotCommand::SetFormation(FollowFormation::Wedge)),
         );
-        assert!(matches!(parse("formation bogus"), Some(BotCommand::Unknown(_))));
+        assert!(matches!(
+            parse("formation bogus"),
+            Some(BotCommand::Unknown(_))
+        ));
     }
 
     #[test]

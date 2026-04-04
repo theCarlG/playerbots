@@ -20,13 +20,17 @@ impl WorldSnapshotExt for BotWorldSnapshot {
 
     fn self_hp_pct(&self) -> f32 {
         let u = self.self_unit();
-        if u.max_health == 0 { return 1.0; }
+        if u.max_health == 0 {
+            return 1.0;
+        }
         u.health as f32 / u.max_health as f32
     }
 
     fn self_mana_pct(&self) -> f32 {
         let u = self.self_unit();
-        if u.max_mana == 0 { return 1.0; }
+        if u.max_mana == 0 {
+            return 1.0;
+        }
         u.mana as f32 / u.max_mana as f32
     }
 
@@ -54,12 +58,16 @@ pub trait UnitSnapshotExt {
 
 impl UnitSnapshotExt for BotUnitSnapshot {
     fn hp_pct(&self) -> f32 {
-        if self.max_health == 0 { return 1.0; }
+        if self.max_health == 0 {
+            return 1.0;
+        }
         self.health as f32 / self.max_health as f32
     }
 
     fn mana_pct(&self) -> f32 {
-        if self.max_mana == 0 { return 1.0; }
+        if self.max_mana == 0 {
+            return 1.0;
+        }
         self.mana as f32 / self.max_mana as f32
     }
 

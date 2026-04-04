@@ -19,7 +19,6 @@ pub fn build_tree() -> Bt {
     Sel(vec![
         // Close gap.
         StickToTarget(5.0),
-
         // Tank path.
         Seq(vec![IsTank, bear_tree()]),
         // DPS path.
@@ -31,15 +30,23 @@ fn bear_tree() -> Bt {
     Sel(vec![
         // Ensure Bear Form.
         Seq(vec![SelfMissingAura(BEAR_FORM), CastOnSelf(BEAR_FORM)]),
-
-        Seq(vec![InCombat, Sel(vec![
-            Seq(vec![HpBelow(0.30), CastOnSelf(FRENZIED_REGENERATION)]),
-            CastOnTarget(GROWL),
-            Seq(vec![TargetMissingAnyRank(FAERIE_FIRE_RANKS), CastOnTarget(FAERIE_FIRE_FERAL)]),
-            Seq(vec![TargetMissingAnyRank(DEMO_ROAR_RANKS), CastOnSelf(DEMORALIZING_ROAR)]),
-            CastOnTarget(MAUL),
-            CastOnTarget(SWIPE_BEAR),
-        ])]),
+        Seq(vec![
+            InCombat,
+            Sel(vec![
+                Seq(vec![HpBelow(0.30), CastOnSelf(FRENZIED_REGENERATION)]),
+                CastOnTarget(GROWL),
+                Seq(vec![
+                    TargetMissingAnyRank(FAERIE_FIRE_RANKS),
+                    CastOnTarget(FAERIE_FIRE_FERAL),
+                ]),
+                Seq(vec![
+                    TargetMissingAnyRank(DEMO_ROAR_RANKS),
+                    CastOnSelf(DEMORALIZING_ROAR),
+                ]),
+                CastOnTarget(MAUL),
+                CastOnTarget(SWIPE_BEAR),
+            ]),
+        ]),
     ])
 }
 
@@ -47,15 +54,17 @@ fn cat_tree() -> Bt {
     Sel(vec![
         // Ensure Cat Form.
         Seq(vec![SelfMissingAura(CAT_FORM), CastOnSelf(CAT_FORM)]),
-
-        Seq(vec![InCombat, Sel(vec![
-            // Finishers (server gates via can_cast on CPs).
-            CastOnTarget(FEROCIOUS_BITE),
-            Seq(vec![TargetMissingAnyRank(RIP_RANKS), CastOnTarget(RIP)]),
-            // Builders.
-            Seq(vec![TargetMissingAnyRank(RAKE_RANKS), CastOnTarget(RAKE)]),
-            CastOnTarget(SHRED),
-            CastOnTarget(CLAW),
-        ])]),
+        Seq(vec![
+            InCombat,
+            Sel(vec![
+                // Finishers (server gates via can_cast on CPs).
+                CastOnTarget(FEROCIOUS_BITE),
+                Seq(vec![TargetMissingAnyRank(RIP_RANKS), CastOnTarget(RIP)]),
+                // Builders.
+                Seq(vec![TargetMissingAnyRank(RAKE_RANKS), CastOnTarget(RAKE)]),
+                CastOnTarget(SHRED),
+                CastOnTarget(CLAW),
+            ]),
+        ]),
     ])
 }

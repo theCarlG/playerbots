@@ -13,30 +13,30 @@ use crate::{
         snapshot::{UnitSnapshotExt, WorldSnapshotExt},
         timers::BotTimers,
     },
-    ffi::{interface::BotInterface, BotRole, BotWorldSnapshot, UnitHandle},
+    ffi::{BotRole, BotWorldSnapshot, UnitHandle, interface::BotInterface},
 };
 
 pub struct TickContext<'a> {
     // ── Immutable game state (read-only, refreshed at tick start) ──────
-    pub snap:        &'a BotWorldSnapshot,
-    pub nearby:      &'a [UnitHandle],   // hostile nearby units (refreshed every 500ms)
-    pub attackers:   &'a [UnitHandle],   // units attacking this bot (refreshed every 500ms)
+    pub snap: &'a BotWorldSnapshot,
+    pub nearby: &'a [UnitHandle], // hostile nearby units (refreshed every 500ms)
+    pub attackers: &'a [UnitHandle], // units attacking this bot (refreshed every 500ms)
     pub group_state: Option<&'a GroupState>,
 
     // ── Mutable bot state ───────────────────────────────────────────────
-    pub interface:   &'a dyn BotInterface,
-    pub blackboard:  &'a mut Blackboard,
-    pub timers:      &'a mut BotTimers,
+    pub interface: &'a dyn BotInterface,
+    pub blackboard: &'a mut Blackboard,
+    pub timers: &'a mut BotTimers,
 
     // ── Tick metadata ───────────────────────────────────────────────────
     pub server_time_ms: u64,
-    pub elapsed_ms:     u32,
-    pub minimal:        bool,   // true = throttled tick, skip expensive queries
+    pub elapsed_ms: u32,
+    pub minimal: bool, // true = throttled tick, skip expensive queries
 
     // ── Bot identity ────────────────────────────────────────────────────
     /// This bot's own UnitHandle (ObjectGuid value). Use as a target for
     /// self-buffs, self-casts, or any operation that needs "cast on myself".
-    pub bot_handle:  UnitHandle,
+    pub bot_handle: UnitHandle,
 
     // ── Encounter ──────────────────────────────────────────────────────
     /// Active encounter FSM, if inside a known raid/dungeon.
@@ -44,7 +44,7 @@ pub struct TickContext<'a> {
 
     // ── Class/role ─────────────────────────────────────────────────────
     pub class: PlayerClass,
-    pub role:  BotRole,
+    pub role: BotRole,
 
     // ── Settings ──────────────────────────────────────────────────────
     /// Per-bot runtime settings (read-only during tick).
@@ -100,11 +100,15 @@ impl<'a> TickContext<'a> {
 
     /// True if this bot is a ranged DPS or healer (should stay at range).
     pub fn is_ranged_or_healer(&self) -> bool {
-        if self.role.is_heal() { return true; }
-        if !self.role.is_dps() { return false; }
-        matches!(self.class,
-            PlayerClass::Mage | PlayerClass::Warlock | PlayerClass::Hunter |
-            PlayerClass::Priest
+        if self.role.is_heal() {
+            return true;
+        }
+        if !self.role.is_dps() {
+            return false;
+        }
+        matches!(
+            self.class,
+            PlayerClass::Mage | PlayerClass::Warlock | PlayerClass::Hunter | PlayerClass::Priest
         )
     }
 }
@@ -115,41 +119,105 @@ pub mod tests {
     use super::*;
     use crate::bot::settings::BotSettings;
     use crate::bot::state::PlayerClass;
-    use crate::ffi::{BotRole, BotUnitSnapshot, BotWorldSnapshot, SpellId, ItemId};
     use crate::engine::{blackboard::Blackboard, timers::BotTimers};
+    use crate::ffi::{BotRole, BotUnitSnapshot, BotWorldSnapshot, ItemId, SpellId};
 
     /// Minimal mock interface for unit tests of BT node logic.
     pub struct NullInterface;
     impl BotInterface for NullInterface {
-        fn get_snapshot(&self) -> BotWorldSnapshot { BotWorldSnapshot::default() }
-        fn get_unit_snapshot(&self, _: UnitHandle) -> BotUnitSnapshot { BotUnitSnapshot::default() }
-        fn has_aura(&self, _: UnitHandle, _: SpellId) -> bool { false }
-        fn get_aura(&self, _: UnitHandle, _: SpellId) -> Option<crate::ffi::BotAuraInfo> { None }
-        fn get_auras(&self, _: UnitHandle) -> Vec<crate::ffi::BotAuraInfo> { vec![] }
-        fn get_threat_list(&self, _: UnitHandle) -> Vec<crate::ffi::BotThreatEntry> { vec![] }
-        fn get_unit_threat(&self, _: UnitHandle, _: UnitHandle) -> f32 { 0.0 }
-        fn unit_distance(&self, _: UnitHandle) -> f32 { 0.0 }
-        fn can_cast(&self, _: SpellId, _: UnitHandle) -> bool { true }
-        fn spell_cooldown_ms(&self, _: SpellId) -> u32 { 0 }
-        fn has_los(&self, _: UnitHandle) -> bool { true }
-        fn get_nearby_units(&self, _: f32, _: bool) -> Vec<UnitHandle> { vec![] }
-        fn get_behind_position(&self, _: UnitHandle, _: f32) -> crate::ffi::BotPosition { Default::default() }
-        fn get_safe_position(&self, _: f32) -> Option<crate::ffi::BotPosition> { None }
-        fn get_spread_position(&self, _: UnitHandle, _: f32, _: u8, _: u8) -> crate::ffi::BotPosition { Default::default() }
-        fn can_reach(&self, _: f32, _: f32, _: f32) -> bool { true }
-        fn cast_spell(&self, _: SpellId, _: UnitHandle) -> bool { true }
-        fn cast_spell_pos(&self, _: SpellId, _: f32, _: f32, _: f32) -> bool { true }
-        fn move_to(&self, _: f32, _: f32, _: f32) -> bool { true }
-        fn follow(&self, _: UnitHandle, _: f32, _: f32) -> bool { true }
-        fn stop_moving(&self) -> bool { true }
-        fn attack(&self, _: UnitHandle) -> bool { true }
-        fn auto_attack(&self, _: bool) -> bool { true }
-        fn say(&self, _: &str, _: u32) -> bool { true }
-        fn use_item(&self, _: ItemId, _: UnitHandle) -> bool { true }
-        fn taunt(&self, _: UnitHandle) -> bool { true }
-        fn group_get_tank(&self) -> Option<UnitHandle> { None }
-        fn group_get_healer(&self) -> Option<UnitHandle> { None }
-        fn group_get_role(&self, _: UnitHandle) -> crate::ffi::BotRole { Default::default() }
+        fn get_snapshot(&self) -> BotWorldSnapshot {
+            BotWorldSnapshot::default()
+        }
+        fn get_unit_snapshot(&self, _: UnitHandle) -> BotUnitSnapshot {
+            BotUnitSnapshot::default()
+        }
+        fn has_aura(&self, _: UnitHandle, _: SpellId) -> bool {
+            false
+        }
+        fn get_aura(&self, _: UnitHandle, _: SpellId) -> Option<crate::ffi::BotAuraInfo> {
+            None
+        }
+        fn get_auras(&self, _: UnitHandle) -> Vec<crate::ffi::BotAuraInfo> {
+            vec![]
+        }
+        fn get_threat_list(&self, _: UnitHandle) -> Vec<crate::ffi::BotThreatEntry> {
+            vec![]
+        }
+        fn get_unit_threat(&self, _: UnitHandle, _: UnitHandle) -> f32 {
+            0.0
+        }
+        fn unit_distance(&self, _: UnitHandle) -> f32 {
+            0.0
+        }
+        fn can_cast(&self, _: SpellId, _: UnitHandle) -> bool {
+            true
+        }
+        fn spell_cooldown_ms(&self, _: SpellId) -> u32 {
+            0
+        }
+        fn has_los(&self, _: UnitHandle) -> bool {
+            true
+        }
+        fn get_nearby_units(&self, _: f32, _: bool) -> Vec<UnitHandle> {
+            vec![]
+        }
+        fn get_behind_position(&self, _: UnitHandle, _: f32) -> crate::ffi::BotPosition {
+            Default::default()
+        }
+        fn get_safe_position(&self, _: f32) -> Option<crate::ffi::BotPosition> {
+            None
+        }
+        fn get_spread_position(
+            &self,
+            _: UnitHandle,
+            _: f32,
+            _: u8,
+            _: u8,
+        ) -> crate::ffi::BotPosition {
+            Default::default()
+        }
+        fn can_reach(&self, _: f32, _: f32, _: f32) -> bool {
+            true
+        }
+        fn cast_spell(&self, _: SpellId, _: UnitHandle) -> bool {
+            true
+        }
+        fn cast_spell_pos(&self, _: SpellId, _: f32, _: f32, _: f32) -> bool {
+            true
+        }
+        fn move_to(&self, _: f32, _: f32, _: f32) -> bool {
+            true
+        }
+        fn follow(&self, _: UnitHandle, _: f32, _: f32) -> bool {
+            true
+        }
+        fn stop_moving(&self) -> bool {
+            true
+        }
+        fn attack(&self, _: UnitHandle) -> bool {
+            true
+        }
+        fn auto_attack(&self, _: bool) -> bool {
+            true
+        }
+        fn say(&self, _: &str, _: u32) -> bool {
+            true
+        }
+        fn use_item(&self, _: ItemId, _: UnitHandle) -> bool {
+            true
+        }
+        fn taunt(&self, _: UnitHandle) -> bool {
+            true
+        }
+        fn group_get_tank(&self) -> Option<UnitHandle> {
+            None
+        }
+        fn group_get_healer(&self) -> Option<UnitHandle> {
+            None
+        }
+        fn group_get_role(&self, _: UnitHandle) -> crate::ffi::BotRole {
+            Default::default()
+        }
     }
 
     // Default settings for tests (leaked to get a &'static reference).
@@ -195,14 +263,14 @@ pub mod tests {
     }
 
     pub struct TestCtxOwned {
-        pub snap:       BotWorldSnapshot,
-        pub nearby:     Vec<UnitHandle>,
-        pub attackers:  Vec<UnitHandle>,
-        pub interface:  NullInterface,
+        pub snap: BotWorldSnapshot,
+        pub nearby: Vec<UnitHandle>,
+        pub attackers: Vec<UnitHandle>,
+        pub interface: NullInterface,
         pub blackboard: Blackboard,
-        pub timers:     BotTimers,
-        pub time_ms:    u64,
-        pub settings:   BotSettings,
+        pub timers: BotTimers,
+        pub time_ms: u64,
+        pub settings: BotSettings,
     }
 
     impl TestCtxOwned {
@@ -221,21 +289,21 @@ pub mod tests {
 
         pub fn ctx(&mut self) -> TickContext<'_> {
             TickContext {
-                snap:           &self.snap,
-                nearby:         &self.nearby,
-                attackers:      &self.attackers,
-                group_state:    None,
-                interface:      &self.interface,
-                blackboard:     &mut self.blackboard,
-                timers:         &mut self.timers,
+                snap: &self.snap,
+                nearby: &self.nearby,
+                attackers: &self.attackers,
+                group_state: None,
+                interface: &self.interface,
+                blackboard: &mut self.blackboard,
+                timers: &mut self.timers,
                 server_time_ms: self.time_ms,
-                elapsed_ms:     100,
-                minimal:        false,
-                bot_handle:     0,
-                encounter:      None,
-                class:          PlayerClass::Warrior,
-                role:           BotRole::DPS,
-                settings:       &self.settings,
+                elapsed_ms: 100,
+                minimal: false,
+                bot_handle: 0,
+                encounter: None,
+                class: PlayerClass::Warrior,
+                role: BotRole::DPS,
+                settings: &self.settings,
             }
         }
     }
@@ -247,7 +315,9 @@ pub mod tests {
 
     // Re-export so bt_nodes tests can use make_test_ctx() directly
     impl Default for TestCtxOwned {
-        fn default() -> Self { Self::new() }
+        fn default() -> Self {
+            Self::new()
+        }
     }
 
     // ── Configurable test interface for encounter/boss BT tests ─────────
@@ -262,7 +332,11 @@ pub mod tests {
 
     impl TestInterface {
         pub fn new() -> Self {
-            Self { auras: vec![], has_safe_pos: false, unit_dist: 10.0 }
+            Self {
+                auras: vec![],
+                has_safe_pos: false,
+                unit_dist: 10.0,
+            }
         }
 
         pub fn with_aura(mut self, id: crate::ffi::SpellId) -> Self {
@@ -282,43 +356,109 @@ pub mod tests {
     }
 
     impl BotInterface for TestInterface {
-        fn get_snapshot(&self) -> BotWorldSnapshot { Default::default() }
-        fn get_unit_snapshot(&self, _: UnitHandle) -> BotUnitSnapshot { Default::default() }
+        fn get_snapshot(&self) -> BotWorldSnapshot {
+            Default::default()
+        }
+        fn get_unit_snapshot(&self, _: UnitHandle) -> BotUnitSnapshot {
+            Default::default()
+        }
         fn has_aura(&self, _: UnitHandle, spell_id: SpellId) -> bool {
             self.auras.contains(&spell_id)
         }
-        fn get_aura(&self, _: UnitHandle, _: SpellId) -> Option<crate::ffi::BotAuraInfo> { None }
-        fn get_auras(&self, _: UnitHandle) -> Vec<crate::ffi::BotAuraInfo> { vec![] }
-        fn get_threat_list(&self, _: UnitHandle) -> Vec<crate::ffi::BotThreatEntry> { vec![] }
-        fn get_unit_threat(&self, _: UnitHandle, _: UnitHandle) -> f32 { 0.0 }
-        fn unit_distance(&self, _: UnitHandle) -> f32 { self.unit_dist }
-        fn can_cast(&self, _: SpellId, _: UnitHandle) -> bool { true }
-        fn spell_cooldown_ms(&self, _: SpellId) -> u32 { 0 }
-        fn has_los(&self, _: UnitHandle) -> bool { true }
-        fn get_nearby_units(&self, _: f32, _: bool) -> Vec<UnitHandle> { vec![] }
-        fn get_behind_position(&self, _: UnitHandle, _: f32) -> crate::ffi::BotPosition { Default::default() }
+        fn get_aura(&self, _: UnitHandle, _: SpellId) -> Option<crate::ffi::BotAuraInfo> {
+            None
+        }
+        fn get_auras(&self, _: UnitHandle) -> Vec<crate::ffi::BotAuraInfo> {
+            vec![]
+        }
+        fn get_threat_list(&self, _: UnitHandle) -> Vec<crate::ffi::BotThreatEntry> {
+            vec![]
+        }
+        fn get_unit_threat(&self, _: UnitHandle, _: UnitHandle) -> f32 {
+            0.0
+        }
+        fn unit_distance(&self, _: UnitHandle) -> f32 {
+            self.unit_dist
+        }
+        fn can_cast(&self, _: SpellId, _: UnitHandle) -> bool {
+            true
+        }
+        fn spell_cooldown_ms(&self, _: SpellId) -> u32 {
+            0
+        }
+        fn has_los(&self, _: UnitHandle) -> bool {
+            true
+        }
+        fn get_nearby_units(&self, _: f32, _: bool) -> Vec<UnitHandle> {
+            vec![]
+        }
+        fn get_behind_position(&self, _: UnitHandle, _: f32) -> crate::ffi::BotPosition {
+            Default::default()
+        }
         fn get_safe_position(&self, _: f32) -> Option<crate::ffi::BotPosition> {
             if self.has_safe_pos {
-                Some(crate::ffi::BotPosition { x: 1.0, y: 2.0, z: 3.0, o: 0.0, map_id: 0 })
+                Some(crate::ffi::BotPosition {
+                    x: 1.0,
+                    y: 2.0,
+                    z: 3.0,
+                    o: 0.0,
+                    map_id: 0,
+                })
             } else {
                 None
             }
         }
-        fn get_spread_position(&self, _: UnitHandle, _: f32, _: u8, _: u8) -> crate::ffi::BotPosition { Default::default() }
-        fn can_reach(&self, _: f32, _: f32, _: f32) -> bool { true }
-        fn cast_spell(&self, _: SpellId, _: UnitHandle) -> bool { true }
-        fn cast_spell_pos(&self, _: SpellId, _: f32, _: f32, _: f32) -> bool { true }
-        fn move_to(&self, _: f32, _: f32, _: f32) -> bool { true }
-        fn follow(&self, _: UnitHandle, _: f32, _: f32) -> bool { true }
-        fn stop_moving(&self) -> bool { true }
-        fn attack(&self, _: UnitHandle) -> bool { true }
-        fn auto_attack(&self, _: bool) -> bool { true }
-        fn say(&self, _: &str, _: u32) -> bool { true }
-        fn use_item(&self, _: ItemId, _: UnitHandle) -> bool { true }
-        fn taunt(&self, _: UnitHandle) -> bool { true }
-        fn group_get_tank(&self) -> Option<UnitHandle> { None }
-        fn group_get_healer(&self) -> Option<UnitHandle> { None }
-        fn group_get_role(&self, _: UnitHandle) -> BotRole { Default::default() }
+        fn get_spread_position(
+            &self,
+            _: UnitHandle,
+            _: f32,
+            _: u8,
+            _: u8,
+        ) -> crate::ffi::BotPosition {
+            Default::default()
+        }
+        fn can_reach(&self, _: f32, _: f32, _: f32) -> bool {
+            true
+        }
+        fn cast_spell(&self, _: SpellId, _: UnitHandle) -> bool {
+            true
+        }
+        fn cast_spell_pos(&self, _: SpellId, _: f32, _: f32, _: f32) -> bool {
+            true
+        }
+        fn move_to(&self, _: f32, _: f32, _: f32) -> bool {
+            true
+        }
+        fn follow(&self, _: UnitHandle, _: f32, _: f32) -> bool {
+            true
+        }
+        fn stop_moving(&self) -> bool {
+            true
+        }
+        fn attack(&self, _: UnitHandle) -> bool {
+            true
+        }
+        fn auto_attack(&self, _: bool) -> bool {
+            true
+        }
+        fn say(&self, _: &str, _: u32) -> bool {
+            true
+        }
+        fn use_item(&self, _: ItemId, _: UnitHandle) -> bool {
+            true
+        }
+        fn taunt(&self, _: UnitHandle) -> bool {
+            true
+        }
+        fn group_get_tank(&self) -> Option<UnitHandle> {
+            None
+        }
+        fn group_get_healer(&self) -> Option<UnitHandle> {
+            None
+        }
+        fn group_get_role(&self, _: UnitHandle) -> BotRole {
+            Default::default()
+        }
     }
 
     /// Build a TickContext from a TestCtxOwned + custom interface + encounter.
@@ -330,8 +470,12 @@ pub mod tests {
         role: BotRole,
     ) -> TickContext<'a> {
         let mut ctx = make_test_ctx_with(
-            &owned.snap, &owned.nearby, &owned.attackers,
-            iface, &mut owned.blackboard, &mut owned.timers,
+            &owned.snap,
+            &owned.nearby,
+            &owned.attackers,
+            iface,
+            &mut owned.blackboard,
+            &mut owned.timers,
         );
         ctx.encounter = Some(encounter);
         ctx.class = class;

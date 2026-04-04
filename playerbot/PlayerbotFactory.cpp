@@ -21,6 +21,32 @@
     #endif
 #endif
 
+// ── Stub visitors — the real ones lived on the deleted strategy engine ──
+// Inventory iteration is a no-op now (see PlayerbotRust::InventoryIterateItems)
+// so these just need to hold whatever state the call-sites read afterwards.
+
+class FindPotionVisitor : public IterateItemsVisitor {
+public:
+    FindPotionVisitor(Player* /*bot*/, uint32 /*effect*/) {}
+    const std::list<Item*>& GetResult() const { return result; }
+private:
+    std::list<Item*> result;
+};
+
+class FindFoodVisitor : public IterateItemsVisitor {
+public:
+    FindFoodVisitor(Player* /*bot*/, uint32 /*category*/) {}
+    const std::list<Item*>& GetResult() const { return result; }
+private:
+    std::list<Item*> result;
+};
+
+class QueryItemCountVisitor : public IterateItemsVisitor {
+public:
+    explicit QueryItemCountVisitor(uint32 /*itemId*/) {}
+    uint32 GetCount() const { return 0; }
+};
+
 // Inline replacement for deleted AiFactory::GetPlayerSpecTab
 static int GetPlayerSpecTab(Player* bot) {
     int maxCount = 0, bestTab = 0;
@@ -1506,65 +1532,9 @@ void PlayerbotFactory::InitPetSpells()
 #endif
 }
 
-void PlayerbotFactory::ClearSkills()
-{
-    for (int i = 0; i < sizeof(tradeSkills) / sizeof(uint32); ++i)
-    {
-        bot->SetSkill(tradeSkills[i], 0, 0, 0);
-    }
-    bot->SetUInt32Value(PLAYER_SKILL_INDEX(0), 0);
-    bot->SetUInt32Value(PLAYER_SKILL_INDEX(1), 0);
-}
-
-void PlayerbotFactory::ClearSpells()
-{
-#ifdef MANGOS
-    std::list<uint32> spells;
-    for(PlayerSpellMap::iterator itr = bot->GetSpellMap().begin(); itr != bot->GetSpellMap().end(); ++itr)
-    {
-        uint32 spellId = itr->first;
-		if (itr->second.state == PLAYERSPELL_REMOVED || itr->second.disabled || IsPassiveSpell(spellId))
-			continue;
-
-        spells.push_back(spellId);
-    }
-
-    for (std::list<uint32>::iterator i = spells.begin(); i != spells.end(); ++i)
-    {
-        bot->removeSpell(*i, false, false);
-    }
-#endif
-#ifdef CMANGOS
-    bot->resetSpells();
-#endif
-}
-
-void PlayerbotFactory::ResetQuests()
-{
-    ObjectMgr::QuestMap const& questTemplates = sObjectMgr.GetQuestTemplates();
-    for (ObjectMgr::QuestMap::const_iterator i = questTemplates.begin(); i != questTemplates.end(); ++i)
-    {
-        Quest const* quest = i->second.get();
-        uint32 entry = quest->GetQuestId();
-
-        // remove all quest entries for 'entry' from quest log
-        for (uint8 slot = 0; slot < MAX_QUEST_LOG_SIZE; ++slot)
-        {
-            uint32 quest = bot->GetQuestSlotQuestId(slot);
-            if (quest == entry)
-            {
-                bot->SetQuestSlot(slot, 0);
-            }
-        }
-
-        // reset rewarded for restart repeatable quest
-        bot->getQuestStatusMap().erase(entry);
-        //bot->getQuestStatusMap()[entry].m_rewarded = false;
-        //bot->getQuestStatusMap()[entry].m_status = QUEST_STATUS_NONE;
-    }
-    //bot->UpdateForQuestWorldObjects();
-    CharacterDatabase.PExecute("DELETE FROM character_queststatus WHERE guid = '%u'", bot->GetGUIDLow());
-}
+void PlayerbotFactory::ClearSkills() { ai->ResetProgressionViaRust(0); }
+void PlayerbotFactory::ClearSpells() { ai->ResetProgressionViaRust(1); }
+void PlayerbotFactory::ResetQuests() { ai->ResetProgressionViaRust(2); }
 
 void PlayerbotFactory::InitReputations()
 {
@@ -3654,15 +3624,14 @@ void PlayerbotFactory::InitQuests(std::list<uint32>& questMap)
 
 void PlayerbotFactory::ClearInventory()
 {
-    DestroyItemsVisitor visitor(bot);
-    IterateItemsMask mask = IterateItemsMask((uint8)IterateItemsMask::ITERATE_ITEMS_IN_BAGS | (uint8)IterateItemsMask::ITERATE_ITEMS_IN_EQUIP);
-    ai->InventoryIterateItems(&visitor, mask);
+    // mode 0 = equipped + carried bags (bank left intact)
+    ai->ClearInventoryViaRust(0);
 }
 
 void PlayerbotFactory::ClearAllItems()
 {
-    DestroyItemsVisitor visitor(bot);
-    ai->InventoryIterateItems(&visitor, IterateItemsMask::ITERATE_ALL_ITEMS);
+    // mode 1 = everything (equipped + bags + bank)
+    ai->ClearInventoryViaRust(1);
 }
 
 void PlayerbotFactory::InitAmmo()
@@ -3863,152 +3832,25 @@ void PlayerbotFactory::InitMounts()
 
 void PlayerbotFactory::InitPotions()
 {
-    uint32 effects[] = { SPELL_EFFECT_HEAL, SPELL_EFFECT_ENERGIZE };
-    for (int i = 0; i < 2; ++i)
-    {
-        uint32 effect = effects[i];
-
-        if (effect == SPELL_EFFECT_ENERGIZE && !bot->HasMana()) //Do not give manapots to non-mana users.
-            continue;
-
-        FindPotionVisitor visitor(bot, effect);
-        ai->InventoryIterateItems(&visitor, IterateItemsMask::ITERATE_ITEMS_IN_BAGS);
-        if (!visitor.GetResult().empty()) continue;
-
-        uint32 itemId = sRandomItemMgr.GetRandomPotion(level, effect);
-        if (!itemId)
-        {
-            sLog.outDetail("No potions (type %d) available for bot %s (%d level)", effect, bot->GetName(), bot->GetLevel());
-            continue;
-        }
-
-        ItemPrototype const* proto = sObjectMgr.GetItemPrototype(itemId);
-        if (!proto) continue;
-
-        uint32 maxCount = proto->GetMaxStackSize();
-        Item* newItem = bot->StoreNewItemInInventorySlot(itemId, urand(maxCount / 2, maxCount));
-    }
+    // Policy (dedup + stack-roll) lives in playerbot-rs/src/factory/consumables.rs.
+    // DB lookup (sRandomItemMgr.GetRandomPotion) is still invoked from the
+    // Rust side via the factory_pick_potion_for_level FFI callback.
+    ai->InitConsumablesViaRust(0);
 }
 
 void PlayerbotFactory::InitFood()
 {
-    uint32 categories[] = { 11, 59 };
-    for (int i = 0; i < 2; ++i)
-    {
-        uint32 category = categories[i];
-
-        if (category == 59 && !bot->HasMana()) //Do not give drinks to non-mana users.
-            continue;
-
-        FindFoodVisitor visitor(bot, category);
-        ai->InventoryIterateItems(&visitor, IterateItemsMask::ITERATE_ITEMS_IN_BAGS);
-        if (!visitor.GetResult().empty()) continue;
-
-        uint32 itemId = sRandomItemMgr.GetFood(level, category);
-        if (!itemId)
-        {
-            sLog.outDetail("No food (category %d) available for bot %s (%d level)", category, bot->GetName(), bot->GetLevel());
-            continue;
-        }
-        ItemPrototype const* proto = sObjectMgr.GetItemPrototype(itemId);
-        if (!proto) continue;
-
-        uint32 maxCount = proto->GetMaxStackSize();
-        Item* newItem = bot->StoreNewItemInInventorySlot(itemId, urand(maxCount / 2, maxCount));
-   }
+    ai->InitConsumablesViaRust(1);
 }
 
 void PlayerbotFactory::InitReagents()
 {
-    std::list<uint32> items;
-    uint32 regCount = 1;
-    switch (bot->getClass())
-    {
-    case CLASS_MAGE:
-        regCount = 2;
-        if (bot->GetLevel() > 11)
-            items = { 17056 };
-        if (bot->GetLevel() > 19)
-            items = { 17056, 17031 };
-        if (bot->GetLevel() > 35)
-            items = { 17056, 17031, 17032 };
-        if (bot->GetLevel() > 55)
-            items = { 17056, 17031, 17032, 17020 };
-        break;
-    case CLASS_DRUID:
-        regCount = 2;
-        if (bot->GetLevel() > 19)
-            items = { 17034 };
-        if (bot->GetLevel() > 29)
-            items = { 17035 };
-        if (bot->GetLevel() > 39)
-            items = { 17036 };
-        if (bot->GetLevel() > 49)
-            items = { 17037, 17021 };
-        if (bot->GetLevel() > 59)
-            items = { 17038, 17026 };
-        if (bot->GetLevel() > 69)
-            items = { 22147, 22148 };
-        break;
-    case CLASS_PALADIN:
-        regCount = 3;
-        if (bot->GetLevel() > 50)
-            items = { 21177 };
-        break;
-    case CLASS_SHAMAN:
-        regCount = 1;
-        if (bot->GetLevel() > 22)
-            items = { 17057 };
-        if (bot->GetLevel() > 28)
-            items = { 17057, 17058 };
-        if (bot->GetLevel() > 29)
-            items = { 17057, 17058, 17030 };
-        break;
-    case CLASS_WARLOCK:
-        regCount = 10;
-        if (bot->GetLevel() > 9)
-            items = { 6265 };
-        if (bot->GetLevel() > 49)
-            items = { 6265, 5565 };
-        break;
-    case CLASS_PRIEST:
-        regCount = 3;
-        if (bot->GetLevel() > 48)
-            items = { 17028 };
-        if (bot->GetLevel() > 55)
-            items = { 17028, 17029 };
-        break;
-    case CLASS_ROGUE:
-        regCount = 1;
-        if (bot->GetLevel() > 21)
-            items = { 5140 };
-        if (bot->GetLevel() > 33)
-            items = { 5140, 5530 };
-        break;
-    }
+    // Static class/level reagent list is now in Rust
+    // (playerbot-rs/src/factory/consumables.rs::init_reagents).
+    ai->InitConsumablesViaRust(2);
 
-    for (std::list<uint32>::iterator i = items.begin(); i != items.end(); ++i)
-    {
-        ItemPrototype const* proto = sObjectMgr.GetItemPrototype(*i);
-        if (!proto)
-        {
-            sLog.outError("No reagent (ItemId %d) found for bot %d (Class:%d)", *i, bot->GetGUIDLow(), bot->getClass());
-            continue;
-        }
-
-        uint32 maxCount = proto->GetMaxStackSize();
-
-        QueryItemCountVisitor visitor(*i);
-        ai->InventoryIterateItems(&visitor, IterateItemsMask::ITERATE_ITEMS_IN_BAGS);
-        if ((uint32)visitor.GetCount() > maxCount) continue;
-
-        uint32 randCount = urand(maxCount / 2, maxCount * regCount);
-
-        Item* newItem = bot->StoreNewItemInInventorySlot(*i, randCount);
-
-        sLog.outDetail("Bot %d got reagent %s x%d", bot->GetGUIDLow(), proto->Name1, randCount);
-    }
-
+    // Spell-derived totems and totem-category items stay in C++ until the
+    // SpellEntry FFI surface is ported.
     for (PlayerSpellMap::iterator itr = bot->GetSpellMap().begin(); itr != bot->GetSpellMap().end(); ++itr)
     {
         uint32 spellId = itr->first;
@@ -4073,10 +3915,7 @@ void PlayerbotFactory::InitReagents()
     }
 }
 
-void PlayerbotFactory::CancelAuras()
-{
-    bot->RemoveAllAuras();
-}
+void PlayerbotFactory::CancelAuras() { ai->FactoryMiscViaRust(0); }
 
 void PlayerbotFactory::InitInventory()
 {
@@ -4085,24 +3924,7 @@ void PlayerbotFactory::InitInventory()
     InitInventorySkill();
 }
 
-void PlayerbotFactory::InitInventorySkill()
-{
-    if (bot->HasSkill(SKILL_MINING)) {
-        StoreItem(2901, 1); // Mining Pick
-    }
-    if (bot->HasSkill(SKILL_BLACKSMITHING) || bot->HasSkill(SKILL_ENGINEERING)) {
-        StoreItem(5956, 1); // Blacksmith Hammer
-    }
-    if (bot->HasSkill(SKILL_ENGINEERING)) {
-        StoreItem(6219, 1); // Arclight Spanner
-    }
-    if (bot->HasSkill(SKILL_ENCHANTING)) {
-        StoreItem(16207, 1); // Runed Arcanite Rod
-    }
-    if (bot->HasSkill(SKILL_SKINNING)) {
-        StoreItem(7005, 1); // Skinning Knife
-    }
-}
+void PlayerbotFactory::InitInventorySkill() { ai->FactoryMiscViaRust(1); }
 
 Item* PlayerbotFactory::StoreItem(uint32 itemId, uint32 count, bool ignoreCount)
 {

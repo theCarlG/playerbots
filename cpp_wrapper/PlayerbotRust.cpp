@@ -7,6 +7,25 @@
 
 #include "Entities/Player.h"
 
+// ── Global init / shutdown ───────────────────────────────────────────────
+
+void PlayerbotRust::InitRustModule()
+{
+    playerbot_init();
+    // TODO: read config values from PlayerbotAIConfig and pass them
+    // playerbot_set_config(react_delay, max_wait, eat_hp, drink_mana, debug);
+}
+
+void PlayerbotRust::ShutdownRustModule()
+{
+    playerbot_shutdown();
+}
+
+void PlayerbotRust::WorldUpdate(uint32_t elapsed_ms)
+{
+    playerbot_world_update(elapsed_ms);
+}
+
 // ── Constructor / Destructor ──────────────────────────────────────────────
 
 PlayerbotRust::PlayerbotRust(Player* bot)
@@ -39,6 +58,34 @@ void PlayerbotRust::UpdateAIInternal(uint32 elapsed, bool minimal)
     playerbot_update(m_rustState, static_cast<uint32_t>(elapsed), minimal);
 }
 
+// ── Command handling ─────────────────────────────────────────────────────
+
+void PlayerbotRust::HandleCommand(uint32 /*type*/, const std::string& text,
+                                   Player& sender, uint32 /*lang*/)
+{
+    if (!m_rustState || text.empty())
+        return;
+
+    uint64_t senderGuid = sender.GetObjectGuid().GetRawValue();
+
+    // Privileged = owner, party leader, or GM. Mirrors the old
+    // PlayerbotSecurity check without the SQL access-level layer.
+    bool privileged = false;
+    if (m_bot)
+    {
+        ObjectGuid masterGuid = m_bot->GetSession() && m_bot->GetSession()->GetPlayer() ?
+            m_bot->GetSession()->GetPlayer()->GetObjectGuid() : ObjectGuid();
+        if (sender.GetObjectGuid() == masterGuid) privileged = true;
+        if (!privileged && m_bot->GetGroup() && m_bot->GetGroup()->IsLeader(sender.GetObjectGuid()))
+            privileged = true;
+        if (!privileged && sender.GetSession() && sender.GetSession()->GetSecurity() > SEC_PLAYER)
+            privileged = true;
+    }
+
+    playerbot_chat_command(m_rustState, senderGuid,
+                           privileged ? 1 : 0, text.c_str());
+}
+
 // ── Push event forwarding ─────────────────────────────────────────────────
 
 void PlayerbotRust::OnUnitSpellCast(uint64_t caster, uint32_t spell_id,
@@ -65,4 +112,28 @@ void PlayerbotRust::OnDamageTaken(uint32_t damage, uint32_t spell_id, uint64_t d
 {
     if (m_rustState)
         playerbot_damage_taken(m_rustState, damage, spell_id, dealer);
+}
+
+void PlayerbotRust::ClearInventoryViaRust(uint8_t mode)
+{
+    if (m_rustState)
+        playerbot_factory_clear_inventory(m_rustState, mode);
+}
+
+void PlayerbotRust::InitConsumablesViaRust(uint8_t kind)
+{
+    if (m_rustState)
+        playerbot_factory_init_consumables(m_rustState, kind);
+}
+
+void PlayerbotRust::ResetProgressionViaRust(uint8_t kind)
+{
+    if (m_rustState)
+        playerbot_factory_reset_progression(m_rustState, kind);
+}
+
+void PlayerbotRust::FactoryMiscViaRust(uint8_t kind)
+{
+    if (m_rustState)
+        playerbot_factory_misc(m_rustState, kind);
 }

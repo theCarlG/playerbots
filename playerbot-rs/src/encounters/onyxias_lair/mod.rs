@@ -4,25 +4,29 @@
 ///   Phase 1 (100%→65%): Ground. Melee position behind boss.
 ///   Phase 2 (65%→40%): Air. Melee hold, dodge Deep Breath, ranged normal.
 ///   Phase 3 (<40%): Ground again + whelp spawns.
-
 use super::{EncounterEvent, EncounterFsm};
 use crate::encounters::bt::Bt::{self, *};
 use crate::ffi::SpellId;
 
 pub const ENTRY_ONYXIA: u32 = 10184;
 
-pub const SPELL_DEEP_BREATH:     SpellId = SpellId(22267);
-pub const SPELL_FLAME_BREATH:    SpellId = SpellId(18435);
+pub const SPELL_DEEP_BREATH: SpellId = SpellId(22267);
+pub const SPELL_FLAME_BREATH: SpellId = SpellId(18435);
 pub const SPELL_FIREBALL_VOLLEY: SpellId = SpellId(18392);
-pub const SPELL_WING_BUFFET:     SpellId = SpellId(18500);
+pub const SPELL_WING_BUFFET: SpellId = SpellId(18500);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OnyxiaPhase { Idle, Phase1, Phase2, Phase3 }
+pub enum OnyxiaPhase {
+    Idle,
+    Phase1,
+    Phase2,
+    Phase3,
+}
 
 pub struct OnyxiaFsm {
     pub phase: OnyxiaPhase,
-    done:      bool,
-    air_bt:    Bt,
+    done: bool,
+    air_bt: Bt,
     ground_bt: Bt,
 }
 
@@ -30,7 +34,7 @@ impl OnyxiaFsm {
     pub fn new() -> Self {
         Self {
             phase: OnyxiaPhase::Idle,
-            done:  false,
+            done: false,
             air_bt: Sel(vec![
                 Seq(vec![TargetHasAura(SPELL_DEEP_BREATH), FleeToSafe(40.0)]),
                 Seq(vec![IsMeleeDps, HoldPosition]),
@@ -39,18 +43,22 @@ impl OnyxiaFsm {
         }
     }
 
-    pub const PHASE_IDLE:   u32 = 0;
+    pub const PHASE_IDLE: u32 = 0;
     pub const PHASE_GROUND: u32 = 1;
-    pub const PHASE_AIR:    u32 = 2;
+    pub const PHASE_AIR: u32 = 2;
 }
 
 impl Default for OnyxiaFsm {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EncounterFsm for OnyxiaFsm {
     fn update(&mut self, event: &EncounterEvent, boss_hp_pct: f32, _time: u64) {
-        if self.done { return; }
+        if self.done {
+            return;
+        }
         match event {
             EncounterEvent::CombatStarted => self.phase = OnyxiaPhase::Phase1,
             EncounterEvent::UnitDied { .. } if self.phase != OnyxiaPhase::Idle => {
@@ -68,21 +76,27 @@ impl EncounterFsm for OnyxiaFsm {
 
     fn phase_id(&self) -> u32 {
         match self.phase {
-            OnyxiaPhase::Idle                          => Self::PHASE_IDLE,
-            OnyxiaPhase::Phase1 | OnyxiaPhase::Phase3  => Self::PHASE_GROUND,
-            OnyxiaPhase::Phase2                        => Self::PHASE_AIR,
+            OnyxiaPhase::Idle => Self::PHASE_IDLE,
+            OnyxiaPhase::Phase1 | OnyxiaPhase::Phase3 => Self::PHASE_GROUND,
+            OnyxiaPhase::Phase2 => Self::PHASE_AIR,
         }
     }
 
-    fn is_active(&self) -> bool { self.phase != OnyxiaPhase::Idle }
-    fn is_done(&self)   -> bool { self.done }
-    fn boss_entry(&self) -> u32 { ENTRY_ONYXIA }
+    fn is_active(&self) -> bool {
+        self.phase != OnyxiaPhase::Idle
+    }
+    fn is_done(&self) -> bool {
+        self.done
+    }
+    fn boss_entry(&self) -> u32 {
+        ENTRY_ONYXIA
+    }
 
     fn phase_bt(&self) -> Option<&Bt> {
         match self.phase {
-            OnyxiaPhase::Idle   => None,
+            OnyxiaPhase::Idle => None,
             OnyxiaPhase::Phase2 => Some(&self.air_bt),
-            _                   => Some(&self.ground_bt),
+            _ => Some(&self.ground_bt),
         }
     }
 }
@@ -114,7 +128,8 @@ mod tests {
         let bt = fsm.phase_bt().unwrap();
         let iface = TestInterface::new();
         let mut owned = TestCtxOwned::new();
-        let mut ctx = make_encounter_ctx(&mut owned, &iface, &fsm, PlayerClass::Rogue, BotRole::DPS);
+        let mut ctx =
+            make_encounter_ctx(&mut owned, &iface, &fsm, PlayerClass::Rogue, BotRole::DPS);
         assert_eq!(bt.tick(&mut ctx), BtResult::Success);
     }
 

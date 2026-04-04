@@ -21,28 +21,30 @@ const BLOOD_PLAGUE: SpellId = SpellId(55078);
 pub fn build_tree() -> Bt {
     Sel(vec![
         StickToTarget(5.0),
-
         Seq(vec![TargetFartherThan(15.0), CastOnTarget(DEATH_GRIP)]),
-
-        Seq(vec![InCombat, Sel(vec![
-            // Absorb vs casters.
-            Seq(vec![TargetIsCasting, CastOnSelf(ANTI_MAGIC_SHELL)]),
-
-            // Burst / AoE.
-            CastOnTarget(HOWLING_BLAST),
-
-            // Main melee.
-            CastOnTarget(OBLITERATE),
-
-            // Diseases.
-            Seq(vec![TargetMissingAura(FROST_FEVER), CastOnTarget(ICY_TOUCH)]),
-            Seq(vec![TargetMissingAura(BLOOD_PLAGUE), CastOnTarget(PLAGUE_STRIKE)]),
-
-            // RP dump.
-            CastOnTarget(FROST_STRIKE),
-
-            // Snare fleeing target.
-            Seq(vec![TargetFartherThan(8.0), CastOnTarget(CHAINS_OF_ICE)]),
-        ])]),
+        Seq(vec![
+            InCombat,
+            Sel(vec![
+                // Absorb vs casters.
+                Seq(vec![TargetIsCasting, CastOnSelf(ANTI_MAGIC_SHELL)]),
+                // Burst / AoE.
+                CastOnTarget(HOWLING_BLAST),
+                // Main melee.
+                CastOnTarget(OBLITERATE),
+                // Diseases.
+                Seq(vec![
+                    TargetMissingAura(FROST_FEVER),
+                    CastOnTarget(ICY_TOUCH),
+                ]),
+                Seq(vec![
+                    TargetMissingAura(BLOOD_PLAGUE),
+                    CastOnTarget(PLAGUE_STRIKE),
+                ]),
+                // RP dump.
+                CastOnTarget(FROST_STRIKE),
+                // Snare fleeing target.
+                Seq(vec![TargetFartherThan(8.0), CastOnTarget(CHAINS_OF_ICE)]),
+            ]),
+        ]),
     ])
 }

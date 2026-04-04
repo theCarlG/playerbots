@@ -9,15 +9,15 @@ use super::super::{EncounterEvent, EncounterFsm};
 use crate::encounters::bt::Bt::{self, *};
 use crate::ffi::SpellId;
 
-pub const AURA_IMPENDING_DOOM:   SpellId = SpellId(18093);
-pub const AURA_LUCIFRONS_CURSE:  SpellId = SpellId(19703);
-pub const AURA_SHADOW_SHOCK:     SpellId = SpellId(20603);
+pub const AURA_IMPENDING_DOOM: SpellId = SpellId(18093);
+pub const AURA_LUCIFRONS_CURSE: SpellId = SpellId(19703);
+pub const AURA_SHADOW_SHOCK: SpellId = SpellId(20603);
 
 #[derive(Clone, Debug)]
 pub struct LucifronFsm {
     active: bool,
-    done:   bool,
-    bt:     Bt,
+    done: bool,
+    bt: Bt,
 }
 
 impl PartialEq for LucifronFsm {
@@ -28,7 +28,11 @@ impl PartialEq for LucifronFsm {
 
 impl LucifronFsm {
     pub fn new() -> Self {
-        Self { active: false, done: false, bt: Self::build_bt() }
+        Self {
+            active: false,
+            done: false,
+            bt: Self::build_bt(),
+        }
     }
 
     fn build_bt() -> Bt {
@@ -43,7 +47,9 @@ impl LucifronFsm {
 }
 
 impl Default for LucifronFsm {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EncounterFsm for LucifronFsm {
@@ -55,10 +61,18 @@ impl EncounterFsm for LucifronFsm {
             _ => {}
         }
     }
-    fn phase_id(&self) -> u32   { u32::from(self.active) }
-    fn is_active(&self) -> bool { self.active }
-    fn is_done(&self)   -> bool { self.done }
-    fn boss_entry(&self) -> u32 { super::ENTRY_LUCIFRON }
+    fn phase_id(&self) -> u32 {
+        u32::from(self.active)
+    }
+    fn is_active(&self) -> bool {
+        self.active
+    }
+    fn is_done(&self) -> bool {
+        self.done
+    }
+    fn boss_entry(&self) -> u32 {
+        super::ENTRY_LUCIFRON
+    }
     fn phase_bt(&self) -> Option<&Bt> {
         if self.active { Some(&self.bt) } else { None }
     }

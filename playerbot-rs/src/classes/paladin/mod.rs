@@ -6,8 +6,7 @@ use crate::{
     bot::state::PlayerSpec,
     classes::ClassKit,
     data::spells::vanilla::paladin::{
-        BLESSING_OF_KINGS, BLESSING_OF_MIGHT, BLESSING_OF_WISDOM, DEVOTION_AURA,
-        RETRIBUTION_AURA,
+        BLESSING_OF_KINGS, BLESSING_OF_MIGHT, BLESSING_OF_WISDOM, DEVOTION_AURA, RETRIBUTION_AURA,
     },
     noncombat::GroupBuff,
 };
@@ -30,9 +29,18 @@ const RET_BUFFS: &[GroupBuff] = &[
 pub fn kit(spec: PlayerSpec) -> ClassKit {
     use PlayerSpec::*;
     match spec {
-        PaladinHoly        => ClassKit { tree: holy::build_tree(),        buffs: HOLY_BUFFS },
-        PaladinProtection  => ClassKit { tree: protection::build_tree(),  buffs: PROT_BUFFS },
-        PaladinRetribution => ClassKit { tree: retribution::build_tree(), buffs: RET_BUFFS },
+        PaladinHoly => ClassKit {
+            tree: holy::build_tree(),
+            buffs: HOLY_BUFFS,
+        },
+        PaladinProtection => ClassKit {
+            tree: protection::build_tree(),
+            buffs: PROT_BUFFS,
+        },
+        PaladinRetribution => ClassKit {
+            tree: retribution::build_tree(),
+            buffs: RET_BUFFS,
+        },
         _ => unreachable!("non-paladin spec passed to paladin::kit"),
     }
 }

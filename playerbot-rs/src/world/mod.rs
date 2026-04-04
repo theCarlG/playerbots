@@ -2,7 +2,6 @@
 ///
 /// Each module exports a function returning a `Bt` enum value.
 /// These are composed into the mode-aware root BT in `bot::init`.
-
 pub mod bg;
 pub mod death;
 pub mod gather;

@@ -15,15 +15,14 @@
 ///   - Add waves: attack nearest hostile.
 ///   - KT active: dodge Shadow Fissure (flee if debuffed).
 ///   - Adds + portal: non-tanks switch to adds, tanks stay on KT.
-
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::encounters::bt::Bt::{self, *};
 use crate::ffi::SpellId;
 
-pub const AURA_FROST_BLAST:     SpellId = SpellId(27808);
-pub const SPELL_CHAINS_OF_KT:   SpellId = SpellId(28410);
+pub const AURA_FROST_BLAST: SpellId = SpellId(27808);
+pub const SPELL_CHAINS_OF_KT: SpellId = SpellId(28410);
 pub const SPELL_SHADOW_FISSURE: SpellId = SpellId(27810);
-pub const SPELL_GLACIAL_BLAST:  SpellId = SpellId(29258);
+pub const SPELL_GLACIAL_BLAST: SpellId = SpellId(29258);
 
 pub const ENTRY_SARCOPHAGUS_KT: u32 = 15990;
 
@@ -39,12 +38,12 @@ pub enum KtPhase {
 
 #[derive(Clone, Debug)]
 pub struct KelThuzadFsm {
-    pub phase:        KtPhase,
+    pub phase: KtPhase,
     pub pull_time_ms: u64,
-    done:             bool,
-    add_waves_bt:     Bt,
-    kt_active_bt:     Bt,
-    adds_portal_bt:   Bt,
+    done: bool,
+    add_waves_bt: Bt,
+    kt_active_bt: Bt,
+    adds_portal_bt: Bt,
 }
 
 impl PartialEq for KelThuzadFsm {
@@ -58,9 +57,9 @@ impl PartialEq for KelThuzadFsm {
 impl KelThuzadFsm {
     pub fn new() -> Self {
         Self {
-            phase:        KtPhase::Idle,
+            phase: KtPhase::Idle,
             pull_time_ms: 0,
-            done:         false,
+            done: false,
             // Phase 1: kill adds
             add_waves_bt: AttackNearest,
             // Phase 2: dodge Shadow Fissure
@@ -73,19 +72,23 @@ impl KelThuzadFsm {
         }
     }
 
-    pub const PHASE_IDLE:        u32 = 0;
-    pub const PHASE_ADD_WAVES:   u32 = 1;
-    pub const PHASE_KT_ACTIVE:   u32 = 2;
+    pub const PHASE_IDLE: u32 = 0;
+    pub const PHASE_ADD_WAVES: u32 = 1;
+    pub const PHASE_KT_ACTIVE: u32 = 2;
     pub const PHASE_ADDS_PORTAL: u32 = 3;
 }
 
 impl Default for KelThuzadFsm {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EncounterFsm for KelThuzadFsm {
     fn update(&mut self, event: &EncounterEvent, boss_hp_pct: f32, time_ms: u64) {
-        if self.done { return; }
+        if self.done {
+            return;
+        }
 
         match event {
             EncounterEvent::CombatStarted => {
@@ -103,21 +106,19 @@ impl EncounterFsm for KelThuzadFsm {
                 self.phase = KtPhase::Idle;
             }
 
-            EncounterEvent::None => {
-                match self.phase {
-                    KtPhase::AddWaves => {
-                        if time_ms.saturating_sub(self.pull_time_ms) >= PHASE1_DURATION_MS {
-                            self.phase = KtPhase::KtActive;
-                        }
+            EncounterEvent::None => match self.phase {
+                KtPhase::AddWaves => {
+                    if time_ms.saturating_sub(self.pull_time_ms) >= PHASE1_DURATION_MS {
+                        self.phase = KtPhase::KtActive;
                     }
-                    KtPhase::KtActive => {
-                        if boss_hp_pct < 0.45 {
-                            self.phase = KtPhase::AddsSummoned;
-                        }
-                    }
-                    _ => {}
                 }
-            }
+                KtPhase::KtActive => {
+                    if boss_hp_pct < 0.45 {
+                        self.phase = KtPhase::AddsSummoned;
+                    }
+                }
+                _ => {}
+            },
 
             _ => {}
         }
@@ -125,22 +126,28 @@ impl EncounterFsm for KelThuzadFsm {
 
     fn phase_id(&self) -> u32 {
         match self.phase {
-            KtPhase::Idle         => Self::PHASE_IDLE,
-            KtPhase::AddWaves     => Self::PHASE_ADD_WAVES,
-            KtPhase::KtActive     => Self::PHASE_KT_ACTIVE,
+            KtPhase::Idle => Self::PHASE_IDLE,
+            KtPhase::AddWaves => Self::PHASE_ADD_WAVES,
+            KtPhase::KtActive => Self::PHASE_KT_ACTIVE,
             KtPhase::AddsSummoned => Self::PHASE_ADDS_PORTAL,
         }
     }
 
-    fn is_active(&self) -> bool { self.phase != KtPhase::Idle }
-    fn is_done(&self)   -> bool { self.done }
-    fn boss_entry(&self) -> u32 { super::ENTRY_KEL_THUZAD }
+    fn is_active(&self) -> bool {
+        self.phase != KtPhase::Idle
+    }
+    fn is_done(&self) -> bool {
+        self.done
+    }
+    fn boss_entry(&self) -> u32 {
+        super::ENTRY_KEL_THUZAD
+    }
 
     fn phase_bt(&self) -> Option<&Bt> {
         match self.phase {
-            KtPhase::Idle         => None,
-            KtPhase::AddWaves     => Some(&self.add_waves_bt),
-            KtPhase::KtActive     => Some(&self.kt_active_bt),
+            KtPhase::Idle => None,
+            KtPhase::AddWaves => Some(&self.add_waves_bt),
+            KtPhase::KtActive => Some(&self.kt_active_bt),
             KtPhase::AddsSummoned => Some(&self.adds_portal_bt),
         }
     }
@@ -186,9 +193,8 @@ mod tests {
         let iface = TestInterface::new();
         let mut owned = TestCtxOwned::new();
         owned.attackers = vec![77]; // an add
-        let mut ctx = make_encounter_ctx(
-            &mut owned, &iface, &fsm, PlayerClass::Warrior, BotRole::DPS,
-        );
+        let mut ctx =
+            make_encounter_ctx(&mut owned, &iface, &fsm, PlayerClass::Warrior, BotRole::DPS);
         assert_eq!(bt.tick(&mut ctx), BtResult::Success);
     }
 
@@ -200,9 +206,8 @@ mod tests {
         let bt = fsm.phase_bt().expect("KT active should have BT");
         let iface = TestInterface::new();
         let mut owned = TestCtxOwned::new();
-        let mut ctx = make_encounter_ctx(
-            &mut owned, &iface, &fsm, PlayerClass::Warrior, BotRole::DPS,
-        );
+        let mut ctx =
+            make_encounter_ctx(&mut owned, &iface, &fsm, PlayerClass::Warrior, BotRole::DPS);
         assert_eq!(bt.tick(&mut ctx), BtResult::Failure);
     }
 }

@@ -14,7 +14,6 @@
 /// Bot behavior per state:
 ///   - DPS phase: normal rotation (no override).
 ///   - Dance phase: move to safe zone based on eruption tracking.
-
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::encounters::bt::Bt;
 use crate::ffi::SpellId;
@@ -23,7 +22,7 @@ pub const SPELL_ERUPTION_ZONE1: SpellId = SpellId(29998);
 pub const SPELL_ERUPTION_ZONE2: SpellId = SpellId(30004);
 pub const SPELL_ERUPTION_ZONE3: SpellId = SpellId(30006);
 pub const SPELL_ERUPTION_ZONE4: SpellId = SpellId(30010);
-pub const SPELL_PLAGUE_CLOUD:   SpellId = SpellId(29350);
+pub const SPELL_PLAGUE_CLOUD: SpellId = SpellId(29350);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeiganPhase {
@@ -34,11 +33,11 @@ pub enum HeiganPhase {
 
 #[derive(Clone, Debug)]
 pub struct HeiganFsm {
-    pub phase:          HeiganPhase,
-    pub erupting_zone:  u8,
+    pub phase: HeiganPhase,
+    pub erupting_zone: u8,
     pub dance_start_ms: u64,
-    done:               bool,
-    dance_bt:           Bt,
+    done: bool,
+    dance_bt: Bt,
 }
 
 impl PartialEq for HeiganFsm {
@@ -53,11 +52,11 @@ impl PartialEq for HeiganFsm {
 impl HeiganFsm {
     pub fn new() -> Self {
         Self {
-            phase:          HeiganPhase::Idle,
-            erupting_zone:  0,
+            phase: HeiganPhase::Idle,
+            erupting_zone: 0,
             dance_start_ms: 0,
-            done:           false,
-            dance_bt:       Bt::MoveToSafeZone,
+            done: false,
+            dance_bt: Bt::MoveToSafeZone,
         }
     }
 
@@ -73,39 +72,51 @@ impl HeiganFsm {
         }
     }
 
-    pub const PHASE_IDLE:  u32 = 0;
-    pub const PHASE_DPS:   u32 = 1;
+    pub const PHASE_IDLE: u32 = 0;
+    pub const PHASE_DPS: u32 = 1;
     pub const PHASE_DANCE: u32 = 2;
 }
 
 impl Default for HeiganFsm {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EncounterFsm for HeiganFsm {
     fn update(&mut self, event: &EncounterEvent, _boss_hp: f32, time_ms: u64) {
-        if self.done { return; }
+        if self.done {
+            return;
+        }
 
         match event {
             EncounterEvent::CombatStarted => {
                 self.phase = HeiganPhase::DpsPhase;
             }
 
-            EncounterEvent::SpellCast { caster: _, spell_id, success: true } => {
-                match *spell_id {
-                    SPELL_ERUPTION_ZONE1 => {
-                        self.erupting_zone = 1;
-                        if self.phase == HeiganPhase::DpsPhase {
-                            self.phase = HeiganPhase::DancePhase;
-                            self.dance_start_ms = time_ms;
-                        }
+            EncounterEvent::SpellCast {
+                caster: _,
+                spell_id,
+                success: true,
+            } => match *spell_id {
+                SPELL_ERUPTION_ZONE1 => {
+                    self.erupting_zone = 1;
+                    if self.phase == HeiganPhase::DpsPhase {
+                        self.phase = HeiganPhase::DancePhase;
+                        self.dance_start_ms = time_ms;
                     }
-                    SPELL_ERUPTION_ZONE2 => { self.erupting_zone = 2; }
-                    SPELL_ERUPTION_ZONE3 => { self.erupting_zone = 3; }
-                    SPELL_ERUPTION_ZONE4 => { self.erupting_zone = 4; }
-                    _ => {}
                 }
-            }
+                SPELL_ERUPTION_ZONE2 => {
+                    self.erupting_zone = 2;
+                }
+                SPELL_ERUPTION_ZONE3 => {
+                    self.erupting_zone = 3;
+                }
+                SPELL_ERUPTION_ZONE4 => {
+                    self.erupting_zone = 4;
+                }
+                _ => {}
+            },
 
             EncounterEvent::UnitDied { victim: _ } => {
                 self.done = true;
@@ -129,15 +140,21 @@ impl EncounterFsm for HeiganFsm {
 
     fn phase_id(&self) -> u32 {
         match self.phase {
-            HeiganPhase::Idle       => Self::PHASE_IDLE,
-            HeiganPhase::DpsPhase   => Self::PHASE_DPS,
+            HeiganPhase::Idle => Self::PHASE_IDLE,
+            HeiganPhase::DpsPhase => Self::PHASE_DPS,
             HeiganPhase::DancePhase => Self::PHASE_DANCE,
         }
     }
 
-    fn is_active(&self) -> bool { self.phase != HeiganPhase::Idle }
-    fn is_done(&self)   -> bool { self.done }
-    fn boss_entry(&self) -> u32 { super::ENTRY_HEIGAN }
+    fn is_active(&self) -> bool {
+        self.phase != HeiganPhase::Idle
+    }
+    fn is_done(&self) -> bool {
+        self.done
+    }
+    fn boss_entry(&self) -> u32 {
+        super::ENTRY_HEIGAN
+    }
 
     fn phase_bt(&self) -> Option<&Bt> {
         match self.phase {
@@ -165,9 +182,15 @@ mod tests {
     fn transitions_to_dance_on_first_eruption() {
         let mut fsm = HeiganFsm::new();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
-        fsm.update(&EncounterEvent::SpellCast {
-            caster: 1, spell_id: SPELL_ERUPTION_ZONE1, success: true
-        }, 1.0, 5000);
+        fsm.update(
+            &EncounterEvent::SpellCast {
+                caster: 1,
+                spell_id: SPELL_ERUPTION_ZONE1,
+                success: true,
+            },
+            1.0,
+            5000,
+        );
         assert_eq!(fsm.phase, HeiganPhase::DancePhase);
         assert_eq!(fsm.erupting_zone, 1);
         assert_eq!(fsm.safe_zone(), 2);
@@ -177,12 +200,24 @@ mod tests {
     fn eruption_zone_tracking() {
         let mut fsm = HeiganFsm::new();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
-        fsm.update(&EncounterEvent::SpellCast {
-            caster: 1, spell_id: SPELL_ERUPTION_ZONE1, success: true
-        }, 1.0, 1000);
-        fsm.update(&EncounterEvent::SpellCast {
-            caster: 1, spell_id: SPELL_ERUPTION_ZONE2, success: true
-        }, 1.0, 5000);
+        fsm.update(
+            &EncounterEvent::SpellCast {
+                caster: 1,
+                spell_id: SPELL_ERUPTION_ZONE1,
+                success: true,
+            },
+            1.0,
+            1000,
+        );
+        fsm.update(
+            &EncounterEvent::SpellCast {
+                caster: 1,
+                spell_id: SPELL_ERUPTION_ZONE2,
+                success: true,
+            },
+            1.0,
+            5000,
+        );
         assert_eq!(fsm.erupting_zone, 2);
         assert_eq!(fsm.safe_zone(), 3);
     }
@@ -191,9 +226,15 @@ mod tests {
     fn returns_to_dps_phase_after_45s() {
         let mut fsm = HeiganFsm::new();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
-        fsm.update(&EncounterEvent::SpellCast {
-            caster: 1, spell_id: SPELL_ERUPTION_ZONE1, success: true
-        }, 1.0, 0);
+        fsm.update(
+            &EncounterEvent::SpellCast {
+                caster: 1,
+                spell_id: SPELL_ERUPTION_ZONE1,
+                success: true,
+            },
+            1.0,
+            0,
+        );
         assert_eq!(fsm.phase, HeiganPhase::DancePhase);
 
         fsm.update(&EncounterEvent::None, 0.8, 46_000);

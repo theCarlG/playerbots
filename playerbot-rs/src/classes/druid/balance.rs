@@ -13,16 +13,30 @@ use crate::{
 pub fn build_tree() -> Bt {
     Sel(vec![
         // Emergency self-heal + Barkskin.
-        Seq(vec![HpBelow(0.35), Sel(vec![CastOnSelf(REGROWTH), CastOnSelf(BARKSKIN)])]),
-
-        Seq(vec![InCombat, Sel(vec![
-            // Debuff upkeep.
-            Seq(vec![TargetMissingAnyRank(FAERIE_FIRE_RANKS), CastOnTarget(FAERIE_FIRE_FERAL)]),
-            Seq(vec![TargetMissingAnyRank(INSECT_SWARM_RANKS), CastOnTarget(INSECT_SWARM)]),
-            Seq(vec![TargetMissingAnyRank(MOONFIRE_RANKS), CastOnTarget(MOONFIRE)]),
-            // Nukes.
-            CastOnTarget(STARFIRE),
-            CastOnTarget(WRATH),
-        ])]),
+        Seq(vec![
+            HpBelow(0.35),
+            Sel(vec![CastOnSelf(REGROWTH), CastOnSelf(BARKSKIN)]),
+        ]),
+        Seq(vec![
+            InCombat,
+            Sel(vec![
+                // Debuff upkeep.
+                Seq(vec![
+                    TargetMissingAnyRank(FAERIE_FIRE_RANKS),
+                    CastOnTarget(FAERIE_FIRE_FERAL),
+                ]),
+                Seq(vec![
+                    TargetMissingAnyRank(INSECT_SWARM_RANKS),
+                    CastOnTarget(INSECT_SWARM),
+                ]),
+                Seq(vec![
+                    TargetMissingAnyRank(MOONFIRE_RANKS),
+                    CastOnTarget(MOONFIRE),
+                ]),
+                // Nukes.
+                CastOnTarget(STARFIRE),
+                CastOnTarget(WRATH),
+            ]),
+        ]),
     ])
 }

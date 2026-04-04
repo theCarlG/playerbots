@@ -13,15 +13,15 @@ use super::super::{EncounterEvent, EncounterFsm};
 use crate::encounters::bt::Bt::{self, *};
 use crate::ffi::SpellId;
 
-pub const SPELL_KNOCK_BACK:   SpellId = SpellId(18670);
-pub const SPELL_MORTAL_STRIKE:SpellId = SpellId(24573);
-pub const SPELL_BLAST_WAVE:   SpellId = SpellId(23331);
+pub const SPELL_KNOCK_BACK: SpellId = SpellId(18670);
+pub const SPELL_MORTAL_STRIKE: SpellId = SpellId(24573);
+pub const SPELL_BLAST_WAVE: SpellId = SpellId(23331);
 
 #[derive(Clone, Debug)]
 pub struct BroodlordFsm {
     active: bool,
-    done:   bool,
-    bt:     Bt,
+    done: bool,
+    bt: Bt,
 }
 
 impl PartialEq for BroodlordFsm {
@@ -32,21 +32,27 @@ impl PartialEq for BroodlordFsm {
 
 impl BroodlordFsm {
     pub fn new() -> Self {
-        Self { active: false, done: false, bt: Self::build_bt() }
+        Self {
+            active: false,
+            done: false,
+            bt: Self::build_bt(),
+        }
     }
 
     fn build_bt() -> Bt {
         // Ranged stay at max range (30y) to avoid the knockback cone
         // and Blast Wave; melee hug close to stay in the safe arc.
         Sel(vec![
-            Seq(vec![IsRanged,  MaintainRange(30.0)]),
+            Seq(vec![IsRanged, MaintainRange(30.0)]),
             Seq(vec![IsMeleeDps, MaintainRange(5.0)]),
         ])
     }
 }
 
 impl Default for BroodlordFsm {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EncounterFsm for BroodlordFsm {
@@ -58,10 +64,18 @@ impl EncounterFsm for BroodlordFsm {
             _ => {}
         }
     }
-    fn phase_id(&self) -> u32   { u32::from(self.active) }
-    fn is_active(&self) -> bool { self.active }
-    fn is_done(&self)   -> bool { self.done }
-    fn boss_entry(&self) -> u32 { super::ENTRY_BROODLORD }
+    fn phase_id(&self) -> u32 {
+        u32::from(self.active)
+    }
+    fn is_active(&self) -> bool {
+        self.active
+    }
+    fn is_done(&self) -> bool {
+        self.done
+    }
+    fn boss_entry(&self) -> u32 {
+        super::ENTRY_BROODLORD
+    }
     fn phase_bt(&self) -> Option<&Bt> {
         if self.active { Some(&self.bt) } else { None }
     }

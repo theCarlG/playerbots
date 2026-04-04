@@ -109,7 +109,10 @@ pub struct CooldownGate {
 
 impl BtNode for CooldownGate {
     fn tick(&self, ctx: &mut TickContext<'_>) -> BtResult {
-        if ctx.timers.spell_on_cooldown(self.spell_id, ctx.server_time_ms) {
+        if ctx
+            .timers
+            .spell_on_cooldown(self.spell_id, ctx.server_time_ms)
+        {
             return BtResult::Failure;
         }
         self.child.tick(ctx)
@@ -155,7 +158,11 @@ pub struct ThrottleGate {
 
 impl ThrottleGate {
     pub fn new(interval_ms: u64, child: Box<dyn BtNode>) -> Self {
-        Self { interval_ms, child, last_run_ms: std::cell::Cell::new(0) }
+        Self {
+            interval_ms,
+            child,
+            last_run_ms: std::cell::Cell::new(0),
+        }
     }
 }
 
@@ -183,7 +190,11 @@ pub struct Condition {
 
 impl BtNode for Condition {
     fn tick(&self, ctx: &mut TickContext<'_>) -> BtResult {
-        if (self.check)(ctx) { BtResult::Success } else { BtResult::Failure }
+        if (self.check)(ctx) {
+            BtResult::Success
+        } else {
+            BtResult::Failure
+        }
     }
 }
 
@@ -203,12 +214,18 @@ impl BtNode for ActionLeaf {
 
 /// Build a condition node.
 pub fn cond(check: impl Fn(&TickContext<'_>) -> bool + Send + 'static) -> Box<dyn BtNode> {
-    Box::new(Condition { check: Box::new(check) })
+    Box::new(Condition {
+        check: Box::new(check),
+    })
 }
 
 /// Build an action leaf.
-pub fn action(execute: impl Fn(&mut TickContext<'_>) -> BtResult + Send + 'static) -> Box<dyn BtNode> {
-    Box::new(ActionLeaf { execute: Box::new(execute) })
+pub fn action(
+    execute: impl Fn(&mut TickContext<'_>) -> BtResult + Send + 'static,
+) -> Box<dyn BtNode> {
+    Box::new(ActionLeaf {
+        execute: Box::new(execute),
+    })
 }
 
 /// Sequence of boxed nodes.
@@ -247,19 +264,25 @@ pub fn throttle(interval_ms: u64, child: Box<dyn BtNode>) -> Box<dyn BtNode> {
 }
 
 /// Cast a spell at a unit target: GCD gate + cooldown gate + cast action.
-pub fn cast_on_target(spell_id: SpellId, target_fn: impl Fn(&TickContext<'_>) -> Option<u64> + Send + 'static) -> Box<dyn BtNode> {
-    gcd_gate(cd_gate(spell_id, action(move |ctx| {
-        if let Some(target) = target_fn(ctx) {
-            if ctx.interface.cast_spell(spell_id, target) {
-                ctx.timers.on_spell_cast(spell_id, ctx.server_time_ms);
-                BtResult::Success
+pub fn cast_on_target(
+    spell_id: SpellId,
+    target_fn: impl Fn(&TickContext<'_>) -> Option<u64> + Send + 'static,
+) -> Box<dyn BtNode> {
+    gcd_gate(cd_gate(
+        spell_id,
+        action(move |ctx| {
+            if let Some(target) = target_fn(ctx) {
+                if ctx.interface.cast_spell(spell_id, target) {
+                    ctx.timers.on_spell_cast(spell_id, ctx.server_time_ms);
+                    BtResult::Success
+                } else {
+                    BtResult::Failure
+                }
             } else {
                 BtResult::Failure
             }
-        } else {
-            BtResult::Failure
-        }
-    })))
+        }),
+    ))
 }
 
 /// Cast a spell at the current target.
@@ -269,7 +292,6 @@ pub fn cast_on_current_target(spell_id: SpellId) -> Box<dyn BtNode> {
         if h == 0 { None } else { Some(h) }
     })
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -314,15 +336,21 @@ mod tests {
 
     #[test]
     fn utility_selector_picks_highest_scoring_success() {
-        use std::sync::atomic::{AtomicU8, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicU8, Ordering};
         let called = Arc::new(AtomicU8::new(0));
         let called2 = called.clone();
 
         let tree = util(vec![
             (10.0, cond(|_| false)), // highest score but fails
-            (8.0,  action(move |_| { called2.fetch_add(1, Ordering::SeqCst); BtResult::Success })),
-            (5.0,  cond(|_| true)),  // lower score, should not be reached
+            (
+                8.0,
+                action(move |_| {
+                    called2.fetch_add(1, Ordering::SeqCst);
+                    BtResult::Success
+                }),
+            ),
+            (5.0, cond(|_| true)), // lower score, should not be reached
         ]);
         let mut owned = make_test_ctx();
         assert_eq!(tree.tick(&mut owned.ctx()), BtResult::Success);

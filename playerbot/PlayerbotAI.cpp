@@ -11,5 +11,12 @@
 
 bool IsAlliance(uint8 race) {
     return race == RACE_HUMAN || race == RACE_DWARF || race == RACE_NIGHTELF
-        || race == RACE_GNOME || race == RACE_DRAENEI || race == RACE_WORGEN;
+        || race == RACE_GNOME
+#ifdef MANGOSBOT_ONE
+        || race == RACE_DRAENEI
+#endif
+#ifdef MANGOSBOT_TWO
+        || race == RACE_DRAENEI
+#endif
+        ;
 }

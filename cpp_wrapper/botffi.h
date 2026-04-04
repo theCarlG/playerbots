@@ -84,48 +84,52 @@ typedef struct {
     bool  found;                /* false = no reachable position found */
 } BotSafePosition;
 
+typedef struct {
+    uint32_t quest_id;
+    bool     complete;
+} BotQuestInfo;
+
+typedef struct {
+    UnitHandle unit;
+    uint32_t   spell_id;        /* debuff spell ID */
+    bool       found;           /* false = no dispellable target */
+} BotDispelTarget;
+
 /* ── Callback table (C++ → Rust query/command interface) ─────────────────── */
 
 typedef struct BotCallbacks {
-    /* -- Core state snapshot (call once at tick start) -- */
+    /* ── Core state snapshot (call once at tick start) ────────────────── */
     BotWorldSnapshot (*get_snapshot)(BotHandle bot);
     BotUnitSnapshot  (*get_unit_snapshot)(BotHandle bot, UnitHandle target);
 
-    /* -- Aura queries -- */
+    /* ── Aura queries ────────────────────────────────────────────────── */
     bool         (*has_aura)(BotHandle bot, UnitHandle target, uint32_t spell_id);
     BotAuraInfo  (*get_aura)(BotHandle bot, UnitHandle target, uint32_t spell_id);
-    /* get_auras: fills *out_count and returns heap-allocated array; caller must call free_aura_list */
     BotAuraInfo* (*get_auras)(BotHandle bot, UnitHandle target, uint32_t* out_count);
     void         (*free_aura_list)(BotAuraInfo* list);
 
-    /* -- Threat queries (CMaNGOS ThreatManager) -- */
-    /* get_threat_list: ordered highest→lowest; caller must call free_threat_list */
+    /* ── Threat queries (CMaNGOS ThreatManager) ──────────────────────── */
     BotThreatEntry* (*get_threat_list)(BotHandle bot, UnitHandle target_unit, uint32_t* out_count);
     void            (*free_threat_list)(BotThreatEntry* list);
     float           (*get_unit_threat)(BotHandle bot, UnitHandle target_unit, UnitHandle from_unit);
 
-    /* -- Unit queries -- */
+    /* ── Unit queries ────────────────────────────────────────────────── */
     float       (*unit_distance)(BotHandle bot, UnitHandle target);
     bool        (*can_cast)(BotHandle bot, uint32_t spell_id, UnitHandle target);
     bool        (*spell_on_cooldown)(BotHandle bot, uint32_t spell_id);
     uint32_t    (*spell_cooldown_ms)(BotHandle bot, uint32_t spell_id);
     bool        (*has_los)(BotHandle bot, UnitHandle target);
-    /* get_nearby_units: caller must call free_unit_list */
     UnitHandle* (*get_nearby_units)(BotHandle bot, float range, bool hostile, uint32_t* out_count);
     void        (*free_unit_list)(UnitHandle* list);
 
-    /* -- Pathfinding / positioning (wraps CMaNGOS PathFinder + Detour) -- */
-    /* Position at `distance` directly behind target (avoids cleave) */
-    BotPosition    (*get_behind_position)(BotHandle bot, UnitHandle target, float distance);
-    /* Nearest reachable position not in any ground effect within search_radius yards */
+    /* ── Pathfinding / positioning ───────────────────────────────────── */
+    BotPosition     (*get_behind_position)(BotHandle bot, UnitHandle target, float distance);
     BotSafePosition (*get_safe_position)(BotHandle bot, float search_radius);
-    /* Evenly-spread position: bot index idx of total bots in a circle of radius around center */
-    BotPosition    (*get_spread_position)(BotHandle bot, UnitHandle center, float radius,
-                                          uint8_t idx, uint8_t total);
-    /* Check if bot can path to (x,y,z) — no movement issued */
-    bool           (*can_reach)(BotHandle bot, float x, float y, float z);
+    BotPosition     (*get_spread_position)(BotHandle bot, UnitHandle center, float radius,
+                                           uint8_t idx, uint8_t total);
+    bool            (*can_reach)(BotHandle bot, float x, float y, float z);
 
-    /* -- Bot commands (all return true on success) -- */
+    /* ── Bot commands (all return true on success) ───────────────────── */
     bool (*cast_spell)(BotHandle bot, uint32_t spell_id, UnitHandle target);
     bool (*cast_spell_pos)(BotHandle bot, uint32_t spell_id, float x, float y, float z);
     bool (*move_to)(BotHandle bot, float x, float y, float z);
@@ -134,13 +138,124 @@ typedef struct BotCallbacks {
     bool (*attack)(BotHandle bot, UnitHandle target);
     bool (*auto_attack)(BotHandle bot, bool enable);
     bool (*say)(BotHandle bot, const char* msg, uint32_t lang);
+    bool (*whisper)(BotHandle bot, uint64_t target_guid, const char* msg);
     bool (*use_item)(BotHandle bot, uint32_t item_id, UnitHandle target);
-    bool (*taunt)(BotHandle bot, UnitHandle target);   /* issues bot's taunt spell */
+    bool (*taunt)(BotHandle bot, UnitHandle target);
 
-    /* -- Group / raid queries -- */
-    UnitHandle (*group_get_tank)(BotHandle bot);       /* 0 if no tank assigned */
-    UnitHandle (*group_get_healer)(BotHandle bot);     /* 0 if no healer assigned */
-    uint8_t    (*group_get_role)(BotHandle bot, UnitHandle member); /* role bitmask */
+    /* ── Group / raid queries ────────────────────────────────────────── */
+    UnitHandle (*group_get_tank)(BotHandle bot);
+    UnitHandle (*group_get_healer)(BotHandle bot);
+    uint8_t    (*group_get_role)(BotHandle bot, UnitHandle member);
+    /* Find the nearest hostile unit marked with raid target icon 1..8.
+     * Returns 0 if no such unit exists. */
+    UnitHandle (*get_unit_with_raid_icon)(BotHandle bot, uint8_t icon);
+
+    /* ── Death / resurrection ────────────────────────────────────────── */
+    bool        (*accept_resurrect)(BotHandle bot);
+    BotPosition (*get_corpse_position)(BotHandle bot);  /* returns {0,0,0} if N/A */
+    bool        (*use_spirit_healer)(BotHandle bot);
+
+    /* ── Mount ───────────────────────────────────────────────────────── */
+    bool (*is_mounted)(BotHandle bot);
+    bool (*mount_up)(BotHandle bot);
+    bool (*dismount)(BotHandle bot);
+    bool (*is_indoor)(BotHandle bot);
+
+    /* ── Loot ────────────────────────────────────────────────────────── */
+    UnitHandle* (*get_nearby_lootable)(BotHandle bot, float range, uint32_t* out_count);
+    bool        (*open_loot)(BotHandle bot, UnitHandle target);
+    bool        (*take_all_loot)(BotHandle bot);
+
+    /* ── NPC interaction ─────────────────────────────────────────────── */
+    UnitHandle* (*get_nearby_npcs)(BotHandle bot, float range, uint32_t npc_flags,
+                                   uint32_t* out_count);
+    bool        (*interact_npc)(BotHandle bot, UnitHandle npc);
+    bool        (*repair_all)(BotHandle bot);
+    bool        (*sell_grey_items)(BotHandle bot);
+    bool        (*has_sellable_items)(BotHandle bot);
+    float       (*get_durability_pct)(BotHandle bot);
+
+    /* ── Quest ───────────────────────────────────────────────────────── */
+    BotQuestInfo* (*get_quest_log)(BotHandle bot, uint32_t* out_count);
+    void          (*free_quest_log)(BotQuestInfo* list);
+    bool          (*accept_all_quests)(BotHandle bot, UnitHandle npc);
+    bool          (*turn_in_quest)(BotHandle bot, UnitHandle npc, uint32_t quest_id);
+
+    /* ── Unit queries (extended) ─────────────────────────────────────── */
+    bool    (*is_attackable)(BotHandle bot, UnitHandle target);
+    uint8_t (*get_unit_level)(BotHandle bot, UnitHandle target);
+    bool    (*is_casting_interruptible)(BotHandle bot, UnitHandle target);
+
+    /* ── Pet management ──────────────────────────────────────────────── */
+    bool    (*has_pet)(BotHandle bot);
+    bool    (*pet_is_alive)(BotHandle bot);
+    uint8_t (*pet_happiness)(BotHandle bot);
+    bool    (*summon_pet)(BotHandle bot);
+    bool    (*revive_pet)(BotHandle bot);
+    bool    (*feed_pet)(BotHandle bot);
+
+    /* ── Dispel / party queries ──────────────────────────────────────── */
+    BotDispelTarget (*find_dispellable_target)(BotHandle bot);
+    UnitHandle      (*find_dead_party_member)(BotHandle bot);
+
+    /* ── Battleground ────────────────────────────────────────────────── */
+    bool           (*is_in_battleground)(BotHandle bot);
+    uint8_t        (*battleground_type)(BotHandle bot);  /* 1=AV, 2=WSG, 3=AB, 0=none */
+    BotSafePosition (*get_bg_objective)(BotHandle bot);  /* .found=false if none */
+    bool           (*capture_bg_objective)(BotHandle bot);
+    UnitHandle*    (*get_nearby_enemies)(BotHandle bot, float range, uint32_t* out_count);
+
+    /* ── RPG / social ────────────────────────────────────────────────── */
+    BotSafePosition (*get_random_point_nearby)(BotHandle bot, float range);
+    bool            (*emote)(BotHandle bot, uint32_t emote_id);
+    UnitHandle*     (*get_nearby_gossip_npcs)(BotHandle bot, float range, uint32_t* out_count);
+
+    /* ── Gathering (mining, herbalism, skinning) ─────────────────────── */
+    bool        (*has_gathering_skill)(BotHandle bot);
+    uint64_t*   (*get_nearby_gatherables)(BotHandle bot, float range, uint32_t* out_count);
+    void        (*free_gatherable_list)(uint64_t* list);
+    bool        (*gather_node)(BotHandle bot, uint64_t handle);
+    float       (*gameobject_distance)(BotHandle bot, uint64_t handle);
+    BotPosition (*gameobject_position)(BotHandle bot, uint64_t handle);
+
+    /* ── Factory: inventory mutation ─────────────────────────────────── */
+    /* Destroy every equipped item plus every item in backpack and carried bags.
+     * Leaves bank contents intact. */
+    void     (*inventory_destroy_equipped_and_bags)(BotHandle bot);
+    /* Destroy every item the bot owns (equipped, bags, bank). */
+    void     (*inventory_destroy_all)(BotHandle bot);
+    /* Return the number of `item_id` in backpack and carried bags (excludes bank). */
+    uint32_t (*item_count_in_bags)(BotHandle bot, uint32_t item_id);
+
+    /* Add `count` of `item_id` to the bot's bags (via StoreNewItemInInventorySlot).
+     * Returns the number actually added — may be 0 if bags are full. */
+    uint32_t (*inventory_add_item)(BotHandle bot, uint32_t item_id, uint32_t count);
+    /* Max stack size of the item prototype (1 if unknown). */
+    uint32_t (*item_max_stack_size)(BotHandle bot, uint32_t item_id);
+
+    /* ── Factory: consumable selection (wraps RandomItemMgr) ─────────── */
+    /* effect: SPELL_EFFECT_HEAL=10, SPELL_EFFECT_ENERGIZE=30. Returns 0 if none. */
+    uint32_t (*factory_pick_potion_for_level)(BotHandle bot, uint32_t level, uint32_t effect);
+    /* category: 11 = food, 59 = drink. Returns 0 if none. */
+    uint32_t (*factory_pick_food_for_level)(BotHandle bot, uint32_t level, uint32_t category);
+
+    /* ── RNG ─────────────────────────────────────────────────────────── */
+    /* Uniform random integer in [min, max] (inclusive). Wraps CMaNGOS urand. */
+    uint32_t (*random_u32)(BotHandle bot, uint32_t min, uint32_t max);
+
+    /* ── Factory: progression wipe ───────────────────────────────────── */
+    /* Set a skill to zero (effectively removing it). Used by ClearSkills. */
+    void (*bot_clear_skill)(BotHandle bot, uint32_t skill_id);
+    /* Reset all learned spells via Player::resetSpells() (CMaNGOS). */
+    void (*bot_reset_spells)(BotHandle bot);
+    /* Wipe every quest from the quest log + character_queststatus DB row. */
+    void (*bot_reset_all_quests)(BotHandle bot);
+
+    /* ── Factory: misc pre/post init ─────────────────────────────────── */
+    /* Remove every aura (buffs & debuffs) currently on the bot. */
+    void (*bot_remove_all_auras)(BotHandle bot);
+    /* True if the bot has `skill_id` learned at any rank. */
+    bool (*bot_has_skill)(BotHandle bot, uint32_t skill_id);
 } BotCallbacks;
 
 /* ── Rust exports (entry points CMaNGOS calls into Rust) ─────────────────── */
@@ -184,56 +299,89 @@ void playerbot_update(void* state, uint32_t elapsed_ms, bool minimal);
 
 /**
  * Incoming network packet (master player → server).
- * Called from WorldSession::HandleLoggedInState (existing CMaNGOS hook).
  */
 void playerbot_packet_in(void* state, uint16_t opcode, const uint8_t* data, uint32_t len);
 
 /**
  * Outgoing network packet (server → master player).
- * Called from WorldSession::SendPacket (existing CMaNGOS hook).
  */
 void playerbot_packet_out(void* state, uint16_t opcode, const uint8_t* data, uint32_t len);
 
-/* ── Push combat events (CMaNGOS notifies Rust immediately when events fire) ─
- * Hooked in BotBridge.cpp via:
- *   - SMSG_SPELL_GO / SMSG_SPELL_START packet observer (spell casts)
- *   - SMSG_AURA_UPDATE packet observer (aura changes)
- *   - PlayerbotAIBase::DamageTaken() override
- *   - PlayerbotAIBase::KilledUnit() / JustDied() hooks
- * These are queued in BotState::push_events and processed at next tick start.
- */
+/* ── Push combat events ──────────────────────────────────────────────────── */
 
-/**
- * A unit visible to this bot cast (or failed to cast) a spell.
- * success=false means the cast was interrupted or resisted.
- */
 void playerbot_unit_spell_cast(void* state, UnitHandle caster, uint32_t spell_id,
                                UnitHandle target, bool success);
 
-/**
- * An aura was applied to or removed from a unit visible to this bot.
- */
 void playerbot_aura_changed(void* state, UnitHandle unit, uint32_t spell_id,
                             bool applied, uint8_t stacks);
 
-/**
- * A unit visible to this bot died.
- */
 void playerbot_unit_died(void* state, UnitHandle victim, UnitHandle killer);
 
-/**
- * This bot took damage (for immediate flee/reaction logic).
- * spell_id=0 for melee damage.
- */
 void playerbot_damage_taken(void* state, uint32_t damage, uint32_t spell_id,
                             UnitHandle dealer);
 
+/* ── Chat command injection ──────────────────────────────────────────────── */
+
 /**
- * Global coordination tick — called from sRandomPlayerbotMgr.UpdateAI (world thread).
- * Used for cross-bot bookkeeping: group state cleanup, activity metrics.
- * This hook already exists in CMaNGOS — no modification required.
+ * Inject a chat command into a bot's pending command queue.
+ * Called when a player whispers a command to the bot.
+ *
+ *   sender_guid  — ObjectGuid raw value of the player issuing the command.
+ *                  0 means "internal/system/console" and bypasses gating.
+ *   privileged   — non-zero if the sender is the bot's owner, party leader,
+ *                  or a GM (mirrors the old PlayerbotSecurity check).
+ *   text         — null-terminated command text.
+ */
+void playerbot_chat_command(void* state, uint64_t sender_guid,
+                            uint8_t privileged, const char* text);
+
+/* ── RTSC (Real-Time Strategy Control) ───────────────────────────────────── */
+
+/**
+ * RTSC spell position — called when spell 30758 is cast on the ground by
+ * the bot's master. The C++ side extracts the destination position from
+ * SpellCastTargets and passes it here. The Rust side applies the pending
+ * RTSC action (move, save waypoint, etc.).
+ */
+void playerbot_rtsc_spell(void* state, float x, float y, float z);
+
+/* ── Global coordination ─────────────────────────────────────────────────── */
+
+/**
+ * Global tick — called from sRandomPlayerbotMgr.UpdateAI (world thread).
  */
 void playerbot_world_update(uint32_t elapsed_ms);
+
+/* ── Factory entry points (called from PlayerbotFactory C++) ─────────────── */
+
+/**
+ * Clear bot inventory via the Rust factory module.
+ *
+ *   state — pointer returned by playerbot_create for this bot
+ *   mode  — 0 = equipped + carried bags; 1 = equipped + bags + bank (everything)
+ */
+void playerbot_factory_clear_inventory(void* state, uint8_t mode);
+
+/**
+ * Initialize consumables for a bot via the Rust factory module.
+ *
+ *   kind — 0 = potions, 1 = food, 2 = reagents
+ */
+void playerbot_factory_init_consumables(void* state, uint8_t kind);
+
+/**
+ * Wipe bot progression via the Rust factory module.
+ *
+ *   kind — 0 = trade skills, 1 = spells, 2 = quests
+ */
+void playerbot_factory_reset_progression(void* state, uint8_t kind);
+
+/**
+ * Miscellaneous factory step via the Rust factory module.
+ *
+ *   kind — 0 = cancel auras, 1 = init skill-tool starter kit
+ */
+void playerbot_factory_misc(void* state, uint8_t kind);
 
 #ifdef __cplusplus
 } /* extern "C" */

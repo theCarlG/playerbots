@@ -21,32 +21,34 @@ const BLOOD_PLAGUE: SpellId = SpellId(55078);
 pub fn build_tree() -> Bt {
     Sel(vec![
         StickToTarget(5.0),
-
         // Death Grip pull on ranged targets.
         Seq(vec![TargetFartherThan(15.0), CastOnTarget(DEATH_GRIP)]),
-
-        Seq(vec![InCombat, Sel(vec![
-            // Cooldown.
-            CastOnSelf(DANCING_RUNE_WEAPON),
-
-            // Taunt.
-            CastOnTarget(DARK_COMMAND),
-
-            // Diseases.
-            Seq(vec![TargetMissingAura(FROST_FEVER), CastOnTarget(ICY_TOUCH)]),
-            Seq(vec![TargetMissingAura(BLOOD_PLAGUE), CastOnTarget(PLAGUE_STRIKE)]),
-
-            // Self-sustain.
-            Seq(vec![HpBelow(0.70), CastOnTarget(DEATH_STRIKE)]),
-
-            // Main damage.
-            CastOnTarget(HEART_STRIKE),
-            CastOnTarget(BLOOD_STRIKE),
-            CastOnTarget(DEATH_COIL),
-
-            // AoE.
-            Seq(vec![NearbyAtLeast(2), CastOnTarget(BLOOD_BOIL)]),
-            Seq(vec![NearbyAtLeast(2), CastOnSelf(DEATH_AND_DECAY)]),
-        ])]),
+        Seq(vec![
+            InCombat,
+            Sel(vec![
+                // Cooldown.
+                CastOnSelf(DANCING_RUNE_WEAPON),
+                // Taunt.
+                CastOnTarget(DARK_COMMAND),
+                // Diseases.
+                Seq(vec![
+                    TargetMissingAura(FROST_FEVER),
+                    CastOnTarget(ICY_TOUCH),
+                ]),
+                Seq(vec![
+                    TargetMissingAura(BLOOD_PLAGUE),
+                    CastOnTarget(PLAGUE_STRIKE),
+                ]),
+                // Self-sustain.
+                Seq(vec![HpBelow(0.70), CastOnTarget(DEATH_STRIKE)]),
+                // Main damage.
+                CastOnTarget(HEART_STRIKE),
+                CastOnTarget(BLOOD_STRIKE),
+                CastOnTarget(DEATH_COIL),
+                // AoE.
+                Seq(vec![NearbyAtLeast(2), CastOnTarget(BLOOD_BOIL)]),
+                Seq(vec![NearbyAtLeast(2), CastOnSelf(DEATH_AND_DECAY)]),
+            ]),
+        ]),
     ])
 }

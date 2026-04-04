@@ -679,27 +679,12 @@ bool PlayerbotAIConfig::Initialize()
     llmBotToBotChatChance = config.GetIntDefault("AiPlayerbot.LLMBotToBotChatChance", 0);
     llmRpgAIChatChance = config.GetIntDefault("AiPlayerbot.LLMRpgAIChatChance", 100);
 
+    // ChatChannelSource enum was removed with the old strategy engine.
+    // LLMBlockedReplyChannels parsing is stubbed; re-add once the LLM chat
+    // plumbing is ported to Rust.
     std::list<std::string> blockedChannels;
     LoadListString<std::list<std::string>>(config.GetStringDefault("AiPlayerbot.LLMBlockedReplyChannels", ""), blockedChannels);
-    std::map<std::string, ChatChannelSource> sourceName;
-    sourceName["guild"] = ChatChannelSource::SRC_GUILD;
-    sourceName["world"] = ChatChannelSource::SRC_WORLD;
-    sourceName["general"] = ChatChannelSource::SRC_GENERAL;
-    sourceName["trade"] = ChatChannelSource::SRC_TRADE;
-    sourceName["lfg"] = ChatChannelSource::SRC_LOOKING_FOR_GROUP;
-    sourceName["ldefence"] = ChatChannelSource::SRC_LOCAL_DEFENSE;
-    sourceName["wdefence"] = ChatChannelSource::SRC_WORLD_DEFENSE;
-    sourceName["grecruitement"] = ChatChannelSource::SRC_GUILD_RECRUITMENT;
-    sourceName["say"] = ChatChannelSource::SRC_SAY;
-    sourceName["whisper"] = ChatChannelSource::SRC_WHISPER;
-    sourceName["emote"] = ChatChannelSource::SRC_EMOTE;
-    sourceName["temote"] = ChatChannelSource::SRC_TEXT_EMOTE;
-    sourceName["yell"] = ChatChannelSource::SRC_YELL;
-    sourceName["party"] = ChatChannelSource::SRC_PARTY;
-    sourceName["raid"] = ChatChannelSource::SRC_RAID;
-
-    for (auto& channelName : blockedChannels)
-        llmBlockedReplyChannels.insert(sourceName[channelName]);
+    (void)blockedChannels;
 
     {
         std::string promptsFile = config.GetStringDefault("AiPlayerbot.LLMDefaultPromptsFile", "llm_character_card");

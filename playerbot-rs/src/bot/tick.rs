@@ -10,7 +10,7 @@
 ///   7. Advance timers
 use crate::{
     bot::state::BotState,
-    encounters::{coordinator, EncounterEvent},
+    encounters::{EncounterEvent, coordinator},
     engine::{bt_nodes::BtNode, context::TickContext},
 };
 
@@ -23,7 +23,9 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
 
     // 2. Throttled attacker/nearby refresh
     if !minimal && now_ms.saturating_sub(bot.last_attackers_refresh_ms) >= cfg.attacker_refresh_ms {
-        bot.attackers = bot.interface.get_nearby_units(cfg.attacker_scan_range, true);
+        bot.attackers = bot
+            .interface
+            .get_nearby_units(cfg.attacker_scan_range, true);
         bot.last_attackers_refresh_ms = now_ms;
     }
     if !minimal && now_ms.saturating_sub(bot.last_nearby_refresh_ms) >= cfg.nearby_refresh_ms {
@@ -72,15 +74,14 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         ..
     } = *bot;
 
-    let ctx_group = group_state.as_ref()
-        .and_then(|arc| arc.try_read().ok());
+    let ctx_group = group_state.as_ref().and_then(|arc| arc.try_read().ok());
 
     let mut ctx = TickContext {
         snap,
         nearby: nearby_units,
         attackers,
         group_state: ctx_group.as_deref(),
-        interface:   interface.as_ref(),
+        interface: interface.as_ref(),
         blackboard,
         timers,
         server_time_ms: now_ms,
@@ -107,8 +108,12 @@ fn process_events(bot: &mut BotState, _now_ms: u64) {
             let snap = bot.interface.get_unit_snapshot(target);
             if snap.max_health > 0 {
                 snap.health as f32 / snap.max_health as f32
-            } else { 1.0 }
-        } else { 1.0 }
+            } else {
+                1.0
+            }
+        } else {
+            1.0
+        }
     };
 
     let now_ms = bot.snap.server_time_ms;
@@ -118,16 +123,27 @@ fn process_events(bot: &mut BotState, _now_ms: u64) {
         use crate::bot::events::BotEvent;
 
         let enc_event = match &event {
-            BotEvent::UnitSpellCast { caster, spell_id, target: _, success } =>
-                Some(EncounterEvent::SpellCast {
-                    caster: *caster, spell_id: *spell_id, success: *success
-                }),
-            BotEvent::AuraChanged { unit, spell_id, applied, .. } =>
-                Some(EncounterEvent::AuraChanged {
-                    unit: *unit, spell_id: *spell_id, applied: *applied
-                }),
-            BotEvent::UnitDied { victim, .. } =>
-                Some(EncounterEvent::UnitDied { victim: *victim }),
+            BotEvent::UnitSpellCast {
+                caster,
+                spell_id,
+                target: _,
+                success,
+            } => Some(EncounterEvent::SpellCast {
+                caster: *caster,
+                spell_id: *spell_id,
+                success: *success,
+            }),
+            BotEvent::AuraChanged {
+                unit,
+                spell_id,
+                applied,
+                ..
+            } => Some(EncounterEvent::AuraChanged {
+                unit: *unit,
+                spell_id: *spell_id,
+                applied: *applied,
+            }),
+            BotEvent::UnitDied { victim, .. } => Some(EncounterEvent::UnitDied { victim: *victim }),
             BotEvent::DamageTaken { .. } => None,
             BotEvent::PacketIn { .. } | BotEvent::PacketOut { .. } => None,
         };
@@ -158,7 +174,8 @@ fn process_events(bot: &mut BotState, _now_ms: u64) {
         use crate::engine::blackboard::{Key, Value};
         let zone = enc.safe_zone_hint();
         if zone > 0 {
-            bot.blackboard.set(Key::EncounterSafeZone, Value::U32(zone as u32));
+            bot.blackboard
+                .set(Key::EncounterSafeZone, Value::U32(zone as u32));
         }
     }
 
@@ -171,4 +188,3 @@ fn process_events(bot: &mut BotState, _now_ms: u64) {
         }
     }
 }
-

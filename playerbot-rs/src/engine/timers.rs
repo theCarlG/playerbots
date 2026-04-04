@@ -1,9 +1,9 @@
+use crate::ffi::SpellId;
 /// Per-bot combat timers: GCD and per-spell cooldowns.
 ///
 /// Tracked in Rust so BT nodes can check cooldowns without calling into C++.
 /// Populated by BT action nodes when spells are cast successfully.
 use std::collections::HashMap;
-use crate::ffi::SpellId;
 
 /// GCD duration in milliseconds (1500ms standard).
 const GCD_MS: u64 = 1500;
@@ -26,12 +26,15 @@ impl BotTimers {
 
     /// Returns true if the spell is currently on cooldown.
     pub fn spell_on_cooldown(&self, spell_id: SpellId, now_ms: u64) -> bool {
-        self.cooldowns.get(&spell_id).map_or(false, |&ready_at| now_ms < ready_at)
+        self.cooldowns
+            .get(&spell_id)
+            .map_or(false, |&ready_at| now_ms < ready_at)
     }
 
     /// Milliseconds remaining on a spell cooldown (0 if ready).
     pub fn cooldown_remaining_ms(&self, spell_id: SpellId, now_ms: u64) -> u32 {
-        self.cooldowns.get(&spell_id)
+        self.cooldowns
+            .get(&spell_id)
             .map(|&ready_at| ready_at.saturating_sub(now_ms) as u32)
             .unwrap_or(0)
     }

@@ -19,22 +19,17 @@ pub fn build_tree() -> Bt {
             SelfMissingAura(WEAKENED_SOUL),
             CastOnSelf(POWER_WORD_SHIELD),
         ]),
-
         // Fade if being attacked.
         Seq(vec![AttackersAtLeast(1), CastOnSelf(FADE)]),
-
         // Critical heals.
         HealLowest(FLASH_HEAL, 0.35),
         HealInjuredParty(FLASH_HEAL, 0.35),
-
         // Sustained heals.
         HealLowest(GREATER_HEAL, 0.55),
         HealInjuredParty(GREATER_HEAL, 0.55),
-
         // HoT maintenance.
         HealInjuredParty(RENEW, 0.90),
         HealLowest(RENEW, 0.90),
-
         // Raid AoE heal.
         Seq(vec![
             GroupMembersBelow(3, 0.70),

@@ -66,6 +66,7 @@ namespace BotBridge
     bool CB_Attack(BotHandle bot, UnitHandle target);
     bool CB_AutoAttack(BotHandle bot, bool enable);
     bool CB_Say(BotHandle bot, const char* msg, uint32_t lang);
+    bool CB_Whisper(BotHandle bot, uint64_t target_guid, const char* msg);
     bool CB_UseItem(BotHandle bot, uint32_t item_id, UnitHandle target);
     bool CB_Taunt(BotHandle bot, UnitHandle target);
 
@@ -73,6 +74,98 @@ namespace BotBridge
     UnitHandle CB_GroupGetTank(BotHandle bot);
     UnitHandle CB_GroupGetHealer(BotHandle bot);
     uint8_t    CB_GroupGetRole(BotHandle bot, UnitHandle member);
+    UnitHandle CB_GetUnitWithRaidIcon(BotHandle bot, uint8_t icon);
+
+    // ── Death / resurrection ───────────────────────────────────────────────
+    bool        CB_AcceptResurrect(BotHandle bot);
+    BotPosition CB_GetCorpsePosition(BotHandle bot);
+    bool        CB_UseSpiritHealer(BotHandle bot);
+
+    // ── Mount ──────────────────────────────────────────────────────────────
+    bool CB_IsMounted(BotHandle bot);
+    bool CB_MountUp(BotHandle bot);
+    bool CB_Dismount(BotHandle bot);
+    bool CB_IsIndoor(BotHandle bot);
+
+    // ── Loot ───────────────────────────────────────────────────────────────
+    UnitHandle* CB_GetNearbyLootable(BotHandle bot, float range, uint32_t* out_count);
+    bool        CB_OpenLoot(BotHandle bot, UnitHandle target);
+    bool        CB_TakeAllLoot(BotHandle bot);
+
+    // ── NPC interaction ────────────────────────────────────────────────────
+    UnitHandle* CB_GetNearbyNpcs(BotHandle bot, float range, uint32_t npc_flags,
+                                  uint32_t* out_count);
+    bool        CB_InteractNpc(BotHandle bot, UnitHandle npc);
+    bool        CB_RepairAll(BotHandle bot);
+    bool        CB_SellGreyItems(BotHandle bot);
+    bool        CB_HasSellableItems(BotHandle bot);
+    float       CB_GetDurabilityPct(BotHandle bot);
+
+    // ── Quest ──────────────────────────────────────────────────────────────
+    BotQuestInfo* CB_GetQuestLog(BotHandle bot, uint32_t* out_count);
+    void          CB_FreeQuestLog(BotQuestInfo* list);
+    bool          CB_AcceptAllQuests(BotHandle bot, UnitHandle npc);
+    bool          CB_TurnInQuest(BotHandle bot, UnitHandle npc, uint32_t quest_id);
+
+    // ── Unit queries (extended) ────────────────────────────────────────────
+    bool    CB_IsAttackable(BotHandle bot, UnitHandle target);
+    uint8_t CB_GetUnitLevel(BotHandle bot, UnitHandle target);
+    bool    CB_IsCastingInterruptible(BotHandle bot, UnitHandle target);
+
+    // ── Pet management ─────────────────────────────────────────────────────
+    bool    CB_HasPet(BotHandle bot);
+    bool    CB_PetIsAlive(BotHandle bot);
+    uint8_t CB_PetHappiness(BotHandle bot);
+    bool    CB_SummonPet(BotHandle bot);
+    bool    CB_RevivePet(BotHandle bot);
+    bool    CB_FeedPet(BotHandle bot);
+
+    // ── Dispel / party queries ─────────────────────────────────────────────
+    BotDispelTarget CB_FindDispellableTarget(BotHandle bot);
+    UnitHandle      CB_FindDeadPartyMember(BotHandle bot);
+
+    // ── Battleground ───────────────────────────────────────────────────────
+    bool            CB_IsInBattleground(BotHandle bot);
+    uint8_t         CB_BattlegroundType(BotHandle bot);
+    BotSafePosition CB_GetBgObjective(BotHandle bot);
+    bool            CB_CaptureBgObjective(BotHandle bot);
+    UnitHandle*     CB_GetNearbyEnemies(BotHandle bot, float range, uint32_t* out_count);
+
+    // ── RPG / social ───────────────────────────────────────────────────────
+    BotSafePosition CB_GetRandomPointNearby(BotHandle bot, float range);
+    bool            CB_Emote(BotHandle bot, uint32_t emote_id);
+    UnitHandle*     CB_GetNearbyGossipNpcs(BotHandle bot, float range, uint32_t* out_count);
+
+    // ── Gathering ──────────────────────────────────────────────────────────
+    bool        CB_HasGatheringSkill(BotHandle bot);
+    uint64_t*   CB_GetNearbyGatherables(BotHandle bot, float range, uint32_t* out_count);
+    void        CB_FreeGatherableList(uint64_t* list);
+    bool        CB_GatherNode(BotHandle bot, uint64_t handle);
+    float       CB_GameobjectDistance(BotHandle bot, uint64_t handle);
+    BotPosition CB_GameobjectPosition(BotHandle bot, uint64_t handle);
+
+    // ── Factory: inventory mutation ────────────────────────────────────────
+    void     CB_InventoryDestroyEquippedAndBags(BotHandle bot);
+    void     CB_InventoryDestroyAll(BotHandle bot);
+    uint32_t CB_ItemCountInBags(BotHandle bot, uint32_t item_id);
+    uint32_t CB_InventoryAddItem(BotHandle bot, uint32_t item_id, uint32_t count);
+    uint32_t CB_ItemMaxStackSize(BotHandle bot, uint32_t item_id);
+
+    // ── Factory: consumable selection ──────────────────────────────────────
+    uint32_t CB_FactoryPickPotionForLevel(BotHandle bot, uint32_t level, uint32_t effect);
+    uint32_t CB_FactoryPickFoodForLevel(BotHandle bot, uint32_t level, uint32_t category);
+
+    // ── RNG ─────────────────────────────────────────────────────────────────
+    uint32_t CB_RandomU32(BotHandle bot, uint32_t min, uint32_t max);
+
+    // ── Factory: progression wipe ──────────────────────────────────────────
+    void CB_BotClearSkill(BotHandle bot, uint32_t skill_id);
+    void CB_BotResetSpells(BotHandle bot);
+    void CB_BotResetAllQuests(BotHandle bot);
+
+    // ── Factory: misc pre/post init ────────────────────────────────────────
+    void CB_BotRemoveAllAuras(BotHandle bot);
+    bool CB_BotHasSkill(BotHandle bot, uint32_t skill_id);
 
     // ── Internal helpers ────────────────────────────────────────────────────
     Player* FindBot(BotHandle bot);

@@ -14,26 +14,35 @@ impl BotRole {
     pub const HEAL: Self = Self(2);
     pub const DPS: Self = Self(4);
 
-    pub fn is_tank(self) -> bool { self.0 & 1 != 0 }
-    pub fn is_heal(self) -> bool { self.0 & 2 != 0 }
-    pub fn is_dps(self)  -> bool { self.0 & 4 != 0 }
+    pub fn is_tank(self) -> bool {
+        self.0 & 1 != 0
+    }
+    pub fn is_heal(self) -> bool {
+        self.0 & 2 != 0
+    }
+    pub fn is_dps(self) -> bool {
+        self.0 & 4 != 0
+    }
 }
 
 /// Encounter-specific role assignments computed by GroupCoordinator.
 #[derive(Debug, Clone, Default)]
 pub struct EncounterAssignments {
-    pub main_tank:  Option<UnitHandle>,
-    pub off_tank:   Option<UnitHandle>,
-    pub healers:    Vec<UnitHandle>,
+    pub main_tank: Option<UnitHandle>,
+    pub off_tank: Option<UnitHandle>,
+    pub healers: Vec<UnitHandle>,
     pub ranged_dps: Vec<UnitHandle>,
-    pub melee_dps:  Vec<UnitHandle>,
+    pub melee_dps: Vec<UnitHandle>,
     /// Special roles keyed by an encounter-specific string (e.g. "mc_breaker", "polarity_switch")
-    pub special:    Vec<(String, UnitHandle)>,
+    pub special: Vec<(String, UnitHandle)>,
 }
 
 impl EncounterAssignments {
     pub fn get_special(&self, role: &str) -> Option<UnitHandle> {
-        self.special.iter().find(|(r, _)| r == role).map(|(_, h)| *h)
+        self.special
+            .iter()
+            .find(|(r, _)| r == role)
+            .map(|(_, h)| *h)
     }
 }
 

@@ -52,12 +52,7 @@ pub fn resurrect_subtree() -> Bt {
 
 /// Threat dump when DPS is about to pull aggro.
 pub fn threat_subtree() -> Bt {
-    Seq(vec![
-        IsTank.not(),
-        InCombat,
-        PullingAggro,
-        ThreatDump,
-    ])
+    Seq(vec![IsTank.not(), InCombat, PullingAggro, ThreatDump])
 }
 
 /// Target selection based on combat order and settings.

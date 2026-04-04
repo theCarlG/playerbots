@@ -7,6 +7,7 @@
 #include "Globals/ObjectMgr.h"
 #include "Database/DatabaseEnv.h"
 #include "PlayerbotAI.h"
+#include "PlayerbotRust.h"
 #include "Entities/Player.h"
 
 #include "Grids/GridNotifiers.h"
@@ -250,11 +251,14 @@ botPIDImpl::~botPIDImpl()
 {
 }
 
-RandomPlayerbotMgr::RandomPlayerbotMgr() 
+RandomPlayerbotMgr::RandomPlayerbotMgr()
 : PlayerbotHolder()
 , processTicks(0)
 , loginProgressBar(NULL)
 {
+    // Initialize the Rust AI module once at server startup.
+    PlayerbotRust::InitRustModule();
+
     if (sPlayerbotAIConfig.enabled && sPlayerbotAIConfig.randomBotAutologin)
     {
         PrepareTeleportCache();
@@ -328,6 +332,8 @@ RandomPlayerbotMgr::RandomPlayerbotMgr()
 
 RandomPlayerbotMgr::~RandomPlayerbotMgr()
 {
+    // Shutdown the Rust AI module when the server stops.
+    PlayerbotRust::ShutdownRustModule();
 }
 
 int RandomPlayerbotMgr::GetMaxAllowedBotCount()
@@ -492,6 +498,9 @@ void RandomPlayerbotMgr::LogPlayerLocation()
 
 void RandomPlayerbotMgr::UpdateAIInternal(uint32 elapsed, bool minimal)
 {
+    // Global Rust coordination tick (runs on the world thread).
+    PlayerbotRust::WorldUpdate(static_cast<uint32_t>(elapsed));
+
     if (!sPlayerbotAIConfig.randomBotAutologin || !sPlayerbotAIConfig.enabled)
         return;
 
@@ -2521,15 +2530,15 @@ void RandomPlayerbotMgr::PrepareTeleportCache()
     }
 
     //Creatures.
-    sObjectMgr.DoCreatureData([&](CreatureDataPair const& dataPair)
+    auto creatureWorker = [&](CreatureDataPair const& dataPair) -> bool
     {
         CreatureInfo const* cInfo = ObjectMgr::GetCreatureTemplate(dataPair.second.id);
 
         if (!cInfo)
-            return;
+            return false;
 
         if (cInfo->ExtraFlags & CREATURE_EXTRA_FLAG_INVISIBLE)
-            return;
+            return false;
 
         static const uint32 allowedNpcFlags[] = {
             UNIT_NPC_FLAG_BATTLEMASTER,
@@ -2561,7 +2570,9 @@ void RandomPlayerbotMgr::PrepareTeleportCache()
                 break;
             }
         }
-    });
+        return false;
+    };
+    sObjectMgr.DoCreatureData(creatureWorker);
 
     for (auto newPoint : newPoints)
         rpgLocsCacheLevel[newPoint.first.first][newPoint.first.second].push_back(newPoint.second);
@@ -3288,10 +3299,9 @@ void RandomPlayerbotMgr::PrintStats(uint32 requesterGuid)
     }
 
     uint32 dps = 0, heal = 0, tank = 0, active = 0, update = 0, randomize = 0, teleport = 0, changeStrategy = 0, dead = 0, combat = 0, revive = 0, taxi = 0, moving = 0, mounted = 0, afk = 0;
-    int stateCount[(uint8)TravelState::MAX_TRAVEL_STATE + 1] = { 0 };
     std::vector<std::pair<Quest const*, int32>> questCount;
 
-    ForEachPlayerbot([this, &dps, &heal, &tank, &active, &update, &randomize, &teleport, &changeStrategy, &dead, &combat, &revive, &taxi, &moving, &mounted, &afk, &alliance, &horde, &perRace, &perClass, &stateCount, &questCount](Player* bot)
+    ForEachPlayerbot([this, &dps, &heal, &tank, &active, &update, &randomize, &teleport, &changeStrategy, &dead, &combat, &revive, &taxi, &moving, &mounted, &afk, &alliance, &horde, &perRace, &perClass, &questCount](Player* bot)
     {
         if (IsAlliance(bot->getRace()))
             alliance[bot->GetLevel() / 10]++;
@@ -3453,25 +3463,8 @@ void RandomPlayerbotMgr::PrintStats(uint32 requesterGuid)
     sLog.outString("%s", ss.str().c_str());
     if (requester) { requester->SendMessageToPlayer(ss.str()); }
 
-    ss.str(""); ss << "Bots questing:";
-    sLog.outString("%s", ss.str().c_str());
-    if (requester) { requester->SendMessageToPlayer(ss.str()); }
-
-    ss.str(""); ss << "    Picking quests: " << stateCount[(uint8)TravelState::TRAVEL_STATE_TRAVEL_PICK_UP_QUEST] + stateCount[(uint8)TravelState::TRAVEL_STATE_WORK_PICK_UP_QUEST];
-    sLog.outString("%s", ss.str().c_str());
-    if (requester) { requester->SendMessageToPlayer(ss.str()); }
-
-    ss.str(""); ss << "    Doing quests: " << stateCount[(uint8)TravelState::TRAVEL_STATE_TRAVEL_DO_QUEST] + stateCount[(uint8)TravelState::TRAVEL_STATE_WORK_DO_QUEST];
-    sLog.outString("%s", ss.str().c_str());
-    if (requester) { requester->SendMessageToPlayer(ss.str()); }
-
-    ss.str(""); ss << "    Completing quests: " << stateCount[(uint8)TravelState::TRAVEL_STATE_TRAVEL_HAND_IN_QUEST] + stateCount[(uint8)TravelState::TRAVEL_STATE_WORK_HAND_IN_QUEST];
-    sLog.outString("%s", ss.str().c_str());
-    if (requester) { requester->SendMessageToPlayer(ss.str()); }
-
-    ss.str(""); ss << "    Idling: " << stateCount[(uint8)TravelState::TRAVEL_STATE_IDLE];
-    sLog.outString("%s", ss.str().c_str());
-    if (requester) { requester->SendMessageToPlayer(ss.str()); }
+    // Travel-state breakdown removed with the old strategy engine; quest
+    // activity stats will be re-added once quest tracking lives in Rust.
 }
 
 double RandomPlayerbotMgr::GetBuyMultiplier(Player* bot)

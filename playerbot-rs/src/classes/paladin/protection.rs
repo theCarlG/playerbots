@@ -13,38 +13,55 @@ const HOLY_SHIELD: SpellId = SpellId(27179); // rank 4 talent
 const RIGHTEOUS_FURY: SpellId = SpellId(25780);
 
 const SEAL_RANKS: &[SpellId] = &[
-    SEAL_OF_RIGHTEOUSNESS, SEAL_OF_COMMAND,
-    SpellId(20154), SpellId(20287), SpellId(20288), SpellId(20289),
-    SpellId(20290), SpellId(20291), SpellId(20292), SpellId(20293),
-    SpellId(21082), SpellId(20920),
+    SEAL_OF_RIGHTEOUSNESS,
+    SEAL_OF_COMMAND,
+    SpellId(20154),
+    SpellId(20287),
+    SpellId(20288),
+    SpellId(20289),
+    SpellId(20290),
+    SpellId(20291),
+    SpellId(20292),
+    SpellId(20293),
+    SpellId(21082),
+    SpellId(20920),
 ];
 
 pub fn build_tree() -> Bt {
     Sel(vec![
         // Maintain Righteous Fury (100% bonus threat).
-        Seq(vec![SelfMissingAura(RIGHTEOUS_FURY), CastOnSelf(RIGHTEOUS_FURY)]),
-
+        Seq(vec![
+            SelfMissingAura(RIGHTEOUS_FURY),
+            CastOnSelf(RIGHTEOUS_FURY),
+        ]),
         // Emergency bubble.
         Seq(vec![HpBelow(0.15), CastOnSelf(DIVINE_SHIELD)]),
-
         // Close gap.
         StickToTarget(5.0),
-
-        Seq(vec![InCombat, Sel(vec![
-            // Holy Shield mitigation + damage.
-            CastOnSelf(HOLY_SHIELD),
-            // Instant damage/threat.
-            CastOnTarget(EXORCISM),
-            // Execute phase.
-            Seq(vec![TargetHpBelow(0.20), CastOnTarget(HAMMER_OF_WRATH)]),
-            // Judgement with seal.
-            Seq(vec![SelfMissingAnyRank(SEAL_RANKS).not(), CastOnTarget(JUDGEMENT)]),
-            // Re-seal.
-            Seq(vec![SelfMissingAnyRank(SEAL_RANKS), CastOnSelf(SEAL_OF_RIGHTEOUSNESS)]),
-            // AoE threat.
-            CastOnSelf(CONSECRATION),
-            // Undead AoE.
-            CastOnSelf(HOLY_WRATH),
-        ])]),
+        Seq(vec![
+            InCombat,
+            Sel(vec![
+                // Holy Shield mitigation + damage.
+                CastOnSelf(HOLY_SHIELD),
+                // Instant damage/threat.
+                CastOnTarget(EXORCISM),
+                // Execute phase.
+                Seq(vec![TargetHpBelow(0.20), CastOnTarget(HAMMER_OF_WRATH)]),
+                // Judgement with seal.
+                Seq(vec![
+                    SelfMissingAnyRank(SEAL_RANKS).not(),
+                    CastOnTarget(JUDGEMENT),
+                ]),
+                // Re-seal.
+                Seq(vec![
+                    SelfMissingAnyRank(SEAL_RANKS),
+                    CastOnSelf(SEAL_OF_RIGHTEOUSNESS),
+                ]),
+                // AoE threat.
+                CastOnSelf(CONSECRATION),
+                // Undead AoE.
+                CastOnSelf(HOLY_WRATH),
+            ]),
+        ]),
     ])
 }

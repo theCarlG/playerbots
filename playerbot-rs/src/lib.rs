@@ -12,14 +12,15 @@ pub mod config;
 pub mod data;
 pub mod encounters;
 pub mod engine;
+pub mod factory;
 pub mod ffi;
 pub mod noncombat;
 pub mod world;
 
 use bot::state::BotState;
 use ffi::{
-    interface::{BotInterface, RealInterface},
     BotCallbacks, BotHandle, SpellId, UnitHandle,
+    interface::{BotInterface, RealInterface},
 };
 
 // ── Lifecycle ────────────────────────────────────────────────────────────
@@ -41,10 +42,18 @@ pub extern "C" fn playerbot_set_config(
     debug: bool,
 ) {
     let mut cfg = config::BotConfig::default();
-    if react_delay_ms > 0       { cfg.react_delay_ms = react_delay_ms; }
-    if max_wait_for_move_ms > 0 { cfg.max_wait_for_move_ms = max_wait_for_move_ms; }
-    if eat_hp_pct > 0.0         { cfg.eat_hp_threshold = eat_hp_pct; }
-    if drink_mana_pct > 0.0     { cfg.drink_mana_threshold = drink_mana_pct; }
+    if react_delay_ms > 0 {
+        cfg.react_delay_ms = react_delay_ms;
+    }
+    if max_wait_for_move_ms > 0 {
+        cfg.max_wait_for_move_ms = max_wait_for_move_ms;
+    }
+    if eat_hp_pct > 0.0 {
+        cfg.eat_hp_threshold = eat_hp_pct;
+    }
+    if drink_mana_pct > 0.0 {
+        cfg.drink_mana_threshold = drink_mana_pct;
+    }
     cfg.debug = debug;
     let _ = config::set(cfg);
 }
@@ -64,11 +73,13 @@ pub unsafe extern "C" fn playerbot_create(
     bot_handle: BotHandle,
     cbs: *const BotCallbacks,
 ) -> *mut () {
-    assert!(!cbs.is_null(), "playerbot_create: null BotCallbacks pointer");
+    assert!(
+        !cbs.is_null(),
+        "playerbot_create: null BotCallbacks pointer"
+    );
 
-    let interface: Box<dyn BotInterface> = Box::new(unsafe {
-        RealInterface::new(bot_handle, *cbs)
-    });
+    let interface: Box<dyn BotInterface> =
+        Box::new(unsafe { RealInterface::new(bot_handle, *cbs) });
 
     let snap = interface.get_snapshot();
     let (class, spec) = class_spec_from_snapshot(snap.self_.class_id);
@@ -83,7 +94,9 @@ pub unsafe extern "C" fn playerbot_create(
 /// `state` must be a pointer from `playerbot_create` for this bot handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn playerbot_destroy(state: *mut ()) {
-    if state.is_null() { return; }
+    if state.is_null() {
+        return;
+    }
     unsafe { drop(Box::from_raw(state.cast::<BotState>())) };
 }
 
@@ -92,11 +105,7 @@ pub unsafe extern "C" fn playerbot_destroy(state: *mut ()) {
 /// # Safety
 /// `state` must be a valid pointer from `playerbot_create`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn playerbot_update(
-    state: *mut (),
-    elapsed_ms: u32,
-    minimal: bool,
-) {
+pub unsafe extern "C" fn playerbot_update(state: *mut (), elapsed_ms: u32, minimal: bool) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
     bot::tick::tick(bot, elapsed_ms, minimal);
 }
@@ -113,7 +122,10 @@ pub unsafe extern "C" fn playerbot_packet_in(
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
     let bytes = unsafe { packet_bytes(data, len) };
-    bot.events.push_back(bot::events::BotEvent::PacketIn { opcode, data: bytes });
+    bot.events.push_back(bot::events::BotEvent::PacketIn {
+        opcode,
+        data: bytes,
+    });
 }
 
 /// # Safety: state valid, data readable for len bytes (or null/0).
@@ -126,7 +138,10 @@ pub unsafe extern "C" fn playerbot_packet_out(
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
     let bytes = unsafe { packet_bytes(data, len) };
-    bot.events.push_back(bot::events::BotEvent::PacketOut { opcode, data: bytes });
+    bot.events.push_back(bot::events::BotEvent::PacketOut {
+        opcode,
+        data: bytes,
+    });
 }
 
 // ── Push combat events ────────────────────────────────────────────────────
@@ -141,7 +156,12 @@ pub unsafe extern "C" fn playerbot_unit_spell_cast(
     success: bool,
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot.events.push_back(bot::events::BotEvent::UnitSpellCast { caster, spell_id: SpellId(spell_id), target, success });
+    bot.events.push_back(bot::events::BotEvent::UnitSpellCast {
+        caster,
+        spell_id: SpellId(spell_id),
+        target,
+        success,
+    });
 }
 
 /// RTSC spell position — called when spell 30758 is cast on ground by the master.
@@ -149,16 +169,12 @@ pub unsafe extern "C" fn playerbot_unit_spell_cast(
 ///
 /// # Safety: state valid.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn playerbot_rtsc_spell(
-    state: *mut (),
-    x: f32,
-    y: f32,
-    z: f32,
-) {
+pub unsafe extern "C" fn playerbot_rtsc_spell(state: *mut (), x: f32, y: f32, z: f32) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot.pending_commands.push_back(
-        commands::PendingCommand::internal(commands::BotCommand::RtscSpellPosition(x, y, z)),
-    );
+    bot.pending_commands
+        .push_back(commands::PendingCommand::internal(
+            commands::BotCommand::RtscSpellPosition(x, y, z),
+        ));
 }
 
 /// # Safety: state valid.
@@ -171,7 +187,12 @@ pub unsafe extern "C" fn playerbot_aura_changed(
     stacks: u8,
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot.events.push_back(bot::events::BotEvent::AuraChanged { unit, spell_id: SpellId(spell_id), applied, stacks });
+    bot.events.push_back(bot::events::BotEvent::AuraChanged {
+        unit,
+        spell_id: SpellId(spell_id),
+        applied,
+        stacks,
+    });
 }
 
 /// # Safety: state valid.
@@ -182,7 +203,8 @@ pub unsafe extern "C" fn playerbot_unit_died(
     killer: UnitHandle,
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot.events.push_back(bot::events::BotEvent::UnitDied { victim, killer });
+    bot.events
+        .push_back(bot::events::BotEvent::UnitDied { victim, killer });
 }
 
 /// # Safety: state valid.
@@ -194,7 +216,11 @@ pub unsafe extern "C" fn playerbot_damage_taken(
     dealer: UnitHandle,
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot.events.push_back(bot::events::BotEvent::DamageTaken { damage, spell_id: SpellId(spell_id), dealer });
+    bot.events.push_back(bot::events::BotEvent::DamageTaken {
+        damage,
+        spell_id: SpellId(spell_id),
+        dealer,
+    });
 }
 
 // ── Chat command injection ────────────────────────────────────────────────
@@ -238,6 +264,78 @@ pub extern "C" fn playerbot_world_update(_elapsed_ms: u32) {
     // Future: flush stale GroupState entries, update activity metrics.
 }
 
+// ── Factory entry points ──────────────────────────────────────────────────
+
+/// Clear bot inventory. Called from C++ `PlayerbotFactory::ClearInventory` /
+/// `ClearAllItems` via the bot's Rust state handle.
+///
+/// `mode`: 0 = equipped + carried bags (bank intact), 1 = everything.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_clear_inventory(state: *mut (), mode: u8) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &*state.cast::<BotState>() };
+    factory::clear_inventory(bot.interface.as_ref(), factory::ClearScope::from_mode(mode));
+}
+
+/// Initialize consumables on a bot via the Rust factory module.
+///
+/// `kind`: 0 = potions, 1 = food, 2 = reagents. Unknown values are ignored.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_init_consumables(state: *mut (), kind: u8) {
+    if state.is_null() {
+        return;
+    }
+    let Some(k) = factory::ConsumableKind::from_kind(kind) else {
+        return;
+    };
+    let bot = unsafe { &*state.cast::<BotState>() };
+    factory::init_consumables(bot.interface.as_ref(), k);
+}
+
+/// Wipe a slice of the bot's progression (trade skills, spellbook, quest log).
+///
+/// `kind`: 0 = trade skills, 1 = spells, 2 = quests. Unknown values are ignored.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_reset_progression(state: *mut (), kind: u8) {
+    if state.is_null() {
+        return;
+    }
+    let Some(k) = factory::ProgressionKind::from_kind(kind) else {
+        return;
+    };
+    let bot = unsafe { &*state.cast::<BotState>() };
+    factory::reset_progression(bot.interface.as_ref(), k);
+}
+
+/// Miscellaneous factory step (cancel auras, hand out trade-skill tool kit).
+///
+/// `kind`: 0 = cancel auras, 1 = init skill tool kit. Unknown values are ignored.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_misc(state: *mut (), kind: u8) {
+    if state.is_null() {
+        return;
+    }
+    let Some(k) = factory::MiscKind::from_kind(kind) else {
+        return;
+    };
+    let bot = unsafe { &*state.cast::<BotState>() };
+    factory::run_misc(bot.interface.as_ref(), k);
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 unsafe fn packet_bytes(data: *const u8, len: u32) -> Vec<u8> {
@@ -251,16 +349,16 @@ unsafe fn packet_bytes(data: *const u8, len: u32) -> Vec<u8> {
 fn class_spec_from_snapshot(class_id: u8) -> (bot::state::PlayerClass, bot::state::PlayerSpec) {
     use bot::state::{PlayerClass::*, PlayerSpec::*};
     match class_id {
-        1  => (Warrior,      WarriorArms),
-        2  => (Paladin,      PaladinRetribution),
-        3  => (Hunter,       HunterMarksmanship),
-        4  => (Rogue,        RogueCombat),
-        5  => (Priest,       PriestHoly),
-        6  => (DeathKnight,  DeathKnightFrost),
-        7  => (Shaman,       ShamanEnhancement),
-        8  => (Mage,         MageFrost),
-        9  => (Warlock,      WarlockDestruction),
-        11 => (Druid,        DruidRestoration),
-        _  => (Warrior,      WarriorArms),
+        1 => (Warrior, WarriorArms),
+        2 => (Paladin, PaladinRetribution),
+        3 => (Hunter, HunterMarksmanship),
+        4 => (Rogue, RogueCombat),
+        5 => (Priest, PriestHoly),
+        6 => (DeathKnight, DeathKnightFrost),
+        7 => (Shaman, ShamanEnhancement),
+        8 => (Mage, MageFrost),
+        9 => (Warlock, WarlockDestruction),
+        11 => (Druid, DruidRestoration),
+        _ => (Warrior, WarriorArms),
     }
 }

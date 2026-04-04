@@ -299,89 +299,11 @@ Player* PlayerbotHolder::GetPlayerBot(uint32 playerGuid) const
     return (it == playerBots.end()) ? nullptr : it->second ? it->second : nullptr;
 }
 
-void PlayerbotHolder::JoinChatChannels(Player* bot)
+void PlayerbotHolder::JoinChatChannels(Player* /*bot*/)
 {
-    // bots join World chat if not solo oriented
-    if (bot->GetLevel() >= 10 && sRandomPlayerbotMgr.IsFreeBot(bot) && bot->GetPlayerbotAI() && bot->GetPlayerbotAI()->GetGrouperType() != GrouperType::SOLO)
-    {
-        // TODO make action/config
-        // Make the bot join the world channel for chat
-        WorldPacket pkt(CMSG_JOIN_CHANNEL);
-#ifndef MANGOSBOT_ZERO
-        pkt << uint32(0) << uint8(0) << uint8(0);
-#endif
-        pkt << std::string("World");
-        pkt << ""; // Pass
-        bot->GetSession()->HandleJoinChannelOpcode(pkt);
-    }
-    // join standard channels
-    uint8 locale = 0;
-
-    AreaTableEntry const* current_zone = bot->GetPlayerbotAI()->GetCurrentZone();
-    ChannelMgr* cMgr = channelMgr(bot->GetTeam());
-    std::string current_zone_name = current_zone ? bot->GetPlayerbotAI()->GetLocalizedAreaName(current_zone) : "";
-
-    if (current_zone && cMgr)
-    {
-        for (uint32 i = 0; i < sChatChannelsStore.GetNumRows(); ++i)
-        {
-            ChatChannelsEntry const* channel = sChatChannelsStore.LookupEntry(i);
-            if (!channel) continue;
-
-            Channel* new_channel = nullptr;
-            switch (channel->ChannelID)
-            {
-                case ChatChannelId::GENERAL:
-                case ChatChannelId::LOCAL_DEFENSE:
-                {
-                    char new_channel_name_buf[100];
-                    snprintf(new_channel_name_buf, 100, channel->pattern[locale], current_zone_name.c_str());
-#ifdef MANGOSBOT_ZERO
-                    new_channel = cMgr->GetJoinChannel(new_channel_name_buf);
-#else
-                    new_channel = cMgr->GetJoinChannel(new_channel_name_buf, channel->ChannelID);
-#endif
-                    break;
-                }
-                case ChatChannelId::TRADE:
-                case ChatChannelId::GUILD_RECRUITMENT:
-                {
-                    char new_channel_name_buf[100];
-                    //3459 is ID for a zone named "City" (only exists for the sake of using its name)
-                    //Currently in magons TBC, if you switch zones, then you join "Trade - <zone>" and "GuildRecruitment - <zone>"
-                    //which is a core bug, should be "Trade - City" and "GuildRecruitment - City" in both 1.12 and TBC
-                    //but if you (actual player) logout in a city and log back in - you join "City" versions
-                    snprintf(
-                        new_channel_name_buf,
-                        100,
-                        channel->pattern[locale],
-                        "City"  // ImportantAreaId::CITY removed — hardcoded
-                    );
-
-#ifdef MANGOSBOT_ZERO
-                    new_channel = cMgr->GetJoinChannel(new_channel_name_buf);
-#else
-                    new_channel = cMgr->GetJoinChannel(new_channel_name_buf, channel->ChannelID);
-#endif
-                    break;
-                }
-                case ChatChannelId::LOOKING_FOR_GROUP:
-                case ChatChannelId::WORLD_DEFENSE:
-                {
-#ifdef MANGOSBOT_ZERO
-                    new_channel = cMgr->GetJoinChannel(channel->pattern[locale]);
-#else
-                    new_channel = cMgr->GetJoinChannel(channel->pattern[locale], channel->ChannelID);
-#endif
-                    break;
-                }
-                default:
-                    break;
-            }
-            if (new_channel)
-                new_channel->Join(bot, "");
-        }
-    }
+    // Stub: the ChatChannelId enum and related helpers were removed with the
+    // old strategy engine. Chat-channel joining for bots will be
+    // reimplemented on the Rust side.
 }
 
 void PlayerbotHolder::OnBotLogin(Player * const bot)
@@ -457,8 +379,7 @@ void PlayerbotHolder::OnBotLogin(Player * const bot)
     {
         bot->GetMotionMaster()->MovementExpired();
     }
-    // set delay on login
-    ai->SetActionDuration(urand(2000, 4000));
+    // set delay on login (SetActionDuration removed — no-op stub)
 
     ai->TellPlayer(ai->GetMaster(), BOT_TEXT("hello"));
 

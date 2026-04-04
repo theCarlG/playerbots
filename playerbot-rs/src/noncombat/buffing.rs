@@ -28,22 +28,34 @@ pub struct GroupBuff {
     /// Spell ID to cast.
     pub spell_id: SpellId,
     /// Aura ID to check (often == spell_id; use the buff's spell effect ID when different).
-    pub aura_id:  SpellId,
+    pub aura_id: SpellId,
     /// Who should receive the buff.
-    pub target:   BuffTarget,
+    pub target: BuffTarget,
 }
 
 impl GroupBuff {
     pub const fn on_self(spell_id: SpellId) -> Self {
-        Self { spell_id, aura_id: spell_id, target: BuffTarget::Me }
+        Self {
+            spell_id,
+            aura_id: spell_id,
+            target: BuffTarget::Me,
+        }
     }
 
     pub const fn on_party(spell_id: SpellId) -> Self {
-        Self { spell_id, aura_id: spell_id, target: BuffTarget::AnyMember }
+        Self {
+            spell_id,
+            aura_id: spell_id,
+            target: BuffTarget::AnyMember,
+        }
     }
 
     pub const fn on_party_aura(spell_id: SpellId, aura_id: SpellId) -> Self {
-        Self { spell_id, aura_id, target: BuffTarget::AnyMember }
+        Self {
+            spell_id,
+            aura_id,
+            target: BuffTarget::AnyMember,
+        }
     }
 }
 
@@ -55,18 +67,20 @@ pub fn build_buff_subtree(buffs: Vec<GroupBuff>) -> Box<dyn BtNode> {
     seq(vec![
         // Only buff out of combat.
         cond(|ctx| !ctx.in_combat()),
-
-        throttle(5_000, action(move |ctx| {
-            for buff in &buffs {
-                if let Some(target_handle) = find_buff_target(ctx, buff) {
-                    if ctx.interface.cast_spell(buff.spell_id, target_handle) {
-                        ctx.timers.on_spell_cast(buff.spell_id, ctx.server_time_ms);
-                        return BtResult::Success;
+        throttle(
+            5_000,
+            action(move |ctx| {
+                for buff in &buffs {
+                    if let Some(target_handle) = find_buff_target(ctx, buff) {
+                        if ctx.interface.cast_spell(buff.spell_id, target_handle) {
+                            ctx.timers.on_spell_cast(buff.spell_id, ctx.server_time_ms);
+                            return BtResult::Success;
+                        }
                     }
                 }
-            }
-            BtResult::Failure
-        })),
+                BtResult::Failure
+            }),
+        ),
     ])
 }
 
@@ -76,25 +90,29 @@ fn find_buff_target(
     ctx: &mut crate::engine::context::TickContext<'_>,
     buff: &GroupBuff,
 ) -> Option<u64> {
-    use BuffTarget::*;
     use crate::ffi::UnitHandle;
+    use BuffTarget::*;
 
     let me = ctx.bot_handle;
 
     match buff.target {
         Me => {
-            if !ctx.interface.has_aura(me, buff.aura_id) { Some(me) } else { None }
+            if !ctx.interface.has_aura(me, buff.aura_id) {
+                Some(me)
+            } else {
+                None
+            }
         }
 
-        Tank => {
-            ctx.interface.group_get_tank()
-                .filter(|&t| !ctx.interface.has_aura(t, buff.aura_id))
-        }
+        Tank => ctx
+            .interface
+            .group_get_tank()
+            .filter(|&t| !ctx.interface.has_aura(t, buff.aura_id)),
 
-        Healer => {
-            ctx.interface.group_get_healer()
-                .filter(|&h| !ctx.interface.has_aura(h, buff.aura_id))
-        }
+        Healer => ctx
+            .interface
+            .group_get_healer()
+            .filter(|&h| !ctx.interface.has_aura(h, buff.aura_id)),
 
         AnyMember => {
             // Check self first, then all group members.
@@ -107,7 +125,8 @@ fn find_buff_target(
                 )
                 .collect();
 
-            candidates.into_iter()
+            candidates
+                .into_iter()
                 .find(|&h| !ctx.interface.has_aura(h, buff.aura_id))
         }
     }

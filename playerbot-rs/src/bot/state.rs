@@ -10,54 +10,69 @@ use crate::{
     bot::settings::BotSettings,
     commands::PendingCommand,
     encounters::EncounterFsm,
-    engine::{
-        blackboard::Blackboard,
-        bt::Bt,
-        group_state::GroupState,
-        timers::BotTimers,
-    },
-    ffi::{interface::BotInterface, BotRole, BotWorldSnapshot, UnitHandle},
+    engine::{blackboard::Blackboard, bt::Bt, group_state::GroupState, timers::BotTimers},
+    ffi::{BotRole, BotWorldSnapshot, UnitHandle, interface::BotInterface},
 };
 
 /// Which WoW class this bot is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PlayerClass {
-    Warrior    = 1,
-    Paladin    = 2,
-    Hunter     = 3,
-    Rogue      = 4,
-    Priest     = 5,
+    Warrior = 1,
+    Paladin = 2,
+    Hunter = 3,
+    Rogue = 4,
+    Priest = 5,
     DeathKnight = 6,
-    Shaman     = 7,
-    Mage       = 8,
-    Warlock    = 9,
-    Druid      = 11,
+    Shaman = 7,
+    Mage = 8,
+    Warlock = 9,
+    Druid = 11,
 }
 
 /// Which specialization / role this bot plays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayerSpec {
     // Warrior
-    WarriorArms, WarriorFury, WarriorProtection,
+    WarriorArms,
+    WarriorFury,
+    WarriorProtection,
     // Paladin
-    PaladinHoly, PaladinProtection, PaladinRetribution,
+    PaladinHoly,
+    PaladinProtection,
+    PaladinRetribution,
     // Priest
-    PriestHoly, PriestDiscipline, PriestShadow,
+    PriestHoly,
+    PriestDiscipline,
+    PriestShadow,
     // Druid
-    DruidBalance, DruidFeral, DruidRestoration,
+    DruidBalance,
+    DruidFeral,
+    DruidRestoration,
     // Hunter
-    HunterBeastMastery, HunterMarksmanship, HunterSurvival,
+    HunterBeastMastery,
+    HunterMarksmanship,
+    HunterSurvival,
     // Mage
-    MageArcane, MageFire, MageFrost,
+    MageArcane,
+    MageFire,
+    MageFrost,
     // Rogue
-    RogueAssassination, RogueCombat, RogueSubtlety,
+    RogueAssassination,
+    RogueCombat,
+    RogueSubtlety,
     // Shaman
-    ShamanElemental, ShamanEnhancement, ShamanRestoration,
+    ShamanElemental,
+    ShamanEnhancement,
+    ShamanRestoration,
     // Warlock
-    WarlockAffliction, WarlockDemonology, WarlockDestruction,
+    WarlockAffliction,
+    WarlockDemonology,
+    WarlockDestruction,
     // Death Knight
-    DeathKnightBlood, DeathKnightFrost, DeathKnightUnholy,
+    DeathKnightBlood,
+    DeathKnightFrost,
+    DeathKnightUnholy,
 }
 
 /// The complete per-bot AI state.
@@ -100,8 +115,8 @@ pub struct BotState {
 
     /// Bot's class and spec.
     pub class: PlayerClass,
-    pub spec:  PlayerSpec,
-    pub role:  BotRole,
+    pub spec: PlayerSpec,
+    pub role: BotRole,
 
     /// Per-bot runtime settings (modified by chat commands).
     pub settings: BotSettings,
@@ -110,8 +125,8 @@ pub struct BotState {
     pub pending_commands: VecDeque<PendingCommand>,
 
     // ── Throttle timestamps ──────────────────────────────────────────────
-    pub last_attackers_refresh_ms:  u64,
-    pub last_nearby_refresh_ms:     u64,
+    pub last_attackers_refresh_ms: u64,
+    pub last_nearby_refresh_ms: u64,
 }
 
 impl BotState {

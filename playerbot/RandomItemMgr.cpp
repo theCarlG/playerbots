@@ -961,33 +961,13 @@ void RandomItemMgr::BuildItemInfoCache()
     sLog.outString("Loaded %d horde only vendor items...", (uint32)hordeItems.size());
 
     // calculate drop source
-    sLog.outString("Loading loot templates...");
+    // NOTE: loot-template drop source mapping is stubbed — the old
+    // DropMap/LootTemplateAccess helpers were removed alongside the C++
+    // strategy engine. Items simply carry no drop source data until this
+    // is reimplemented on top of CMaNGOS LootTemplate storage directly.
+    sLog.outString("Loading loot templates... (stub)");
+    typedef std::multimap<uint32, int32> DropMap;
     DropMap* dropMap = new DropMap;
-
-    int32 sEntry;
-
-    for (uint32 entry = 0; entry < sCreatureStorage.GetMaxEntry(); entry++)
-    {
-        sEntry = entry;
-
-        LootTemplateAccess const* lTemplateA = DropMapValue::GetLootTemplate(ObjectGuid(HIGHGUID_UNIT, entry, uint32(1)), LOOT_CORPSE);
-
-        if (lTemplateA)
-            for (LootStoreItem const& lItem : lTemplateA->Entries)
-                dropMap->insert(std::make_pair(lItem.itemid, sEntry));
-    }
-
-    for (uint32 entry = 0; entry < sGOStorage.GetMaxEntry(); entry++)
-    {
-        sEntry = entry;
-
-        LootTemplateAccess const* lTemplateA = DropMapValue::GetLootTemplate(ObjectGuid(HIGHGUID_GAMEOBJECT, entry, uint32(1)), LOOT_CORPSE);
-
-        if (lTemplateA)
-            for (LootStoreItem const& lItem : lTemplateA->Entries)
-                dropMap->insert(std::make_pair(lItem.itemid, -sEntry));
-    }
-
     sLog.outString("Loaded %d loot templates...", (uint32)dropMap->size());
 
     sLog.outString("Calculating stat weights for %d items...", sItemStorage.GetMaxEntry());

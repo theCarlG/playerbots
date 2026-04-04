@@ -9,10 +9,10 @@
 /// Mana-free classes (warriors, rogues, death knights) skip the mana check.
 use crate::engine::bt_nodes::{BtNode, BtResult, action, cond, seq};
 
-pub const HP_EAT_THRESHOLD:    f32 = 0.70; // start eating below this HP%
-pub const HP_FULL_THRESHOLD:   f32 = 0.90; // stop eating above this HP%
+pub const HP_EAT_THRESHOLD: f32 = 0.70; // start eating below this HP%
+pub const HP_FULL_THRESHOLD: f32 = 0.90; // stop eating above this HP%
 pub const MANA_DRINK_THRESHOLD: f32 = 0.40;
-pub const MANA_FULL_THRESHOLD:  f32 = 0.80;
+pub const MANA_FULL_THRESHOLD: f32 = 0.80;
 
 /// Returns true if the class uses mana (needs a drink recovery check).
 fn uses_mana(ctx: &crate::engine::context::TickContext<'_>) -> bool {
@@ -29,17 +29,15 @@ pub fn build_consumables_subtree() -> Box<dyn BtNode> {
     seq(vec![
         // Only recover out of combat.
         cond(|ctx| !ctx.in_combat()),
-
         // At least one resource is below threshold.
         cond(|ctx| {
-            let hp_low   = ctx.self_hp_pct() < HP_EAT_THRESHOLD;
+            let hp_low = ctx.self_hp_pct() < HP_EAT_THRESHOLD;
             let mana_low = uses_mana(ctx) && ctx.self_mana_pct() < MANA_DRINK_THRESHOLD;
             hp_low || mana_low
         }),
-
         // Stop moving and wait until both resources are recovered.
         action(|ctx| {
-            let hp_full   = ctx.self_hp_pct()   >= HP_FULL_THRESHOLD;
+            let hp_full = ctx.self_hp_pct() >= HP_FULL_THRESHOLD;
             let mana_full = !uses_mana(ctx) || ctx.self_mana_pct() >= MANA_FULL_THRESHOLD;
 
             if hp_full && mana_full {
@@ -64,10 +62,10 @@ mod tests {
     fn consumables_returns_failure_when_hp_full() {
         let tree = build_consumables_subtree();
         let mut owned = make_test_ctx();
-        owned.snap.self_.health     = 1000;
+        owned.snap.self_.health = 1000;
         owned.snap.self_.max_health = 1000;
-        owned.snap.self_.mana       = 1000;
-        owned.snap.self_.max_mana   = 1000;
+        owned.snap.self_.mana = 1000;
+        owned.snap.self_.max_mana = 1000;
         owned.snap.self_.power_type = 0; // mana user
         // Out of combat + full HP/mana → Failure (nothing to do)
         assert_eq!(tree.tick(&mut owned.ctx()), BtResult::Failure);
@@ -77,12 +75,12 @@ mod tests {
     fn consumables_runs_when_out_of_combat_and_low_hp() {
         let tree = build_consumables_subtree();
         let mut owned = make_test_ctx();
-        owned.snap.self_.health     = 500;
+        owned.snap.self_.health = 500;
         owned.snap.self_.max_health = 1000; // 50% < 70% threshold
-        owned.snap.self_.mana       = 1000;
-        owned.snap.self_.max_mana   = 1000;
+        owned.snap.self_.mana = 1000;
+        owned.snap.self_.max_mana = 1000;
         owned.snap.self_.power_type = 0;
-        owned.snap.self_.in_combat  = false;
+        owned.snap.self_.in_combat = false;
         // Low HP → Running (recovering)
         assert_eq!(tree.tick(&mut owned.ctx()), BtResult::Running);
     }
@@ -91,9 +89,9 @@ mod tests {
     fn consumables_returns_failure_when_in_combat() {
         let tree = build_consumables_subtree();
         let mut owned = make_test_ctx();
-        owned.snap.self_.health     = 200;
+        owned.snap.self_.health = 200;
         owned.snap.self_.max_health = 1000; // 20% HP
-        owned.snap.self_.in_combat  = true;
+        owned.snap.self_.in_combat = true;
         // In combat → Failure even though HP is low
         assert_eq!(tree.tick(&mut owned.ctx()), BtResult::Failure);
     }

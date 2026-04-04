@@ -29,8 +29,6 @@ public:
     std::string data;
 };
 
-class PerformanceMonitorOperation;
-
 //https://gist.github.com/bradley219/5373998
 
 class botPIDImpl;

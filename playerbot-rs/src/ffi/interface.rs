@@ -73,7 +73,9 @@ pub trait BotInterface: Send {
     fn say(&self, msg: &str, lang: u32) -> bool;
     /// Whisper a message directly to a specific player (`target_guid`).
     /// Used for per-command replies to the sender.
-    fn whisper(&self, _target_guid: u64, _msg: &str) -> bool { false }
+    fn whisper(&self, _target_guid: u64, _msg: &str) -> bool {
+        false
+    }
     fn use_item(&self, item_id: ItemId, target: UnitHandle) -> bool;
     fn taunt(&self, target: UnitHandle) -> bool;
 
@@ -82,7 +84,8 @@ pub trait BotInterface: Send {
     /// 5 = moon, 6 = square, 7 = cross, 8 = skull). Returns `None` if
     /// no unit is marked with that icon in range.
     fn get_unit_with_raid_icon(&self, icon: u8) -> Option<UnitHandle> {
-        let _ = icon; None
+        let _ = icon;
+        None
     }
 
     /* ── Group / raid ────────────────────────────────────────────────── */
@@ -93,96 +96,254 @@ pub trait BotInterface: Send {
 
     /* ── Death / resurrection ───────────────────────────────────────── */
 
-    fn accept_resurrect(&self) -> bool { false }
-    fn get_corpse_position(&self) -> Option<BotPosition> { None }
-    fn use_spirit_healer(&self) -> bool { false }
+    fn accept_resurrect(&self) -> bool {
+        false
+    }
+    fn get_corpse_position(&self) -> Option<BotPosition> {
+        None
+    }
+    fn use_spirit_healer(&self) -> bool {
+        false
+    }
 
     /* ── Mount ──────────────────────────────────────────────────────── */
 
-    fn is_mounted(&self) -> bool { false }
-    fn mount_up(&self) -> bool { false }
-    fn dismount(&self) -> bool { false }
-    fn is_indoor(&self) -> bool { false }
+    fn is_mounted(&self) -> bool {
+        false
+    }
+    fn mount_up(&self) -> bool {
+        false
+    }
+    fn dismount(&self) -> bool {
+        false
+    }
+    fn is_indoor(&self) -> bool {
+        false
+    }
 
     /* ── Loot ───────────────────────────────────────────────────────── */
 
-    fn get_nearby_lootable(&self, _range: f32) -> Vec<UnitHandle> { vec![] }
-    fn open_loot(&self, _target: UnitHandle) -> bool { false }
-    fn take_all_loot(&self) -> bool { false }
+    fn get_nearby_lootable(&self, _range: f32) -> Vec<UnitHandle> {
+        vec![]
+    }
+    fn open_loot(&self, _target: UnitHandle) -> bool {
+        false
+    }
+    fn take_all_loot(&self) -> bool {
+        false
+    }
 
     /* ── NPC interaction ────────────────────────────────────────────── */
 
-    fn get_nearby_npcs(&self, _range: f32, _npc_flags: u32) -> Vec<UnitHandle> { vec![] }
-    fn interact_npc(&self, _npc: UnitHandle) -> bool { false }
-    fn repair_all(&self) -> bool { false }
-    fn sell_grey_items(&self) -> bool { false }
-    fn has_sellable_items(&self) -> bool { false }
-    fn get_durability_pct(&self) -> f32 { 1.0 }
+    fn get_nearby_npcs(&self, _range: f32, _npc_flags: u32) -> Vec<UnitHandle> {
+        vec![]
+    }
+    fn interact_npc(&self, _npc: UnitHandle) -> bool {
+        false
+    }
+    fn repair_all(&self) -> bool {
+        false
+    }
+    fn sell_grey_items(&self) -> bool {
+        false
+    }
+    fn has_sellable_items(&self) -> bool {
+        false
+    }
+    fn get_durability_pct(&self) -> f32 {
+        1.0
+    }
 
     /* ── Quest ──────────────────────────────────────────────────────── */
 
-    fn get_quest_log(&self) -> Vec<QuestInfo> { vec![] }
-    fn accept_all_quests(&self, _npc: UnitHandle) -> bool { false }
-    fn turn_in_quest(&self, _npc: UnitHandle, _quest_id: u32) -> bool { false }
+    fn get_quest_log(&self) -> Vec<QuestInfo> {
+        vec![]
+    }
+    fn accept_all_quests(&self, _npc: UnitHandle) -> bool {
+        false
+    }
+    fn turn_in_quest(&self, _npc: UnitHandle, _quest_id: u32) -> bool {
+        false
+    }
 
     /* ── Unit queries (extended) ────────────────────────────────────── */
 
-    fn is_attackable(&self, _target: UnitHandle) -> bool { false }
-    fn get_unit_level(&self, _target: UnitHandle) -> u8 { 0 }
-    fn is_casting_interruptible(&self, _target: UnitHandle) -> bool { false }
+    fn is_attackable(&self, _target: UnitHandle) -> bool {
+        false
+    }
+    fn get_unit_level(&self, _target: UnitHandle) -> u8 {
+        0
+    }
+    fn is_casting_interruptible(&self, _target: UnitHandle) -> bool {
+        false
+    }
 
     /* ── Pet management ─────────────────────────────────────────────── */
 
-    fn has_pet(&self) -> bool { false }
-    fn pet_is_alive(&self) -> bool { false }
-    fn pet_happiness(&self) -> u8 { 3 } // 1=unhappy, 2=content, 3=happy
-    fn summon_pet(&self) -> bool { false }
-    fn revive_pet(&self) -> bool { false }
-    fn feed_pet(&self) -> bool { false }
+    fn has_pet(&self) -> bool {
+        false
+    }
+    fn pet_is_alive(&self) -> bool {
+        false
+    }
+    fn pet_happiness(&self) -> u8 {
+        3
+    } // 1=unhappy, 2=content, 3=happy
+    fn summon_pet(&self) -> bool {
+        false
+    }
+    fn revive_pet(&self) -> bool {
+        false
+    }
+    fn feed_pet(&self) -> bool {
+        false
+    }
 
     /* ── Dispel / party aura queries ────────────────────────────────── */
 
     /// Find a group member with a dispellable debuff that this bot can remove.
     /// Returns (member_handle, debuff_spell_id).
-    fn find_dispellable_target(&self) -> Option<(UnitHandle, SpellId)> { None }
+    fn find_dispellable_target(&self) -> Option<(UnitHandle, SpellId)> {
+        None
+    }
 
     /// Find a dead group member that can be resurrected.
-    fn find_dead_party_member(&self) -> Option<UnitHandle> { None }
+    fn find_dead_party_member(&self) -> Option<UnitHandle> {
+        None
+    }
 
     /* ── Battleground ───────────────────────────────────────────────── */
 
     /// True if the bot is currently in a battleground instance.
-    fn is_in_battleground(&self) -> bool { false }
+    fn is_in_battleground(&self) -> bool {
+        false
+    }
     /// BG type: 1=AV, 2=WSG, 3=AB. 0 if not in BG.
-    fn battleground_type(&self) -> u8 { 0 }
+    fn battleground_type(&self) -> u8 {
+        0
+    }
     /// Get the position of a nearby capturable BG objective (flag, base).
-    fn get_bg_objective(&self) -> Option<BotPosition> { None }
+    fn get_bg_objective(&self) -> Option<BotPosition> {
+        None
+    }
     /// Interact with a BG objective (pick up flag, capture base).
-    fn capture_bg_objective(&self) -> bool { false }
+    fn capture_bg_objective(&self) -> bool {
+        false
+    }
     /// Get nearby enemy players within range.
-    fn get_nearby_enemies(&self, _range: f32) -> Vec<UnitHandle> { vec![] }
+    fn get_nearby_enemies(&self, _range: f32) -> Vec<UnitHandle> {
+        vec![]
+    }
 
     /* ── RPG / social ───────────────────────────────────────────────── */
 
     /// Get a random navigable point near the bot within range.
-    fn get_random_point_nearby(&self, _range: f32) -> Option<BotPosition> { None }
+    fn get_random_point_nearby(&self, _range: f32) -> Option<BotPosition> {
+        None
+    }
     /// Play an emote (wave, bow, dance, etc.).
-    fn emote(&self, _emote_id: u32) -> bool { false }
+    fn emote(&self, _emote_id: u32) -> bool {
+        false
+    }
     /// Get nearby friendly NPCs to gossip with (non-vendor, non-quest).
-    fn get_nearby_gossip_npcs(&self, _range: f32) -> Vec<UnitHandle> { vec![] }
+    fn get_nearby_gossip_npcs(&self, _range: f32) -> Vec<UnitHandle> {
+        vec![]
+    }
 
     /* ── Gathering (mining, herbalism, skinning) ────────────────────── */
 
     /// True if the bot has any gathering profession (mining, herbalism, skinning).
-    fn has_gathering_skill(&self) -> bool { false }
+    fn has_gathering_skill(&self) -> bool {
+        false
+    }
     /// Get nearby gatherable game objects (ore veins, herb nodes) or skinnable corpses.
-    fn get_nearby_gatherables(&self, _range: f32) -> Vec<u64> { vec![] }
+    fn get_nearby_gatherables(&self, _range: f32) -> Vec<u64> {
+        vec![]
+    }
     /// Interact with a gatherable node/corpse to gather it.
-    fn gather_node(&self, _handle: u64) -> bool { false }
+    fn gather_node(&self, _handle: u64) -> bool {
+        false
+    }
     /// Distance to a game object handle.
-    fn gameobject_distance(&self, _handle: u64) -> f32 { f32::MAX }
+    fn gameobject_distance(&self, _handle: u64) -> f32 {
+        f32::MAX
+    }
     /// Position of a game object handle.
-    fn gameobject_position(&self, _handle: u64) -> BotPosition { BotPosition::default() }
+    fn gameobject_position(&self, _handle: u64) -> BotPosition {
+        BotPosition::default()
+    }
+
+    /* ── Factory: inventory mutation ─────────────────────────────────── */
+
+    /// Destroy every equipped item plus every item in backpack + carried bags.
+    /// Bank contents are left intact. Used by the factory before re-rolling gear.
+    fn inventory_destroy_equipped_and_bags(&self) {}
+
+    /// Destroy every item the bot owns (equipped, bags, and bank).
+    fn inventory_destroy_all(&self) {}
+
+    /// Return how many of `item_id` the bot holds in backpack + carried bags
+    /// (excludes bank). Used by factory restock checks.
+    fn item_count_in_bags(&self, _item_id: ItemId) -> u32 {
+        0
+    }
+
+    /// Add `count` of `item_id` to the bot's bags. Returns the number actually
+    /// added (may be less than requested if bags are full).
+    fn inventory_add_item(&self, _item_id: ItemId, _count: u32) -> u32 {
+        0
+    }
+
+    /// Max stack size for `item_id` (1 if the item prototype is unknown).
+    fn item_max_stack_size(&self, _item_id: ItemId) -> u32 {
+        1
+    }
+
+    /* ── Factory: consumable selection ────────────────────────────────── */
+
+    /// Pick a potion item ID appropriate for `level` and spell effect
+    /// (10 = SPELL_EFFECT_HEAL, 30 = SPELL_EFFECT_ENERGIZE). Returns 0 if
+    /// no suitable potion exists for that level/effect.
+    fn factory_pick_potion_for_level(&self, _level: u32, _effect: u32) -> ItemId {
+        ItemId::NONE
+    }
+
+    /// Pick a food item ID appropriate for `level` and food category
+    /// (11 = food, 59 = drink). Returns 0 if none.
+    fn factory_pick_food_for_level(&self, _level: u32, _category: u32) -> ItemId {
+        ItemId::NONE
+    }
+
+    /* ── RNG ─────────────────────────────────────────────────────────── */
+
+    /// Uniform random integer in `[min, max]` (inclusive).
+    fn random_u32(&self, _min: u32, _max: u32) -> u32 {
+        0
+    }
+
+    /* ── Factory: progression wipe ───────────────────────────────────── */
+
+    /// Zero out one trade skill on the bot. Called from the factory when
+    /// re-rolling a bot's trade professions.
+    fn bot_clear_skill(&self, _skill_id: u32) {}
+
+    /// Reset the bot's spellbook to the class's starter spells
+    /// (removes all learned spells except the defaults).
+    fn bot_reset_spells(&self) {}
+
+    /// Clear every quest from the bot's quest log and drop any
+    /// completed/rewarded quest status (also deletes the DB rows).
+    fn bot_reset_all_quests(&self) {}
+
+    /* ── Factory: misc pre/post init ─────────────────────────────────── */
+
+    /// Strip every aura (buffs and debuffs) currently on the bot.
+    fn bot_remove_all_auras(&self) {}
+
+    /// Whether the bot has the given skill learned (at any rank).
+    fn bot_has_skill(&self, _skill_id: u32) -> bool {
+        false
+    }
 }
 
 /// Quest info returned from the FFI.
@@ -392,7 +553,11 @@ impl BotInterface for RealInterface {
 
     fn get_corpse_position(&self) -> Option<BotPosition> {
         let pos = unsafe { (self.cbs.get_corpse_position.unwrap())(self.handle) };
-        if pos.x == 0.0 && pos.y == 0.0 && pos.z == 0.0 { None } else { Some(pos) }
+        if pos.x == 0.0 && pos.y == 0.0 && pos.z == 0.0 {
+            None
+        } else {
+            Some(pos)
+        }
     }
 
     fn use_spirit_healer(&self) -> bool {
@@ -421,8 +586,11 @@ impl BotInterface for RealInterface {
 
     fn get_nearby_lootable(&self, range: f32) -> Vec<UnitHandle> {
         let mut count: u32 = 0;
-        let ptr = unsafe { (self.cbs.get_nearby_lootable.unwrap())(self.handle, range, &mut count) };
-        if ptr.is_null() || count == 0 { return Vec::new(); }
+        let ptr =
+            unsafe { (self.cbs.get_nearby_lootable.unwrap())(self.handle, range, &mut count) };
+        if ptr.is_null() || count == 0 {
+            return Vec::new();
+        }
         let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
         unsafe { (self.cbs.free_unit_list.unwrap())(ptr) };
         vec
@@ -443,7 +611,9 @@ impl BotInterface for RealInterface {
         let ptr = unsafe {
             (self.cbs.get_nearby_npcs.unwrap())(self.handle, range, npc_flags, &mut count)
         };
-        if ptr.is_null() || count == 0 { return Vec::new(); }
+        if ptr.is_null() || count == 0 {
+            return Vec::new();
+        }
         let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
         unsafe { (self.cbs.free_unit_list.unwrap())(ptr) };
         vec
@@ -474,12 +644,17 @@ impl BotInterface for RealInterface {
     fn get_quest_log(&self) -> Vec<QuestInfo> {
         let mut count: u32 = 0;
         let ptr = unsafe { (self.cbs.get_quest_log.unwrap())(self.handle, &mut count) };
-        if ptr.is_null() || count == 0 { return Vec::new(); }
+        if ptr.is_null() || count == 0 {
+            return Vec::new();
+        }
         let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
-        let vec = slice.iter().map(|q| QuestInfo {
-            quest_id: q.quest_id,
-            complete: q.complete,
-        }).collect();
+        let vec = slice
+            .iter()
+            .map(|q| QuestInfo {
+                quest_id: q.quest_id,
+                complete: q.complete,
+            })
+            .collect();
         unsafe { (self.cbs.free_quest_log.unwrap())(ptr) };
         vec
     }
@@ -561,7 +736,13 @@ impl BotInterface for RealInterface {
     fn get_bg_objective(&self) -> Option<BotPosition> {
         let result = unsafe { (self.cbs.get_bg_objective.unwrap())(self.handle) };
         if result.found {
-            Some(BotPosition { x: result.x, y: result.y, z: result.z, o: 0.0, map_id: 0 })
+            Some(BotPosition {
+                x: result.x,
+                y: result.y,
+                z: result.z,
+                o: 0.0,
+                map_id: 0,
+            })
         } else {
             None
         }
@@ -574,7 +755,9 @@ impl BotInterface for RealInterface {
     fn get_nearby_enemies(&self, range: f32) -> Vec<UnitHandle> {
         let mut count: u32 = 0;
         let ptr = unsafe { (self.cbs.get_nearby_enemies.unwrap())(self.handle, range, &mut count) };
-        if ptr.is_null() || count == 0 { return Vec::new(); }
+        if ptr.is_null() || count == 0 {
+            return Vec::new();
+        }
         let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
         unsafe { (self.cbs.free_unit_list.unwrap())(ptr) };
         vec
@@ -585,7 +768,13 @@ impl BotInterface for RealInterface {
     fn get_random_point_nearby(&self, range: f32) -> Option<BotPosition> {
         let result = unsafe { (self.cbs.get_random_point_nearby.unwrap())(self.handle, range) };
         if result.found {
-            Some(BotPosition { x: result.x, y: result.y, z: result.z, o: 0.0, map_id: 0 })
+            Some(BotPosition {
+                x: result.x,
+                y: result.y,
+                z: result.z,
+                o: 0.0,
+                map_id: 0,
+            })
         } else {
             None
         }
@@ -597,10 +786,11 @@ impl BotInterface for RealInterface {
 
     fn get_nearby_gossip_npcs(&self, range: f32) -> Vec<UnitHandle> {
         let mut count: u32 = 0;
-        let ptr = unsafe {
-            (self.cbs.get_nearby_gossip_npcs.unwrap())(self.handle, range, &mut count)
-        };
-        if ptr.is_null() || count == 0 { return Vec::new(); }
+        let ptr =
+            unsafe { (self.cbs.get_nearby_gossip_npcs.unwrap())(self.handle, range, &mut count) };
+        if ptr.is_null() || count == 0 {
+            return Vec::new();
+        }
         let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
         unsafe { (self.cbs.free_unit_list.unwrap())(ptr) };
         vec
@@ -614,10 +804,11 @@ impl BotInterface for RealInterface {
 
     fn get_nearby_gatherables(&self, range: f32) -> Vec<u64> {
         let mut count: u32 = 0;
-        let ptr = unsafe {
-            (self.cbs.get_nearby_gatherables.unwrap())(self.handle, range, &mut count)
-        };
-        if ptr.is_null() || count == 0 { return Vec::new(); }
+        let ptr =
+            unsafe { (self.cbs.get_nearby_gatherables.unwrap())(self.handle, range, &mut count) };
+        if ptr.is_null() || count == 0 {
+            return Vec::new();
+        }
         let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
         unsafe { (self.cbs.free_gatherable_list.unwrap())(ptr) };
         vec
@@ -633,5 +824,67 @@ impl BotInterface for RealInterface {
 
     fn gameobject_position(&self, handle: u64) -> BotPosition {
         unsafe { (self.cbs.gameobject_position.unwrap())(self.handle, handle) }
+    }
+
+    /* ── Factory: inventory mutation ─────────────────────────────────── */
+
+    fn inventory_destroy_equipped_and_bags(&self) {
+        unsafe { (self.cbs.inventory_destroy_equipped_and_bags.unwrap())(self.handle) }
+    }
+
+    fn inventory_destroy_all(&self) {
+        unsafe { (self.cbs.inventory_destroy_all.unwrap())(self.handle) }
+    }
+
+    fn item_count_in_bags(&self, item_id: ItemId) -> u32 {
+        unsafe { (self.cbs.item_count_in_bags.unwrap())(self.handle, item_id.raw()) }
+    }
+
+    fn inventory_add_item(&self, item_id: ItemId, count: u32) -> u32 {
+        unsafe { (self.cbs.inventory_add_item.unwrap())(self.handle, item_id.raw(), count) }
+    }
+
+    fn item_max_stack_size(&self, item_id: ItemId) -> u32 {
+        unsafe { (self.cbs.item_max_stack_size.unwrap())(self.handle, item_id.raw()) }
+    }
+
+    fn factory_pick_potion_for_level(&self, level: u32, effect: u32) -> ItemId {
+        ItemId(unsafe {
+            (self.cbs.factory_pick_potion_for_level.unwrap())(self.handle, level, effect)
+        })
+    }
+
+    fn factory_pick_food_for_level(&self, level: u32, category: u32) -> ItemId {
+        ItemId(unsafe {
+            (self.cbs.factory_pick_food_for_level.unwrap())(self.handle, level, category)
+        })
+    }
+
+    fn random_u32(&self, min: u32, max: u32) -> u32 {
+        unsafe { (self.cbs.random_u32.unwrap())(self.handle, min, max) }
+    }
+
+    /* ── Factory: progression wipe ───────────────────────────────────── */
+
+    fn bot_clear_skill(&self, skill_id: u32) {
+        unsafe { (self.cbs.bot_clear_skill.unwrap())(self.handle, skill_id) }
+    }
+
+    fn bot_reset_spells(&self) {
+        unsafe { (self.cbs.bot_reset_spells.unwrap())(self.handle) }
+    }
+
+    fn bot_reset_all_quests(&self) {
+        unsafe { (self.cbs.bot_reset_all_quests.unwrap())(self.handle) }
+    }
+
+    /* ── Factory: misc pre/post init ─────────────────────────────────── */
+
+    fn bot_remove_all_auras(&self) {
+        unsafe { (self.cbs.bot_remove_all_auras.unwrap())(self.handle) }
+    }
+
+    fn bot_has_skill(&self, skill_id: u32) -> bool {
+        unsafe { (self.cbs.bot_has_skill.unwrap())(self.handle, skill_id) }
     }
 }

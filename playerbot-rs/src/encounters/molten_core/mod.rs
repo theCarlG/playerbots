@@ -56,24 +56,24 @@ enum Boss {
 impl Boss {
     fn update(&mut self, event: &EncounterEvent, boss_hp_pct: f32, time_ms: u64) {
         match self {
-            Self::Ragnaros(fsm)    => fsm.update(event, boss_hp_pct, time_ms),
+            Self::Ragnaros(fsm) => fsm.update(event, boss_hp_pct, time_ms),
             Self::BaronGeddon(fsm) => fsm.update(event, boss_hp_pct, time_ms),
-            Self::Magmadar(fsm)    => fsm.update(event, boss_hp_pct, time_ms),
-            Self::Lucifron(fsm)    => fsm.update(event, boss_hp_pct, time_ms),
-            Self::Garr(fsm)        => fsm.update(event, boss_hp_pct, time_ms),
-            Self::Shazzrah(fsm)    => fsm.update(event, boss_hp_pct, time_ms),
+            Self::Magmadar(fsm) => fsm.update(event, boss_hp_pct, time_ms),
+            Self::Lucifron(fsm) => fsm.update(event, boss_hp_pct, time_ms),
+            Self::Garr(fsm) => fsm.update(event, boss_hp_pct, time_ms),
+            Self::Shazzrah(fsm) => fsm.update(event, boss_hp_pct, time_ms),
             _ => {}
         }
     }
 
     fn phase_id(&self) -> u32 {
         match &self {
-            Self::Ragnaros(fsm)    => fsm.phase_id(),
-            Self::BaronGeddon(_)   => 10,
-            Self::Magmadar(_)      => 11,
-            Self::Lucifron(_)      => 12,
-            Self::Garr(_)          => 13,
-            Self::Shazzrah(_)      => 14,
+            Self::Ragnaros(fsm) => fsm.phase_id(),
+            Self::BaronGeddon(_) => 10,
+            Self::Magmadar(_) => 11,
+            Self::Lucifron(_) => 12,
+            Self::Garr(_) => 13,
+            Self::Shazzrah(_) => 14,
             Self::None => 0,
             _ => 1,
         }
@@ -81,44 +81,44 @@ impl Boss {
 
     fn phase_bt(&self) -> Option<&Bt> {
         match self {
-            Self::Ragnaros(fsm)    => fsm.phase_bt(),
+            Self::Ragnaros(fsm) => fsm.phase_bt(),
             Self::BaronGeddon(fsm) => fsm.phase_bt(),
-            Self::Magmadar(fsm)    => fsm.phase_bt(),
-            Self::Lucifron(fsm)    => fsm.phase_bt(),
-            Self::Garr(fsm)        => fsm.phase_bt(),
-            Self::Shazzrah(fsm)    => fsm.phase_bt(),
+            Self::Magmadar(fsm) => fsm.phase_bt(),
+            Self::Lucifron(fsm) => fsm.phase_bt(),
+            Self::Garr(fsm) => fsm.phase_bt(),
+            Self::Shazzrah(fsm) => fsm.phase_bt(),
             _ => None,
         }
     }
 
     fn from_entry(entry: u32) -> Self {
         match entry {
-            ENTRY_RAGNAROS     => Self::Ragnaros(RagnarosFsm::new()),
+            ENTRY_RAGNAROS => Self::Ragnaros(RagnarosFsm::new()),
             ENTRY_BARON_GEDDON => Self::BaronGeddon(BaronGeddonFsm::new()),
-            ENTRY_MAGMADAR     => Self::Magmadar(MagmadarFsm::new()),
-            ENTRY_LUCIFRON     => Self::Lucifron(LucifronFsm::new()),
-            ENTRY_GARR         => Self::Garr(GarrFsm::new()),
-            ENTRY_SHAZZRAH     => Self::Shazzrah(ShazzrahFsm::new()),
-            ENTRY_GEHENNAS     => Self::Gehennas,
-            ENTRY_SULFURON     => Self::Sulfuron,
-            ENTRY_GOLEMAGG     => Self::Golemagg,
-            ENTRY_MAJORDOMO    => Self::Majordomo,
+            ENTRY_MAGMADAR => Self::Magmadar(MagmadarFsm::new()),
+            ENTRY_LUCIFRON => Self::Lucifron(LucifronFsm::new()),
+            ENTRY_GARR => Self::Garr(GarrFsm::new()),
+            ENTRY_SHAZZRAH => Self::Shazzrah(ShazzrahFsm::new()),
+            ENTRY_GEHENNAS => Self::Gehennas,
+            ENTRY_SULFURON => Self::Sulfuron,
+            ENTRY_GOLEMAGG => Self::Golemagg,
+            ENTRY_MAJORDOMO => Self::Majordomo,
             _ => Self::None,
         }
     }
 
     fn as_entry(&self) -> u32 {
         match self {
-            Self::Ragnaros(_)    => ENTRY_RAGNAROS,
+            Self::Ragnaros(_) => ENTRY_RAGNAROS,
             Self::BaronGeddon(_) => ENTRY_BARON_GEDDON,
-            Self::Magmadar(_)    => ENTRY_MAGMADAR,
-            Self::Lucifron(_)    => ENTRY_LUCIFRON,
-            Self::Garr(_)        => ENTRY_GARR,
-            Self::Shazzrah(_)    => ENTRY_SHAZZRAH,
-            Self::Gehennas       => ENTRY_GEHENNAS,
-            Self::Sulfuron       => ENTRY_SULFURON,
-            Self::Golemagg       => ENTRY_GOLEMAGG,
-            Self::Majordomo      => ENTRY_MAJORDOMO,
+            Self::Magmadar(_) => ENTRY_MAGMADAR,
+            Self::Lucifron(_) => ENTRY_LUCIFRON,
+            Self::Garr(_) => ENTRY_GARR,
+            Self::Shazzrah(_) => ENTRY_SHAZZRAH,
+            Self::Gehennas => ENTRY_GEHENNAS,
+            Self::Sulfuron => ENTRY_SULFURON,
+            Self::Golemagg => ENTRY_GOLEMAGG,
+            Self::Majordomo => ENTRY_MAJORDOMO,
             Self::None => 0,
         }
     }
