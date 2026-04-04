@@ -7,10 +7,10 @@
 ///     Melee must back off when a Firesworn is low or get one-shot.
 ///   - Firesworn frenzy (19516) on ally death — +60% haste, purge it.
 ///
-/// Strategy: everyone stays spread (Eruption AoE). Melee pull out when a
+/// Strategy: everyone stays spread (Eruption `AoE`). Melee pull out when a
 /// Firesworn crosses ~15% to avoid Eruption. Mages/shamans purge frenzy.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, Sel, Seq, IsRanged, MaintainRange};
 use crate::ffi::SpellId;
 
 pub const AURA_ANTIMAGIC_PULSE: SpellId = SpellId(19492);

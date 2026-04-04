@@ -4,7 +4,7 @@
 ///   → Corruption → Curse of Agony → Shadowburn execute → Shadow Bolt
 use crate::{
     data::spells::vanilla::warlock::*,
-    engine::bt::Bt::{self, *},
+    engine::bt::Bt::{self, Sel, MaintainRange, Seq, SelfMissingAura, CastOnSelf, ManaBelow, Not, HpBelow, InCombat, TargetMissingAura, CastOnTarget, TargetHpBelow},
     ffi::SpellId,
 };
 

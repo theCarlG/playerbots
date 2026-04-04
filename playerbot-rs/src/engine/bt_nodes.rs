@@ -6,11 +6,11 @@
 /// Design:
 /// - Sequence: all children must succeed (left-to-right)
 /// - Selector: first child that succeeds wins
-/// - UtilitySelector: highest-scoring child that succeeds wins (replaces priority queue)
-/// - CooldownGate: spell cooldown check before running child
-/// - Condition: pure predicate on TickContext
-/// - ActionLeaf: issues a command, returns Success/Failure
-/// - PhaseSelector: routes to a subtree based on current encounter phase
+/// - `UtilitySelector`: highest-scoring child that succeeds wins (replaces priority queue)
+/// - `CooldownGate`: spell cooldown check before running child
+/// - Condition: pure predicate on `TickContext`
+/// - `ActionLeaf`: issues a command, returns Success/Failure
+/// - `PhaseSelector`: routes to a subtree based on current encounter phase
 use crate::engine::context::TickContext;
 use crate::ffi::SpellId;
 
@@ -70,7 +70,7 @@ impl BtNode for Selector {
 /// Evaluates all children, executes the highest-scoring one that returns Success.
 /// Replaces the current C++ priority queue + all-triggers-polled loop.
 ///
-/// Children are (base_score, node) pairs. Scores are not multiplied here —
+/// Children are (`base_score`, node) pairs. Scores are not multiplied here —
 /// individual nodes can adjust by returning Failure to be skipped.
 /// The list is iterated in order; if two have equal score, the earlier one wins.
 pub struct UtilitySelector {
@@ -238,17 +238,17 @@ pub fn sel(children: Vec<Box<dyn BtNode>>) -> Box<dyn BtNode> {
     Box::new(Selector { children })
 }
 
-/// UtilitySelector with (score, node) pairs.
+/// `UtilitySelector` with (score, node) pairs.
 pub fn util(children: Vec<(f32, Box<dyn BtNode>)>) -> Box<dyn BtNode> {
     Box::new(UtilitySelector::new(children))
 }
 
-/// CooldownGate wrapping a child.
+/// `CooldownGate` wrapping a child.
 pub fn cd_gate(spell_id: SpellId, child: Box<dyn BtNode>) -> Box<dyn BtNode> {
     Box::new(CooldownGate { spell_id, child })
 }
 
-/// GcdGate wrapping a child.
+/// `GcdGate` wrapping a child.
 pub fn gcd_gate(child: Box<dyn BtNode>) -> Box<dyn BtNode> {
     Box::new(GcdGate { child })
 }
@@ -258,7 +258,7 @@ pub fn not(child: Box<dyn BtNode>) -> Box<dyn BtNode> {
     Box::new(Inverter { child })
 }
 
-/// ThrottleGate — run at most once per interval.
+/// `ThrottleGate` — run at most once per interval.
 pub fn throttle(interval_ms: u64, child: Box<dyn BtNode>) -> Box<dyn BtNode> {
     Box::new(ThrottleGate::new(interval_ms, child))
 }

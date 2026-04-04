@@ -27,7 +27,7 @@ const RET_BUFFS: &[GroupBuff] = &[
 ];
 
 pub fn kit(spec: PlayerSpec) -> ClassKit {
-    use PlayerSpec::*;
+    use PlayerSpec::{PaladinHoly, PaladinProtection, PaladinRetribution};
     match spec {
         PaladinHoly => ClassKit {
             tree: holy::build_tree(),

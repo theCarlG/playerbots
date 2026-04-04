@@ -8,7 +8,7 @@ use crate::{bot::state::PlayerSpec, classes::ClassKit, noncombat::GroupBuff};
 const BUFFS: &[GroupBuff] = &[];
 
 pub fn kit(spec: PlayerSpec) -> ClassKit {
-    use PlayerSpec::*;
+    use PlayerSpec::{DeathKnightBlood, DeathKnightFrost, DeathKnightUnholy};
     let tree = match spec {
         DeathKnightBlood => blood::build_tree(),
         DeathKnightFrost => frost::build_tree(),

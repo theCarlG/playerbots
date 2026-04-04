@@ -8,7 +8,7 @@
 /// so the combat wrapper is built in `bot::init` as a `Box<dyn BtNode>`
 /// selector containing both `Bt` enum nodes and the class rotation.
 use crate::bot::state::PlayerClass;
-use crate::engine::bt::Bt::{self, *};
+use crate::engine::bt::Bt::{self, Seq, HpBelow, FleeToSafe, TargetCastingInterruptible, Interrupt, Sel, IsClass, DispelParty, ResurrectParty, IsTank, InCombat, PullingAggro, ThreatDump, HasFocusTarget, FocusAttack, CombatOrderHas, TankPickupAdds, AssistLeader, ProtectAttacker, ReactivityIs, AttackNearest};
 
 /// Flee at critically low HP.
 pub fn flee_subtree() -> Bt {

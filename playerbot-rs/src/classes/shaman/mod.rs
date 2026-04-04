@@ -13,7 +13,7 @@ const ENH_BUFFS: &[GroupBuff] = &[GroupBuff::on_self(LIGHTNING_SHIELD)];
 const NONE: &[GroupBuff] = &[];
 
 pub fn kit(spec: PlayerSpec) -> ClassKit {
-    use PlayerSpec::*;
+    use PlayerSpec::{ShamanElemental, ShamanEnhancement, ShamanRestoration};
     match spec {
         ShamanElemental => ClassKit {
             tree: elemental::build_tree(),

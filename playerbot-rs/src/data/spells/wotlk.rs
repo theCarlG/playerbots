@@ -1,7 +1,7 @@
 /// Spell ID constants introduced in Wrath of the Lich King (patch 3.x).
 ///
 /// As with `tbc.rs`, older ranks remain addressable via `spells::vanilla`.
-/// This module lists only abilities first available in WotLK — most
+/// This module lists only abilities first available in `WotLK` — most
 /// notably the entire Death Knight class, plus new utility/cooldowns that
 /// rotation trees branch on.
 use crate::ffi::SpellId;

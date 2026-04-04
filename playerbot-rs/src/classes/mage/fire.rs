@@ -4,7 +4,7 @@
 ///   Scorch (build Fire Vulnerability stacks) → Fireball
 use crate::{
     data::spells::vanilla::mage::*,
-    engine::bt::Bt::{self, *},
+    engine::bt::Bt::{self, Sel, MaintainRange, Seq, HpBelow, CastOnSelf, ManaBelow, InCombat, TargetIsCasting, CastOnTarget, TargetHpBelow, TargetAuraStacksBelow},
     ffi::SpellId,
 };
 

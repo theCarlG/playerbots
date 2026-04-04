@@ -8,12 +8,12 @@
 ///    - Others: run to edge of room (40yd from raid).
 ///    Bots WITHOUT the debuff are unaffected — `HasDebuff` checks this bot only.
 ///
-/// 2. **Inferno** (aura 19695): Geddon channels AoE ring around himself.
+/// 2. **Inferno** (aura 19695): Geddon channels `AoE` ring around himself.
 ///    - Mages: Fire Ward before fleeing (reduces fire damage).
 ///    - Others: flee 30 yards.
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::bot::state::PlayerClass;
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, Sel, Seq, HasDebuff, IsClass, CastOnSelf, MoveAwayFromRaid, TargetHasAura, FleeToSafe};
 use crate::ffi::SpellId;
 
 pub const AURA_LIVING_BOMB: SpellId = SpellId(20475);

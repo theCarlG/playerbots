@@ -1,8 +1,8 @@
-/// Blood Death Knight behavior tree (WotLK only).
+/// Blood Death Knight behavior tree (`WotLK` only).
 ///
 /// Priority: Death Grip pull → Dancing Rune Weapon → diseases → Death Strike heal
-///   → Heart Strike → Blood Strike → Death Coil → AoE
-use crate::engine::bt::Bt::{self, *};
+///   → Heart Strike → Blood Strike → Death Coil → `AoE`
+use crate::engine::bt::Bt::{self, Sel};
 
 #[cfg(feature = "wotlk")]
 use crate::{data::spells::vanilla::deathknight::*, ffi::SpellId};

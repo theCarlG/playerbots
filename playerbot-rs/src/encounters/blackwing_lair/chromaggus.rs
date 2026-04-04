@@ -12,7 +12,7 @@
 /// Strategy: everyone stays behind the boss; ranged maintain max range to
 /// stay out of breath cones entirely in case of tank position slips.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, Sel, Seq, IsRanged, MaintainRange};
 use crate::ffi::SpellId;
 
 pub const AURA_BROOD_AFFLICTION_BLUE: SpellId = SpellId(23170);

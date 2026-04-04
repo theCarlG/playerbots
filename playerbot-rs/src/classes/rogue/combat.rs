@@ -1,12 +1,12 @@
 /// Combat Rogue behavior tree (Classic / Vanilla).
 ///
-/// Priority: Vanish → Evasion → Kick interrupt → Riposte → Blade Flurry AoE
+/// Priority: Vanish → Evasion → Kick interrupt → Riposte → Blade Flurry `AoE`
 ///   → Slice and Dice upkeep → Eviscerate → Rupture → Sinister Strike
 use crate::{
     data::spells::vanilla::rogue::*,
     engine::{
         aura_helpers::RUPTURE_RANKS,
-        bt::Bt::{self, *},
+        bt::Bt::{self, Sel, StickToTarget, Seq, HpBelow, CastOnSelf, InCombat, TargetIsCasting, CastOnTarget, NearbyAtLeast, SelfMissingAura, TargetMissingAnyRank},
     },
     ffi::SpellId,
 };

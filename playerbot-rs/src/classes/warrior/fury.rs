@@ -3,7 +3,7 @@
 /// Priority: close gap → emergency fear → execute → bloodthirst → whirlwind → cleave/heroic strike
 use crate::{
     data::spells::vanilla::warrior::*,
-    engine::bt::Bt::{self, *},
+    engine::bt::Bt::{self, Sel, CastOnTarget, StickToTarget, Seq, InCombat, HpBelow, TargetHpBelow, NearbyAtLeast},
 };
 
 pub fn build_tree() -> Bt {

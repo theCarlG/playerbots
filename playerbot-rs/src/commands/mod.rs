@@ -116,7 +116,7 @@ pub enum BotCommand {
 
 /// A command queued for execution, tagged with its sender and trust level.
 ///
-/// `sender` is the ObjectGuid of the player who issued the whisper, or
+/// `sender` is the `ObjectGuid` of the player who issued the whisper, or
 /// `None` for internal/system-injected commands (RTSC spell positions,
 /// tests). `privileged` is true if the sender is the bot's owner, party
 /// leader, or a GM (decided C++-side in `PlayerbotRust::HandleCommand`).
@@ -163,12 +163,12 @@ pub fn process_commands(bot: &mut BotState) {
 
 /// The crowd-control spell this class has available for `cc {icon}` commands.
 ///
-/// The spell is always *attempted* — `can_cast` handles rank, LoS, range,
+/// The spell is always *attempted* — `can_cast` handles rank, `LoS`, range,
 /// creature-type immunity, already-CC'd, etc. Returns `None` for classes
 /// with no direct single-target CC (warrior, DK, rogue uses stealth-only
 /// sap so it's conditional).
 fn class_cc_spell(class: crate::bot::state::PlayerClass) -> Option<SpellId> {
-    use crate::bot::state::PlayerClass::*;
+    use crate::bot::state::PlayerClass::{Mage, Warlock, Priest, Druid, Hunter, Paladin, Shaman, Rogue, Warrior, DeathKnight};
     Some(match class {
         Mage => SpellId(118),      // polymorph
         Warlock => SpellId(710),   // banish (works on demons/elementals)
@@ -251,13 +251,11 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         BotCommand::CcRti(icon) => {
             // Pick a CC spell from the class's vocabulary. The bot will only
             // cast if it can — uncastable/missing spells silently no-op.
-            if let Some(unit) = bot.interface.get_unit_with_raid_icon(*icon) {
-                if let Some(spell) = class_cc_spell(bot.class) {
-                    if bot.interface.can_cast(spell, unit) {
+            if let Some(unit) = bot.interface.get_unit_with_raid_icon(*icon)
+                && let Some(spell) = class_cc_spell(bot.class)
+                    && bot.interface.can_cast(spell, unit) {
                         bot.interface.cast_spell(spell, unit);
                     }
-                }
-            }
         }
         BotCommand::BlacklistSpell(spell) => {
             s.spell_blacklist.insert(*spell);

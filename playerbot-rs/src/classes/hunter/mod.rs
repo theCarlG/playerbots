@@ -7,7 +7,7 @@ use crate::{bot::state::PlayerSpec, classes::ClassKit, noncombat::GroupBuff};
 const BUFFS: &[GroupBuff] = &[];
 
 pub fn kit(spec: PlayerSpec) -> ClassKit {
-    use PlayerSpec::*;
+    use PlayerSpec::{HunterBeastMastery, HunterMarksmanship, HunterSurvival};
     let tree = match spec {
         HunterBeastMastery => beast_mastery::build_tree(),
         HunterMarksmanship => marksmanship::build_tree(),

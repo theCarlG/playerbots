@@ -75,7 +75,7 @@ pub fn trade_skills() -> &'static [u32] {
 ///
 /// Mirrors `PlayerbotFactory::ClearSkills`. The two `PLAYER_SKILL_INDEX(0/1)`
 /// slot resets from the original are intentionally omitted — the original
-/// call site is commented out upstream, and those writes are a WoW internal
+/// call site is commented out upstream, and those writes are a `WoW` internal
 /// detail that does not belong on the Rust side of the FFI.
 pub fn clear_trade_skills(iface: &dyn BotInterface) {
     for &skill_id in trade_skills() {
@@ -85,7 +85,7 @@ pub fn clear_trade_skills(iface: &dyn BotInterface) {
 
 /// Reset the bot's spellbook to class defaults.
 ///
-/// Mirrors `PlayerbotFactory::ClearSpells`. Delegates straight to CMaNGOS'
+/// Mirrors `PlayerbotFactory::ClearSpells`. Delegates straight to `CMaNGOS`'
 /// `Player::resetSpells()` via the callback — there is no Rust-side policy.
 pub fn clear_spells(iface: &dyn BotInterface) {
     iface.bot_reset_spells();

@@ -6,7 +6,7 @@ use crate::{
     data::spells::vanilla::hunter::*,
     engine::{
         aura_helpers::{HUNTERS_MARK_RANKS, SERPENT_STING_RANKS},
-        bt::Bt::{self, *},
+        bt::Bt::{self, Sel, Seq, HpBelow, CastOnSelf, InCombat, TargetMissingAnyRank, CastOnTarget, TargetIsCasting, TargetCloserThan},
     },
     ffi::SpellId,
 };

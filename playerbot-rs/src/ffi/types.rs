@@ -3,7 +3,7 @@
 /// These prevent accidentally mixing spell IDs with item IDs, zone IDs, etc.
 /// All are `#[repr(transparent)]` so they have identical layout to the inner type.
 
-/// A WoW spell ID (e.g. Mortal Strike = 21553).
+/// A `WoW` spell ID (e.g. Mortal Strike = 21553).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct SpellId(pub u32);
@@ -32,7 +32,7 @@ impl From<SpellId> for u32 {
     }
 }
 
-/// A WoW item ID (e.g. Hearthstone = 6948).
+/// A `WoW` item ID (e.g. Hearthstone = 6948).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct ItemId(pub u32);
@@ -60,7 +60,7 @@ impl From<ItemId> for u32 {
     }
 }
 
-/// Role bitmask — matches the `role` field in BotUnitSnapshot.
+/// Role bitmask — matches the `role` field in `BotUnitSnapshot`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BotRole(pub u8);
 

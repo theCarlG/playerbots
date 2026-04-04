@@ -13,7 +13,7 @@
 ///   - Polarity: check own charge, move to correct side of room.
 ///   - Normal (Thaddius, no shift): normal rotation.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, AttackNearest, Sel, Seq, HasDebuff, MoveToSafeZone};
 use crate::ffi::SpellId;
 
 pub const SPELL_POLARITY_SHIFT: SpellId = SpellId(28089);

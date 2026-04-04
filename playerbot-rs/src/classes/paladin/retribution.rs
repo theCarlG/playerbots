@@ -4,7 +4,7 @@
 ///   Judgement (with seal) → maintain seal → Consecration
 use crate::{
     data::spells::vanilla::paladin::*,
-    engine::bt::Bt::{self, *},
+    engine::bt::Bt::{self, Sel, StickToTarget, Seq, HpBelow, CastOnSelf, InCombat, TargetHpBelow, CastOnTarget, SelfMissingAnyRank},
     ffi::SpellId,
 };
 

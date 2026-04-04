@@ -4,7 +4,7 @@
 ///   Ambush (stealth opener) → Hemorrhage → Eviscerate → Sinister Strike
 use crate::{
     data::spells::vanilla::rogue::*,
-    engine::bt::Bt::{self, *},
+    engine::bt::Bt::{self, Sel, StickToTarget, Seq, HpBelow, CastOnSelf, InCombat, TargetIsCasting, CastOnTarget, SelfMissingAura},
 };
 
 pub fn build_tree() -> Bt {

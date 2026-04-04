@@ -1,10 +1,10 @@
 /// Arcane Mage behavior tree (Classic / Vanilla).
 ///
 /// Priority: Ice Block → Evocation → Counterspell → Fire Blast execute →
-///   Arcane Missiles → Frostbolt filler → Arcane Explosion AoE
+///   Arcane Missiles → Frostbolt filler → Arcane Explosion `AoE`
 use crate::{
     data::spells::vanilla::mage::*,
-    engine::bt::Bt::{self, *},
+    engine::bt::Bt::{self, Sel, MaintainRange, Seq, HpBelow, CastOnSelf, ManaBelow, InCombat, TargetIsCasting, CastOnTarget, TargetHpBelow, NearbyAtLeast},
 };
 
 pub fn build_tree() -> Bt {

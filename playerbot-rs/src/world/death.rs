@@ -2,7 +2,7 @@
 ///
 /// Runs as highest-priority node in the root BT. When the bot is dead,
 /// nothing else should execute.
-use crate::engine::bt::Bt::{self, *};
+use crate::engine::bt::Bt::{self, Seq, IsAlive, Sel, AcceptResurrect, CorpseRun, UseSpiritHealer};
 
 pub fn death_subtree() -> Bt {
     Seq(vec![

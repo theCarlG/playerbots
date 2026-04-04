@@ -5,7 +5,7 @@
 ///   Submerged (75%/50%/25%): kill 8 Sons of Flame.
 ///   Phase 2 (< 25%): same as Ground, adds spawn continuously.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, AttackNearest, Seq, IsRanged, MaintainRange};
 use crate::ffi::SpellId;
 
 pub const ENTRY_SON_OF_FLAME: u32 = 12143;

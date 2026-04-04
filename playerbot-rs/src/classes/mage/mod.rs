@@ -16,7 +16,7 @@ const BUFFS: &[GroupBuff] = &[GroupBuff::on_party_aura(
 )];
 
 pub fn kit(spec: PlayerSpec) -> ClassKit {
-    use PlayerSpec::*;
+    use PlayerSpec::{MageArcane, MageFire, MageFrost};
     let tree = match spec {
         MageArcane => arcane::build_tree(),
         MageFire => fire::build_tree(),

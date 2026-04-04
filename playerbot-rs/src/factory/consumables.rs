@@ -9,12 +9,12 @@
 //!   * **Reagents** — fully Rust, since the class/level tables are hard-coded
 //!     constants. The spell-derived totem loop (iterate `SpellMap` and pick
 //!     up totems from `SpellEntry::Totem[]`) is **not** ported here — it
-//!     needs a SpellEntry FFI surface which does not yet exist. That loop
+//!     needs a `SpellEntry` FFI surface which does not yet exist. That loop
 //!     will be re-added when we port `InitAvailableSpells`.
 //!
 //! Unit tests use a deterministic `MockIface` that records every call so
 //! we can assert on item IDs, counts, and dedup behavior without touching
-//! real CMaNGOS DB tables.
+//! real `CMaNGOS` DB tables.
 
 use crate::ffi::interface::BotInterface;
 use crate::ffi::types::ItemId;
@@ -120,7 +120,7 @@ fn restock_picked(iface: &dyn BotInterface, level: u32, selector: u32, kind: Pic
 /// Per-class reagent plan keyed by level. Ported verbatim from
 /// `PlayerbotFactory::InitReagents`. Expansion-specific entries (e.g. wotlk
 /// druid Flintweed Seed 22147, Wild Quillvine 22148) are included for all
-/// builds — CMaNGOS will silently skip unknown item IDs on classic/tbc.
+/// builds — `CMaNGOS` will silently skip unknown item IDs on classic/tbc.
 #[derive(Debug, Default)]
 struct ReagentPlan {
     items: Vec<ItemId>,

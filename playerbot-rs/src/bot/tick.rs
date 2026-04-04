@@ -5,7 +5,7 @@
 ///   2. Throttled refresh of nearby/attacker lists
 ///   3. Zone-change check → create/destroy encounter FSM
 ///   4. Process push events → update encounter FSM + blackboard
-///   5. Build TickContext
+///   5. Build `TickContext`
 ///   6. Run the BT tree
 ///   7. Advance timers
 use crate::{
@@ -154,16 +154,12 @@ fn process_events(bot: &mut BotState, _now_ms: u64) {
         }
 
         // Generic blackboard side effects.
-        match &event {
-            BotEvent::UnitDied { victim: _, .. } => {
-                use crate::engine::blackboard::{Key, Value};
-                if let Some(count) = bot.blackboard.get_u32(Key::AddCount) {
-                    if count > 0 {
-                        bot.blackboard.set(Key::AddCount, Value::U32(count - 1));
-                    }
+        if let BotEvent::UnitDied { victim: _, .. } = &event {
+            use crate::engine::blackboard::{Key, Value};
+            if let Some(count) = bot.blackboard.get_u32(Key::AddCount)
+                && count > 0 {
+                    bot.blackboard.set(Key::AddCount, Value::U32(count - 1));
                 }
-            }
-            _ => {}
         }
     }
 
@@ -180,11 +176,9 @@ fn process_events(bot: &mut BotState, _now_ms: u64) {
     }
 
     // If bot entered combat, notify encounter FSM.
-    if bot.snap.self_.in_combat {
-        if let Some(enc) = &mut bot.encounter {
-            if !enc.is_active() {
+    if bot.snap.self_.in_combat
+        && let Some(enc) = &mut bot.encounter
+            && !enc.is_active() {
                 enc.update(&EncounterEvent::CombatStarted, boss_hp_pct, now_ms);
             }
-        }
-    }
 }

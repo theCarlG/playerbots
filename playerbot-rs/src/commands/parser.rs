@@ -10,7 +10,7 @@ use crate::commands::BotCommand;
 use crate::data::spells::lookup_spell_by_name;
 use crate::ffi::SpellId;
 
-/// Parse a chat message into a BotCommand.
+/// Parse a chat message into a `BotCommand`.
 /// Returns `None` if the message is not a recognized command.
 pub fn parse(text: &str) -> Option<BotCommand> {
     let text = text.trim();
@@ -40,7 +40,7 @@ pub fn parse(text: &str) -> Option<BotCommand> {
 
         // -- Targeting --
         "focus" => {
-            if args.first().map_or(false, |a| *a == "clear") {
+            if args.first().is_some_and(|a| *a == "clear") {
                 Some(BotCommand::Focus(None))
             } else {
                 Some(BotCommand::Focus(None)) // target from current target
@@ -250,11 +250,10 @@ fn parse_rti(token: &str) -> Option<u8> {
     if let Some(rest) = token.strip_prefix("rti") {
         return rest.parse::<u8>().ok().filter(|&n| (1..=8).contains(&n));
     }
-    if let Ok(n) = token.parse::<u8>() {
-        if (1..=8).contains(&n) {
+    if let Ok(n) = token.parse::<u8>()
+        && (1..=8).contains(&n) {
             return Some(n);
         }
-    }
     Some(match token {
         "star" => 1,
         "circle" => 2,

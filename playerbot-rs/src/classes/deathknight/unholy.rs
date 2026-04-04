@@ -1,8 +1,8 @@
-/// Unholy Death Knight behavior tree (WotLK only) — Disease DPS spec.
+/// Unholy Death Knight behavior tree (`WotLK` only) — Disease DPS spec.
 ///
 /// Priority: Bone Shield → Death Grip → diseases → Scourge Strike →
-///   AoE Blood Boil → Death Coil → Death and Decay
-use crate::engine::bt::Bt::{self, *};
+///   `AoE` Blood Boil → Death Coil → Death and Decay
+use crate::engine::bt::Bt::{self, Sel};
 
 #[cfg(feature = "wotlk")]
 use crate::{data::spells::vanilla::deathknight::*, ffi::SpellId};

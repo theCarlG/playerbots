@@ -1,4 +1,4 @@
-/// BotState — the per-bot AI state object.
+/// `BotState` — the per-bot AI state object.
 ///
 /// This is the opaque `void*` returned by `playerbot_create` and stored by
 /// the C++ `PlayerbotRust` class. It owns everything the AI needs.
@@ -14,7 +14,7 @@ use crate::{
     ffi::{BotRole, BotWorldSnapshot, UnitHandle, interface::BotInterface},
 };
 
-/// Which WoW class this bot is.
+/// Which `WoW` class this bot is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PlayerClass {
@@ -77,10 +77,10 @@ pub enum PlayerSpec {
 
 /// The complete per-bot AI state.
 pub struct BotState {
-    /// CMaNGOS ObjectGuid value for this bot's Player.
+    /// `CMaNGOS` `ObjectGuid` value for this bot's Player.
     pub handle: u64,
 
-    /// Interface to the game (production: RealInterface, tests: MockInterface).
+    /// Interface to the game (production: `RealInterface`, tests: `MockInterface`).
     pub interface: Box<dyn BotInterface>,
 
     /// Current tick's world snapshot. Refreshed at the start of each tick.

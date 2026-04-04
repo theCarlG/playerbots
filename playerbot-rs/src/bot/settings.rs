@@ -31,7 +31,7 @@ pub enum BehaviorMode {
 /// How the bot selects combat targets. Bitflags-style — multiple flags may
 /// coexist (e.g. `TANK | ASSIST`, `TANK_ASSIST | DPS_ASSIST`).
 ///
-/// Matches the C++ bitfield semantics the RaidControl addon drives:
+/// Matches the C++ bitfield semantics the `RaidControl` addon drives:
 /// `co +tank`, `co -threat`, `co +tank assist,+dps assist`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CombatOrder(pub u32);
@@ -125,7 +125,7 @@ impl std::ops::BitOrAssign for CombatOrder {
 
 /// Named strategies the bot can toggle at runtime via `nc +x,-y` commands.
 ///
-/// Mirrors the C++ "strategies" vocabulary the RaidControl addon sends.
+/// Mirrors the C++ "strategies" vocabulary the `RaidControl` addon sends.
 /// Each flag gates one optional subtree in the root BT. Core behavior
 /// (combat rotations, reactive layer, mode dispatch) is NOT a strategy —
 /// strategies are the knobs a raid leader turns during a pull.
@@ -202,7 +202,7 @@ impl std::ops::BitOr for StrategyFlags {
 }
 
 /// How followers arrange themselves around the master when in Follow mode.
-/// Mirrors the C++ formation vocabulary the RaidControl addon sends.
+/// Mirrors the C++ formation vocabulary the `RaidControl` addon sends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FollowFormation {
     /// Cluster tightly near the leader (default).

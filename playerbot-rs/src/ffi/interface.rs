@@ -1,12 +1,12 @@
-/// BotInterface — the Rust abstraction over the C BotCallbacks vtable.
+/// `BotInterface` — the Rust abstraction over the C `BotCallbacks` vtable.
 ///
-/// Production code uses RealInterface (wraps the C function pointer table).
-/// Tests use MockInterface (in-memory mock that records all commands issued).
+/// Production code uses `RealInterface` (wraps the C function pointer table).
+/// Tests use `MockInterface` (in-memory mock that records all commands issued).
 ///
-/// BtNode and TickContext use `&dyn BotInterface` so they work in both contexts
+/// `BtNode` and `TickContext` use `&dyn BotInterface` so they work in both contexts
 /// without any conditional compilation.
 use super::{
-    BotAuraInfo, BotCallbacks, BotHandle, BotPosition, BotSafePosition, BotThreatEntry,
+    BotAuraInfo, BotCallbacks, BotHandle, BotPosition, BotThreatEntry,
     BotUnitSnapshot, BotWorldSnapshot, UnitHandle,
     types::{BotRole, ItemId, SpellId},
 };
@@ -202,7 +202,7 @@ pub trait BotInterface: Send {
     /* ── Dispel / party aura queries ────────────────────────────────── */
 
     /// Find a group member with a dispellable debuff that this bot can remove.
-    /// Returns (member_handle, debuff_spell_id).
+    /// Returns (`member_handle`, `debuff_spell_id`).
     fn find_dispellable_target(&self) -> Option<(UnitHandle, SpellId)> {
         None
     }
@@ -302,7 +302,7 @@ pub trait BotInterface: Send {
     /* ── Factory: consumable selection ────────────────────────────────── */
 
     /// Pick a potion item ID appropriate for `level` and spell effect
-    /// (10 = SPELL_EFFECT_HEAL, 30 = SPELL_EFFECT_ENERGIZE). Returns 0 if
+    /// (10 = `SPELL_EFFECT_HEAL`, 30 = `SPELL_EFFECT_ENERGIZE`). Returns 0 if
     /// no suitable potion exists for that level/effect.
     fn factory_pick_potion_for_level(&self, _level: u32, _effect: u32) -> ItemId {
         ItemId::NONE

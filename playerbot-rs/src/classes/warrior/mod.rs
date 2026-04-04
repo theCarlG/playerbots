@@ -11,7 +11,7 @@ use crate::{
 const BUFFS: &[GroupBuff] = &[GroupBuff::on_party(BATTLE_SHOUT)];
 
 pub fn kit(spec: PlayerSpec) -> ClassKit {
-    use PlayerSpec::*;
+    use PlayerSpec::{WarriorArms, WarriorFury, WarriorProtection};
     let tree = match spec {
         WarriorArms => arms::build_tree(),
         WarriorFury => fury::build_tree(),

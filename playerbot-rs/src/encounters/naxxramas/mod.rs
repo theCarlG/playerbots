@@ -1,7 +1,7 @@
 pub mod grobbulus;
 /// Naxxramas — 15 boss encounters across 5 wings.
 ///
-/// Zone ID: 3456.  40-player raid (Vanilla) / 10 and 25-player (WotLK).
+/// Zone ID: 3456.  40-player raid (Vanilla) / 10 and 25-player (`WotLK`).
 ///
 /// Wings:
 ///   Spider Wing:    Anub'Rekhan, Grand Widow Faerlina, Maexxna

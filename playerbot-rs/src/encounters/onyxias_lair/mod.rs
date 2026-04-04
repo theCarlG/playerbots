@@ -5,7 +5,7 @@
 ///   Phase 2 (65%→40%): Air. Melee hold, dodge Deep Breath, ranged normal.
 ///   Phase 3 (<40%): Ground again + whelp spawns.
 use super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, Sel, Seq, TargetHasAura, FleeToSafe, IsMeleeDps, HoldPosition, MoveBehind};
 use crate::ffi::SpellId;
 
 pub const ENTRY_ONYXIA: u32 = 10184;

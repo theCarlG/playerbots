@@ -1,6 +1,6 @@
 /// Aura rank helpers — check if a unit has any rank of a multi-rank spell.
 ///
-/// Many WoW spells have multiple ranks (e.g. Rend rank 1-6).  When checking
+/// Many `WoW` spells have multiple ranks (e.g. Rend rank 1-6).  When checking
 /// if a DoT/buff is already on a target, we need to check all ranks.
 /// This module provides `has_any_rank()` and spell rank tables.
 use crate::ffi::{SpellId, UnitHandle, interface::BotInterface};

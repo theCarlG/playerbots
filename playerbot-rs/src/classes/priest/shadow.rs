@@ -1,10 +1,10 @@
 /// Shadow Priest behavior tree (Classic / Vanilla).
 ///
 /// Priority: Shadowform → Fade → emergency self-heal → Vampiric Embrace →
-///   SW:Pain → Mind Blast → Devouring Plague → Mind Flay → Psychic Scream (AoE panic)
+///   SW:Pain → Mind Blast → Devouring Plague → Mind Flay → Psychic Scream (`AoE` panic)
 use crate::{
     data::spells::vanilla::priest::*,
-    engine::bt::Bt::{self, *},
+    engine::bt::Bt::{self, Sel, Seq, SelfMissingAura, CastOnSelf, AttackersAtLeast, HpBelow, InCombat, TargetMissingAura, CastOnTarget, TargetMissingAnyRank},
     ffi::SpellId,
 };
 

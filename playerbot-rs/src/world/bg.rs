@@ -1,7 +1,7 @@
 /// Battleground autonomous behavior.
 ///
 /// Priority: fight nearby enemies > capture objectives > follow group.
-use crate::engine::bt::Bt::{self, *};
+use crate::engine::bt::Bt::{self, Seq, InCombat, InBattleground, Sel, BgAttackEnemy, BgCaptureObjective, Follow};
 
 pub fn bg_subtree() -> Bt {
     Seq(vec![

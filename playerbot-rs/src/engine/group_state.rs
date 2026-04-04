@@ -1,7 +1,7 @@
-/// Shared group/encounter state — one instance per group, shared via Arc<RwLock<>>.
+/// Shared group/encounter state — one instance per group, shared via Arc<`RwLock`<>>.
 ///
 /// The group's "coordinator" (leader bot) writes this once per world tick.
-/// All other bots in the group read it (lock-free via try_read with stale fallback).
+/// All other bots in the group read it (lock-free via `try_read` with stale fallback).
 use crate::ffi::UnitHandle;
 
 /// Bot role bitmask — mirrors the C-side role field.
@@ -25,7 +25,7 @@ impl BotRole {
     }
 }
 
-/// Encounter-specific role assignments computed by GroupCoordinator.
+/// Encounter-specific role assignments computed by `GroupCoordinator`.
 #[derive(Debug, Clone, Default)]
 pub struct EncounterAssignments {
     pub main_tank: Option<UnitHandle>,
@@ -33,7 +33,7 @@ pub struct EncounterAssignments {
     pub healers: Vec<UnitHandle>,
     pub ranged_dps: Vec<UnitHandle>,
     pub melee_dps: Vec<UnitHandle>,
-    /// Special roles keyed by an encounter-specific string (e.g. "mc_breaker", "polarity_switch")
+    /// Special roles keyed by an encounter-specific string (e.g. "`mc_breaker`", "`polarity_switch`")
     pub special: Vec<(String, UnitHandle)>,
 }
 

@@ -10,7 +10,7 @@ use crate::{
 const BUFFS: &[GroupBuff] = &[GroupBuff::on_self(DEMON_ARMOR)];
 
 pub fn kit(spec: PlayerSpec) -> ClassKit {
-    use PlayerSpec::*;
+    use PlayerSpec::{WarlockAffliction, WarlockDemonology, WarlockDestruction};
     let tree = match spec {
         WarlockAffliction => affliction::build_tree(),
         WarlockDemonology => demonology::build_tree(),

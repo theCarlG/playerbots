@@ -1,8 +1,8 @@
-/// Frost Death Knight behavior tree (WotLK only).
+/// Frost Death Knight behavior tree (`WotLK` only).
 ///
 /// Priority: Death Grip → Anti-Magic Shell vs casters → Howling Blast → Obliterate
 ///   → diseases → Frost Strike → Chains of Ice
-use crate::engine::bt::Bt::{self, *};
+use crate::engine::bt::Bt::{self, Sel};
 
 #[cfg(feature = "wotlk")]
 use crate::{data::spells::vanilla::deathknight::*, ffi::SpellId};

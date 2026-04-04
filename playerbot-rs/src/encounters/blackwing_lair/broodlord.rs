@@ -10,7 +10,7 @@
 /// Strategy: melee hug the boss from the sides/back, ranged stay at max
 /// range to minimise knockback exposure.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, Sel, Seq, IsRanged, MaintainRange, IsMeleeDps};
 use crate::ffi::SpellId;
 
 pub const SPELL_KNOCK_BACK: SpellId = SpellId(18670);

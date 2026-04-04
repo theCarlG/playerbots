@@ -6,7 +6,7 @@ use crate::{
     data::spells::vanilla::warrior::*,
     engine::{
         aura_helpers::DEMORALIZING_SHOUT_RANKS,
-        bt::Bt::{self, *},
+        bt::Bt::{self, Sel, Seq, HpBelow, CastOnSelf, CastOnTarget, StickToTarget, InCombat, TargetMissingAnyRank},
     },
 };
 

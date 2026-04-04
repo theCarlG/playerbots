@@ -1,10 +1,10 @@
 /// Elemental Shaman behavior tree (Classic / Vanilla).
 ///
-/// Priority: totem upkeep → Earth Shock interrupt → Flame Shock DoT →
-///   Chain Lightning AoE → Lightning Bolt → Frost Shock filler
+/// Priority: totem upkeep → Earth Shock interrupt → Flame Shock `DoT` →
+///   Chain Lightning `AoE` → Lightning Bolt → Frost Shock filler
 use crate::{
     data::spells::vanilla::shaman::*,
-    engine::bt::Bt::{self, *},
+    engine::bt::Bt::{self, Sel, MaintainRange, Seq, GroupSizeAtLeast, SelfMissingAura, CastOnSelf, InCombat, TargetIsCasting, CastOnTarget, TargetMissingAura, NearbyAtLeast},
 };
 
 pub fn build_tree() -> Bt {

@@ -1,7 +1,7 @@
 /// Per-bot typed key-value store.
 ///
 /// All state that the BT writes and reads across ticks lives here.
-/// O(1) access via enum discriminant index — no string lookups, no HashMap.
+/// O(1) access via enum discriminant index — no string lookups, no `HashMap`.
 use crate::ffi::UnitHandle;
 
 /// All keys a BT node can read or write.

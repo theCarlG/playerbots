@@ -1,4 +1,4 @@
-/// Spell ID constants for Classic (Vanilla) WoW.
+/// Spell ID constants for Classic (Vanilla) `WoW`.
 ///
 /// IDs are for the highest rank available at level 60 cap unless noted.
 /// Source: wowhead classic DB / cmangos spell tables.

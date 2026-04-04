@@ -6,7 +6,7 @@
 ///
 /// Coordinates are approximate (inn door / capital square), not exact SQL.
 /// A future expansion replaces this with flight-path pathing; for now the
-/// bot move_to's the destination once the map matches.
+/// bot `move_to`'s the destination once the map matches.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NamedLocation {
     pub name: &'static str,

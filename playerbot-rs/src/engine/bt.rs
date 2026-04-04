@@ -57,7 +57,7 @@ pub enum Bt {
     HasDebuff(SpellId),
     /// The bot's current target has the specified aura.
     TargetHasAura(SpellId),
-    /// This bot is missing the specified aura (inverse of HasDebuff on self).
+    /// This bot is missing the specified aura (inverse of `HasDebuff` on self).
     SelfMissingAura(SpellId),
     /// The current target is missing the specified aura.
     TargetMissingAura(SpellId),
@@ -693,13 +693,11 @@ const REFOLLOW_THRESHOLD: f32 = 8.0;
 
 fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
     // Prefer following the designated tank.
-    if let Some(tank) = ctx.interface.group_get_tank() {
-        if ctx.interface.unit_distance(tank) > REFOLLOW_THRESHOLD {
-            if ctx.interface.follow(tank, FOLLOW_DIST, 0.0) {
+    if let Some(tank) = ctx.interface.group_get_tank()
+        && ctx.interface.unit_distance(tank) > REFOLLOW_THRESHOLD
+            && ctx.interface.follow(tank, FOLLOW_DIST, 0.0) {
                 return BtResult::Success;
             }
-        }
-    }
     // Fall back to any group member far enough away.
     let member = ctx.snap.group_members[..ctx.snap.group_size as usize]
         .iter()
@@ -707,11 +705,10 @@ fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
         .find(|&h| {
             h != 0 && h != ctx.bot_handle && ctx.interface.unit_distance(h) > REFOLLOW_THRESHOLD
         });
-    if let Some(target) = member {
-        if ctx.interface.follow(target, FOLLOW_DIST, 0.0) {
+    if let Some(target) = member
+        && ctx.interface.follow(target, FOLLOW_DIST, 0.0) {
             return BtResult::Success;
         }
-    }
     BtResult::Failure
 }
 
@@ -724,12 +721,11 @@ fn tick_guard_return(ctx: &mut TickContext<'_>) -> BtResult {
         let pos = &ctx.snap.self_.pos;
         let dx = pos.x - gx;
         let dy = pos.y - gy;
-        let dist = (dx * dx + dy * dy).sqrt();
-        if dist > GUARD_LEASH_DIST {
-            if ctx.interface.move_to(gx, gy, gz) {
+        let dist = dx.hypot(dy);
+        if dist > GUARD_LEASH_DIST
+            && ctx.interface.move_to(gx, gy, gz) {
                 return BtResult::Running;
             }
-        }
     }
     BtResult::Failure
 }
@@ -765,12 +761,11 @@ fn tick_consumables(ctx: &mut TickContext<'_>) -> BtResult {
 
 fn tick_buff(ctx: &mut TickContext<'_>, buffs: &[GroupBuff]) -> BtResult {
     for buff in buffs {
-        if let Some(target_handle) = find_buff_target(ctx, buff) {
-            if ctx.interface.cast_spell(buff.spell_id, target_handle) {
+        if let Some(target_handle) = find_buff_target(ctx, buff)
+            && ctx.interface.cast_spell(buff.spell_id, target_handle) {
                 ctx.timers.on_spell_cast(buff.spell_id, ctx.server_time_ms);
                 return BtResult::Success;
             }
-        }
     }
     BtResult::Failure
 }
@@ -926,22 +921,20 @@ fn tick_threat_dump(ctx: &mut TickContext<'_>) -> BtResult {
 }
 
 fn tick_focus_attack(ctx: &mut TickContext<'_>) -> BtResult {
-    if let Some(focus) = ctx.settings.focus_target {
-        if ctx.current_target() != Some(focus) && ctx.interface.attack(focus) {
+    if let Some(focus) = ctx.settings.focus_target
+        && ctx.current_target() != Some(focus) && ctx.interface.attack(focus) {
             return BtResult::Success;
         }
-    }
     BtResult::Failure
 }
 
 fn tick_tank_pickup(ctx: &mut TickContext<'_>) -> BtResult {
     for &attacker in ctx.attackers {
         let snap = ctx.interface.get_unit_snapshot(attacker);
-        if snap.current_target != ctx.bot_handle {
-            if ctx.interface.taunt(attacker) {
+        if snap.current_target != ctx.bot_handle
+            && ctx.interface.taunt(attacker) {
                 return BtResult::Success;
             }
-        }
     }
     BtResult::Failure
 }
@@ -965,11 +958,10 @@ fn tick_assist_leader(ctx: &mut TickContext<'_>) -> BtResult {
             }
         });
 
-    if let Some(target) = leader_target {
-        if ctx.current_target() != Some(target) && ctx.interface.attack(target) {
+    if let Some(target) = leader_target
+        && ctx.current_target() != Some(target) && ctx.interface.attack(target) {
             return BtResult::Success;
         }
-    }
     BtResult::Failure
 }
 
@@ -977,11 +969,10 @@ fn tick_protect(ctx: &mut TickContext<'_>) -> BtResult {
     if let Some(protect) = ctx.settings.protect_target {
         for &attacker in ctx.attackers {
             let snap = ctx.interface.get_unit_snapshot(attacker);
-            if snap.current_target == protect {
-                if ctx.interface.attack(attacker) {
+            if snap.current_target == protect
+                && ctx.interface.attack(attacker) {
                     return BtResult::Success;
                 }
-            }
         }
     }
     BtResult::Failure
@@ -1071,13 +1062,11 @@ fn tick_accept_quests(ctx: &mut TickContext<'_>) -> BtResult {
 fn tick_attack_quest_mob(ctx: &mut TickContext<'_>) -> BtResult {
     let quests = ctx.interface.get_quest_log();
     let has_active = quests.iter().any(|q| !q.complete);
-    if has_active {
-        if let Some(&target) = ctx.nearby.iter().find(|&&u| ctx.interface.is_attackable(u)) {
-            if ctx.interface.attack(target) {
+    if has_active
+        && let Some(&target) = ctx.nearby.iter().find(|&&u| ctx.interface.is_attackable(u))
+            && ctx.interface.attack(target) {
                 return BtResult::Success;
             }
-        }
-    }
     BtResult::Failure
 }
 
@@ -1107,11 +1096,10 @@ fn tick_travel(ctx: &mut TickContext<'_>) -> BtResult {
 
 fn tick_grind(ctx: &mut TickContext<'_>) -> BtResult {
     // Re-engage existing target.
-    if let Some(t) = ctx.current_target() {
-        if ctx.interface.is_attackable(t) && ctx.interface.attack(t) {
+    if let Some(t) = ctx.current_target()
+        && ctx.interface.is_attackable(t) && ctx.interface.attack(t) {
             return BtResult::Success;
         }
-    }
     // Find a level-appropriate attackable mob.
     let my_level = ctx.snap.self_.level;
     let target = ctx.nearby.iter().copied().find(|&unit| {
@@ -1122,11 +1110,10 @@ fn tick_grind(ctx: &mut TickContext<'_>) -> BtResult {
         let diff = (level as i16 - my_level as i16).unsigned_abs();
         diff <= 3 && ctx.interface.unit_distance(unit) < ctx.settings.max_combat_range
     });
-    if let Some(t) = target {
-        if ctx.interface.attack(t) {
+    if let Some(t) = target
+        && ctx.interface.attack(t) {
             return BtResult::Success;
         }
-    }
     BtResult::Failure
 }
 
@@ -1167,22 +1154,20 @@ fn tick_bg_capture(ctx: &mut TickContext<'_>) -> BtResult {
 
 fn tick_bg_attack(ctx: &mut TickContext<'_>) -> BtResult {
     let enemies = ctx.interface.get_nearby_enemies(30.0);
-    if let Some(&enemy) = enemies.first() {
-        if ctx.interface.attack(enemy) {
+    if let Some(&enemy) = enemies.first()
+        && ctx.interface.attack(enemy) {
             return BtResult::Success;
         }
-    }
     BtResult::Failure
 }
 
 // ── RPG helpers ─────────────────────────────────────────────────────────────
 
 fn tick_rpg_wander(ctx: &mut TickContext<'_>) -> BtResult {
-    if let Some(pos) = ctx.interface.get_random_point_nearby(20.0) {
-        if ctx.interface.move_to(pos.x, pos.y, pos.z) {
+    if let Some(pos) = ctx.interface.get_random_point_nearby(20.0)
+        && ctx.interface.move_to(pos.x, pos.y, pos.z) {
             return BtResult::Running;
         }
-    }
     BtResult::Failure
 }
 

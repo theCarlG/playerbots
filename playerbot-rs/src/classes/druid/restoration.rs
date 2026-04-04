@@ -1,10 +1,10 @@
 /// Restoration Druid behavior tree (Classic / Vanilla).
 ///
 /// Priority: Innervate (OOM) → Barkskin (damaged) → critical heals →
-///   Tranquility (AoE panic) → HoT maintenance
+///   Tranquility (`AoE` panic) → `HoT` maintenance
 use crate::{
     data::spells::vanilla::druid::*,
-    engine::bt::Bt::{self, *},
+    engine::bt::Bt::{self, Sel, Seq, ManaBelow, CastOnSelf, HpBelow, AttackersAtLeast, HealLowest, HealInjuredParty, GroupMembersBelow},
 };
 
 pub fn build_tree() -> Bt {

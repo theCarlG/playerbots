@@ -10,7 +10,7 @@ use crate::{
     world,
 };
 
-/// Build a BotState from its handle, interface, class, and spec.
+/// Build a `BotState` from its handle, interface, class, and spec.
 pub fn create_bot(
     handle: u64,
     interface: Box<dyn BotInterface>,
@@ -25,7 +25,7 @@ pub fn create_bot(
 }
 
 fn default_role_for_spec(spec: &PlayerSpec) -> BotRole {
-    use PlayerSpec::*;
+    use PlayerSpec::{WarriorProtection, PaladinProtection, DruidFeral, PriestHoly, PriestDiscipline, PaladinHoly, ShamanRestoration, DruidRestoration};
     match spec {
         WarriorProtection | PaladinProtection | DruidFeral => BotRole::TANK,
         PriestHoly | PriestDiscipline | PaladinHoly | ShamanRestoration | DruidRestoration => {
@@ -38,7 +38,7 @@ fn default_role_for_spec(spec: &PlayerSpec) -> BotRole {
 /// Look up the class rotation tree and buff list for this (class, spec).
 /// Each class owns its own dispatch; this function is a flat 10-arm switch.
 fn class_kit(class: PlayerClass, spec: PlayerSpec) -> ClassKit {
-    use PlayerClass::*;
+    use PlayerClass::{Warrior, Paladin, Priest, Druid, Hunter, Mage, Rogue, Shaman, Warlock, DeathKnight};
     match class {
         Warrior => classes::warrior::kit(spec),
         Paladin => classes::paladin::kit(spec),
@@ -64,7 +64,7 @@ fn class_kit(class: PlayerClass, spec: PlayerSpec) -> ClassKit {
 ///   6. Mode-specific out-of-combat behavior
 ///   7. Maintenance (buff, loot, pet, mount, vendor, repair)
 fn build_root_tree(class: PlayerClass, spec: PlayerSpec) -> Bt {
-    use Bt::*;
+    use Bt::{Sel, ModeIs, Seq, InCombat, Consumables, EncounterOverride, ShouldEngage};
 
     let ClassKit {
         tree: combat_tree,
@@ -108,7 +108,7 @@ fn combat_wrapper(class_rotation: Bt) -> Bt {
 
 /// Mode dispatch — each behavior mode gets its own subtree.
 fn mode_dispatch() -> Bt {
-    use Bt::*;
+    use Bt::{Sel, Seq, ModeIs, Follow, StrategyEnabled};
     Sel(vec![
         Seq(vec![
             ModeIs(BehaviorMode::Follow),
@@ -143,7 +143,7 @@ fn mode_dispatch() -> Bt {
 
 /// Maintenance subtree — low-priority upkeep in any non-passive mode.
 fn maintenance_subtree(buffs: &'static [GroupBuff]) -> Bt {
-    use Bt::*;
+    use Bt::{Sel, Seq, InCombat, Buff, Follow};
     Sel(vec![
         Seq(vec![InCombat.not(), Bt::throttle(5_000, Buff(buffs))]),
         world::pet::pet_subtree(),

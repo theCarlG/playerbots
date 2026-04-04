@@ -1,4 +1,4 @@
-/// TickContext — everything a BT node needs for one tick.
+/// `TickContext` — everything a BT node needs for one tick.
 ///
 /// Built once at the start of each `playerbot_update` call and passed
 /// down through the entire tree. Immutable game state is borrowed;
@@ -10,7 +10,7 @@ use crate::{
     engine::{
         blackboard::Blackboard,
         group_state::GroupState,
-        snapshot::{UnitSnapshotExt, WorldSnapshotExt},
+        snapshot::WorldSnapshotExt,
         timers::BotTimers,
     },
     ffi::{BotRole, BotWorldSnapshot, UnitHandle, interface::BotInterface},
@@ -34,7 +34,7 @@ pub struct TickContext<'a> {
     pub minimal: bool, // true = throttled tick, skip expensive queries
 
     // ── Bot identity ────────────────────────────────────────────────────
-    /// This bot's own UnitHandle (ObjectGuid value). Use as a target for
+    /// This bot's own `UnitHandle` (`ObjectGuid` value). Use as a target for
     /// self-buffs, self-casts, or any operation that needs "cast on myself".
     pub bot_handle: UnitHandle,
 
@@ -80,7 +80,7 @@ impl<'a> TickContext<'a> {
 
     /// True if an encounter FSM is active (boss engaged).
     pub fn encounter_active(&self) -> bool {
-        self.encounter.map_or(false, |e| e.is_active())
+        self.encounter.is_some_and(|e| e.is_active())
     }
 
     /// NPC entry of the current boss (0 if no encounter).

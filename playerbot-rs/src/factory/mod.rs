@@ -3,7 +3,7 @@
 //! once when a bot is generated, and occasionally thereafter (gear re-rolls,
 //! consumable top-ups, spec changes).
 //!
-//! Each submodule covers one concern of the old PlayerbotFactory:
+//! Each submodule covers one concern of the old `PlayerbotFactory`:
 //!
 //!   * `inventory`   — clear / restock items, bags.
 //!   * `consumables` — potions, food, reagents, totems.
@@ -11,7 +11,7 @@
 //!   * `misc`        — cancel auras, hand out trade-skill tools.
 //!
 //! Submodules are pure policy: they take `&dyn BotInterface` and call methods
-//! on it. They do not touch CMaNGOS directly — the FFI layer handles that.
+//! on it. They do not touch `CMaNGOS` directly — the FFI layer handles that.
 
 pub mod consumables;
 pub mod inventory;

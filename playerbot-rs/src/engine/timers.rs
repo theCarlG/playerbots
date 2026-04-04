@@ -6,16 +6,16 @@ use crate::ffi::SpellId;
 use std::collections::HashMap;
 
 /// GCD duration in milliseconds (1500ms standard).
-const GCD_MS: u64 = 1500;
+// const GCD_MS: u64 = 1500;
 /// Off-GCD margin: spells with cast time > 0 don't trigger full GCD.
 /// We always track full GCD for simplicity; real off-GCD handling is per-spell.
 const INSTANT_GCD_MS: u64 = 1500;
 
 #[derive(Debug, Default)]
 pub struct BotTimers {
-    /// spell_id → server_time_ms when this spell is next usable
+    /// `spell_id` → `server_time_ms` when this spell is next usable
     cooldowns: HashMap<SpellId, u64>,
-    /// server_time_ms when GCD expires
+    /// `server_time_ms` when GCD expires
     gcd_ready_at: u64,
 }
 
@@ -28,15 +28,14 @@ impl BotTimers {
     pub fn spell_on_cooldown(&self, spell_id: SpellId, now_ms: u64) -> bool {
         self.cooldowns
             .get(&spell_id)
-            .map_or(false, |&ready_at| now_ms < ready_at)
+            .is_some_and(|&ready_at| now_ms < ready_at)
     }
 
     /// Milliseconds remaining on a spell cooldown (0 if ready).
     pub fn cooldown_remaining_ms(&self, spell_id: SpellId, now_ms: u64) -> u32 {
         self.cooldowns
             .get(&spell_id)
-            .map(|&ready_at| ready_at.saturating_sub(now_ms) as u32)
-            .unwrap_or(0)
+            .map_or(0, |&ready_at| ready_at.saturating_sub(now_ms) as u32)
     }
 
     /// Returns true if GCD is active.
@@ -46,18 +45,18 @@ impl BotTimers {
 
     /// Called by action nodes when a spell is successfully cast.
     /// Records the GCD and the spell's own cooldown.
-    pub fn on_spell_cast(&mut self, spell_id: SpellId, now_ms: u64) {
+    pub fn on_spell_cast(&mut self, _spell_id: SpellId, now_ms: u64) {
         self.gcd_ready_at = now_ms + INSTANT_GCD_MS;
     }
 
-    /// Called when we know the exact cooldown duration (from C++ spell_cooldown_ms).
+    /// Called when we know the exact cooldown duration (from C++ `spell_cooldown_ms`).
     pub fn set_cooldown(&mut self, spell_id: SpellId, duration_ms: u32, now_ms: u64) {
         if duration_ms > 0 {
             self.cooldowns.insert(spell_id, now_ms + duration_ms as u64);
         }
     }
 
-    /// Advance timers by elapsed_ms. Cleans up expired entries.
+    /// Advance timers by `elapsed_ms`. Cleans up expired entries.
     pub fn advance(&mut self, now_ms: u64) {
         self.cooldowns.retain(|_, ready_at| *ready_at > now_ms);
     }

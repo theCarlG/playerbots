@@ -1,10 +1,10 @@
 /// Enhancement Shaman behavior tree (Classic / Vanilla).
 ///
 /// Priority: Lightning Shield + totem upkeep → panic heal → Stormstrike →
-///   Earth Shock interrupt → Flame Shock DoT → Earth Shock filler
+///   Earth Shock interrupt → Flame Shock `DoT` → Earth Shock filler
 use crate::{
     data::spells::vanilla::shaman::*,
-    engine::bt::Bt::{self, *},
+    engine::bt::Bt::{self, Sel, Seq, SelfMissingAnyRank, CastOnSelf, SelfMissingAura, StickToTarget, InCombat, HpBelow, CastOnTarget, TargetIsCasting, TargetMissingAura},
     ffi::SpellId,
 };
 

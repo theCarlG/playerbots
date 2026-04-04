@@ -4,7 +4,7 @@
 ///   → Cone of Cold (on frozen target) → Fire Blast execute → Frostbolt
 use crate::{
     data::spells::vanilla::mage::*,
-    engine::bt::Bt::{self, *},
+    engine::bt::Bt::{self, Sel, MaintainRange, Seq, HpBelow, CastOnSelf, ManaBelow, InCombat, TargetIsCasting, CastOnTarget, TargetCloserThan, TargetHasAura, TargetHpBelow},
     ffi::SpellId,
 };
 

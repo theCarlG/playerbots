@@ -5,7 +5,7 @@
 ///   Raid must survive — no boss to target.
 ///
 /// Phase 2: Kel'Thuzad emerges from sarcophagus.
-///   - Shadow Fissure (27810): ground AoE — move out immediately.
+///   - Shadow Fissure (27810): ground `AoE` — move out immediately.
 ///   - Frost Blast (27808): frozen target needs immediate healing.
 ///   - Chains of Kel'Thuzad (28410): mind control.
 ///
@@ -16,7 +16,7 @@
 ///   - KT active: dodge Shadow Fissure (flee if debuffed).
 ///   - Adds + portal: non-tanks switch to adds, tanks stay on KT.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, AttackNearest, Seq, HasDebuff, FleeToSafe, Sel, IsTank};
 use crate::ffi::SpellId;
 
 pub const AURA_FROST_BLAST: SpellId = SpellId(27808);

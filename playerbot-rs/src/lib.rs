@@ -165,7 +165,7 @@ pub unsafe extern "C" fn playerbot_unit_spell_cast(
 }
 
 /// RTSC spell position — called when spell 30758 is cast on ground by the master.
-/// The C++ side extracts the destination position from SpellCastTargets and calls this.
+/// The C++ side extracts the destination position from `SpellCastTargets` and calls this.
 ///
 /// # Safety: state valid.
 #[unsafe(no_mangle)]
@@ -228,7 +228,7 @@ pub unsafe extern "C" fn playerbot_damage_taken(
 /// Inject a chat command into a bot's pending command queue.
 ///
 /// Called from C++ when a player whispers a command to the bot.
-/// `sender_guid` is the ObjectGuid raw value of the commanding player
+/// `sender_guid` is the `ObjectGuid` raw value of the commanding player
 /// (0 = internal/system). `privileged` is non-zero if the sender is
 /// owner/party-leader/GM — unprivileged commands are silently dropped.
 ///
@@ -244,8 +244,8 @@ pub unsafe extern "C" fn playerbot_chat_command(
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
     let c_str = unsafe { std::ffi::CStr::from_ptr(text) };
-    if let Ok(text) = c_str.to_str() {
-        if let Some(cmd) = commands::parser::parse(text) {
+    if let Ok(text) = c_str.to_str()
+        && let Some(cmd) = commands::parser::parse(text) {
             let pc = if sender_guid == 0 {
                 commands::PendingCommand::internal(cmd)
             } else {
@@ -253,12 +253,11 @@ pub unsafe extern "C" fn playerbot_chat_command(
             };
             bot.pending_commands.push_back(pc);
         }
-    }
 }
 
 // ── Global coordination tick ──────────────────────────────────────────────
 
-/// Called from sRandomPlayerbotMgr.UpdateAI (world thread, existing CMaNGOS hook).
+/// Called from sRandomPlayerbotMgr.UpdateAI (world thread, existing `CMaNGOS` hook).
 #[unsafe(no_mangle)]
 pub extern "C" fn playerbot_world_update(_elapsed_ms: u32) {
     // Future: flush stale GroupState entries, update activity metrics.
@@ -347,7 +346,7 @@ unsafe fn packet_bytes(data: *const u8, len: u32) -> Vec<u8> {
 }
 
 fn class_spec_from_snapshot(class_id: u8) -> (bot::state::PlayerClass, bot::state::PlayerSpec) {
-    use bot::state::{PlayerClass::*, PlayerSpec::*};
+    use bot::state::{PlayerClass::{Warrior, Paladin, Hunter, Rogue, Priest, DeathKnight, Shaman, Mage, Warlock, Druid}, PlayerSpec::{WarriorArms, PaladinRetribution, HunterMarksmanship, RogueCombat, PriestHoly, DeathKnightFrost, ShamanEnhancement, MageFrost, WarlockDestruction, DruidRestoration}};
     match class_id {
         1 => (Warrior, WarriorArms),
         2 => (Paladin, PaladinRetribution),

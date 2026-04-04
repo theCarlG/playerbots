@@ -3,7 +3,7 @@
 /// Single-phase fight with one critical mechanic:
 /// **Mutating Injection** (aura 28169): Applied to a random player.
 /// The afflicted player MUST immediately run 20+ yards from the raid.
-/// After ~10s the injection explodes, dealing AoE damage.
+/// After ~10s the injection explodes, dealing `AoE` damage.
 ///
 /// Additionally: Slime Spray (28158) frontal cone — tank keeps boss turned away.
 ///
@@ -11,7 +11,7 @@
 ///   - Mutating Injection on self → flee 20yd from raid.
 ///   - Otherwise: normal rotation.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, Seq, HasDebuff, MoveAwayFromRaid};
 use crate::ffi::SpellId;
 
 pub const AURA_MUTATING_INJECTION: SpellId = SpellId(28169);

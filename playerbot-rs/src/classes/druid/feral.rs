@@ -7,7 +7,7 @@ use crate::{
     data::spells::vanilla::druid::*,
     engine::{
         aura_helpers::{DEMO_ROAR_RANKS, FAERIE_FIRE_RANKS, RAKE_RANKS, RIP_RANKS},
-        bt::Bt::{self, *},
+        bt::Bt::{self, Sel, StickToTarget, Seq, IsTank, SelfMissingAura, CastOnSelf, InCombat, HpBelow, CastOnTarget, TargetMissingAnyRank},
     },
     ffi::SpellId,
 };

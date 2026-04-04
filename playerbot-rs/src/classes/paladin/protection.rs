@@ -5,7 +5,7 @@
 ///   → Judgement (with seal) → re-seal → Consecration → Holy Wrath
 use crate::{
     data::spells::vanilla::paladin::*,
-    engine::bt::Bt::{self, *},
+    engine::bt::Bt::{self, Sel, Seq, SelfMissingAura, CastOnSelf, HpBelow, StickToTarget, InCombat, CastOnTarget, TargetHpBelow, SelfMissingAnyRank},
     ffi::SpellId,
 };
 

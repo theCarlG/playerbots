@@ -27,7 +27,7 @@ pub enum BuffTarget {
 pub struct GroupBuff {
     /// Spell ID to cast.
     pub spell_id: SpellId,
-    /// Aura ID to check (often == spell_id; use the buff's spell effect ID when different).
+    /// Aura ID to check (often == `spell_id`; use the buff's spell effect ID when different).
     pub aura_id: SpellId,
     /// Who should receive the buff.
     pub target: BuffTarget,
@@ -71,12 +71,11 @@ pub fn build_buff_subtree(buffs: Vec<GroupBuff>) -> Box<dyn BtNode> {
             5_000,
             action(move |ctx| {
                 for buff in &buffs {
-                    if let Some(target_handle) = find_buff_target(ctx, buff) {
-                        if ctx.interface.cast_spell(buff.spell_id, target_handle) {
+                    if let Some(target_handle) = find_buff_target(ctx, buff)
+                        && ctx.interface.cast_spell(buff.spell_id, target_handle) {
                             ctx.timers.on_spell_cast(buff.spell_id, ctx.server_time_ms);
                             return BtResult::Success;
                         }
-                    }
                 }
                 BtResult::Failure
             }),
@@ -91,7 +90,7 @@ fn find_buff_target(
     buff: &GroupBuff,
 ) -> Option<u64> {
     use crate::ffi::UnitHandle;
-    use BuffTarget::*;
+    use BuffTarget::{Me, Tank, Healer, AnyMember};
 
     let me = ctx.bot_handle;
 

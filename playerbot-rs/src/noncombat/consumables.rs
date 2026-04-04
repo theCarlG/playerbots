@@ -2,7 +2,7 @@
 ///
 /// When HP < 70 % or mana < 40 % and the bot is out of combat, it stops
 /// moving and "rests" until thresholds are met.  Actual item usage is left
-/// to the CMaNGOS side (the C++ wrapper can inject food/drink on the bot
+/// to the `CMaNGOS` side (the C++ wrapper can inject food/drink on the bot
 /// character).  The Rust side simply holds the bot still and blocks other
 /// actions (follow, buffing) until recovery completes.
 ///

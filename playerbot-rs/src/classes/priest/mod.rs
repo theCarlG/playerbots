@@ -15,7 +15,7 @@ const BUFFS: &[GroupBuff] = &[
 ];
 
 pub fn kit(spec: PlayerSpec) -> ClassKit {
-    use PlayerSpec::*;
+    use PlayerSpec::{PriestHoly, PriestDiscipline, PriestShadow};
     let tree = match spec {
         PriestHoly => holy::build_tree(),
         PriestDiscipline => discipline::build_tree(),

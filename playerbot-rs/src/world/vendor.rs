@@ -1,5 +1,5 @@
 /// Vendor behavior — sell grey/white items at nearby vendor NPCs.
-use crate::engine::bt::Bt::{self, *};
+use crate::engine::bt::Bt::{self, Seq, InCombat, SettingEnabled, HasSellableItems, VendorSellGrey};
 use crate::engine::bt::Setting;
 
 pub fn vendor_subtree() -> Bt {
