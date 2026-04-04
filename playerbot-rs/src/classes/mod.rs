@@ -1,0 +1,10 @@
+pub mod warrior;
+pub mod paladin;
+pub mod priest;
+pub mod druid;
+pub mod hunter;
+pub mod mage;
+pub mod rogue;
+pub mod shaman;
+pub mod warlock;
+pub mod deathknight;

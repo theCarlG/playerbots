@@ -1,0 +1,24 @@
+[package]
+name = "playerbot-rs"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "playerbot_rs"
+crate-type = ["staticlib"]
+
+[dependencies]
+# No async runtime. No game engine. No ECS framework. Just Rust.
+
+[build-dependencies]
+bindgen = "0.72"
+
+[features]
+default = []
+vanilla = []
+tbc     = []
+wotlk   = []
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
