@@ -1,113 +1,42 @@
 /// Enhancement Shaman behavior tree (Classic / Vanilla).
 ///
-/// Priority: totems down → Stormstrike (talent) → Earth Shock → maintain Lightning Shield
+/// Priority: Lightning Shield + totem upkeep → panic heal → Stormstrike →
+///   Earth Shock interrupt → Flame Shock DoT → Earth Shock filler
 use crate::{
     data::spells::vanilla::shaman::*,
-    engine::{
-        bt_nodes::{BtNode, BtResult, action, cast_on_current_target, cd_gate,
-                    cond, gcd_gate, sel, seq},
-        context::TickContext,
-    },
+    engine::bt::Bt::{self, *},
     ffi::SpellId,
 };
 
-pub fn build_tree() -> Box<dyn BtNode> {
-    sel(vec![
-        // Maintain Lightning Shield
-        seq(vec![
-            cond(|ctx| !ctx.interface.has_aura(ctx.bot_handle, LIGHTNING_SHIELD)
-                && !ctx.interface.has_aura(ctx.bot_handle, SpellId(10432))),
-            gcd_gate(cd_gate(LIGHTNING_SHIELD, action(|ctx| {
-                let me = ctx.bot_handle;
-                if ctx.interface.cast_spell(LIGHTNING_SHIELD, me) {
-                    ctx.timers.on_spell_cast(LIGHTNING_SHIELD, ctx.server_time_ms);
-                    BtResult::Success
-                } else {
-                    BtResult::Failure
-                }
-            }))),
-        ]),
+// Higher-rank auras for self buffs.
+const LIGHTNING_SHIELD_RANKS: &[SpellId] = &[LIGHTNING_SHIELD, SpellId(10432)];
+const WINDFURY_TOTEM_RANKS: &[SpellId] = &[WINDFURY_TOTEM, SpellId(25587)];
 
-        // Drop Windfury Totem
-        seq(vec![
-            cond(|ctx| !ctx.interface.has_aura(ctx.bot_handle, WINDFURY_TOTEM)
-                && !ctx.interface.has_aura(ctx.bot_handle, SpellId(25587))),
-            gcd_gate(cd_gate(WINDFURY_TOTEM, action(|ctx| {
-                let me = ctx.bot_handle;
-                if ctx.interface.cast_spell(WINDFURY_TOTEM, me) {
-                    ctx.timers.on_spell_cast(WINDFURY_TOTEM, ctx.server_time_ms);
-                    BtResult::Success
-                } else {
-                    BtResult::Failure
-                }
-            }))),
-        ]),
+pub fn build_tree() -> Bt {
+    Sel(vec![
+        // Self buffs.
+        Seq(vec![SelfMissingAnyRank(LIGHTNING_SHIELD_RANKS), CastOnSelf(LIGHTNING_SHIELD)]),
+        Seq(vec![SelfMissingAnyRank(WINDFURY_TOTEM_RANKS), CastOnSelf(WINDFURY_TOTEM)]),
+        Seq(vec![SelfMissingAura(STRENGTH_OF_EARTH_TOTEM), CastOnSelf(STRENGTH_OF_EARTH_TOTEM)]),
 
-        // Strength of Earth Totem
-        seq(vec![
-            cond(|ctx| !ctx.interface.has_aura(ctx.bot_handle, STRENGTH_OF_EARTH_TOTEM)),
-            gcd_gate(cd_gate(STRENGTH_OF_EARTH_TOTEM, action(|ctx| {
-                let me = ctx.bot_handle;
-                if ctx.interface.cast_spell(STRENGTH_OF_EARTH_TOTEM, me) {
-                    ctx.timers.on_spell_cast(STRENGTH_OF_EARTH_TOTEM, ctx.server_time_ms);
-                    BtResult::Success
-                } else {
-                    BtResult::Failure
-                }
-            }))),
-        ]),
+        StickToTarget(5.0),
 
-        seq(vec![
-            cond(|ctx| ctx.in_combat()),
-            sel(vec![
-                // Nature's Swiftness for instant heal when critical
-                seq(vec![
-                    cond(|ctx| ctx.self_hp_pct() < 0.25),
-                    gcd_gate(cd_gate(NATURE_SWIFTNESS, action(|ctx| {
-                        let me = ctx.bot_handle;
-                        if ctx.interface.cast_spell(NATURE_SWIFTNESS, me) {
-                            ctx.timers.on_spell_cast(NATURE_SWIFTNESS, ctx.server_time_ms);
-                            BtResult::Success
-                        } else {
-                            BtResult::Failure
-                        }
-                    }))),
-                ]),
+        Seq(vec![InCombat, Sel(vec![
+            // Panic heal chain.
+            Seq(vec![HpBelow(0.25), CastOnSelf(NATURE_SWIFTNESS)]),
+            Seq(vec![HpBelow(0.35), CastOnSelf(LESSER_HEALING_WAVE)]),
 
-                // Self-heal via Lesser Healing Wave when low HP
-                seq(vec![
-                    cond(|ctx| ctx.self_hp_pct() < 0.35),
-                    gcd_gate(cd_gate(LESSER_HEALING_WAVE, action(|ctx| {
-                        let me = ctx.bot_handle;
-                        if ctx.interface.cast_spell(LESSER_HEALING_WAVE, me) {
-                            ctx.timers.on_spell_cast(LESSER_HEALING_WAVE, ctx.server_time_ms);
-                            BtResult::Success
-                        } else {
-                            BtResult::Failure
-                        }
-                    }))),
-                ]),
+            // Primary damage.
+            CastOnTarget(STORMSTRIKE),
 
-                // Stormstrike — talent, high melee damage
-                cast_on_current_target(STORMSTRIKE),
+            // Interrupt.
+            Seq(vec![TargetIsCasting, CastOnTarget(EARTH_SHOCK)]),
 
-                // Earth Shock — interrupt + instant damage
-                seq(vec![
-                    cond(|ctx| ctx.current_target().map_or(false, |t|
-                        ctx.interface.get_unit_snapshot(t).is_casting)),
-                    cast_on_current_target(EARTH_SHOCK),
-                ]),
+            // DoT.
+            Seq(vec![TargetMissingAura(FLAME_SHOCK), CastOnTarget(FLAME_SHOCK)]),
 
-                // Flame Shock — fire DoT
-                seq(vec![
-                    cond(|ctx| ctx.current_target().map_or(false, |t|
-                        !ctx.interface.has_aura(t, FLAME_SHOCK))),
-                    cast_on_current_target(FLAME_SHOCK),
-                ]),
-
-                // Earth Shock — filler
-                cast_on_current_target(EARTH_SHOCK),
-            ]),
-        ]),
+            // Filler instant.
+            CastOnTarget(EARTH_SHOCK),
+        ])]),
     ])
 }

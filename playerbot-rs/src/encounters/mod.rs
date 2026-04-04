@@ -9,8 +9,9 @@
 /// Push events (from tick.rs) are dispatched to the FSM via `EncounterFsm::update()`.
 /// The BT reads `encounter.phase_id()` to select phase-appropriate subtrees.
 
+pub mod bt;
+pub mod bt_overrides;
 pub mod coordinator;
-pub mod mechanics;
 pub mod molten_core;
 pub mod onyxias_lair;
 pub mod blackwing_lair;
@@ -22,9 +23,26 @@ pub mod naxxramas;
 #[cfg(any(feature = "tbc", feature = "wotlk"))]
 pub mod karazhan;
 
+use crate::engine::bt::Bt;
 use crate::ffi::SpellId;
 
+/// Reserved phase IDs shared by all encounters.
+///
+/// Encounters are free to use any `u32` for their internal phases, but these
+/// two values are conventional slots that every FSM gets for free:
+///
+/// - `PHASE_PREPULL`: the FSM is constructed but `CombatStarted` has not fired.
+/// - `PHASE_VICTORY`: `is_done()` is true (boss dead). The FSM may still
+///   return a `phase_bt()` for a brief victory routine before the encounter
+///   is torn down.
+pub const PHASE_PREPULL: u32 = 0;
+pub const PHASE_VICTORY: u32 = u32::MAX;
+
 /// Trait all encounter FSMs implement.
+///
+/// Each boss is a state machine. Each state can have an associated BT that
+/// overrides the normal combat rotation (via `phase_bt()`). When `phase_bt()`
+/// returns `None`, the normal rotation runs.
 pub trait EncounterFsm: Send {
     /// Update the FSM from a push event and current boss HP.
     ///
@@ -45,6 +63,24 @@ pub trait EncounterFsm: Send {
     /// NPC entry ID of the primary boss tracked by this FSM.
     /// Used by the coordinator to match the right FSM to a given target.
     fn boss_entry(&self) -> u32;
+
+    /// Hint for Heigan-style safe zone positioning (1-4). 0 = not applicable.
+    fn safe_zone_hint(&self) -> u8 { 0 }
+
+    /// Returns the BT override for the current phase, if any.
+    ///
+    /// When `Some`, this BT runs instead of the normal combat rotation.
+    /// When `None`, the normal rotation runs unmodified.
+    ///
+    /// BTs are built once at FSM construction and stored in the boss struct.
+    /// Returns a reference to the pre-built tree — zero allocation per tick,
+    /// no vtable dispatch (concrete `Bt` data type).
+    ///
+    /// Transitions (pull, phase change, victory) are expressed as dedicated
+    /// phase states inside each FSM's phase enum; there is no separate edge
+    /// hook. The FSM's `update()` flips into the transition phase and
+    /// `phase_bt()` returns the matching tree.
+    fn phase_bt(&self) -> Option<&Bt> { None }
 }
 
 /// Events that can drive FSM transitions.

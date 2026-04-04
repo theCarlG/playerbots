@@ -8,7 +8,7 @@
 use super::{
     BotAuraInfo, BotCallbacks, BotHandle, BotPosition, BotSafePosition, BotThreatEntry,
     BotUnitSnapshot, BotWorldSnapshot, UnitHandle,
-    types::{BotRole, SpellId, ItemId},
+    types::{BotRole, ItemId, SpellId},
 };
 
 /// The complete interface a bot has to the game world.
@@ -51,7 +51,13 @@ pub trait BotInterface: Send {
     /// Nearest reachable position not in a ground hazard within `search_radius` yards.
     fn get_safe_position(&self, search_radius: f32) -> Option<BotPosition>;
     /// Spread position: this bot is index `idx` of `total` bots spreading at `radius` around `center`.
-    fn get_spread_position(&self, center: UnitHandle, radius: f32, idx: u8, total: u8) -> BotPosition;
+    fn get_spread_position(
+        &self,
+        center: UnitHandle,
+        radius: f32,
+        idx: u8,
+        total: u8,
+    ) -> BotPosition;
     /// Returns true if the bot can pathfind to (x, y, z).
     fn can_reach(&self, x: f32, y: f32, z: f32) -> bool;
 
@@ -65,14 +71,125 @@ pub trait BotInterface: Send {
     fn attack(&self, target: UnitHandle) -> bool;
     fn auto_attack(&self, enable: bool) -> bool;
     fn say(&self, msg: &str, lang: u32) -> bool;
+    /// Whisper a message directly to a specific player (`target_guid`).
+    /// Used for per-command replies to the sender.
+    fn whisper(&self, _target_guid: u64, _msg: &str) -> bool { false }
     fn use_item(&self, item_id: ItemId, target: UnitHandle) -> bool;
     fn taunt(&self, target: UnitHandle) -> bool;
+
+    /// Find the nearest hostile unit currently marked with the given raid
+    /// target icon (1 = star, 2 = circle, 3 = diamond, 4 = triangle,
+    /// 5 = moon, 6 = square, 7 = cross, 8 = skull). Returns `None` if
+    /// no unit is marked with that icon in range.
+    fn get_unit_with_raid_icon(&self, icon: u8) -> Option<UnitHandle> {
+        let _ = icon; None
+    }
 
     /* ── Group / raid ────────────────────────────────────────────────── */
 
     fn group_get_tank(&self) -> Option<UnitHandle>;
     fn group_get_healer(&self) -> Option<UnitHandle>;
     fn group_get_role(&self, member: UnitHandle) -> BotRole;
+
+    /* ── Death / resurrection ───────────────────────────────────────── */
+
+    fn accept_resurrect(&self) -> bool { false }
+    fn get_corpse_position(&self) -> Option<BotPosition> { None }
+    fn use_spirit_healer(&self) -> bool { false }
+
+    /* ── Mount ──────────────────────────────────────────────────────── */
+
+    fn is_mounted(&self) -> bool { false }
+    fn mount_up(&self) -> bool { false }
+    fn dismount(&self) -> bool { false }
+    fn is_indoor(&self) -> bool { false }
+
+    /* ── Loot ───────────────────────────────────────────────────────── */
+
+    fn get_nearby_lootable(&self, _range: f32) -> Vec<UnitHandle> { vec![] }
+    fn open_loot(&self, _target: UnitHandle) -> bool { false }
+    fn take_all_loot(&self) -> bool { false }
+
+    /* ── NPC interaction ────────────────────────────────────────────── */
+
+    fn get_nearby_npcs(&self, _range: f32, _npc_flags: u32) -> Vec<UnitHandle> { vec![] }
+    fn interact_npc(&self, _npc: UnitHandle) -> bool { false }
+    fn repair_all(&self) -> bool { false }
+    fn sell_grey_items(&self) -> bool { false }
+    fn has_sellable_items(&self) -> bool { false }
+    fn get_durability_pct(&self) -> f32 { 1.0 }
+
+    /* ── Quest ──────────────────────────────────────────────────────── */
+
+    fn get_quest_log(&self) -> Vec<QuestInfo> { vec![] }
+    fn accept_all_quests(&self, _npc: UnitHandle) -> bool { false }
+    fn turn_in_quest(&self, _npc: UnitHandle, _quest_id: u32) -> bool { false }
+
+    /* ── Unit queries (extended) ────────────────────────────────────── */
+
+    fn is_attackable(&self, _target: UnitHandle) -> bool { false }
+    fn get_unit_level(&self, _target: UnitHandle) -> u8 { 0 }
+    fn is_casting_interruptible(&self, _target: UnitHandle) -> bool { false }
+
+    /* ── Pet management ─────────────────────────────────────────────── */
+
+    fn has_pet(&self) -> bool { false }
+    fn pet_is_alive(&self) -> bool { false }
+    fn pet_happiness(&self) -> u8 { 3 } // 1=unhappy, 2=content, 3=happy
+    fn summon_pet(&self) -> bool { false }
+    fn revive_pet(&self) -> bool { false }
+    fn feed_pet(&self) -> bool { false }
+
+    /* ── Dispel / party aura queries ────────────────────────────────── */
+
+    /// Find a group member with a dispellable debuff that this bot can remove.
+    /// Returns (member_handle, debuff_spell_id).
+    fn find_dispellable_target(&self) -> Option<(UnitHandle, SpellId)> { None }
+
+    /// Find a dead group member that can be resurrected.
+    fn find_dead_party_member(&self) -> Option<UnitHandle> { None }
+
+    /* ── Battleground ───────────────────────────────────────────────── */
+
+    /// True if the bot is currently in a battleground instance.
+    fn is_in_battleground(&self) -> bool { false }
+    /// BG type: 1=AV, 2=WSG, 3=AB. 0 if not in BG.
+    fn battleground_type(&self) -> u8 { 0 }
+    /// Get the position of a nearby capturable BG objective (flag, base).
+    fn get_bg_objective(&self) -> Option<BotPosition> { None }
+    /// Interact with a BG objective (pick up flag, capture base).
+    fn capture_bg_objective(&self) -> bool { false }
+    /// Get nearby enemy players within range.
+    fn get_nearby_enemies(&self, _range: f32) -> Vec<UnitHandle> { vec![] }
+
+    /* ── RPG / social ───────────────────────────────────────────────── */
+
+    /// Get a random navigable point near the bot within range.
+    fn get_random_point_nearby(&self, _range: f32) -> Option<BotPosition> { None }
+    /// Play an emote (wave, bow, dance, etc.).
+    fn emote(&self, _emote_id: u32) -> bool { false }
+    /// Get nearby friendly NPCs to gossip with (non-vendor, non-quest).
+    fn get_nearby_gossip_npcs(&self, _range: f32) -> Vec<UnitHandle> { vec![] }
+
+    /* ── Gathering (mining, herbalism, skinning) ────────────────────── */
+
+    /// True if the bot has any gathering profession (mining, herbalism, skinning).
+    fn has_gathering_skill(&self) -> bool { false }
+    /// Get nearby gatherable game objects (ore veins, herb nodes) or skinnable corpses.
+    fn get_nearby_gatherables(&self, _range: f32) -> Vec<u64> { vec![] }
+    /// Interact with a gatherable node/corpse to gather it.
+    fn gather_node(&self, _handle: u64) -> bool { false }
+    /// Distance to a game object handle.
+    fn gameobject_distance(&self, _handle: u64) -> f32 { f32::MAX }
+    /// Position of a game object handle.
+    fn gameobject_position(&self, _handle: u64) -> BotPosition { BotPosition::default() }
+}
+
+/// Quest info returned from the FFI.
+#[derive(Debug, Clone)]
+pub struct QuestInfo {
+    pub quest_id: u32,
+    pub complete: bool,
 }
 
 // ── Production implementation ─────────────────────────────────────────────
@@ -94,6 +211,7 @@ impl RealInterface {
     }
 }
 
+#[expect(unsafe_code)]
 impl BotInterface for RealInterface {
     fn get_snapshot(&self) -> BotWorldSnapshot {
         unsafe { (self.cbs.get_snapshot.unwrap())(self.handle) }
@@ -115,7 +233,9 @@ impl BotInterface for RealInterface {
     fn get_auras(&self, unit: UnitHandle) -> Vec<BotAuraInfo> {
         let mut count: u32 = 0;
         let ptr = unsafe { (self.cbs.get_auras.unwrap())(self.handle, unit, &mut count) };
-        if ptr.is_null() || count == 0 { return Vec::new(); }
+        if ptr.is_null() || count == 0 {
+            return Vec::new();
+        }
         let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
         unsafe { (self.cbs.free_aura_list.unwrap())(ptr) };
         vec
@@ -123,8 +243,11 @@ impl BotInterface for RealInterface {
 
     fn get_threat_list(&self, target_unit: UnitHandle) -> Vec<BotThreatEntry> {
         let mut count: u32 = 0;
-        let ptr = unsafe { (self.cbs.get_threat_list.unwrap())(self.handle, target_unit, &mut count) };
-        if ptr.is_null() || count == 0 { return Vec::new(); }
+        let ptr =
+            unsafe { (self.cbs.get_threat_list.unwrap())(self.handle, target_unit, &mut count) };
+        if ptr.is_null() || count == 0 {
+            return Vec::new();
+        }
         let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
         unsafe { (self.cbs.free_threat_list.unwrap())(ptr) };
         vec
@@ -152,8 +275,12 @@ impl BotInterface for RealInterface {
 
     fn get_nearby_units(&self, range: f32, hostile: bool) -> Vec<UnitHandle> {
         let mut count: u32 = 0;
-        let ptr = unsafe { (self.cbs.get_nearby_units.unwrap())(self.handle, range, hostile, &mut count) };
-        if ptr.is_null() || count == 0 { return Vec::new(); }
+        let ptr = unsafe {
+            (self.cbs.get_nearby_units.unwrap())(self.handle, range, hostile, &mut count)
+        };
+        if ptr.is_null() || count == 0 {
+            return Vec::new();
+        }
         let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
         unsafe { (self.cbs.free_unit_list.unwrap())(ptr) };
         vec
@@ -166,13 +293,25 @@ impl BotInterface for RealInterface {
     fn get_safe_position(&self, search_radius: f32) -> Option<BotPosition> {
         let result = unsafe { (self.cbs.get_safe_position.unwrap())(self.handle, search_radius) };
         if result.found {
-            Some(BotPosition { x: result.x, y: result.y, z: result.z, o: 0.0, map_id: 0 })
+            Some(BotPosition {
+                x: result.x,
+                y: result.y,
+                z: result.z,
+                o: 0.0,
+                map_id: 0,
+            })
         } else {
             None
         }
     }
 
-    fn get_spread_position(&self, center: UnitHandle, radius: f32, idx: u8, total: u8) -> BotPosition {
+    fn get_spread_position(
+        &self,
+        center: UnitHandle,
+        radius: f32,
+        idx: u8,
+        total: u8,
+    ) -> BotPosition {
         unsafe { (self.cbs.get_spread_position.unwrap())(self.handle, center, radius, idx, total) }
     }
 
@@ -213,6 +352,11 @@ impl BotInterface for RealInterface {
         unsafe { (self.cbs.say.unwrap())(self.handle, c_str.as_ptr(), lang) }
     }
 
+    fn whisper(&self, target_guid: u64, msg: &str) -> bool {
+        let c_str = std::ffi::CString::new(msg).unwrap_or_default();
+        unsafe { (self.cbs.whisper.unwrap())(self.handle, target_guid, c_str.as_ptr()) }
+    }
+
     fn use_item(&self, item_id: ItemId, target: UnitHandle) -> bool {
         unsafe { (self.cbs.use_item.unwrap())(self.handle, item_id.raw(), target) }
     }
@@ -233,5 +377,261 @@ impl BotInterface for RealInterface {
 
     fn group_get_role(&self, member: UnitHandle) -> BotRole {
         BotRole(unsafe { (self.cbs.group_get_role.unwrap())(self.handle, member) })
+    }
+
+    fn get_unit_with_raid_icon(&self, icon: u8) -> Option<UnitHandle> {
+        let h = unsafe { (self.cbs.get_unit_with_raid_icon.unwrap())(self.handle, icon) };
+        if h == 0 { None } else { Some(h) }
+    }
+
+    /* ── Death / resurrection ───────────────────────────────────────── */
+
+    fn accept_resurrect(&self) -> bool {
+        unsafe { (self.cbs.accept_resurrect.unwrap())(self.handle) }
+    }
+
+    fn get_corpse_position(&self) -> Option<BotPosition> {
+        let pos = unsafe { (self.cbs.get_corpse_position.unwrap())(self.handle) };
+        if pos.x == 0.0 && pos.y == 0.0 && pos.z == 0.0 { None } else { Some(pos) }
+    }
+
+    fn use_spirit_healer(&self) -> bool {
+        unsafe { (self.cbs.use_spirit_healer.unwrap())(self.handle) }
+    }
+
+    /* ── Mount ──────────────────────────────────────────────────────── */
+
+    fn is_mounted(&self) -> bool {
+        unsafe { (self.cbs.is_mounted.unwrap())(self.handle) }
+    }
+
+    fn mount_up(&self) -> bool {
+        unsafe { (self.cbs.mount_up.unwrap())(self.handle) }
+    }
+
+    fn dismount(&self) -> bool {
+        unsafe { (self.cbs.dismount.unwrap())(self.handle) }
+    }
+
+    fn is_indoor(&self) -> bool {
+        unsafe { (self.cbs.is_indoor.unwrap())(self.handle) }
+    }
+
+    /* ── Loot ───────────────────────────────────────────────────────── */
+
+    fn get_nearby_lootable(&self, range: f32) -> Vec<UnitHandle> {
+        let mut count: u32 = 0;
+        let ptr = unsafe { (self.cbs.get_nearby_lootable.unwrap())(self.handle, range, &mut count) };
+        if ptr.is_null() || count == 0 { return Vec::new(); }
+        let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
+        unsafe { (self.cbs.free_unit_list.unwrap())(ptr) };
+        vec
+    }
+
+    fn open_loot(&self, target: UnitHandle) -> bool {
+        unsafe { (self.cbs.open_loot.unwrap())(self.handle, target) }
+    }
+
+    fn take_all_loot(&self) -> bool {
+        unsafe { (self.cbs.take_all_loot.unwrap())(self.handle) }
+    }
+
+    /* ── NPC interaction ────────────────────────────────────────────── */
+
+    fn get_nearby_npcs(&self, range: f32, npc_flags: u32) -> Vec<UnitHandle> {
+        let mut count: u32 = 0;
+        let ptr = unsafe {
+            (self.cbs.get_nearby_npcs.unwrap())(self.handle, range, npc_flags, &mut count)
+        };
+        if ptr.is_null() || count == 0 { return Vec::new(); }
+        let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
+        unsafe { (self.cbs.free_unit_list.unwrap())(ptr) };
+        vec
+    }
+
+    fn interact_npc(&self, npc: UnitHandle) -> bool {
+        unsafe { (self.cbs.interact_npc.unwrap())(self.handle, npc) }
+    }
+
+    fn repair_all(&self) -> bool {
+        unsafe { (self.cbs.repair_all.unwrap())(self.handle) }
+    }
+
+    fn sell_grey_items(&self) -> bool {
+        unsafe { (self.cbs.sell_grey_items.unwrap())(self.handle) }
+    }
+
+    fn has_sellable_items(&self) -> bool {
+        unsafe { (self.cbs.has_sellable_items.unwrap())(self.handle) }
+    }
+
+    fn get_durability_pct(&self) -> f32 {
+        unsafe { (self.cbs.get_durability_pct.unwrap())(self.handle) }
+    }
+
+    /* ── Quest ──────────────────────────────────────────────────────── */
+
+    fn get_quest_log(&self) -> Vec<QuestInfo> {
+        let mut count: u32 = 0;
+        let ptr = unsafe { (self.cbs.get_quest_log.unwrap())(self.handle, &mut count) };
+        if ptr.is_null() || count == 0 { return Vec::new(); }
+        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
+        let vec = slice.iter().map(|q| QuestInfo {
+            quest_id: q.quest_id,
+            complete: q.complete,
+        }).collect();
+        unsafe { (self.cbs.free_quest_log.unwrap())(ptr) };
+        vec
+    }
+
+    fn accept_all_quests(&self, npc: UnitHandle) -> bool {
+        unsafe { (self.cbs.accept_all_quests.unwrap())(self.handle, npc) }
+    }
+
+    fn turn_in_quest(&self, npc: UnitHandle, quest_id: u32) -> bool {
+        unsafe { (self.cbs.turn_in_quest.unwrap())(self.handle, npc, quest_id) }
+    }
+
+    /* ── Unit queries (extended) ────────────────────────────────────── */
+
+    fn is_attackable(&self, target: UnitHandle) -> bool {
+        unsafe { (self.cbs.is_attackable.unwrap())(self.handle, target) }
+    }
+
+    fn get_unit_level(&self, target: UnitHandle) -> u8 {
+        unsafe { (self.cbs.get_unit_level.unwrap())(self.handle, target) }
+    }
+
+    fn is_casting_interruptible(&self, target: UnitHandle) -> bool {
+        unsafe { (self.cbs.is_casting_interruptible.unwrap())(self.handle, target) }
+    }
+
+    /* ── Pet management ─────────────────────────────────────────────── */
+
+    fn has_pet(&self) -> bool {
+        unsafe { (self.cbs.has_pet.unwrap())(self.handle) }
+    }
+
+    fn pet_is_alive(&self) -> bool {
+        unsafe { (self.cbs.pet_is_alive.unwrap())(self.handle) }
+    }
+
+    fn pet_happiness(&self) -> u8 {
+        unsafe { (self.cbs.pet_happiness.unwrap())(self.handle) }
+    }
+
+    fn summon_pet(&self) -> bool {
+        unsafe { (self.cbs.summon_pet.unwrap())(self.handle) }
+    }
+
+    fn revive_pet(&self) -> bool {
+        unsafe { (self.cbs.revive_pet.unwrap())(self.handle) }
+    }
+
+    fn feed_pet(&self) -> bool {
+        unsafe { (self.cbs.feed_pet.unwrap())(self.handle) }
+    }
+
+    /* ── Dispel / party queries ─────────────────────────────────────── */
+
+    fn find_dispellable_target(&self) -> Option<(UnitHandle, SpellId)> {
+        let result = unsafe { (self.cbs.find_dispellable_target.unwrap())(self.handle) };
+        if result.found {
+            Some((result.unit, SpellId(result.spell_id)))
+        } else {
+            None
+        }
+    }
+
+    fn find_dead_party_member(&self) -> Option<UnitHandle> {
+        let h = unsafe { (self.cbs.find_dead_party_member.unwrap())(self.handle) };
+        if h == 0 { None } else { Some(h) }
+    }
+
+    /* ── Battleground ───────────────────────────────────────────────── */
+
+    fn is_in_battleground(&self) -> bool {
+        unsafe { (self.cbs.is_in_battleground.unwrap())(self.handle) }
+    }
+
+    fn battleground_type(&self) -> u8 {
+        unsafe { (self.cbs.battleground_type.unwrap())(self.handle) }
+    }
+
+    fn get_bg_objective(&self) -> Option<BotPosition> {
+        let result = unsafe { (self.cbs.get_bg_objective.unwrap())(self.handle) };
+        if result.found {
+            Some(BotPosition { x: result.x, y: result.y, z: result.z, o: 0.0, map_id: 0 })
+        } else {
+            None
+        }
+    }
+
+    fn capture_bg_objective(&self) -> bool {
+        unsafe { (self.cbs.capture_bg_objective.unwrap())(self.handle) }
+    }
+
+    fn get_nearby_enemies(&self, range: f32) -> Vec<UnitHandle> {
+        let mut count: u32 = 0;
+        let ptr = unsafe { (self.cbs.get_nearby_enemies.unwrap())(self.handle, range, &mut count) };
+        if ptr.is_null() || count == 0 { return Vec::new(); }
+        let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
+        unsafe { (self.cbs.free_unit_list.unwrap())(ptr) };
+        vec
+    }
+
+    /* ── RPG / social ───────────────────────────────────────────────── */
+
+    fn get_random_point_nearby(&self, range: f32) -> Option<BotPosition> {
+        let result = unsafe { (self.cbs.get_random_point_nearby.unwrap())(self.handle, range) };
+        if result.found {
+            Some(BotPosition { x: result.x, y: result.y, z: result.z, o: 0.0, map_id: 0 })
+        } else {
+            None
+        }
+    }
+
+    fn emote(&self, emote_id: u32) -> bool {
+        unsafe { (self.cbs.emote.unwrap())(self.handle, emote_id) }
+    }
+
+    fn get_nearby_gossip_npcs(&self, range: f32) -> Vec<UnitHandle> {
+        let mut count: u32 = 0;
+        let ptr = unsafe {
+            (self.cbs.get_nearby_gossip_npcs.unwrap())(self.handle, range, &mut count)
+        };
+        if ptr.is_null() || count == 0 { return Vec::new(); }
+        let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
+        unsafe { (self.cbs.free_unit_list.unwrap())(ptr) };
+        vec
+    }
+
+    /* ── Gathering ──────────────────────────────────────────────────── */
+
+    fn has_gathering_skill(&self) -> bool {
+        unsafe { (self.cbs.has_gathering_skill.unwrap())(self.handle) }
+    }
+
+    fn get_nearby_gatherables(&self, range: f32) -> Vec<u64> {
+        let mut count: u32 = 0;
+        let ptr = unsafe {
+            (self.cbs.get_nearby_gatherables.unwrap())(self.handle, range, &mut count)
+        };
+        if ptr.is_null() || count == 0 { return Vec::new(); }
+        let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
+        unsafe { (self.cbs.free_gatherable_list.unwrap())(ptr) };
+        vec
+    }
+
+    fn gather_node(&self, handle: u64) -> bool {
+        unsafe { (self.cbs.gather_node.unwrap())(self.handle, handle) }
+    }
+
+    fn gameobject_distance(&self, handle: u64) -> f32 {
+        unsafe { (self.cbs.gameobject_distance.unwrap())(self.handle, handle) }
+    }
+
+    fn gameobject_position(&self, handle: u64) -> BotPosition {
+        unsafe { (self.cbs.gameobject_position.unwrap())(self.handle, handle) }
     }
 }

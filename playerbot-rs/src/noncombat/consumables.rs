@@ -7,7 +7,7 @@
 /// actions (follow, buffing) until recovery completes.
 ///
 /// Mana-free classes (warriors, rogues, death knights) skip the mana check.
-use crate::engine::bt_nodes::{BtNode, BtResult, action, cond, sel, seq};
+use crate::engine::bt_nodes::{BtNode, BtResult, action, cond, seq};
 
 pub const HP_EAT_THRESHOLD:    f32 = 0.70; // start eating below this HP%
 pub const HP_FULL_THRESHOLD:   f32 = 0.90; // stop eating above this HP%

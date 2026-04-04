@@ -1,69 +1,45 @@
 /// Protection Warrior behavior tree (Classic / Vanilla).
 ///
-/// Tank priority: survival CDs → taunt on aggro loss → Shield Block → Revenge →
+/// Tank priority: survival CDs → taunt → Shield Block → Bloodrage → Revenge →
 ///   Shield Slam → Sunder Armor → Heroic Strike → Demoralizing Shout
 use crate::{
-    combat::targeting::self_buff_action,
     data::spells::vanilla::warrior::*,
-    engine::bt_nodes::{BtNode, BtResult, action, cast_on_current_target, cd_gate,
-                        cond, gcd_gate, sel, seq},
-    engine::context::TickContext,
-    ffi::SpellId,
+    engine::{
+        aura_helpers::DEMORALIZING_SHOUT_RANKS,
+        bt::Bt::{self, *},
+    },
 };
 
-pub fn build_tree() -> Box<dyn BtNode> {
-    sel(vec![
-        // Emergency survival CDs
-        seq(vec![
-            cond(|ctx| ctx.self_hp_pct() < 0.20),
-            sel(vec![
-                cast_on_current_target(SHIELD_WALL),
-                cast_on_current_target(LAST_STAND),
-            ]),
+pub fn build_tree() -> Bt {
+    Sel(vec![
+        // Emergency survival CDs.
+        Seq(vec![
+            HpBelow(0.20),
+            Sel(vec![CastOnSelf(SHIELD_WALL), CastOnSelf(LAST_STAND)]),
         ]),
 
-        // Close gap
-        cast_on_current_target(CHARGE),
+        // Close gap.
+        CastOnTarget(CHARGE),
+        StickToTarget(5.0),
 
-        seq(vec![
-            cond(|ctx| ctx.in_combat()),
-            sel(vec![
-                // Taunt if we lost aggro (interface can_cast returns true only when
-                // the server's aggro-loss condition is met for taunt procs)
-                cast_on_current_target(TAUNT),
-
-                // Shield Block — mitigation
-                self_buff_action(SHIELD_BLOCK, |ctx| ctx.in_combat()),
-
-                // Bloodrage — rage generation
-                self_buff_action(BLOODRAGE, |ctx| {
-                    ctx.in_combat() && ctx.self_hp_pct() > 0.30
-                }),
-
-                // Revenge — high priority proc
-                cast_on_current_target(REVENGE),
-
-                // Shield Slam — high damage (requires talent)
-                cast_on_current_target(SHIELD_SLAM),
-
-                // Sunder Armor — debuff stacks
-                cast_on_current_target(SUNDER_ARMOR),
-
-                // Heroic Strike — rage dump
-                cast_on_current_target(HEROIC_STRIKE),
-
-                // Demoralizing Shout — melee debuff
-                seq(vec![
-                    cond(target_needs_demo_shout),
-                    cast_on_current_target(DEMORALIZING_SHOUT),
-                ]),
+        Seq(vec![InCombat, Sel(vec![
+            // Taunt is gated by can_cast (only fires on aggro loss).
+            CastOnTarget(TAUNT),
+            // Shield Block mitigation.
+            CastOnSelf(SHIELD_BLOCK),
+            // Bloodrage while HP is safe.
+            Seq(vec![HpBelow(0.30).not(), CastOnSelf(BLOODRAGE)]),
+            // Revenge proc.
+            CastOnTarget(REVENGE),
+            // Core threat.
+            CastOnTarget(SHIELD_SLAM),
+            CastOnTarget(SUNDER_ARMOR),
+            CastOnTarget(HEROIC_STRIKE),
+            // Demo Shout upkeep.
+            Seq(vec![
+                TargetMissingAnyRank(DEMORALIZING_SHOUT_RANKS),
+                CastOnTarget(DEMORALIZING_SHOUT),
             ]),
-        ]),
+        ])]),
     ])
-}
-
-fn target_needs_demo_shout(ctx: &TickContext<'_>) -> bool {
-    let Some(target) = ctx.current_target() else { return false };
-    use crate::engine::aura_helpers::{has_any_rank, DEMORALIZING_SHOUT_RANKS};
-    !has_any_rank(ctx.interface, target, DEMORALIZING_SHOUT_RANKS)
 }

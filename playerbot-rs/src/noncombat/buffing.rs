@@ -10,7 +10,7 @@ use crate::engine::bt_nodes::{BtNode, BtResult, action, cond, seq, throttle};
 use crate::ffi::SpellId;
 
 /// Who can receive this buff.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum BuffTarget {
     /// Cast on self only.
     Me,
@@ -23,7 +23,7 @@ pub enum BuffTarget {
 }
 
 /// One buff the bot knows how to apply.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct GroupBuff {
     /// Spell ID to cast.
     pub spell_id: SpellId,
@@ -34,15 +34,15 @@ pub struct GroupBuff {
 }
 
 impl GroupBuff {
-    pub fn on_self(spell_id: SpellId) -> Self {
+    pub const fn on_self(spell_id: SpellId) -> Self {
         Self { spell_id, aura_id: spell_id, target: BuffTarget::Me }
     }
 
-    pub fn on_party(spell_id: SpellId) -> Self {
+    pub const fn on_party(spell_id: SpellId) -> Self {
         Self { spell_id, aura_id: spell_id, target: BuffTarget::AnyMember }
     }
 
-    pub fn on_party_aura(spell_id: SpellId, aura_id: SpellId) -> Self {
+    pub const fn on_party_aura(spell_id: SpellId, aura_id: SpellId) -> Self {
         Self { spell_id, aura_id, target: BuffTarget::AnyMember }
     }
 }

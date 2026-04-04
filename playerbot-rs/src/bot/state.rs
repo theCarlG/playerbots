@@ -7,10 +7,12 @@ use std::sync::{Arc, RwLock};
 
 use crate::{
     bot::events::BotEvent,
+    bot::settings::BotSettings,
+    commands::PendingCommand,
     encounters::EncounterFsm,
     engine::{
         blackboard::Blackboard,
-        bt_nodes::BtNode,
+        bt::Bt,
         group_state::GroupState,
         timers::BotTimers,
     },
@@ -94,12 +96,18 @@ pub struct BotState {
     pub encounter: Option<Box<dyn EncounterFsm>>,
 
     /// The root behavior tree. Built once at bot init, never reallocated.
-    pub root_tree: Box<dyn BtNode>,
+    pub root_tree: Bt,
 
     /// Bot's class and spec.
     pub class: PlayerClass,
     pub spec:  PlayerSpec,
     pub role:  BotRole,
+
+    /// Per-bot runtime settings (modified by chat commands).
+    pub settings: BotSettings,
+
+    /// Pending commands from chat, processed at tick start.
+    pub pending_commands: VecDeque<PendingCommand>,
 
     // ── Throttle timestamps ──────────────────────────────────────────────
     pub last_attackers_refresh_ms:  u64,
@@ -113,7 +121,7 @@ impl BotState {
         class: PlayerClass,
         spec: PlayerSpec,
         role: BotRole,
-        root_tree: Box<dyn BtNode>,
+        root_tree: Bt,
     ) -> Self {
         Self {
             handle,
@@ -130,6 +138,8 @@ impl BotState {
             class,
             spec,
             role,
+            settings: BotSettings::default(),
+            pending_commands: VecDeque::new(),
             last_attackers_refresh_ms: 0,
             last_nearby_refresh_ms: 0,
         }

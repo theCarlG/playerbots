@@ -1,57 +1,73 @@
-/// Magmadar encounter FSM — Molten Core.
+/// Magmadar encounter — Molten Core.
 ///
-/// Single-phase fight.  Key mechanics:
-///
-/// 1. **Lava Bomb** (spell 19411): Ground AoE marker — bot must move out
-///    immediately.  The bomb lands at a player's location.
-///
-/// 2. **Panic** (Fear, aura 19408): Magmadar fears the tank periodically.
-///    Off-tanks / taunters need to pick up quickly.
-///
-/// 3. **Flame Buffet** (aura 19634): Stacking fire debuff on melee range targets.
-///    Ranged and healers must stay > 30 yards from Magmadar to avoid it.
-///
-/// Bot positioning:
-///   - Melee DPS and tank: stay close.
-///   - Ranged and healers: maintain > 30 yards from Magmadar.
-
+/// Single-phase fight:
+///   - Ranged/healers: stay > 30yd (Flame Buffet stacking debuff).
+///   - Tanks: taunt after Panic fear breaks.
+///   - Melee DPS: normal rotation.
 use super::super::{EncounterEvent, EncounterFsm};
+use crate::encounters::bt::Bt::{self, IsRanged, IsTank, MaintainRange, Sel, Seq, Taunt};
 use crate::ffi::SpellId;
 
-pub const SPELL_LAVA_BOMB:    SpellId = SpellId(19411);
-pub const AURA_PANIC:         SpellId = SpellId(19408); // fear
-pub const AURA_FLAME_BUFFET:  SpellId = SpellId(19634);
+pub const SPELL_LAVA_BOMB: SpellId = SpellId(19411);
+pub const AURA_PANIC: SpellId = SpellId(19408);
+pub const AURA_FLAME_BUFFET: SpellId = SpellId(19634);
 
-/// Minimum range for ranged/heals to avoid Flame Buffet.
-pub const MAGMADAR_RANGED_MIN_RANGE: f32 = 30.0;
-
+#[derive(Clone, Debug)]
 pub struct MagmadarFsm {
     active: bool,
-    done:   bool,
+    done: bool,
+    bt: Bt,
+}
+
+impl PartialEq for MagmadarFsm {
+    fn eq(&self, other: &Self) -> bool {
+        self.active == other.active && self.done == other.done
+    }
 }
 
 impl MagmadarFsm {
     pub fn new() -> Self {
-        Self { active: false, done: false }
+        Self {
+            active: false,
+            done: false,
+            bt: Sel(vec![
+                Seq(vec![IsRanged, MaintainRange(30.0)]),
+                Seq(vec![IsTank, Taunt]),
+            ]),
+        }
     }
 }
 
 impl Default for MagmadarFsm {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EncounterFsm for MagmadarFsm {
     fn update(&mut self, event: &EncounterEvent, _boss_hp: f32, _time: u64) {
         match event {
-            EncounterEvent::CombatStarted          => self.active = true,
+            EncounterEvent::CombatStarted => self.active = true,
             EncounterEvent::UnitDied { victim: _ } => self.done = true,
-            EncounterEvent::GroupWipe              => { self.active = false; }
+            EncounterEvent::GroupWipe => self.active = false,
             _ => {}
         }
     }
 
-    fn phase_id(&self) -> u32  { if self.active { 1 } else { 0 } }
-    fn is_active(&self) -> bool { self.active }
-    fn is_done(&self)   -> bool { self.done }
-    fn boss_entry(&self) -> u32 { super::ENTRY_MAGMADAR }
+    fn phase_id(&self) -> u32 {
+        u32::from(self.active)
+    }
+    fn is_active(&self) -> bool {
+        self.active
+    }
+    fn is_done(&self) -> bool {
+        self.done
+    }
+    fn boss_entry(&self) -> u32 {
+        super::ENTRY_MAGMADAR
+    }
+
+    fn phase_bt(&self) -> Option<&Bt> {
+        if self.active { Some(&self.bt) } else { None }
+    }
 }

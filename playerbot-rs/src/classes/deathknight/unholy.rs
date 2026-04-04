@@ -1,78 +1,51 @@
 /// Unholy Death Knight behavior tree (WotLK only) — Disease DPS spec.
 ///
-/// Priority: diseases → Scourge Strike → Death Coil → Bone Shield
+/// Priority: Bone Shield → Death Grip → diseases → Scourge Strike →
+///   AoE Blood Boil → Death Coil → Death and Decay
+use crate::engine::bt::Bt::{self, *};
 
-pub fn build_tree() -> Box<dyn crate::engine::bt_nodes::BtNode> {
-    #[cfg(not(feature = "wotlk"))]
-    return crate::engine::bt_nodes::sel(vec![crate::engine::bt_nodes::cond(|_| false)]);
+#[cfg(feature = "wotlk")]
+use crate::{data::spells::vanilla::deathknight::*, ffi::SpellId};
 
-    #[cfg(feature = "wotlk")]
-    {
-        use crate::{
-            data::spells::vanilla::deathknight::*,
-            engine::bt_nodes::{BtResult, action, cast_on_current_target, cd_gate,
-                                cond, gcd_gate, sel, seq},
-            ffi::SpellId,
-        };
-        // Scourge Strike: 55271 (rank 4), Bone Shield: 49222
-        const SCOURGE_STRIKE: SpellId = SpellId(55271);
+#[cfg(not(feature = "wotlk"))]
+pub fn build_tree() -> Bt {
+    Sel(vec![])
+}
 
-        sel(vec![
-            // Bone Shield — self buff
-            seq(vec![
-                cond(|ctx| !ctx.interface.has_aura(ctx.bot_handle, BONE_SHIELD)),
-                gcd_gate(cd_gate(BONE_SHIELD, action(|ctx| {
-                    let me = ctx.bot_handle;
-                    if ctx.interface.cast_spell(BONE_SHIELD, me) {
-                        ctx.timers.on_spell_cast(BONE_SHIELD, ctx.server_time_ms);
-                        BtResult::Success
-                    } else {
-                        BtResult::Failure
-                    }
-                }))),
-            ]),
+#[cfg(feature = "wotlk")]
+const SCOURGE_STRIKE: SpellId = SpellId(55271);
+#[cfg(feature = "wotlk")]
+const FROST_FEVER: SpellId = SpellId(55095);
+#[cfg(feature = "wotlk")]
+const BLOOD_PLAGUE: SpellId = SpellId(55078);
 
-            // Death Grip
-            seq(vec![
-                cond(|ctx| ctx.current_target().map_or(false, |t|
-                    ctx.interface.unit_distance(t) > 15.0)),
-                cast_on_current_target(DEATH_GRIP),
-            ]),
+#[cfg(feature = "wotlk")]
+pub fn build_tree() -> Bt {
+    Sel(vec![
+        StickToTarget(5.0),
 
-            seq(vec![
-                cond(|ctx| ctx.in_combat()),
-                sel(vec![
-                    // Apply diseases
-                    seq(vec![
-                        cond(|ctx| ctx.current_target().map_or(false, |t|
-                            !ctx.interface.has_aura(t, SpellId(55095)))),
-                        cast_on_current_target(ICY_TOUCH),
-                    ]),
-                    seq(vec![
-                        cond(|ctx| ctx.current_target().map_or(false, |t|
-                            !ctx.interface.has_aura(t, SpellId(55078)))),
-                        cast_on_current_target(PLAGUE_STRIKE),
-                    ]),
+        // Self-buff.
+        Seq(vec![SelfMissingAura(BONE_SHIELD), CastOnSelf(BONE_SHIELD)]),
 
-                    // Scourge Strike — main damage
-                    cast_on_current_target(SCOURGE_STRIKE),
+        // Pull.
+        Seq(vec![TargetFartherThan(15.0), CastOnTarget(DEATH_GRIP)]),
 
-                    // Blood Boil — AoE spread diseases
-                    seq(vec![
-                        cond(|ctx| ctx.nearby.len() >= 2),
-                        cast_on_current_target(BLOOD_BOIL),
-                    ]),
+        Seq(vec![InCombat, Sel(vec![
+            // Diseases.
+            Seq(vec![TargetMissingAura(FROST_FEVER), CastOnTarget(ICY_TOUCH)]),
+            Seq(vec![TargetMissingAura(BLOOD_PLAGUE), CastOnTarget(PLAGUE_STRIKE)]),
 
-                    // Death Coil — Runic Power dump
-                    cast_on_current_target(DEATH_COIL),
+            // Main damage.
+            CastOnTarget(SCOURGE_STRIKE),
 
-                    // Death and Decay — AoE
-                    seq(vec![
-                        cond(|ctx| ctx.nearby.len() >= 2),
-                        cast_on_current_target(DEATH_AND_DECAY),
-                    ]),
-                ]),
-            ]),
-        ])
-    }
+            // AoE spread.
+            Seq(vec![NearbyAtLeast(2), CastOnTarget(BLOOD_BOIL)]),
+
+            // RP dump.
+            CastOnTarget(DEATH_COIL),
+
+            // AoE ground.
+            Seq(vec![NearbyAtLeast(2), CastOnSelf(DEATH_AND_DECAY)]),
+        ])]),
+    ])
 }

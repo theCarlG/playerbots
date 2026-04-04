@@ -1,75 +1,36 @@
 /// Elemental Shaman behavior tree (Classic / Vanilla).
 ///
-/// Priority: Flame Shock → Lightning Bolt → Chain Lightning (AoE) → Earth Shock (interrupt)
+/// Priority: totem upkeep → Earth Shock interrupt → Flame Shock DoT →
+///   Chain Lightning AoE → Lightning Bolt → Frost Shock filler
 use crate::{
     data::spells::vanilla::shaman::*,
-    engine::{
-        bt_nodes::{BtNode, BtResult, action, cast_on_current_target, cd_gate,
-                    cond, gcd_gate, sel, seq},
-        context::TickContext,
-    },
+    engine::bt::Bt::{self, *},
 };
 
-pub fn build_tree() -> Box<dyn BtNode> {
-    sel(vec![
-        // Drop totems
-        seq(vec![
-            cond(|ctx| !ctx.interface.has_aura(ctx.bot_handle, GRACE_OF_AIR_TOTEM)
-                && ctx.snap.group_size > 1),
-            gcd_gate(cd_gate(GRACE_OF_AIR_TOTEM, action(|ctx| {
-                let me = ctx.bot_handle;
-                if ctx.interface.cast_spell(GRACE_OF_AIR_TOTEM, me) {
-                    ctx.timers.on_spell_cast(GRACE_OF_AIR_TOTEM, ctx.server_time_ms);
-                    BtResult::Success
-                } else {
-                    BtResult::Failure
-                }
-            }))),
-        ]),
+pub fn build_tree() -> Bt {
+    Sel(vec![
+        MaintainRange(20.0),
 
-        // Mana Spring Totem
-        seq(vec![
-            cond(|ctx| !ctx.interface.has_aura(ctx.bot_handle, MANA_SPRING_TOTEM)),
-            gcd_gate(cd_gate(MANA_SPRING_TOTEM, action(|ctx| {
-                let me = ctx.bot_handle;
-                if ctx.interface.cast_spell(MANA_SPRING_TOTEM, me) {
-                    ctx.timers.on_spell_cast(MANA_SPRING_TOTEM, ctx.server_time_ms);
-                    BtResult::Success
-                } else {
-                    BtResult::Failure
-                }
-            }))),
-        ]),
+        // Totem upkeep.
+        Seq(vec![GroupSizeAtLeast(2), SelfMissingAura(GRACE_OF_AIR_TOTEM),
+                 CastOnSelf(GRACE_OF_AIR_TOTEM)]),
+        Seq(vec![SelfMissingAura(MANA_SPRING_TOTEM), CastOnSelf(MANA_SPRING_TOTEM)]),
 
-        seq(vec![
-            cond(|ctx| ctx.in_combat()),
-            sel(vec![
-                // Earth Shock — interrupt
-                seq(vec![
-                    cond(|ctx| ctx.current_target().map_or(false, |t|
-                        ctx.interface.get_unit_snapshot(t).is_casting)),
-                    cast_on_current_target(EARTH_SHOCK),
-                ]),
+        Seq(vec![InCombat, Sel(vec![
+            // Interrupt.
+            Seq(vec![TargetIsCasting, CastOnTarget(EARTH_SHOCK)]),
 
-                // Flame Shock — maintain DoT
-                seq(vec![
-                    cond(|ctx| ctx.current_target().map_or(false, |t|
-                        !ctx.interface.has_aura(t, FLAME_SHOCK))),
-                    cast_on_current_target(FLAME_SHOCK),
-                ]),
+            // Flame Shock DoT.
+            Seq(vec![TargetMissingAura(FLAME_SHOCK), CastOnTarget(FLAME_SHOCK)]),
 
-                // Chain Lightning — AoE
-                seq(vec![
-                    cond(|ctx| ctx.nearby.len() >= 3),
-                    cast_on_current_target(CHAIN_LIGHTNING),
-                ]),
+            // AoE.
+            Seq(vec![NearbyAtLeast(3), CastOnTarget(CHAIN_LIGHTNING)]),
 
-                // Lightning Bolt — main nuke
-                cast_on_current_target(LIGHTNING_BOLT),
+            // Main nuke.
+            CastOnTarget(LIGHTNING_BOLT),
 
-                // Frost Shock — filler / snare
-                cast_on_current_target(FROST_SHOCK),
-            ]),
-        ]),
+            // Filler/snare.
+            CastOnTarget(FROST_SHOCK),
+        ])]),
     ])
 }

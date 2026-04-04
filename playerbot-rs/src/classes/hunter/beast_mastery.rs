@@ -1,86 +1,36 @@
 /// Beast Mastery Hunter behavior tree (Classic / Vanilla).
 ///
-/// BM hunter relies heavily on pet damage. The bot manages:
-/// Pet attack → Bestial Wrath → Hunter's Mark → ranged shots
+/// BM relies heavily on pet damage.
+/// Priority: Feign Death → Aspect of the Hawk → Hunter's Mark → Bestial Wrath →
+///   shots → Serpent Sting → Raptor Strike (melee fallback)
 use crate::{
     data::spells::vanilla::hunter::*,
     engine::{
-        bt_nodes::{BtNode, BtResult, action, cast_on_current_target, cd_gate,
-                    cond, gcd_gate, sel, seq},
-        context::TickContext,
+        aura_helpers::{HUNTERS_MARK_RANKS, SERPENT_STING_RANKS},
+        bt::Bt::{self, *},
     },
 };
 
-pub fn build_tree() -> Box<dyn BtNode> {
-    sel(vec![
-        // Feign Death at critical HP
-        seq(vec![
-            cond(|ctx| ctx.self_hp_pct() < 0.15),
-            gcd_gate(cd_gate(FEIGN_DEATH, action(|ctx| {
-                let me = ctx.bot_handle;
-                if ctx.interface.cast_spell(FEIGN_DEATH, me) {
-                    ctx.timers.on_spell_cast(FEIGN_DEATH, ctx.server_time_ms);
-                    BtResult::Success
-                } else {
-                    BtResult::Failure
-                }
-            }))),
-        ]),
+pub fn build_tree() -> Bt {
+    Sel(vec![
+        // Emergency FD.
+        Seq(vec![HpBelow(0.15), CastOnSelf(FEIGN_DEATH)]),
 
-        // Aspect of the Hawk
-        seq(vec![
-            cond(needs_hawk),
-            gcd_gate(cd_gate(ASPECT_OF_THE_HAWK, action(|ctx| {
-                let me = ctx.bot_handle;
-                if ctx.interface.cast_spell(ASPECT_OF_THE_HAWK, me) {
-                    ctx.timers.on_spell_cast(ASPECT_OF_THE_HAWK, ctx.server_time_ms);
-                    BtResult::Success
-                } else {
-                    BtResult::Failure
-                }
-            }))),
-        ]),
+        // Maintain Aspect of the Hawk.
+        Seq(vec![SelfMissingAura(ASPECT_OF_THE_HAWK), CastOnSelf(ASPECT_OF_THE_HAWK)]),
 
-        seq(vec![
-            cond(|ctx| ctx.in_combat()),
-            sel(vec![
-                // Hunter's Mark
-                seq(vec![
-                    cond(|ctx| {
-                        ctx.current_target().map_or(false, |t|
-                            !ctx.interface.has_aura(t, HUNTERS_MARK))
-                    }),
-                    cast_on_current_target(HUNTERS_MARK),
-                ]),
+        // Kite melee attackers (MaintainRange only fires when too close).
+        MaintainRange(8.0),
 
-                // Bestial Wrath (BM talent) — burst
-                cast_on_current_target(BESTIAL_WRATH),
-
-                // Aimed Shot
-                cast_on_current_target(AIMED_SHOT),
-
-                // Multi-Shot
-                cast_on_current_target(MULTI_SHOT),
-
-                // Arcane Shot
-                cast_on_current_target(ARCANE_SHOT),
-
-                // Serpent Sting
-                seq(vec![
-                    cond(|ctx| {
-                        ctx.current_target().map_or(false, |t|
-                            !ctx.interface.has_aura(t, SERPENT_STING))
-                    }),
-                    cast_on_current_target(SERPENT_STING),
-                ]),
-
-                // Raptor Strike (melee)
-                cast_on_current_target(RAPTOR_STRIKE),
-            ]),
-        ]),
+        Seq(vec![InCombat, Sel(vec![
+            Seq(vec![TargetMissingAnyRank(HUNTERS_MARK_RANKS), CastOnTarget(HUNTERS_MARK)]),
+            CastOnTarget(BESTIAL_WRATH),
+            CastOnTarget(AIMED_SHOT),
+            CastOnTarget(MULTI_SHOT),
+            CastOnTarget(ARCANE_SHOT),
+            Seq(vec![TargetMissingAnyRank(SERPENT_STING_RANKS), CastOnTarget(SERPENT_STING)]),
+            // Melee fallback.
+            CastOnTarget(RAPTOR_STRIKE),
+        ])]),
     ])
-}
-
-fn needs_hawk(ctx: &TickContext<'_>) -> bool {
-    !ctx.interface.has_aura(ctx.bot_handle, ASPECT_OF_THE_HAWK)
 }

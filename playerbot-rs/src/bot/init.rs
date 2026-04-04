@@ -1,9 +1,13 @@
 /// Bot initialization — builds the root behavior tree from (class, spec).
 use crate::{
+    bot::settings::{BehaviorMode, StrategyFlags},
     bot::state::{BotState, PlayerClass, PlayerSpec},
-    engine::bt_nodes::{BtNode, cond, sel},
+    classes::{self, ClassKit},
+    combat::reactive,
+    engine::bt::Bt,
     ffi::{interface::BotInterface, BotRole},
-    noncombat,
+    noncombat::GroupBuff,
+    world,
 };
 
 /// Build a BotState from its handle, interface, class, and spec.
@@ -28,76 +32,112 @@ fn default_role_for_spec(spec: &PlayerSpec) -> BotRole {
     }
 }
 
+/// Look up the class rotation tree and buff list for this (class, spec).
+/// Each class owns its own dispatch; this function is a flat 10-arm switch.
+fn class_kit(class: PlayerClass, spec: PlayerSpec) -> ClassKit {
+    use PlayerClass::*;
+    match class {
+        Warrior     => classes::warrior::kit(spec),
+        Paladin     => classes::paladin::kit(spec),
+        Priest      => classes::priest::kit(spec),
+        Druid       => classes::druid::kit(spec),
+        Hunter      => classes::hunter::kit(spec),
+        Mage        => classes::mage::kit(spec),
+        Rogue       => classes::rogue::kit(spec),
+        Shaman      => classes::shaman::kit(spec),
+        Warlock     => classes::warlock::kit(spec),
+        DeathKnight => classes::deathknight::kit(spec),
+    }
+}
+
 /// Build the complete root behavior tree for a given class/spec.
 ///
-/// Root structure:
-///   Selector [
-///     noncombat_subtree   (eat/drink → buff → loot → follow)
-///     combat_subtree      (class-specific rotation)
-///   ]
-fn build_root_tree(class: PlayerClass, spec: PlayerSpec) -> Box<dyn BtNode> {
-    use crate::classes::*;
-    use PlayerClass::*;
-    use PlayerSpec::*;
+/// Root structure (priority order):
+///   1. Death handling (corpse run, accept rez)
+///   2. Passive mode — do nothing
+///   3. Eat/drink — recover HP/mana
+///   4. Encounter override — boss mechanics
+///   5. Combat wrapper (reactive + class rotation)
+///   6. Mode-specific out-of-combat behavior
+///   7. Maintenance (buff, loot, pet, mount, vendor, repair)
+fn build_root_tree(class: PlayerClass, spec: PlayerSpec) -> Bt {
+    use Bt::*;
 
-    let (combat_tree, buffs) = match (class, spec) {
-        // ── Warrior ───────────────────────────────────────────────────────
-        (Warrior, WarriorArms)       => (warrior::arms::build_tree(),       noncombat::warrior_buffs()),
-        (Warrior, WarriorFury)       => (warrior::fury::build_tree(),        noncombat::warrior_buffs()),
-        (Warrior, WarriorProtection) => (warrior::protection::build_tree(),  noncombat::warrior_buffs()),
+    let ClassKit { tree: combat_tree, buffs } = class_kit(class, spec);
 
-        // ── Paladin ───────────────────────────────────────────────────────
-        (Paladin, PaladinRetribution) => (paladin::retribution::build_tree(), noncombat::paladin_retribution_buffs()),
-        (Paladin, PaladinHoly)        => (paladin::holy::build_tree(),         noncombat::paladin_holy_buffs()),
-        (Paladin, PaladinProtection)  => (paladin::protection::build_tree(),   noncombat::paladin_protection_buffs()),
+    Sel(vec![
+        // 1. Death handling.
+        world::death::death_subtree(),
 
-        // ── Priest ────────────────────────────────────────────────────────
-        (Priest, PriestHoly)       => (priest::holy::build_tree(),       noncombat::priest_buffs()),
-        (Priest, PriestDiscipline) => (priest::discipline::build_tree(), noncombat::priest_buffs()),
-        (Priest, PriestShadow)     => (priest::shadow::build_tree(),     noncombat::priest_buffs()),
+        // 2. Passive mode — do nothing.
+        ModeIs(BehaviorMode::Passive),
 
-        // ── Druid ─────────────────────────────────────────────────────────
-        (Druid, DruidBalance)     => (druid::balance::build_tree(),     noncombat::druid_buffs()),
-        (Druid, DruidFeral)       => (druid::feral::build_tree(),       noncombat::druid_buffs()),
-        (Druid, DruidRestoration) => (druid::restoration::build_tree(), noncombat::druid_buffs()),
+        // 3. Eat/drink — out of combat only.
+        Seq(vec![InCombat.not(), Consumables]),
 
-        // ── Hunter ────────────────────────────────────────────────────────
-        (Hunter, HunterBeastMastery)  => (hunter::beast_mastery::build_tree(),  noncombat::no_buffs()),
-        (Hunter, HunterMarksmanship)  => (hunter::marksmanship::build_tree(),   noncombat::no_buffs()),
-        (Hunter, HunterSurvival)      => (hunter::survival::build_tree(),       noncombat::no_buffs()),
+        // 4. Encounter override.
+        EncounterOverride,
 
-        // ── Mage ──────────────────────────────────────────────────────────
-        (Mage, MageArcane) => (mage::arcane::build_tree(), noncombat::mage_buffs()),
-        (Mage, MageFire)   => (mage::fire::build_tree(),   noncombat::mage_buffs()),
-        (Mage, MageFrost)  => (mage::frost::build_tree(),  noncombat::mage_buffs()),
+        // 5. In combat → reactive + rotation.
+        Seq(vec![
+            Sel(vec![InCombat, ShouldEngage]),
+            combat_wrapper(combat_tree),
+        ]),
 
-        // ── Rogue ─────────────────────────────────────────────────────────
-        (Rogue, RogueAssassination) => (rogue::assassination::build_tree(), noncombat::no_buffs()),
-        (Rogue, RogueCombat)        => (rogue::combat::build_tree(),        noncombat::no_buffs()),
-        (Rogue, RogueSubtlety)      => (rogue::subtlety::build_tree(),      noncombat::no_buffs()),
+        // 6. Out-of-combat mode dispatch.
+        mode_dispatch(),
 
-        // ── Shaman ────────────────────────────────────────────────────────
-        (Shaman, ShamanElemental)    => (shaman::elemental::build_tree(),    noncombat::shaman_elemental_buffs()),
-        (Shaman, ShamanEnhancement)  => (shaman::enhancement::build_tree(),  noncombat::shaman_enhancement_buffs()),
-        (Shaman, ShamanRestoration)  => (shaman::restoration::build_tree(),  noncombat::shaman_restoration_buffs()),
+        // 7. Maintenance.
+        maintenance_subtree(buffs),
+    ])
+}
 
-        // ── Warlock ───────────────────────────────────────────────────────
-        (Warlock, WarlockAffliction)  => (warlock::affliction::build_tree(),  noncombat::warlock_buffs()),
-        (Warlock, WarlockDemonology)  => (warlock::demonology::build_tree(),  noncombat::warlock_buffs()),
-        (Warlock, WarlockDestruction) => (warlock::destruction::build_tree(), noncombat::warlock_buffs()),
+/// Wrap a class rotation in the shared reactive subtrees (flee, interrupt,
+/// dispel, threat, targeting) that apply to every class.
+fn combat_wrapper(class_rotation: Bt) -> Bt {
+    Bt::Sel(vec![
+        reactive::flee_subtree(),
+        reactive::interrupt_subtree(),
+        reactive::dispel_subtree(),
+        reactive::resurrect_subtree(),
+        reactive::threat_subtree(),
+        reactive::targeting_subtree(),
+        class_rotation,
+    ])
+}
 
-        // ── Death Knight (WotLK only) ─────────────────────────────────────
-        (DeathKnight, DeathKnightBlood)  => (deathknight::blood::build_tree(),  noncombat::no_buffs()),
-        (DeathKnight, DeathKnightFrost)  => (deathknight::frost::build_tree(),  noncombat::no_buffs()),
-        (DeathKnight, DeathKnightUnholy) => (deathknight::unholy::build_tree(), noncombat::no_buffs()),
+/// Mode dispatch — each behavior mode gets its own subtree.
+fn mode_dispatch() -> Bt {
+    use Bt::*;
+    Sel(vec![
+        Seq(vec![ModeIs(BehaviorMode::Follow), Bt::throttle(2_000, Follow)]),
+        Seq(vec![ModeIs(BehaviorMode::Stay), world::stay::stay_subtree()]),
+        Seq(vec![ModeIs(BehaviorMode::Grind), world::grind::grind_subtree()]),
+        Seq(vec![ModeIs(BehaviorMode::Quest), world::quest::quest_subtree()]),
+        Seq(vec![ModeIs(BehaviorMode::Guard), world::guard::guard_subtree()]),
+        // RPG mode is only active if the RPG strategy flag is set; without
+        // it, rpg-mode bots just idle-follow instead of wandering into NPCs.
+        Seq(vec![
+            ModeIs(BehaviorMode::Rpg),
+            StrategyEnabled(StrategyFlags::RPG),
+            world::rpg::rpg_subtree(),
+        ]),
+        Seq(vec![ModeIs(BehaviorMode::Bg), world::bg::bg_subtree()]),
+    ])
+}
 
-        // Invalid class/spec combinations (should never happen in practice)
-        _ => return sel(vec![cond(|_| false)]),
-    };
-
-    // Wrap the combat tree with non-combat behavior at the top level.
-    sel(vec![
-        noncombat::build_noncombat_subtree(buffs),
-        combat_tree,
+/// Maintenance subtree — low-priority upkeep in any non-passive mode.
+fn maintenance_subtree(buffs: &'static [GroupBuff]) -> Bt {
+    use Bt::*;
+    Sel(vec![
+        Seq(vec![InCombat.not(), Bt::throttle(5_000, Buff(buffs))]),
+        world::pet::pet_subtree(),
+        world::loot::loot_subtree(),
+        world::gather::gather_subtree(),
+        world::mount::mount_subtree(),
+        world::vendor::vendor_subtree(),
+        world::repair::repair_subtree(),
+        // Follow as absolute fallback.
+        Bt::throttle(2_000, Follow),
     ])
 }

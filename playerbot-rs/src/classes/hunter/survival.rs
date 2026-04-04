@@ -1,78 +1,40 @@
 /// Survival Hunter behavior tree (Classic / Vanilla).
 ///
-/// Survival focuses on traps, melee-range escapes, and counter-attack procs.
-/// Priority: Feign Death (emergency) → Counterattack → Aimed Shot → Multi-Shot →
-///   Arcane Shot → Serpent Sting → Explosive Trap
+/// Priority: Feign Death → Hunter's Mark → Counterattack → Explosive Trap / Wing Clip
+///   at melee → ranged rotation → Serpent Sting
 use crate::{
     data::spells::vanilla::hunter::*,
-    engine::bt_nodes::{BtNode, BtResult, action, cast_on_current_target, cd_gate,
-                        cond, gcd_gate, sel, seq},
+    engine::{
+        aura_helpers::{HUNTERS_MARK_RANKS, SERPENT_STING_RANKS},
+        bt::Bt::{self, *},
+    },
     ffi::SpellId,
 };
 
-// Counterattack: 19306 rank 1, 20909 rank 2, 20910 rank 3
-const COUNTERATTACK: SpellId = SpellId(20910);
+const COUNTERATTACK: SpellId = SpellId(20910); // rank 3
 
-pub fn build_tree() -> Box<dyn BtNode> {
-    sel(vec![
-        // Feign Death at critical HP
-        seq(vec![
-            cond(|ctx| ctx.self_hp_pct() < 0.15),
-            gcd_gate(cd_gate(FEIGN_DEATH, action(|ctx| {
-                let me = ctx.bot_handle;
-                if ctx.interface.cast_spell(FEIGN_DEATH, me) {
-                    ctx.timers.on_spell_cast(FEIGN_DEATH, ctx.server_time_ms);
-                    BtResult::Success
-                } else {
-                    BtResult::Failure
-                }
-            }))),
-        ]),
+pub fn build_tree() -> Bt {
+    Sel(vec![
+        // Emergency FD.
+        Seq(vec![HpBelow(0.15), CastOnSelf(FEIGN_DEATH)]),
 
-        seq(vec![
-            cond(|ctx| ctx.in_combat()),
-            sel(vec![
-                // Hunter's Mark
-                seq(vec![
-                    cond(|ctx| ctx.current_target().map_or(false, |t|
-                        !ctx.interface.has_aura(t, HUNTERS_MARK))),
-                    cast_on_current_target(HUNTERS_MARK),
-                ]),
+        Seq(vec![InCombat, Sel(vec![
+            Seq(vec![TargetMissingAnyRank(HUNTERS_MARK_RANKS), CastOnTarget(HUNTERS_MARK)]),
 
-                // Counterattack (proc after parry)
-                cast_on_current_target(COUNTERATTACK),
+            CastOnTarget(COUNTERATTACK),
 
-                // Scatter Shot (interrupt)
-                seq(vec![
-                    cond(|ctx| ctx.current_target().map_or(false, |t|
-                        ctx.interface.get_unit_snapshot(t).is_casting)),
-                    cast_on_current_target(SCATTER_SHOT),
-                ]),
+            // Interrupt.
+            Seq(vec![TargetIsCasting, CastOnTarget(SCATTER_SHOT)]),
 
-                // Explosive Trap — place at feet when engaged
-                seq(vec![
-                    cond(|ctx| ctx.current_target().map_or(false, |t|
-                        ctx.interface.unit_distance(t) < 5.0)),
-                    cast_on_current_target(EXPLOSIVE_TRAP),
-                ]),
+            // Melee escapes/AoE.
+            Seq(vec![TargetCloserThan(5.0), CastOnSelf(EXPLOSIVE_TRAP)]),
+            Seq(vec![TargetCloserThan(5.0), CastOnTarget(WING_CLIP)]),
 
-                // Wing Clip if too close
-                seq(vec![
-                    cond(|ctx| ctx.current_target().map_or(false, |t|
-                        ctx.interface.unit_distance(t) < 5.0)),
-                    cast_on_current_target(WING_CLIP),
-                ]),
-
-                // Ranged rotation
-                cast_on_current_target(AIMED_SHOT),
-                cast_on_current_target(MULTI_SHOT),
-                cast_on_current_target(ARCANE_SHOT),
-                seq(vec![
-                    cond(|ctx| ctx.current_target().map_or(false, |t|
-                        !ctx.interface.has_aura(t, SERPENT_STING))),
-                    cast_on_current_target(SERPENT_STING),
-                ]),
-            ]),
-        ]),
+            // Ranged rotation.
+            CastOnTarget(AIMED_SHOT),
+            CastOnTarget(MULTI_SHOT),
+            CastOnTarget(ARCANE_SHOT),
+            Seq(vec![TargetMissingAnyRank(SERPENT_STING_RANKS), CastOnTarget(SERPENT_STING)]),
+        ])]),
     ])
 }

@@ -2,16 +2,19 @@
 //
 // Compiles to a static library (libplayerbot_rs.a) linked by the C++ wrapper.
 // All public symbols are extern "C" and declared in cpp_wrapper/botffi.h.
+#![allow(unsafe_code)]
 
 pub mod bot;
 pub mod classes;
 pub mod combat;
+pub mod commands;
 pub mod config;
 pub mod data;
 pub mod encounters;
 pub mod engine;
 pub mod ffi;
 pub mod noncombat;
+pub mod world;
 
 use bot::state::BotState;
 use ffi::{
@@ -141,6 +144,23 @@ pub unsafe extern "C" fn playerbot_unit_spell_cast(
     bot.events.push_back(bot::events::BotEvent::UnitSpellCast { caster, spell_id: SpellId(spell_id), target, success });
 }
 
+/// RTSC spell position — called when spell 30758 is cast on ground by the master.
+/// The C++ side extracts the destination position from SpellCastTargets and calls this.
+///
+/// # Safety: state valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_rtsc_spell(
+    state: *mut (),
+    x: f32,
+    y: f32,
+    z: f32,
+) {
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    bot.pending_commands.push_back(
+        commands::PendingCommand::internal(commands::BotCommand::RtscSpellPosition(x, y, z)),
+    );
+}
+
 /// # Safety: state valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn playerbot_aura_changed(
@@ -175,6 +195,39 @@ pub unsafe extern "C" fn playerbot_damage_taken(
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
     bot.events.push_back(bot::events::BotEvent::DamageTaken { damage, spell_id: SpellId(spell_id), dealer });
+}
+
+// ── Chat command injection ────────────────────────────────────────────────
+
+/// Inject a chat command into a bot's pending command queue.
+///
+/// Called from C++ when a player whispers a command to the bot.
+/// `sender_guid` is the ObjectGuid raw value of the commanding player
+/// (0 = internal/system). `privileged` is non-zero if the sender is
+/// owner/party-leader/GM — unprivileged commands are silently dropped.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+/// `text` must be a valid null-terminated C string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_chat_command(
+    state: *mut (),
+    sender_guid: u64,
+    privileged: u8,
+    text: *const std::os::raw::c_char,
+) {
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    let c_str = unsafe { std::ffi::CStr::from_ptr(text) };
+    if let Ok(text) = c_str.to_str() {
+        if let Some(cmd) = commands::parser::parse(text) {
+            let pc = if sender_guid == 0 {
+                commands::PendingCommand::internal(cmd)
+            } else {
+                commands::PendingCommand::external(sender_guid, privileged != 0, cmd)
+            };
+            bot.pending_commands.push_back(pc);
+        }
+    }
 }
 
 // ── Global coordination tick ──────────────────────────────────────────────

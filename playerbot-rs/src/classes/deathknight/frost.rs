@@ -1,90 +1,48 @@
 /// Frost Death Knight behavior tree (WotLK only).
 ///
-/// Two-handed Frost: Howling Blast → Obliterate → Frost Strike → Icy Touch → Plague Strike
-#[cfg(feature = "wotlk")]
-use crate::{
-    data::spells::vanilla::deathknight::*,
-    engine::{
-        bt_nodes::{BtNode, BtResult, action, cast_on_current_target, cd_gate,
-                    cond, gcd_gate, sel, seq},
-        context::TickContext,
-    },
-    ffi::SpellId,
-};
+/// Priority: Death Grip → Anti-Magic Shell vs casters → Howling Blast → Obliterate
+///   → diseases → Frost Strike → Chains of Ice
+use crate::engine::bt::Bt::{self, *};
 
 #[cfg(feature = "wotlk")]
-pub fn build_tree() -> Box<dyn BtNode> {
-    sel(vec![
-        // Death Grip — pull enemy
-        seq(vec![
-            cond(|ctx| ctx.current_target().map_or(false, |t|
-                ctx.interface.unit_distance(t) > 15.0)),
-            cast_on_current_target(DEATH_GRIP),
-        ]),
-
-        seq(vec![
-            cond(|ctx| ctx.in_combat()),
-            sel(vec![
-                // Anti-Magic Shell — absorb magic damage
-                seq(vec![
-                    cond(|ctx| ctx.current_target().map_or(false, |t|
-                        ctx.interface.get_unit_snapshot(t).is_casting)),
-                    gcd_gate(cd_gate(ANTI_MAGIC_SHELL, action(|ctx| {
-                        let me = ctx.bot_handle;
-                        if ctx.interface.cast_spell(ANTI_MAGIC_SHELL, me) {
-                            ctx.timers.on_spell_cast(ANTI_MAGIC_SHELL, ctx.server_time_ms);
-                            BtResult::Success
-                        } else {
-                            BtResult::Failure
-                        }
-                    }))),
-                ]),
-
-                // Howling Blast (burst + AoE)
-                cast_on_current_target(HOWLING_BLAST),
-
-                // Obliterate — main melee
-                cast_on_current_target(OBLITERATE),
-
-                // Icy Touch — apply Frost Fever (required for Obliterate buff)
-                seq(vec![
-                    cond(target_needs_frost_fever),
-                    cast_on_current_target(ICY_TOUCH),
-                ]),
-
-                // Plague Strike — apply Blood Plague
-                seq(vec![
-                    cond(target_needs_blood_plague),
-                    cast_on_current_target(PLAGUE_STRIKE),
-                ]),
-
-                // Frost Strike — Runic Power dump
-                cast_on_current_target(FROST_STRIKE),
-
-                // Chains of Ice — snare
-                seq(vec![
-                    cond(|ctx| ctx.current_target().map_or(false, |t|
-                        ctx.interface.unit_distance(t) > 8.0)),
-                    cast_on_current_target(CHAINS_OF_ICE),
-                ]),
-            ]),
-        ]),
-    ])
-}
-
-#[cfg(feature = "wotlk")]
-fn target_needs_frost_fever(ctx: &TickContext<'_>) -> bool {
-    // Frost Fever aura: 55095
-    ctx.current_target().map_or(false, |t| !ctx.interface.has_aura(t, SpellId(55095)))
-}
-
-#[cfg(feature = "wotlk")]
-fn target_needs_blood_plague(ctx: &TickContext<'_>) -> bool {
-    // Blood Plague aura: 55078
-    ctx.current_target().map_or(false, |t| !ctx.interface.has_aura(t, SpellId(55078)))
-}
+use crate::{data::spells::vanilla::deathknight::*, ffi::SpellId};
 
 #[cfg(not(feature = "wotlk"))]
-pub fn build_tree() -> Box<dyn crate::engine::bt_nodes::BtNode> {
-    crate::engine::bt_nodes::sel(vec![crate::engine::bt_nodes::cond(|_| false)])
+pub fn build_tree() -> Bt {
+    Sel(vec![])
+}
+
+#[cfg(feature = "wotlk")]
+const FROST_FEVER: SpellId = SpellId(55095);
+#[cfg(feature = "wotlk")]
+const BLOOD_PLAGUE: SpellId = SpellId(55078);
+
+#[cfg(feature = "wotlk")]
+pub fn build_tree() -> Bt {
+    Sel(vec![
+        StickToTarget(5.0),
+
+        Seq(vec![TargetFartherThan(15.0), CastOnTarget(DEATH_GRIP)]),
+
+        Seq(vec![InCombat, Sel(vec![
+            // Absorb vs casters.
+            Seq(vec![TargetIsCasting, CastOnSelf(ANTI_MAGIC_SHELL)]),
+
+            // Burst / AoE.
+            CastOnTarget(HOWLING_BLAST),
+
+            // Main melee.
+            CastOnTarget(OBLITERATE),
+
+            // Diseases.
+            Seq(vec![TargetMissingAura(FROST_FEVER), CastOnTarget(ICY_TOUCH)]),
+            Seq(vec![TargetMissingAura(BLOOD_PLAGUE), CastOnTarget(PLAGUE_STRIKE)]),
+
+            // RP dump.
+            CastOnTarget(FROST_STRIKE),
+
+            // Snare fleeing target.
+            Seq(vec![TargetFartherThan(8.0), CastOnTarget(CHAINS_OF_ICE)]),
+        ])]),
+    ])
 }

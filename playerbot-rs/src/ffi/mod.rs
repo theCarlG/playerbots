@@ -13,8 +13,8 @@ pub mod types;
 // Re-export the plain-data types from generated bindings.
 // These are safe to use anywhere — they are just data with no invariants.
 pub use bindings::{
-    BotAuraInfo, BotCallbacks, BotHandle, BotPosition, BotSafePosition, BotThreatEntry,
-    BotUnitSnapshot, BotWorldSnapshot, UnitHandle,
+    BotAuraInfo, BotCallbacks, BotDispelTarget, BotHandle, BotPosition, BotQuestInfo,
+    BotSafePosition, BotThreatEntry, BotUnitSnapshot, BotWorldSnapshot, UnitHandle,
 };
 
 // Re-export newtypes for use throughout the crate.

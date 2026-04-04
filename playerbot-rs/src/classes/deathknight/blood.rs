@@ -1,84 +1,52 @@
-/// Blood Death Knight behavior tree (WotLK only) — Tank/DPS spec.
+/// Blood Death Knight behavior tree (WotLK only).
 ///
-/// Self-sustaining through Death Strike heals.
-/// Priority: Death Grip → Heart Strike → Death Strike → Blood Strike → Death Coil
+/// Priority: Death Grip pull → Dancing Rune Weapon → diseases → Death Strike heal
+///   → Heart Strike → Blood Strike → Death Coil → AoE
+use crate::engine::bt::Bt::{self, *};
 
-pub fn build_tree() -> Box<dyn crate::engine::bt_nodes::BtNode> {
-    use crate::engine::bt_nodes::{BtResult, action, cast_on_current_target, cd_gate,
-                                    cond, gcd_gate, sel, seq};
-    use crate::ffi::SpellId;
+#[cfg(feature = "wotlk")]
+use crate::{data::spells::vanilla::deathknight::*, ffi::SpellId};
 
-    #[cfg(feature = "wotlk")]
-    use crate::data::spells::vanilla::deathknight::*;
+#[cfg(not(feature = "wotlk"))]
+pub fn build_tree() -> Bt {
+    Sel(vec![])
+}
 
-    #[cfg(not(feature = "wotlk"))]
-    return sel(vec![cond(|_| false)]);
+#[cfg(feature = "wotlk")]
+const FROST_FEVER: SpellId = SpellId(55095);
+#[cfg(feature = "wotlk")]
+const BLOOD_PLAGUE: SpellId = SpellId(55078);
 
-    #[cfg(feature = "wotlk")]
-    sel(vec![
-        // Death Grip — pull
-        seq(vec![
-            cond(|ctx| ctx.current_target().map_or(false, |t|
-                ctx.interface.unit_distance(t) > 15.0)),
-            cast_on_current_target(DEATH_GRIP),
-        ]),
+#[cfg(feature = "wotlk")]
+pub fn build_tree() -> Bt {
+    Sel(vec![
+        StickToTarget(5.0),
 
-        seq(vec![
-            cond(|ctx| ctx.in_combat()),
-            sel(vec![
-                // Dancing Rune Weapon — boost threat
-                gcd_gate(cd_gate(DANCING_RUNE_WEAPON, action(|ctx| {
-                    let me = ctx.bot_handle;
-                    if ctx.interface.cast_spell(DANCING_RUNE_WEAPON, me) {
-                        ctx.timers.on_spell_cast(DANCING_RUNE_WEAPON, ctx.server_time_ms);
-                        BtResult::Success
-                    } else {
-                        BtResult::Failure
-                    }
-                }))),
+        // Death Grip pull on ranged targets.
+        Seq(vec![TargetFartherThan(15.0), CastOnTarget(DEATH_GRIP)]),
 
-                // Dark Command — taunt
-                cast_on_current_target(DARK_COMMAND),
+        Seq(vec![InCombat, Sel(vec![
+            // Cooldown.
+            CastOnSelf(DANCING_RUNE_WEAPON),
 
-                // Icy Touch + Plague Strike — diseases
-                seq(vec![
-                    cond(|ctx| ctx.current_target().map_or(false, |t|
-                        !ctx.interface.has_aura(t, SpellId(55095)))), // Frost Fever
-                    cast_on_current_target(ICY_TOUCH),
-                ]),
-                seq(vec![
-                    cond(|ctx| ctx.current_target().map_or(false, |t|
-                        !ctx.interface.has_aura(t, SpellId(55078)))), // Blood Plague
-                    cast_on_current_target(PLAGUE_STRIKE),
-                ]),
+            // Taunt.
+            CastOnTarget(DARK_COMMAND),
 
-                // Death Strike — heal + damage
-                seq(vec![
-                    cond(|ctx| ctx.self_hp_pct() < 0.70),
-                    cast_on_current_target(DEATH_STRIKE),
-                ]),
+            // Diseases.
+            Seq(vec![TargetMissingAura(FROST_FEVER), CastOnTarget(ICY_TOUCH)]),
+            Seq(vec![TargetMissingAura(BLOOD_PLAGUE), CastOnTarget(PLAGUE_STRIKE)]),
 
-                // Heart Strike — main melee
-                cast_on_current_target(HEART_STRIKE),
+            // Self-sustain.
+            Seq(vec![HpBelow(0.70), CastOnTarget(DEATH_STRIKE)]),
 
-                // Blood Strike
-                cast_on_current_target(BLOOD_STRIKE),
+            // Main damage.
+            CastOnTarget(HEART_STRIKE),
+            CastOnTarget(BLOOD_STRIKE),
+            CastOnTarget(DEATH_COIL),
 
-                // Death Coil — Runic Power
-                cast_on_current_target(DEATH_COIL),
-
-                // Blood Boil — AoE
-                seq(vec![
-                    cond(|ctx| ctx.nearby.len() >= 2),
-                    cast_on_current_target(BLOOD_BOIL),
-                ]),
-
-                // Death and Decay — AoE ground
-                seq(vec![
-                    cond(|ctx| ctx.nearby.len() >= 2),
-                    cast_on_current_target(DEATH_AND_DECAY),
-                ]),
-            ]),
-        ]),
+            // AoE.
+            Seq(vec![NearbyAtLeast(2), CastOnTarget(BLOOD_BOIL)]),
+            Seq(vec![NearbyAtLeast(2), CastOnSelf(DEATH_AND_DECAY)]),
+        ])]),
     ])
 }

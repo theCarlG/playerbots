@@ -11,7 +11,7 @@
 use crate::{
     bot::state::BotState,
     encounters::{coordinator, EncounterEvent},
-    engine::context::TickContext,
+    engine::{bt_nodes::BtNode, context::TickContext},
 };
 
 pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
@@ -48,6 +48,9 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     // 4. Process push events
     process_events(bot, now_ms);
 
+    // 4.5 Process pending chat commands → mutate settings
+    crate::commands::process_commands(bot);
+
     // 5. Build TickContext and run BT
     //
     // Destructure bot so the borrow checker sees each field independently.
@@ -60,8 +63,12 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         ref mut blackboard,
         ref mut timers,
         ref group_state,
+        ref encounter,
         ref root_tree,
         handle: bot_handle,
+        class,
+        role,
+        ref settings,
         ..
     } = *bot;
 
@@ -80,6 +87,10 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         elapsed_ms,
         minimal,
         bot_handle,
+        encounter: encounter.as_deref(),
+        class,
+        role,
+        settings,
     };
 
     let _ = root_tree.tick(&mut ctx);
@@ -143,6 +154,12 @@ fn process_events(bot: &mut BotState, _now_ms: u64) {
     // Regular tick: update encounter FSM with None event (HP polling).
     if let Some(enc) = &mut bot.encounter {
         enc.update(&EncounterEvent::None, boss_hp_pct, now_ms);
+        // Write encounter hints to blackboard for BT nodes.
+        use crate::engine::blackboard::{Key, Value};
+        let zone = enc.safe_zone_hint();
+        if zone > 0 {
+            bot.blackboard.set(Key::EncounterSafeZone, Value::U32(zone as u32));
+        }
     }
 
     // If bot entered combat, notify encounter FSM.
