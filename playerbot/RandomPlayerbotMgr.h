@@ -5,7 +5,6 @@
 #include "PlayerbotAIBase.h"
 #include "PlayerbotMgr.h"
 #include "playerbot/PlayerbotAIConfig.h"
-#include "WorldPosition.h"
 #include <map>
 #include <list>
 

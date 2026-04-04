@@ -2,7 +2,6 @@
 #include "Category.h"
 #include "AhBotConfig.h"
 #include "PricingStrategy.h"
-#include "playerbot/ServerFacade.h"
 #include "Server/SQLStorages.h"
 #include "Server/DBCStructure.h"
 #include "Entities/ItemPrototype.h"
@@ -107,7 +106,7 @@ bool TradeSkill::ContainsInternal(ItemPrototype const* proto)
 
 bool TradeSkill::IsCraftedBySpell(ItemPrototype const* proto, uint32 spellId)
 {
-    SpellEntry const *entry = sServerFacade.LookupSpellInfo(spellId);
+    SpellEntry const *entry = sSpellTemplate.LookupEntry<SpellEntry>(spellId);
     if (!entry)
         return false;
 
@@ -153,7 +152,7 @@ bool TradeSkill::IsCraftedBy(ItemPrototype const* proto, uint32 spellId)
     if (IsCraftedBySpell(proto, spellId))
         return true;
 
-    SpellEntry const *entry = sServerFacade.LookupSpellInfo(spellId);
+    SpellEntry const *entry = sSpellTemplate.LookupEntry<SpellEntry>(spellId);
     if (!entry)
         return false;
 

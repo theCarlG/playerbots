@@ -6,16 +6,33 @@
 
 #include "Database/DBCStore.h"
 #include "Database/DatabaseEnv.h"
-#include "PlayerbotAI.h"
-
-#include "playerbot/ServerFacade.h"
-#include "strategy/values/LootValues.h"
 
 #include "Entities/ItemEnchantmentMgr.h"
 
-#include "strategy/values/SharedValueContext.h"
-
 char * strstri (const char* str1, const char* str2);
+
+// Inline replacement for deleted AiFactory::GetPlayerSpecTab
+static int GetPlayerSpecTab(Player* bot) {
+    int maxCount = 0, bestTab = 0;
+    for (int i = 0; i < 3; ++i) {
+        int count = 0;
+        uint32 classMask = bot->getClassMask();
+        for (uint32 i2 = 0; i2 < sTalentStore.GetNumRows(); ++i2) {
+            TalentEntry const* talentInfo = sTalentStore.LookupEntry(i2);
+            if (!talentInfo) continue;
+            TalentTabEntry const* talentTabInfo = sTalentTabStore.LookupEntry(talentInfo->TalentTab);
+            if (!talentTabInfo || talentTabInfo->tabpage != uint32(i) || !(talentTabInfo->ClassMask & classMask)) continue;
+            for (int rank = MAX_TALENT_RANK - 1; rank >= 0; --rank) {
+                if (talentInfo->RankID[rank] && bot->HasSpell(talentInfo->RankID[rank])) {
+                    count += rank + 1;
+                    break;
+                }
+            }
+        }
+        if (count > maxCount) { maxCount = count; bestTab = i; }
+    }
+    return bestTab;
+}
 
 uint64 BotEquipKey::GetKey()
 {
@@ -1194,7 +1211,13 @@ void RandomItemMgr::BuildItemInfoCache()
         {
             bool isAlly = false;
             bool isHorde = false;
-            for (auto& vendor : GAI_VALUE2(std::list<int32>, "item vendor list", itemId))
+            // Query vendor list directly from DB (replaces deleted GAI_VALUE2 macro)
+            std::list<int32> vendorList;
+            if (auto vendorResult = WorldDatabase.PQuery("SELECT entry FROM npc_vendor WHERE item = '%u'", itemId))
+            {
+                do { vendorList.push_back(vendorResult->Fetch()[0].GetInt32()); } while (vendorResult->NextRow());
+            }
+            for (auto& vendor : vendorList)
             {
                 CreatureInfo const* cInfo = sObjectMgr.GetCreatureTemplate(vendor);
                 if (!cInfo)
@@ -1203,11 +1226,17 @@ void RandomItemMgr::BuildItemInfoCache()
                 cacheInfo->source = ITEM_SOURCE_VENDOR;
                 cacheInfo->sourceIds.push_back(vendor);
 
-                FactionTemplateEntry const* factionEntry = sFactionTemplateStore.LookupEntry(cInfo->Faction);
-                if (PlayerbotAI::friendToAlliance(factionEntry))
+                // Simplified faction check — vendor team detection will be improved in Rust
+                uint32 faction = cInfo->Faction;
+                if (faction == 12 || faction == 55 || faction == 79 || faction == 84)
                     isAlly = true;
-                if (PlayerbotAI::friendToHorde(factionEntry))
+                else if (faction == 29 || faction == 68 || faction == 71 || faction == 85)
                     isHorde = true;
+                else
+                {
+                    isAlly = true;
+                    isHorde = true;
+                }
 
                 // check faction conditions
                 VendorItemData const* vItems = sObjectMgr.GetNpcVendorItemList(vendor);
@@ -2591,7 +2620,7 @@ std::vector<uint32> RandomItemMgr::GetQuestIdsForItem(uint32 itemId)
 std::string RandomItemMgr::GetPlayerSpecName(Player* player)
 {
     std::string specName;
-    int tab = AiFactory::GetPlayerSpecTab(player);
+    int tab = GetPlayerSpecTab(player);
     switch (player->getClass())
     {
     case CLASS_PRIEST:
@@ -3563,7 +3592,7 @@ void RandomItemMgr::BuildPotionCache()
 
                 for (int j = 0; j < MAX_ITEM_PROTO_SPELLS; j++)
                 {
-                    const SpellEntry* const spellInfo = sServerFacade.LookupSpellInfo(proto->Spells[j].SpellId);
+                    const SpellEntry* const spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(proto->Spells[j].SpellId);
                     if (!spellInfo)
                         continue;
 

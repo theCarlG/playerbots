@@ -3,14 +3,12 @@
 
 #include "Common.h"
 #include "PlayerbotAIBase.h"
-#include "playerbot/AiFactory.h"
 #ifdef CMANGOS
 #include "Entities/Player.h"
 #endif
 #ifdef MANGOS
 #include "Object/Player.h"
 #endif
-#include "strategy/values/ItemUsageValue.h"
 
 enum RandomItemType
 {

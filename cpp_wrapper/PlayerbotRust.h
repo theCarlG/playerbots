@@ -50,8 +50,38 @@ public:
     void OnUnitDied(uint64_t victim, uint64_t killer);
     void OnDamageTaken(uint32_t damage, uint32_t spell_id, uint64_t dealer);
 
+    // ── Packet forwarding ────────────────────────────────────────────────
+    void HandleMasterIncomingPacket(const WorldPacket& /*packet*/) {}
+    void HandleMasterOutgoingPacket(const WorldPacket& /*packet*/) {}
+
+    // ── Command handling (stubbed — will be routed to Rust) ────────────
+    void HandleCommand(uint32 /*type*/, const std::string& /*text*/, Player& /*sender*/, uint32 /*lang*/ = 0) {}
+    void HandleTeleportAck() {}
+
     // ── Accessors ─────────────────────────────────────────────────────────
     Player* GetBot() const { return m_bot; }
+    Player* GetMaster() const { return nullptr; }  // no master concept yet
+
+    // ── Management stubs (called by PlayerbotMgr/RandomPlayerbotMgr) ──
+    bool HasRealPlayerMaster() const { return false; }
+    bool IsInRealGuild() const { return false; }
+    bool IsRealPlayer() const { return false; }
+    bool GetShouldLogOut() const { return false; }
+    void StopMoving() {}
+    void TellPlayer(Player* /*target*/, const std::string& /*msg*/) {}
+    void SetPlayerFriend(bool /*val*/) {}
+    AreaTableEntry const* GetCurrentZone() const { return nullptr; }
+    std::string GetLocalizedAreaName(AreaTableEntry const* /*area*/) const { return ""; }
+
+    enum class GrouperType { SOLO, MEMBER, LEADER_2, LEADER_3, LEADER_4, LEADER_5 };
+    GrouperType GetGrouperType() const { return GrouperType::SOLO; }
+    std::string HandleRemoteCommand(const std::string& /*cmd*/) { return ""; }
+    bool HasCheat(uint32_t /*mask*/) const { return false; }
+    void ResetStrategies(bool /*incremental*/ = false) {}
+    void AllowActivity(uint32_t /*activity*/, bool /*allow*/) {}
+    void SetMaster(Player* /*master*/) {}
+    float GetLevelFloat() const { return 0.0f; }
+    Unit* GetUnit(ObjectGuid /*guid*/) const { return nullptr; }
 
 private:
     Player*      m_bot;           // the CMaNGOS Player this AI drives

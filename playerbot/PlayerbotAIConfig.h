@@ -1,13 +1,24 @@
 #pragma once
 
 #include "Config/Config.h"
-#include "Talentspec.h"
 #include "Globals/SharedDefines.h"
 #include "SystemConfig.h"
 
 class Player;
 class PlayerbotMgr;
 class ChatHandler;
+class PlayerbotAI;
+
+// Stub for deleted TalentSpec system — talent spec management will move to Rust
+struct ClassSpecs {
+    ClassSpecs() = default;
+    ClassSpecs(uint32 /*classMask*/) {}
+    struct TalentPath {
+        uint32 id; std::string name; int probability;
+        TalentPath(uint32 i, std::string n, int p) : id(i), name(n), probability(p) {}
+    };
+    std::vector<TalentPath> talentPath;
+};
 
 #if PLATFORM == PLATFORM_WINDOWS
 inline std::string _D_AIPLAYERBOT_CONFIG = "aiplayerbot.conf";

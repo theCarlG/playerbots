@@ -4,7 +4,6 @@
 #include "ItemBag.h"
 #include "AhBotConfig.h"
 #include "PricingStrategy.h"
-#include "playerbot/ServerFacade.h"
 
 using namespace ahbot;
 

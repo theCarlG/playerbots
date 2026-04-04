@@ -1,4 +1,7 @@
-#include "WorldPosition.h"
+#pragma once
+
+#include "Common.h"
+#include "Entities/ObjectGuid.h"
 
 namespace ai
 {

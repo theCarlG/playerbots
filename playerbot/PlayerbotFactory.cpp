@@ -10,8 +10,6 @@
 #include "Globals/SharedDefines.h"
 #include "RandomItemMgr.h"
 #include "RandomPlayerbotFactory.h"
-#include "playerbot/ServerFacade.h"
-#include "playerbot/AiFactory.h"
 #include "Guilds/GuildMgr.h"
 
 #ifndef MANGOSBOT_ZERO
@@ -22,9 +20,29 @@
         #include "ArenaTeam.h"
     #endif
 #endif
-#include "strategy/ItemVisitors.h"
 
-using namespace ai;
+// Inline replacement for deleted AiFactory::GetPlayerSpecTab
+static int GetPlayerSpecTab(Player* bot) {
+    int maxCount = 0, bestTab = 0;
+    for (int i = 0; i < 3; ++i) {
+        int count = 0;
+        uint32 classMask = bot->getClassMask();
+        for (uint32 i2 = 0; i2 < sTalentStore.GetNumRows(); ++i2) {
+            TalentEntry const* talentInfo = sTalentStore.LookupEntry(i2);
+            if (!talentInfo) continue;
+            TalentTabEntry const* talentTabInfo = sTalentTabStore.LookupEntry(talentInfo->TalentTab);
+            if (!talentTabInfo || talentTabInfo->tabpage != uint32(i) || !(talentTabInfo->ClassMask & classMask)) continue;
+            for (int rank = MAX_TALENT_RANK - 1; rank >= 0; --rank) {
+                if (talentInfo->RankID[rank] && bot->HasSpell(talentInfo->RankID[rank])) {
+                    count += rank + 1;
+                    break;
+                }
+            }
+        }
+        if (count > maxCount) { maxCount = count; bestTab = i; }
+    }
+    return bestTab;
+}
 
 #define PLAYER_SKILL_INDEX(x)       (PLAYER_SKILL_INFO_1_1 + ((x)*3))
 
@@ -89,16 +107,16 @@ void PlayerbotFactory::Init()
         if (!taxiNode)
             continue;
 
-        WorldPosition taxiPosition(taxiNode);
-
-        if (!taxiPosition.isOverworld())
+        // Only include overworld taxi nodes (maps 0, 1, 530, 571)
+        uint32 mapId = taxiNode->map_id;
+        if (mapId != 0 && mapId != 1 && mapId != 530 && mapId != 571)
             continue;
 
         TaxiNodeLevel taxiNodeLevel = TaxiNodeLevel();
 
         taxiNodeLevel.Index = i;
-        taxiNodeLevel.MapId = taxiNode->map_id;
-        taxiNodeLevel.Level = taxiPosition.getAreaLevel();
+        taxiNodeLevel.MapId = mapId;
+        taxiNodeLevel.Level = 1;  // Simplified — area level detection moved to Rust
 
         if (taxiNode->MountCreatureID[0])
             overworldTaxiNodeLevelsH.push_back(taxiNodeLevel);
@@ -132,7 +150,7 @@ void PlayerbotFactory::Prepare()
             itemQuality = urand(ITEM_QUALITY_RARE, ITEM_QUALITY_EPIC);
     }*/
 
-    if (sServerFacade.UnitIsDead(bot))
+    if (!bot->IsAlive())
     {
         bot->ResurrectPlayer(1.0f, false);
         bot->SpawnCorpseBones();
@@ -179,7 +197,6 @@ void PlayerbotFactory::Randomize(bool incremental, bool syncWithMaster)
     bool isRandomBot = sRandomPlayerbotMgr.IsRandomBot(bot) && bot->GetPlayerbotAI() && !bot->GetPlayerbotAI()->HasRealPlayerMaster() && !bot->GetPlayerbotAI()->IsInRealGuild();
 
     sLog.outDetail("Resetting player...");
-    auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Reset");
     //ClearSkills();
     ClearSpells();
 
@@ -213,7 +230,6 @@ void PlayerbotFactory::Randomize(bool incremental, bool syncWithMaster)
             bot->SetUInt32Value(PLAYER_NEXT_LEVEL_XP, sObjectMgr.GetXPForLevel(level));
         }
     }
-    pmo.reset();
 
     sLog.outDetail("Initializing bags...");
     InitBags();
@@ -224,23 +240,14 @@ void PlayerbotFactory::Randomize(bool incremental, bool syncWithMaster)
     sLog.outDetail("Initializing skills (step 1)...");
     InitAllSkills();
 
-    pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Talents");
     sLog.outDetail("Initializing talents...");
     //InitTalentsTree(incremental);
     //sRandomPlayerbotMgr.SetValue(bot->GetGUIDLow(), "specNo", 0);
-    ai->DoSpecificAction("auto talents");
+    // Talent and strategy initialization now handled by Rust module.
 
-    if (!incremental && isRandomBot)
-        sPlayerbotDbStore.Reset(ai);
-
-    ai->ResetStrategies(incremental); // fix wrong stored strategy
-    pmo.reset();
-
-    pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Spells2");
     sLog.outDetail("Initializing spells (step 2)...");
     InitAvailableSpells();
     InitSpecialSpells();
-    pmo.reset();
 
     if (isRealRandomBot)
     {
@@ -258,7 +265,6 @@ void PlayerbotFactory::Randomize(bool incremental, bool syncWithMaster)
         
     }
 
-    pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Equip");
     sLog.outDetail("Initializing equipmemt...");
     if (bot->GetLevel() >= sPlayerbotAIConfig.minEnchantingBotLevel)
     {
@@ -268,7 +274,6 @@ void PlayerbotFactory::Randomize(bool incremental, bool syncWithMaster)
 
     InitEquipment(incremental, syncWithMaster);
     InitGems();
-    pmo.reset();
 
     if (isRandomBot)
     {
@@ -293,18 +298,12 @@ void PlayerbotFactory::Randomize(bool incremental, bool syncWithMaster)
 
     if (!incremental && isRandomBot)
     {
-        /*pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_EqSets");
-        sLog.outDetail("Initializing second equipment set...");
-        InitSecondEquipmentSet();
-        if (pmo) pmo->finish();*/
-
         sLog.outDetail("Initializing inventory...");
         InitInventory();
     }
 
     if (isRandomBot)
     {
-        auto pmo_guild_teams = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Guilds & ArenaTeams");
         sLog.outDetail("Initializing guilds & ArenaTeams");
         InitGuild();
 #ifndef MANGOSBOT_ZERO
@@ -315,14 +314,12 @@ void PlayerbotFactory::Randomize(bool incremental, bool syncWithMaster)
 
     if (bot->GetLevel() >= 10 && bot->getClass() == CLASS_HUNTER)
     {
-        auto pmo_pet = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Pet");
         sLog.outDetail("Initializing pet...");
         InitPet();
         InitPetSpells();
     }
     else if (bot->getClass() == CLASS_WARLOCK)
     {
-        auto pmo_pet = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Pet");
         sLog.outDetail("Initializing pet...");
         InitPet();
         InitPetSpells();
@@ -347,12 +344,10 @@ void PlayerbotFactory::Randomize(bool incremental, bool syncWithMaster)
         InitTaxiNodes();
     }
 
-    pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Save");
     sLog.outDetail("Saving to DB...");
     if (sRandomPlayerbotMgr.GetDatabaseDelay("CharacterDatabase") < 10 * IN_MILLISECONDS)
         bot->SaveToDB();
     sLog.outDetail("Done.");
-    pmo.reset();
 }
 
 void PlayerbotFactory::Refresh()
@@ -372,7 +367,6 @@ void PlayerbotFactory::Refresh()
 
 void PlayerbotFactory::AddConsumables()
 {
-    auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Consumables");
    switch (bot->getClass())
    {
       case CLASS_PRIEST:
@@ -1574,7 +1568,6 @@ void PlayerbotFactory::ResetQuests()
 
 void PlayerbotFactory::InitReputations()
 {
-    auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Reputations");
     // list of factions
     std::list<uint32> factions;
 
@@ -1934,7 +1927,7 @@ void PlayerbotFactory::AddItemSpellStats(uint32 smod, uint8& sp, uint8& ap, uint
 
 bool PlayerbotFactory::CanEquipWeapon(ItemPrototype const* proto)
 {
-   int tab = AiFactory::GetPlayerSpecTab(bot);
+   int tab = GetPlayerSpecTab(bot);
 
    switch (bot->getClass())
    {
@@ -2899,7 +2892,6 @@ void PlayerbotFactory::InitSecondEquipmentSet()
 
 void PlayerbotFactory::InitBags()
 {
-    auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Bags");
     for (uint8 slot = INVENTORY_SLOT_BAG_START; slot < INVENTORY_SLOT_BAG_END; ++slot)
     {
         Bag* pBag = (Bag*)bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
@@ -2923,7 +2915,7 @@ void PlayerbotFactory::EnchantItem(Item* item)
     if (bot->GetLevel() < sPlayerbotAIConfig.minEnchantingBotLevel)
         return;
 
-    int tab = AiFactory::GetPlayerSpecTab(bot);
+    int tab = GetPlayerSpecTab(bot);
     uint32 tempId = uint32((uint32)bot->getClass() * (uint32)10);
     ApplyEnchantTemplate(tempId += (uint32)tab, item);
 }
@@ -3047,7 +3039,6 @@ void PlayerbotFactory::AddGems(Item* item)
 
 void PlayerbotFactory::InitAllSkills()
 {
-    auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Skills1");
     InitSkills();
     InitTradeSkills();
 }
@@ -3176,11 +3167,11 @@ void PlayerbotFactory::InitTradeSkills()
             if (state != TRAINER_SPELL_GREEN)
                 continue;
 
-            SpellEntry const* proto = sServerFacade.LookupSpellInfo(tSpell->spell);
+            SpellEntry const* proto = sSpellTemplate.LookupEntry<SpellEntry>(tSpell->spell);
             if (!proto)
                 continue;
 
-            SpellEntry const* spell = sServerFacade.LookupSpellInfo(tSpell->spell);
+            SpellEntry const* spell = sSpellTemplate.LookupEntry<SpellEntry>(tSpell->spell);
             if (spell)
             {
                 std::string SpellName = spell->SpellName[0];
@@ -3245,7 +3236,6 @@ void PlayerbotFactory::InitTradeSkills()
 
 void PlayerbotFactory::UpdateTradeSkills()
 {
-    auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Skills2");
     for (int i = 0; i < sizeof(tradeSkills) / sizeof(uint32); ++i)
     {
         if (bot->GetSkillValue(tradeSkills[i]) == 1)
@@ -3423,7 +3413,6 @@ void PlayerbotFactory::SetRandomSkill(uint16 id)
 
 void PlayerbotFactory::InitAvailableSpells()
 {
-    auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Spells1");
     bot->learnDefaultSpells();
     bot->learnClassLevelSpells(true);
 
@@ -3678,7 +3667,6 @@ void PlayerbotFactory::ClearAllItems()
 
 void PlayerbotFactory::InitAmmo()
 {
-    auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Ammo");
     if (bot->getClass() != CLASS_HUNTER && bot->getClass() != CLASS_ROGUE && bot->getClass() != CLASS_WARRIOR)
         return;
 
@@ -3737,7 +3725,6 @@ void PlayerbotFactory::InitAmmo()
 
 void PlayerbotFactory::InitMounts()
 {
-    auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Mounts");
     uint32 firstmount =
 #ifdef MANGOSBOT_ZERO
         40
@@ -3876,7 +3863,6 @@ void PlayerbotFactory::InitMounts()
 
 void PlayerbotFactory::InitPotions()
 {
-    auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Potions");
     uint32 effects[] = { SPELL_EFFECT_HEAL, SPELL_EFFECT_ENERGIZE };
     for (int i = 0; i < 2; ++i)
     {
@@ -3906,7 +3892,6 @@ void PlayerbotFactory::InitPotions()
 
 void PlayerbotFactory::InitFood()
 {
-    auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Food");
     uint32 categories[] = { 11, 59 };
     for (int i = 0; i < 2; ++i)
     {
@@ -3935,7 +3920,6 @@ void PlayerbotFactory::InitFood()
 
 void PlayerbotFactory::InitReagents()
 {
-    auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Reagents");
     std::list<uint32> items;
     uint32 regCount = 1;
     switch (bot->getClass())
@@ -4032,7 +4016,7 @@ void PlayerbotFactory::InitReagents()
         if (itr->second.state == PLAYERSPELL_REMOVED || itr->second.disabled || IsPassiveSpell(spellId))
             continue;
 
-        const SpellEntry* pSpellInfo = sServerFacade.LookupSpellInfo(spellId);
+        const SpellEntry* pSpellInfo = sSpellTemplate.LookupEntry<SpellEntry>(spellId);
         if (!pSpellInfo)
             continue;
 
@@ -4096,7 +4080,6 @@ void PlayerbotFactory::CancelAuras()
 
 void PlayerbotFactory::InitInventory()
 {
-    auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Inventory");
     //InitInventoryTrade();
     //InitInventoryEquip();
     InitInventorySkill();
@@ -4412,7 +4395,7 @@ void PlayerbotFactory::EnchantEquipment()
 
 void PlayerbotFactory::ApplyEnchantTemplate()
 {
-   int tab = AiFactory::GetPlayerSpecTab(bot);
+   int tab = GetPlayerSpecTab(bot);
 
    switch (bot->getClass())
    {
@@ -4726,7 +4709,7 @@ void PlayerbotFactory::InitGems() //WIP
                                                         AddItemStats(pEnchant->spellid[i], sp, ap, tank);
                                                 break;                                                    
                                                 case ITEM_ENCHANTMENT_TYPE_EQUIP_SPELL:                                                   
-                                                        const SpellEntry* const spellInfo = sServerFacade.LookupSpellInfo(pEnchant->spellid[i]);
+                                                        const SpellEntry* const spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(pEnchant->spellid[i]);
                                                         if (!spellInfo)
                                                             continue;
 
@@ -4778,7 +4761,6 @@ void PlayerbotFactory::InitGems() //WIP
 
 void PlayerbotFactory::InitTaxiNodes()
 {
-    auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_TaxiNodes");
     uint32 startMap = bot->GetMapId();
 
     if (startMap == 530) //BE=EK, DREA=KAL

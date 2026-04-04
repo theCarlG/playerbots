@@ -6,10 +6,6 @@
 #include "playerbot/PlayerbotFactory.h"
 #include "RandomItemMgr.h"
 #include "World/WorldState.h"
-#include "playerbot/PlayerbotHelpMgr.h"
-#include "playerbot/strategy/actions/CheatAction.h"
-
-#include "playerbot/TravelMgr.h"
 
 #include <iostream>
 #include <numeric>
@@ -402,9 +398,26 @@ bool PlayerbotAIConfig::Initialize()
         }
     }
 
-    botCheatMask = uint32(CheatAction::GetCheatMask(config.GetStringDefault("AiPlayerbot.BotCheats", "taxi,item,breath")));
-
-    rndBotCheatMask = uint32(CheatAction::GetCheatMask(config.GetStringDefault("AiPlayerbot.RndBotCheats", "taxi,item,breath")));    
+    // Inline cheat mask parsing (replaces deleted CheatAction::GetCheatMask)
+    auto parseCheatMask = [this](const std::string& cheats) -> uint32 {
+        uint32 mask = 0;
+        std::vector<std::string> names;
+        split(names, cheats, ",");
+        for (auto& name : names)
+        {
+            for (size_t i = 0; i < BotCheatMaskName.size(); ++i)
+            {
+                if (BotCheatMaskName[i] == name)
+                {
+                    mask |= (1 << i);
+                    break;
+                }
+            }
+        }
+        return mask;
+    };
+    botCheatMask = parseCheatMask(config.GetStringDefault("AiPlayerbot.BotCheats", "taxi,item,breath"));
+    rndBotCheatMask = parseCheatMask(config.GetStringDefault("AiPlayerbot.RndBotCheats", "taxi,item,breath"));    
 
     LoadListString<std::list<std::string>>(config.GetStringDefault("AiPlayerbot.AllowedLogFiles", ""), allowedLogFiles);
     LoadListString<std::list<std::string>>(config.GetStringDefault("AiPlayerbot.DebugFilter", "add gathering loot,check values,emote,check mount state,jump"), debugFilter);
@@ -738,28 +751,11 @@ bool PlayerbotAIConfig::Initialize()
 
     targetPosRecalcDistance = config.GetFloatDefault("AiPlayerbot.TargetPosRecalcDistance", 0.1f),
 
-    sLog.outString("Loading area levels.");
-    sTravelMgr.LoadAreaLevels();
-    sLog.outString("Loading spellIds.");
-    ChatHelper::PopulateSpellNameList();
-    ItemUsageValue::PopulateProfessionReagentIds();
-    ItemUsageValue::PopulateSoldByVendorItemIds();
-    ItemUsageValue::PopulateReagentItemIdsForCraftableItemIds();
-
     RandomPlayerbotFactory::CreateRandomBots();
     PlayerbotFactory::Init();
     sRandomItemMgr.Init();
-    sPlayerbotTextMgr.LoadBotTexts();
-    sPlayerbotTextMgr.LoadBotTextChance();
-    sPlayerbotHelpMgr.LoadBotHelpTexts();
 
     LoadTalentSpecs();
-
-    if (sPlayerbotAIConfig.autoDoQuests)
-    {
-        sLog.outString("Loading Quest Detail Data...");
-        sTravelMgr.LoadQuestTravelTable();
-    }
 
     sLog.outString("Loading named locations...");
     sRandomPlayerbotMgr.LoadNamedLocations();
@@ -1007,252 +1003,29 @@ void PlayerbotAIConfig::log(std::string fileName, const char* str, ...)
     fflush(stdout);
 }
 
-void PlayerbotAIConfig::logEvent(PlayerbotAI* ai, std::string eventName, std::string info1, std::string info2)
+void PlayerbotAIConfig::logEvent(PlayerbotAI* /*ai*/, std::string /*eventName*/, std::string /*info1*/, std::string /*info2*/)
 {
-    if (hasLog("bot_events.csv"))
-    {
-        Player* bot = ai->GetBot();
+    // Event logging stubbed — will be reimplemented in Rust.
+}
 
-        std::ostringstream out;
-        out << sPlayerbotAIConfig.GetTimestampStr() << "+00,";
-        out << bot->GetName() << ",";
-        out << eventName << ",";
-        out << std::fixed << std::setprecision(2);
-        WorldPosition(bot).printWKT(out);
-
-        out << std::to_string(bot->getRace()) << ",";
-        out << std::to_string(bot->getClass()) << ",";
-        float subLevel = ai->GetLevelFloat();
-
-        out << subLevel << ",";
-
-        out << "\"" << info1 << "\",";
-        out << "\"" << info2 << "\"";
-
-        log("bot_events.csv", out.str().c_str());
-    }
-};
-
-void PlayerbotAIConfig::logEvent(PlayerbotAI* ai, std::string eventName, ObjectGuid guid, std::string info2)
+void PlayerbotAIConfig::logEvent(PlayerbotAI* ai, std::string eventName, ObjectGuid /*guid*/, std::string info2)
 {
-    std::string info1 = "";
+    logEvent(ai, eventName, std::string(""), info2);
+}
 
-    Unit* victim;
-    if (guid)
-    {
-        victim = ai->GetUnit(guid);
-        if (victim)
-            info1 = victim->GetName();
-    }
-
-    logEvent(ai, eventName, info1, info2);
-};
-
-bool PlayerbotAIConfig::CanLogAction(PlayerbotAI* ai, std::string actionName, bool isExecute, std::string lastActionName)
+bool PlayerbotAIConfig::CanLogAction(PlayerbotAI* /*ai*/, std::string actionName, bool /*isExecute*/, std::string /*lastActionName*/)
 {
-    bool forRpg = (actionName.find("rpg") == 0) && ai->HasStrategy("debug rpg", BotState::BOT_STATE_NON_COMBAT);
-
-    if (!forRpg)
-    {
-        if (isExecute && !ai->HasStrategy("debug", BotState::BOT_STATE_NON_COMBAT))
-            return false;
-
-        if (!isExecute && !ai->HasStrategy("debug action", BotState::BOT_STATE_NON_COMBAT))
-            return false;
-
-        if ((lastActionName == actionName) && (actionName == "melee"))
-        {
-            return false;
-        }
-    }
-
     return std::find(debugFilter.begin(), debugFilter.end(), actionName) == debugFilter.end();
 }
 
 void PlayerbotAIConfig::LoadTalentSpecs()
 {
-    sLog.outString("Loading TalentSpecs");
-
-    uint32 maxSpecLevel = 0;
-
-    for (uint32 cls = 1; cls < MAX_CLASSES; ++cls)
-    {
-        classSpecs[cls] = ClassSpecs(1 << (cls - 1));
-        for (uint32 spec = 0; spec < MAX_LEVEL; ++spec)
-        {
-            std::ostringstream os; os << "AiPlayerbot.PremadeSpecName." << cls << "." << spec;
-            std::string specName = config.GetStringDefault(os.str().c_str(), "");
-            if (!specName.empty())
-            {
-                std::ostringstream os; os << "AiPlayerbot.PremadeSpecProb." << cls << "." << spec;
-                int probability = config.GetIntDefault(os.str().c_str(), 100);
-
-                TalentPath talentPath(spec, specName, probability);
-
-                for (uint32 level = 10; level <= 100; level++)
-                {
-                    std::ostringstream os; os << "AiPlayerbot.PremadeSpecLink." << cls << "." << spec << "." << level;
-                    std::string specLink = config.GetStringDefault(os.str().c_str(), "");
-                    specLink = specLink.substr(0, specLink.find("#", 0));
-                    specLink = specLink.substr(0, specLink.find(" ", 0));
-
-                    if (!specLink.empty())
-                    {
-                        if (maxSpecLevel < level)
-                            maxSpecLevel = level;
-
-                        std::ostringstream out;
-
-                        //Ignore bad specs.
-                        if (!classSpecs[cls].baseSpec.CheckTalentLink(specLink, &out))
-                        {
-                            sLog.outErrorDb("Error with premade spec link: %s", specLink.c_str());
-                            sLog.outErrorDb("%s", out.str().c_str());
-                            continue;
-                        }
-
-                        TalentSpec linkSpec(&classSpecs[cls].baseSpec, specLink);
-
-                        if (!linkSpec.CheckTalents(TalentSpec::LeveltoPoints(level), &out))
-                        {
-                            sLog.outErrorDb("Error with premade spec: %s", specLink.c_str());
-                            sLog.outErrorDb("%s", out.str().c_str());
-                            continue;
-                        }
-
-
-                        talentPath.talentSpec.push_back(linkSpec);
-                    }
-
-                    {
-                        //Glyphs
-
-                        using GlyphPriority = std::pair<std::string, uint32>;
-                        using GlyphPriorityList = std::vector<GlyphPriority>;
-                        using GlyphPriorityLevelMap = std::unordered_map<uint32, GlyphPriorityList>;
-                        using GlyphPrioritySpecMap = std::unordered_map<uint32, GlyphPriorityLevelMap>;
-
-                        std::ostringstream os; os << "AiPlayerbot.PremadeSpecGlyp." << cls << "." << spec << "." << level;
-
-                        std::string glyphList = config.GetStringDefault(os.str().c_str(), "");
-                        glyphList = glyphList.substr(0, glyphList.find("#", 0));
-                        boost::trim_right(glyphList);
-
-                        if (!glyphList.empty())
-                        {
-                            Tokens premadeSpecGlyphs = Qualified::getMultiQualifiers(glyphList, ",");
-
-                            for (auto& glyph : premadeSpecGlyphs)
-                            {
-                                Tokens tokens = Qualified::getMultiQualifiers(glyph, "|");
-                                std::string glyphName = "Glyph of " + tokens[0];
-                                uint32 talentId = tokens.size() > 1 ? stoi(tokens[1]) : 0;
-
-                                bool glyphFound = false;
-                                for (auto& itemId : sRandomItemMgr.GetGlyphs(1 << (cls - 1)))
-                                {
-                                    ItemPrototype const* proto = sObjectMgr.GetItemPrototype(itemId);
-
-                                    if (!proto)
-                                        continue;
-
-                                    if (proto->Name1 == glyphName)
-                                    {
-                                        glyphPriorityMap[cls][spec][level].push_back(std::make_pair(itemId, talentId));
-                                        glyphFound = true;
-                                        break;
-                                    }
-                                }
-
-                                if (!glyphFound)
-                                {
-                                    sLog.outError("%s is not found for class %d (spec %d level %d)", glyphName.c_str(), cls, spec, level);
-                                }
-
-                            }
-                        }
-                    }
-                }
-
-                //Only add paths that have atleast 1 spec.
-                if (talentPath.talentSpec.size() > 0)
-                    classSpecs[cls].talentPath.push_back(talentPath);
-            }
-        }
-    }
-
-    if (classSpecs[1].talentPath.empty())
-        sLog.outErrorDb("No premade specs found!!");
-    else
-    {
-        if (maxSpecLevel < DEFAULT_MAX_LEVEL && randomBotMaxLevel < DEFAULT_MAX_LEVEL)
-            sLog.outErrorDb("!!!!!!!!!!! randomBotMaxLevel and the talentspec levels are below this expansions max level. Please check if you have the correct config file!!!!!!");
-
-    }
+    // Talent spec management will be handled by Rust.
+    // Config-file premade specs are not loaded here anymore.
+    sLog.outString("Talent spec loading deferred to Rust module.");
 }
 
-void PlayerbotAIConfig::LoadLLMDefaultPrompts(const std::string& fileName)
+void PlayerbotAIConfig::LoadLLMDefaultPrompts(const std::string& /*fileName*/)
 {
-    std::ifstream file(fileName);
-    if (!file.is_open())
-    {
-        sLog.outString("LLM default prompts file '%s' not found or unreadable.", fileName.c_str());
-        return;
-    }
-
-    std::string line;
-    uint32 loaded = 0;
-
-    std::string likePattern = std::string("manual saved string::llmdefaultprompt>%");
-    CharacterDatabase.escape_string(likePattern);
-
-    while (std::getline(file, line))
-    {
-        boost::trim(line);
-        if (line.empty() || line.front() == '#')
-            continue;
-
-        size_t delim = line.find("::");
-        if (delim == std::string::npos)
-        {
-            sLog.outError("LLM prompts file '%s' contains invalid line (missing '::'): %s", fileName.c_str(), line.c_str());
-            continue;
-        }
-
-        std::string name = line.substr(0, delim);
-        std::string text = line.substr(delim + 2);
-        boost::trim(name);
-        boost::trim(text);
-
-        if (name.empty())
-        {
-            sLog.outError("LLM prompts file '%s' contains empty name: %s", fileName.c_str(), line.c_str());
-            continue;
-        }
-
-        auto result = CharacterDatabase.PQuery("SELECT guid FROM characters WHERE name = '%s' LIMIT 1", name.c_str());
-        if (!result)
-        {
-            sLog.outError("Character '%s' not found in characters DB while loading '%s'.", name.c_str(), fileName.c_str());
-            continue;
-        }
-
-        Field* fields = result->Fetch();
-        uint32 guid = fields[0].GetUInt32();
-
-        CharacterDatabase.PExecute(
-            "DELETE FROM `ai_playerbot_db_store` WHERE `guid` = '%u' AND `key` = '%s' AND `value` LIKE '%s'",
-            guid, "value", likePattern.c_str());
-
-        std::string dbValue = std::string("manual saved string::llmdefaultprompt>") + text;
-        CharacterDatabase.escape_string(dbValue);
-
-        CharacterDatabase.PExecute(
-            "INSERT INTO `ai_playerbot_db_store` (`guid`, `preset`, `key`, `value`) VALUES ('%u', '%s', '%s', '%s')",
-            guid, "", "value", dbValue.c_str());
-
-        ++loaded;
-    }
-
-    sLog.outString("Loaded %u LLM character personalities from %s", loaded, fileName.c_str());
+    // LLM interface removed — this is a no-op stub.
 }

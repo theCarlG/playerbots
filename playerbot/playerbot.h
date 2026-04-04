@@ -16,13 +16,9 @@
 #include "Guilds/Guild.h"
 
 #include "playerbotDefs.h"
-#include "playerbot/PlayerbotAIAware.h"
 #include "PlayerbotMgr.h"
 #include "playerbot/RandomPlayerbotMgr.h"
-#include "ChatHelper.h"
-#include "BroadcastHelper.h"
 #include "PlayerbotAI.h"
-#include "PlayerbotDbStore.h"
 
 #define MANGOSBOT_VERSION 2
 

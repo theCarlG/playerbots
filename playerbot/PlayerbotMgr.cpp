@@ -1,10 +1,7 @@
 #include "playerbot/playerbot.h"
 #include "playerbot/PlayerbotAIConfig.h"
-#include "PlayerbotDbStore.h"
 #include "playerbot/PlayerbotFactory.h"
 #include "playerbot/RandomPlayerbotMgr.h"
-#include "playerbot/ServerFacade.h"
-#include "playerbot/TravelMgr.h"
 #include "Chat/ChannelMgr.h"
 #include "Social/SocialMgr.h"
 
@@ -63,9 +60,9 @@ PlayerbotHolder::PlayerbotHolder() : PlayerbotAIBase()
     m_botCommandHandlers["read"] = &PlayerbotHolder::HandleBotRead;
     m_botCommandHandlers["clear"] = &PlayerbotHolder::HandleBotClear;
 
-    for (uint32 spellId = 0; spellId < sServerFacade.GetSpellInfoRows(); spellId++)
+    for (uint32 spellId = 0; spellId < sSpellTemplate.GetMaxEntry(); spellId++)
     {
-        sServerFacade.LookupSpellInfo(spellId);
+        sSpellTemplate.LookupEntry<SpellEntry>(spellId);
     }
 }
 
@@ -196,14 +193,6 @@ void PlayerbotHolder::LogoutPlayerBot(uint32 guid)
         if (!ai)
             return;
 
-        if (!sPlayerbotAIConfig.bExplicitDbStoreSave)
-        {
-           Group* group = bot->GetGroup();
-           if (group && !bot->InBattleGround() && !bot->InBattleGroundQueue() && ai->HasActivePlayerMaster())
-           {
-              sPlayerbotDbStore.Save(ai);
-           }
-        }
         sLog.outDebug("Bot %s logging out", bot->GetName());
         bot->SaveToDB();
 
@@ -291,15 +280,6 @@ void PlayerbotHolder::DisablePlayerBot(uint32 guid, bool logOutPlayer)
         MotionMaster& mm = *bot->GetMotionMaster();
         mm.Clear();
 
-        if (!sPlayerbotAIConfig.bExplicitDbStoreSave)
-        {
-           Group* group = bot->GetGroup();
-           if (group && !bot->InBattleGround() && !bot->InBattleGroundQueue() && bot->GetPlayerbotAI()->HasActivePlayerMaster())
-           {
-              sPlayerbotDbStore.Save(bot->GetPlayerbotAI());
-           }
-        }
-
         sLog.outDebug("Bot %s logged out", bot->GetName());
         bot->SaveToDB();
 
@@ -335,7 +315,7 @@ void PlayerbotHolder::JoinChatChannels(Player* bot)
         bot->GetSession()->HandleJoinChannelOpcode(pkt);
     }
     // join standard channels
-    uint8 locale = BroadcastHelper::GetLocale();
+    uint8 locale = 0;
 
     AreaTableEntry const* current_zone = bot->GetPlayerbotAI()->GetCurrentZone();
     ChannelMgr* cMgr = channelMgr(bot->GetTeam());
@@ -375,7 +355,7 @@ void PlayerbotHolder::JoinChatChannels(Player* bot)
                         new_channel_name_buf,
                         100,
                         channel->pattern[locale],
-                        bot->GetPlayerbotAI()->GetLocalizedAreaName(GetAreaEntryByAreaID(ImportantAreaId::CITY)).c_str()
+                        "City"  // ImportantAreaId::CITY removed — hardcoded
                     );
 
 #ifdef MANGOSBOT_ZERO
@@ -471,15 +451,12 @@ void PlayerbotHolder::OnBotLogin(Player * const bot)
         }
     }
 
-    ai->ResetStrategies();
+    // Strategy reset handled by Rust module.
 
     if (master && !master->IsTaxiFlying())
     {
         bot->GetMotionMaster()->MovementExpired();
     }
-
-    // check activity
-    ai->AllowActivity(ALL_ACTIVITY, true);
     // set delay on login
     ai->SetActionDuration(urand(2000, 4000));
 
@@ -952,11 +929,11 @@ void PlayerbotMgr::HandleCommand(uint32 type, const std::string& text, uint32 la
     ForEachPlayerbot([&](Player *bot)
     {
         if (type == CHAT_MSG_SAY)
-            if (bot->GetMapId() != master->GetMapId() || sServerFacade.GetDistance2d(bot, master) > 25)
+            if (bot->GetMapId() != master->GetMapId() || bot->GetDistance2d(master) > 25)
                 return;
 
         if (type == CHAT_MSG_YELL)
-            if (bot->GetMapId() != master->GetMapId() || sServerFacade.GetDistance2d(bot, master) > 300)
+            if (bot->GetMapId() != master->GetMapId() || bot->GetDistance2d(master) > 300)
                return;
 
         bot->GetPlayerbotAI()->HandleCommand(type, text, *master, lang);
@@ -965,11 +942,11 @@ void PlayerbotMgr::HandleCommand(uint32 type, const std::string& text, uint32 la
     sRandomPlayerbotMgr.ForEachPlayerbot([&](Player* bot)
     {
         if (type == CHAT_MSG_SAY)
-            if (bot->GetMapId() != master->GetMapId() || sServerFacade.GetDistance2d(bot, master) > 25)
+            if (bot->GetMapId() != master->GetMapId() || bot->GetDistance2d(master) > 25)
                return;
 
         if (type == CHAT_MSG_YELL)
-            if (bot->GetMapId() != master->GetMapId() || sServerFacade.GetDistance2d(bot, master) > 300)
+            if (bot->GetMapId() != master->GetMapId() || bot->GetDistance2d(master) > 300)
                return;
 
         if (bot->GetPlayerbotAI()->GetMaster() == master)
@@ -1054,8 +1031,6 @@ void PlayerbotMgr::OnPlayerLogin(Player* player)
     if (!sPlayerbotAIConfig.enabled)
         return;
 
-    // set locale priority for bot texts
-    sPlayerbotTextMgr.AddLocalePriority(player->GetSession()->GetSessionDbLocaleIndex());
     sLog.outDetail("Player %s logged in, localeDbc %i, localeDb %i", player->GetName(), (uint32)(player->GetSession()->GetSessionDbcLocale()), player->GetSession()->GetSessionDbLocaleIndex());
 
     if (sPlayerbotAIConfig.IsFreeAltBot(player))
@@ -1314,47 +1289,14 @@ std::list<std::string> PlayerbotHolder::HandleSelf(Player* master, const std::st
    return messages;
 }
 
-std::string PlayerbotHolder::HandleBotDebug(Player* bot, Player* master, const std::string param)
+std::string PlayerbotHolder::HandleBotDebug(Player* /*bot*/, Player* /*master*/, const std::string /*param*/)
 {
-    if (!bot)
-        return "debug requires a bot";
-
-    PlayerbotAI* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "Bot has no AI";
-
-    ai->RecordMessages(true);
-
-    std::string command = param;
-
-    if(!ai->DoSpecificAction("cdebug", Event(".bot", command, master ? master : bot), true))
-    {
-        return "debug failed";
-    }
-
-    std::vector<std::string> output = ai->GetRecordedMessages();
-    if (output.empty())
-        return "(no output)";
-
-    std::string result;
-    for (const auto& line : output)
-    {
-        result += line + "\n";
-    }
-    return result;
+    return "Debug not available — AI managed by Rust module";
 }
 
-std::string PlayerbotHolder::HandleBotC(Player* bot, Player* master, const std::string param)
+std::string PlayerbotHolder::HandleBotC(Player* /*bot*/, Player* /*master*/, const std::string /*param*/)
 {
-    if (!bot)
-        return "c requires a bot";
-
-    PlayerbotAI* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "Bot has no AI";
-
-    ai->DoSpecificAction("cdebug", Event(".bot", "monstertalk " + param, master ? master : bot), true);
-    return "ok";
+    return "Debug not available — AI managed by Rust module";
 }
 
 std::string PlayerbotHolder::HandleConsoleWhisper(Player* bot, Player* master, const std::string param)
@@ -1437,140 +1379,29 @@ std::string PlayerbotHolder::HandleConsoleWhisper(Player* bot, Player* master, c
 }
 
 
-std::string PlayerbotHolder::HandleConsoleCmd(Player* bot, Player* master, const std::string param)
+std::string PlayerbotHolder::HandleConsoleCmd(Player* /*bot*/, Player* /*master*/, const std::string /*param*/)
 {
-    if (!bot)
-        return "do requires a bot";
-
-    PlayerbotAI* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "Bot has no AI";
-
-    ExternalEventHelper helper(ai->GetAiObjectContext());
-
-    std::string msg = "Sending command " + param + " to player " + bot->GetName();
-
-    if (!helper.ParseChatCommand(param, master ? master : bot))
-    {
-        return "command failed";
-    }    
-
-    return msg;
+    return "Console commands not available — AI managed by Rust module";
 }
 
-std::string PlayerbotHolder::HandleBotDo(Player* bot, Player* master, const std::string param)
+std::string PlayerbotHolder::HandleBotDo(Player* /*bot*/, Player* /*master*/, const std::string /*param*/)
 {
-    if (!bot)
-        return "do requires a bot";
-
-    PlayerbotAI* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "Bot has no AI";
-
-    std::string actionName = param;
-    std::string subparam = "";
-
-    Action* action = nullptr;
-
-    size_t i = std::string::npos;
-    while (true)
-    {
-        action = ai->GetAiObjectContext()->GetAction(param);
-
-        if (action)
-            break;
-
-        size_t found = param.rfind(" ", i);
-        if (found == std::string::npos || !found)
-            break;
-
-        actionName = param.substr(0, found);
-        subparam = param.substr(found + 1);
-
-        i = found - 1;
-    }
-
-    if (!action)
-        return "action not found";
-
-    ai->RecordMessages(true);
-
-    std::vector<std::string> output;
-
-    if (!ai->DoSpecificAction(actionName, Event(".bot", subparam, master ? master : bot), true))
-    {
-        output = GetBotErrors(bot->GetName());
-
-        if (output.empty())
-            return "action failed";
-
-        std::string result;
-        for (const auto& line : output)
-        {
-            result += line + "\n";
-        }
-        return result;
-    }
-
-    output = ai->GetRecordedMessages();
-    if (output.empty())
-        return "(no output)";
-
-    std::string result;
-    for (const auto& line : output)
-    {
-        result += line + "\n";
-    }
-    return result;
+    return "Bot actions not available — AI managed by Rust module";
 }
 
-std::string PlayerbotHolder::HandleBotRecord(Player* bot, Player* master, const std::string param)
+std::string PlayerbotHolder::HandleBotRecord(Player* /*bot*/, Player* /*master*/, const std::string /*param*/)
 {
-    if (!bot)
-        return "record requires a bot";
-
-    PlayerbotAI* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "Bot has no AI";
-
-    ai->RecordMessages(true);
-    return "Recording enabled on " + std::string(bot->GetName());
+    return "Recording not available — AI managed by Rust module";
 }
 
-std::string PlayerbotHolder::HandleBotRead(Player* bot, Player* master, const std::string param)
+std::string PlayerbotHolder::HandleBotRead(Player* /*bot*/, Player* /*master*/, const std::string /*param*/)
 {
-    if (!bot)
-        return "read requires a bot";
-
-    PlayerbotAI* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "Bot has no AI";
-
-    std::vector<std::string> output = ai->GetRecordedMessages();
-    ai->RecordMessages(false);
-
-    if (output.empty())
-        return "(no messages)";
-
-    std::string result;
-    for (const auto& line : output)
-    {
-        result += line + "\n";
-    }
-    return result;
+    return "Recording not available — AI managed by Rust module";
 }
 
-std::string PlayerbotHolder::HandleBotClear(Player* bot, Player* master, const std::string param)
+std::string PlayerbotHolder::HandleBotClear(Player* /*bot*/, Player* /*master*/, const std::string /*param*/)
 {
-    if (!bot)
-        return "clear requires a bot";
-
-    PlayerbotAI* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "Bot has no AI";
-
-    ai->ClearRecordedMessages();
-    return "Messages cleared";
+    return "Recording not available — AI managed by Rust module";
 }
 
 std::list<std::string> PlayerbotHolder::HandleParty(Player* master, const std::string param, AccountTypes security)
