@@ -1,10 +1,10 @@
 /// Bot initialization — builds the root behavior tree from (class, spec).
 ///
-/// Each class/spec module exports a `build_tree(spec_info: &SpecInfo) -> Box<dyn BtNode>`.
+/// Each class/spec module exports a `build_tree() -> Box<dyn BtNode>`.
 /// This function dispatches to the right one.
 use crate::{
     bot::state::{BotRole, BotState, PlayerClass, PlayerSpec},
-    engine::bt_nodes::{BtNode, Selector, cond, sel},
+    engine::bt_nodes::{BtNode, cond, sel},
     ffi::interface::BotInterface,
 };
 
@@ -38,18 +38,21 @@ fn default_role_for_spec(spec: &PlayerSpec) -> BotRole {
 ///     combat_subtree,
 ///     noncombat_subtree,
 ///   }
-fn build_root_tree(_class: PlayerClass, _spec: PlayerSpec) -> Box<dyn BtNode> {
-    // Phase 1 stub: just follow the master and don't do anything harmful.
-    // Class-specific combat trees will be added in Phase 2.
-    sel(vec![
-        // Placeholder combat: auto-attack current target if in combat
-        cond(|ctx| ctx.in_combat() && ctx.current_target().is_some()),
-        // Placeholder non-combat: do nothing
-        cond(|_| false),
-    ])
-}
+fn build_root_tree(class: PlayerClass, spec: PlayerSpec) -> Box<dyn BtNode> {
+    use PlayerClass::*;
+    use PlayerSpec::*;
 
-// TODO Phase 2: import and wire up class-specific BTs:
-// use crate::classes::warrior::{arms, fury, protection};
-// use crate::classes::priest::{holy, discipline, shadow};
-// etc.
+    match (class, spec) {
+        (Warrior, WarriorArms) => {
+            crate::classes::warrior::arms::build_tree()
+        }
+
+        // TODO Phase 3: wire up remaining classes
+        _ => {
+            // Phase 2 stub for unimplemented classes: do nothing harmful.
+            sel(vec![
+                cond(|_| false),
+            ])
+        }
+    }
+}

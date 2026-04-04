@@ -49,6 +49,7 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     // Build the context referencing bot's mutable fields
     // SAFETY: root_tree does not access blackboard/timers/interface through BotState,
     // only through TickContext which we construct here with explicit borrows.
+    let bot_handle = bot.handle;
     let mut ctx = TickContext {
         snap,
         nearby,
@@ -60,6 +61,7 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         server_time_ms: now_ms,
         elapsed_ms,
         minimal,
+        bot_handle,
     };
 
     // We need to tick the tree but root_tree is in bot. Use a pointer to avoid

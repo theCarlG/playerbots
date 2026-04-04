@@ -1,6 +1,5 @@
-#[cfg(feature = "vanilla")]
+// Spell ID tables are always compiled — they are just numeric constants.
+// Feature flags gate behavior modules (encounters, class builds), not spell IDs.
 pub mod vanilla;
-#[cfg(feature = "tbc")]
 pub mod tbc;
-#[cfg(feature = "wotlk")]
 pub mod wotlk;

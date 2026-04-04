@@ -29,6 +29,11 @@ pub struct TickContext<'a> {
     pub server_time_ms: u64,
     pub elapsed_ms:     u32,
     pub minimal:        bool,   // true = throttled tick, skip expensive queries
+
+    // ── Bot identity ────────────────────────────────────────────────────
+    /// This bot's own UnitHandle (ObjectGuid value). Use as a target for
+    /// self-buffs, self-casts, or any operation that needs "cast on myself".
+    pub bot_handle:  UnitHandle,
 }
 
 impl<'a> TickContext<'a> {
@@ -120,6 +125,7 @@ pub mod tests {
             server_time_ms: 10_000,
             elapsed_ms: 100,
             minimal: false,
+            bot_handle: 0,
         }
     }
 
@@ -164,6 +170,7 @@ pub mod tests {
                 server_time_ms: self.time_ms,
                 elapsed_ms:     100,
                 minimal:        false,
+                bot_handle:     0,  // test default: no real handle
             }
         }
     }

@@ -21,6 +21,50 @@ set(LIBRARY_NAME playerbots)
 #Add PCH Files
 set(bots_PCH "${CMAKE_CURRENT_SOURCE_DIR}/botpch.h")
 
+# ── Rust AI module ─────────────────────────────────────────────────────────
+# Select expansion feature flag matching the CMaNGOS project.
+if(${CMAKE_PROJECT_NAME} MATCHES "Classic")
+    set(RUST_FEATURE "vanilla")
+elseif(${CMAKE_PROJECT_NAME} MATCHES "TBC")
+    set(RUST_FEATURE "tbc")
+else()
+    set(RUST_FEATURE "wotlk")
+endif()
+
+# Profile flag for Cargo
+if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+    set(CARGO_PROFILE "--release")
+    set(RUST_TARGET_DIR "release")
+else()
+    set(CARGO_PROFILE "")
+    set(RUST_TARGET_DIR "debug")
+endif()
+
+set(RUST_CRATE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/playerbot-rs")
+set(RUST_LIB "${RUST_CRATE_DIR}/target/${RUST_TARGET_DIR}/libplayerbot_rs.a")
+
+add_custom_target(playerbot_rs_build ALL
+    COMMAND cargo build ${CARGO_PROFILE} --features ${RUST_FEATURE}
+    WORKING_DIRECTORY ${RUST_CRATE_DIR}
+    COMMENT "Building Rust playerbot-rs (feature=${RUST_FEATURE})"
+    BYPRODUCTS ${RUST_LIB}
+)
+
+add_library(playerbot_rs_lib STATIC IMPORTED GLOBAL)
+set_target_properties(playerbot_rs_lib PROPERTIES
+    IMPORTED_LOCATION ${RUST_LIB}
+)
+add_dependencies(playerbot_rs_lib playerbot_rs_build)
+
+# ── C++ wrapper sources ────────────────────────────────────────────────────
+set(CppWrapper_Source
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/BotBridge.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/BotBridge.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/PlayerbotRust.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/PlayerbotRust.cpp
+)
+source_group("Rust Wrapper" FILES ${CppWrapper_Source})
+
 #Base files
 file(GLOB Playerbot_Source ${CMAKE_CURRENT_SOURCE_DIR}/playerbot/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/playerbot/*.h)
     source_group("Player Bot" FILES ${Playerbot_Source})
@@ -32,6 +76,7 @@ file(GLOB AHbot_Source ${CMAKE_CURRENT_SOURCE_DIR}/ahbot/*.cpp ${CMAKE_CURRENT_S
 set(LIBRARY_SRCS
     ${Playerbot_Source}
     ${AHbot_Source}
+    ${CppWrapper_Source}
     ${bots_PCH}
     ${CMAKE_CURRENT_SOURCE_DIR}/botpch.cpp
 )
@@ -159,12 +204,23 @@ target_link_libraries(${LIBRARY_NAME}
   PRIVATE Detour
   PRIVATE g3dlite
   PRIVATE zlib
+  PRIVATE playerbot_rs_lib
 )
 if(WIN32)
   target_link_libraries(${LIBRARY_NAME}
     PRIVATE ws2_32
   )
+else()
+  # Rust static lib needs pthread and dl on Linux/macOS
+  target_link_libraries(${LIBRARY_NAME}
+    PRIVATE pthread
+    PRIVATE dl
+  )
 endif()
+
+target_include_directories(${LIBRARY_NAME}
+  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper
+)
 
 target_include_directories(${LIBRARY_NAME}
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
