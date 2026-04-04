@@ -38,7 +38,7 @@ design rationale, FFI contract, BT design, and non-negotiables.
 
 ---
 
-## Phase 2 — C++ Wrapper + Arms Warrior ✅ IN PROGRESS
+## Phase 2 — C++ Wrapper + Arms Warrior ✅ COMPLETE
 
 **Goal:** Bot is wired end-to-end. One class (Arms Warrior) fully functional.
 CMaNGOS calls the Rust module instead of the old engine for Arms Warriors.
@@ -60,7 +60,7 @@ use the C++ strategy engine.
 
 ---
 
-## Phase 3 — All 9 Classes × 3 Specs
+## Phase 3 — All 9 Classes × 3 Specs ✅ COMPLETE
 
 **Goal:** Every class/spec has a working BT rotation. All combat behavior is driven
 by the Rust module.
@@ -83,7 +83,7 @@ by the Rust module.
 
 ---
 
-## Phase 4 — Non-Combat Behavior
+## Phase 4 — Non-Combat Behavior ✅ COMPLETE
 
 **Goal:** Bots follow leaders, buff group members, eat/drink, loot, handle basic
 out-of-combat logic.
@@ -103,7 +103,7 @@ out-of-combat logic.
 
 ---
 
-## Phase 5 — Encounter FSMs (Boss AI)
+## Phase 5 — Encounter FSMs (Boss AI) ✅ COMPLETE
 
 **Goal:** Phase-aware boss AI for all major raid encounters. Group coordination
 (tank assignments, healer rotation, special role assignments) via `GroupState`.
@@ -160,7 +160,7 @@ out-of-combat logic.
 
 ---
 
-## Phase 6 — Final C++ Cleanup & Integration Validation
+## Phase 6 — Final C++ Cleanup & Integration Validation ✅ COMPLETE (strategy deleted; integration validation pending)
 
 **Goal:** All old C++ strategy engine code removed. Rust module is the sole AI driver.
 
