@@ -64,4 +64,25 @@ namespace ai
     public:
         MCRuneCloseTrigger(PlayerbotAI* ai) : ValueTrigger(ai, "mc rune close", 1) { qualifier = "has object::go usable filter::entry filter::{gos close,mc runes}"; }
     };
+
+    class BaronGeddonStartFightTrigger : public StartBossFightTrigger
+    {
+    public:
+        BaronGeddonStartFightTrigger(PlayerbotAI* ai) : StartBossFightTrigger(ai, "start baron geddon fight", "baron geddon", 12056) {}
+    };
+
+    class BaronGeddonEndFightTrigger : public EndBossFightTrigger
+    {
+    public:
+        BaronGeddonEndFightTrigger(PlayerbotAI* ai) : EndBossFightTrigger(ai, "end baron geddon fight", "baron geddon", 12056) {}
+    };
+
+    // Fires when this bot has Baron Geddon's Living Bomb debuff (must run away from group).
+    // Uses a distinct name to avoid conflict with the Mage class's own "living bomb" trigger.
+    class HasLivingBombDebuffTrigger : public Trigger
+    {
+    public:
+        HasLivingBombDebuffTrigger(PlayerbotAI* ai) : Trigger(ai, "has living bomb debuff", 1) {}
+        bool IsActive() override { return ai->HasAura("living bomb", bot); }
+    };
 }

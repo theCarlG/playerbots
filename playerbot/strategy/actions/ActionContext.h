@@ -364,10 +364,15 @@ namespace ai
             // Dungeon Boss Actions
             creators["enable onyxia fight strategy"] = [](PlayerbotAI* ai) { return new OnyxiaEnableFightStrategyAction(ai); };
             creators["disable onyxia fight strategy"] = [](PlayerbotAI* ai) { return new OnyxiaDisableFightStrategyAction(ai); };
+            creators["move away from onyxia"] = [](PlayerbotAI* ai) { return new OnyxiaMoveAwayAction(ai); };
 
             creators["enable magmadar fight strategy"] = [](PlayerbotAI* ai) { return new MagmadarEnableFightStrategyAction(ai); };
             creators["disable magmadar fight strategy"] = [](PlayerbotAI* ai) { return new MagmadarDisableFightStrategyAction(ai); };
             creators["move away from magmadar"] = [](PlayerbotAI* ai) { return new MagmadarMoveAwayAction(ai); };
+
+            creators["enable baron geddon fight strategy"] = [](PlayerbotAI* ai) { return new BaronGeddonEnableFightStrategyAction(ai); };
+            creators["disable baron geddon fight strategy"] = [](PlayerbotAI* ai) { return new BaronGeddonDisableFightStrategyAction(ai); };
+            creators["baron geddon run away"] = [](PlayerbotAI* ai) { return new BaronGeddonRunAwayAction(ai); };
 
             creators["move away from hazard"] = [](PlayerbotAI* ai) { return new MoveAwayFromHazard(ai); };
             creators["move to mc rune"] = [](PlayerbotAI* ai) { return new MoveToMCRuneAction(ai); };

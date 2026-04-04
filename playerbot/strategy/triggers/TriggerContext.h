@@ -301,11 +301,17 @@ namespace ai
             // Dungeon Boss Triggers
             creators["start onyxia fight"] = [](PlayerbotAI* ai) { return new OnyxiaStartFightTrigger(ai); };
             creators["end onyxia fight"] = [](PlayerbotAI* ai) { return new OnyxiaEndFightTrigger(ai); };
+            creators["onyxia too close"] = [](PlayerbotAI* ai) { return new OnyxiaTooCloseTrigger(ai); };
+            creators["onyxian whelp hazard"] = [](PlayerbotAI* ai) { return new OnyxianWhelpHazardTrigger(ai); };
 
             creators["start magmadar fight"] = [](PlayerbotAI* ai) { return new MagmadarStartFightTrigger(ai); };
             creators["end magmadar fight"] = [](PlayerbotAI* ai) { return new MagmadarEndFightTrigger(ai); };
             creators["magmadar lava bomb"] = [](PlayerbotAI* ai) { return new MagmadarLavaBombTrigger(ai); };
             creators["magmadar too close"] = [](PlayerbotAI* ai) { return new MagmadarTooCloseTrigger(ai); };
+
+            creators["start baron geddon fight"] = [](PlayerbotAI* ai) { return new BaronGeddonStartFightTrigger(ai); };
+            creators["end baron geddon fight"] = [](PlayerbotAI* ai) { return new BaronGeddonEndFightTrigger(ai); };
+            creators["has living bomb debuff"] = [](PlayerbotAI* ai) { return new HasLivingBombDebuffTrigger(ai); };
 
             creators["fire protection potion ready"] = [](PlayerbotAI* ai) { return new FireProtectionPotionReadyTrigger(ai); };
 

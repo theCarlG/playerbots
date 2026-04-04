@@ -10,6 +10,10 @@ void MoltenCoreDungeonStrategy::InitCombatTriggers(std::list<TriggerNode*>& trig
     triggers.push_back(new TriggerNode(
         "start magmadar fight",
         NextAction::array(0, new NextAction("enable magmadar fight strategy", 100.0f), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "start baron geddon fight",
+        NextAction::array(0, new NextAction("enable baron geddon fight strategy", 100.0f), NULL)));
 }
 
 void MoltenCoreDungeonStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
@@ -86,4 +90,26 @@ void MagmadarFightStrategy::InitCombatMultipliers(std::list<Multiplier*>& multip
     {
         multipliers.push_back(new PreventMoveAwayFromCreatureOnReachToCastMultiplier(ai));
     }
+}
+
+void BaronGeddonFightStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
+{
+    // Living Bomb: bot must immediately run away from group — very high priority
+    triggers.push_back(new TriggerNode(
+        "has living bomb debuff",
+        NextAction::array(0, new NextAction("baron geddon run away", 150.0f), NULL)));
+}
+
+void BaronGeddonFightStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
+{
+    triggers.push_back(new TriggerNode(
+        "end baron geddon fight",
+        NextAction::array(0, new NextAction("disable baron geddon fight strategy", 100.0f), NULL)));
+}
+
+void BaronGeddonFightStrategy::InitDeadTriggers(std::list<TriggerNode*>& triggers)
+{
+    triggers.push_back(new TriggerNode(
+        "end baron geddon fight",
+        NextAction::array(0, new NextAction("disable baron geddon fight strategy", 100.0f), NULL)));
 }

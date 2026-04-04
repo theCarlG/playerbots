@@ -2,6 +2,7 @@
 #include "DungeonActions.h"
 #include "ChangeStrategyAction.h"
 #include "UseItemAction.h"
+#include "playerbot/strategy/values/HazardsValue.h"
 
 namespace ai
 {
@@ -57,5 +58,29 @@ namespace ai
     {
     public:
         DouseMCRuneActionEternal(PlayerbotAI* ai) : UseItemIdAction(ai, "douse mc rune eternal") { qualifier = "{22754,entry filter::{gos close,mc runes}}"; }
+    };
+
+    class BaronGeddonEnableFightStrategyAction : public ChangeAllStrategyAction
+    {
+    public:
+        BaronGeddonEnableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "enable baron geddon fight strategy", "+baron geddon") {}
+    };
+
+    class BaronGeddonDisableFightStrategyAction : public ChangeAllStrategyAction
+    {
+    public:
+        BaronGeddonDisableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "disable baron geddon fight strategy", "-baron geddon") {}
+    };
+
+    // When this bot has the Living Bomb debuff, move away from party members to avoid chain explosion
+    class BaronGeddonRunAwayAction : public MovementAction
+    {
+    public:
+        BaronGeddonRunAwayAction(PlayerbotAI* ai) : MovementAction(ai, "baron geddon run away") {}
+        bool Execute(Event& event) override;
+        bool isPossible() override;
+
+    private:
+        bool IsHazardNearby(const WorldPosition& point, const std::list<HazardPosition>& hazards) const;
     };
 }

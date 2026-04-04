@@ -27,4 +27,11 @@ namespace ai
     public:
         OnyxiaDisableFightStrategyAction(PlayerbotAI* ai) : ChangeAllStrategyAction(ai, "disable onyxia fight strategy", "-onyxia") {}
     };
+
+    // Ranged/healers move away to maintain safe range from Onyxia
+    class OnyxiaMoveAwayAction : public MoveAwayFromCreature
+    {
+    public:
+        OnyxiaMoveAwayAction(PlayerbotAI* ai) : MoveAwayFromCreature(ai, "move away from onyxia", 10184, 31.0f) {}
+    };
 }
