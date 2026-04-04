@@ -8,6 +8,7 @@ use crate::{
                     cond, gcd_gate, sel, seq},
         context::TickContext,
     },
+    ffi::SpellId,
 };
 
 pub fn build_tree() -> Box<dyn BtNode> {
@@ -15,7 +16,7 @@ pub fn build_tree() -> Box<dyn BtNode> {
         // Maintain Lightning Shield
         seq(vec![
             cond(|ctx| !ctx.interface.has_aura(ctx.bot_handle, LIGHTNING_SHIELD)
-                && !ctx.interface.has_aura(ctx.bot_handle, 10432)),
+                && !ctx.interface.has_aura(ctx.bot_handle, SpellId(10432))),
             gcd_gate(cd_gate(LIGHTNING_SHIELD, action(|ctx| {
                 let me = ctx.bot_handle;
                 if ctx.interface.cast_spell(LIGHTNING_SHIELD, me) {
@@ -30,7 +31,7 @@ pub fn build_tree() -> Box<dyn BtNode> {
         // Drop Windfury Totem
         seq(vec![
             cond(|ctx| !ctx.interface.has_aura(ctx.bot_handle, WINDFURY_TOTEM)
-                && !ctx.interface.has_aura(ctx.bot_handle, 25587)),
+                && !ctx.interface.has_aura(ctx.bot_handle, SpellId(25587))),
             gcd_gate(cd_gate(WINDFURY_TOTEM, action(|ctx| {
                 let me = ctx.bot_handle;
                 if ctx.interface.cast_spell(WINDFURY_TOTEM, me) {

@@ -8,11 +8,12 @@ use crate::{
                     cond, gcd_gate, sel, seq},
         context::TickContext,
     },
+    ffi::SpellId,
 };
 
 // Curse of Elements: 1490 (rank 1), 17937 (rank 4), 11722 — actually different IDs
-const CURSE_OF_ELEMENTS: u32 = 17937; // rank 4
-const CURSE_OF_AGONY: u32 = 11722;    // rank 7 (already in vanilla.rs)
+const CURSE_OF_ELEMENTS: SpellId = SpellId(17937); // rank 4
+const CURSE_OF_AGONY: SpellId = SpellId(11722);    // rank 7 (already in vanilla.rs)
 
 pub fn build_tree() -> Box<dyn BtNode> {
     sel(vec![

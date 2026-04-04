@@ -12,9 +12,10 @@ pub fn build_tree() -> Box<dyn crate::engine::bt_nodes::BtNode> {
             data::spells::vanilla::deathknight::*,
             engine::bt_nodes::{BtResult, action, cast_on_current_target, cd_gate,
                                 cond, gcd_gate, sel, seq},
+            ffi::SpellId,
         };
         // Scourge Strike: 55271 (rank 4), Bone Shield: 49222
-        const SCOURGE_STRIKE: u32 = 55271;
+        const SCOURGE_STRIKE: SpellId = SpellId(55271);
 
         sel(vec![
             // Bone Shield — self buff
@@ -44,12 +45,12 @@ pub fn build_tree() -> Box<dyn crate::engine::bt_nodes::BtNode> {
                     // Apply diseases
                     seq(vec![
                         cond(|ctx| ctx.current_target().map_or(false, |t|
-                            !ctx.interface.has_aura(t, 55095))),
+                            !ctx.interface.has_aura(t, SpellId(55095)))),
                         cast_on_current_target(ICY_TOUCH),
                     ]),
                     seq(vec![
                         cond(|ctx| ctx.current_target().map_or(false, |t|
-                            !ctx.interface.has_aura(t, 55078))),
+                            !ctx.interface.has_aura(t, SpellId(55078)))),
                         cast_on_current_target(PLAGUE_STRIKE),
                     ]),
 

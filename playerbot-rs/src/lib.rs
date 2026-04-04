@@ -16,13 +16,35 @@ pub mod noncombat;
 use bot::state::BotState;
 use ffi::{
     interface::{BotInterface, RealInterface},
-    BotCallbacks, BotHandle, UnitHandle,
+    BotCallbacks, BotHandle, SpellId, UnitHandle,
 };
 
 // ── Lifecycle ────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
 pub extern "C" fn playerbot_init() {}
+
+/// Set bot configuration from C++. Must be called before any bots are created.
+/// Values that are 0 / 0.0 / false use defaults.
+///
+/// # Safety
+/// Must be called from a single thread (server startup, before bots spawn).
+#[unsafe(no_mangle)]
+pub extern "C" fn playerbot_set_config(
+    react_delay_ms: u32,
+    max_wait_for_move_ms: u32,
+    eat_hp_pct: f32,
+    drink_mana_pct: f32,
+    debug: bool,
+) {
+    let mut cfg = config::BotConfig::default();
+    if react_delay_ms > 0       { cfg.react_delay_ms = react_delay_ms; }
+    if max_wait_for_move_ms > 0 { cfg.max_wait_for_move_ms = max_wait_for_move_ms; }
+    if eat_hp_pct > 0.0         { cfg.eat_hp_threshold = eat_hp_pct; }
+    if drink_mana_pct > 0.0     { cfg.drink_mana_threshold = drink_mana_pct; }
+    cfg.debug = debug;
+    let _ = config::set(cfg);
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn playerbot_shutdown() {}
@@ -116,7 +138,7 @@ pub unsafe extern "C" fn playerbot_unit_spell_cast(
     success: bool,
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot.events.push_back(bot::events::BotEvent::UnitSpellCast { caster, spell_id, target, success });
+    bot.events.push_back(bot::events::BotEvent::UnitSpellCast { caster, spell_id: SpellId(spell_id), target, success });
 }
 
 /// # Safety: state valid.
@@ -129,7 +151,7 @@ pub unsafe extern "C" fn playerbot_aura_changed(
     stacks: u8,
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot.events.push_back(bot::events::BotEvent::AuraChanged { unit, spell_id, applied, stacks });
+    bot.events.push_back(bot::events::BotEvent::AuraChanged { unit, spell_id: SpellId(spell_id), applied, stacks });
 }
 
 /// # Safety: state valid.
@@ -152,7 +174,7 @@ pub unsafe extern "C" fn playerbot_damage_taken(
     dealer: UnitHandle,
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot.events.push_back(bot::events::BotEvent::DamageTaken { damage, spell_id, dealer });
+    bot.events.push_back(bot::events::BotEvent::DamageTaken { damage, spell_id: SpellId(spell_id), dealer });
 }
 
 // ── Global coordination tick ──────────────────────────────────────────────

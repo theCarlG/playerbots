@@ -9,6 +9,7 @@ use crate::{
                     cond, gcd_gate, sel, seq},
         context::TickContext,
     },
+    ffi::SpellId,
 };
 
 pub fn build_tree() -> Box<dyn BtNode> {
@@ -92,6 +93,6 @@ fn self_has_seal(ctx: &TickContext<'_>) -> bool {
     // Check all seal spell IDs (multiple ranks)
     ctx.interface.has_aura(me, SEAL_OF_COMMAND)
         || ctx.interface.has_aura(me, SEAL_OF_RIGHTEOUSNESS)
-        || ctx.interface.has_aura(me, 20154) // Seal of Righteousness rank 1
-        || ctx.interface.has_aura(me, 21082) // rank 8
+        || ctx.interface.has_aura(me, SpellId(20154)) // Seal of Righteousness rank 1
+        || ctx.interface.has_aura(me, SpellId(21082)) // rank 8
 }

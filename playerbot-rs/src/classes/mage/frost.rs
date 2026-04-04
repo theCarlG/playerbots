@@ -9,10 +9,11 @@ use crate::{
                     cond, gcd_gate, sel, seq},
         context::TickContext,
     },
+    ffi::SpellId,
 };
 
 // Cold Snap resets frost CD: 11958 (rank 1 talent)
-const COLD_SNAP: u32 = 12472;
+const COLD_SNAP: SpellId = SpellId(12472);
 
 pub fn build_tree() -> Box<dyn BtNode> {
     sel(vec![
@@ -100,8 +101,8 @@ fn enemy_melee_range(ctx: &TickContext<'_>) -> bool {
 fn target_is_frozen(ctx: &TickContext<'_>) -> bool {
     // Frozen = has Frost Nova (42397 or 122) or Freeze (33395) aura
     ctx.current_target().map_or(false, |t|
-        ctx.interface.has_aura(t, 122)
-            || ctx.interface.has_aura(t, 42397))
+        ctx.interface.has_aura(t, SpellId(122))
+            || ctx.interface.has_aura(t, SpellId(42397)))
 }
 
 fn target_below_20pct(ctx: &TickContext<'_>) -> bool {

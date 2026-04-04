@@ -15,10 +15,11 @@
 ///   - Normal: DPS / heal from max range.
 
 use super::super::{EncounterEvent, EncounterFsm};
+use crate::ffi::SpellId;
 
 /// Aura spell IDs
-pub const AURA_LIVING_BOMB: u32 = 20475;
-pub const AURA_INFERNO:     u32 = 19695;
+pub const AURA_LIVING_BOMB: SpellId = SpellId(20475);
+pub const AURA_INFERNO:     SpellId = SpellId(19695);
 
 pub struct BaronGeddonFsm {
     active: bool,

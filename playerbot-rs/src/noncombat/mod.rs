@@ -80,7 +80,7 @@ pub fn druid_buffs() -> Vec<GroupBuff> {
     use crate::data::spells::vanilla::druid::*;
     vec![
         // Mark of the Wild: spell 9885 (rank 6 vanilla)
-        GroupBuff { spell_id: 9885, aura_id: 9885, target: BuffTarget::AnyMember },
+        GroupBuff { spell_id: crate::ffi::SpellId(9885), aura_id: crate::ffi::SpellId(9885), target: BuffTarget::AnyMember },
     ]
 }
 

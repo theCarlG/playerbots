@@ -39,7 +39,7 @@ pub mod nefarian_class_calls {
 
 /// Vaelastrasz — Burning Adrenaline (aura 18173): forces a player to cast
 /// Fire/Death spells before their HP hits 0.  Affects tanks most severely.
-pub const AURA_BURNING_ADRENALINE: u32 = 18173;
+pub const AURA_BURNING_ADRENALINE: crate::ffi::SpellId = crate::ffi::SpellId(18173);
 
 #[derive(Clone, Copy, PartialEq)]
 enum ActiveBoss {

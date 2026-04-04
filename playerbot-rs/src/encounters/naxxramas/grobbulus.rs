@@ -10,9 +10,10 @@
 /// Slime Spray (28158): frontal cone — tank must keep boss turned away.
 
 use super::super::{EncounterEvent, EncounterFsm};
+use crate::ffi::SpellId;
 
-pub const AURA_MUTATING_INJECTION: u32 = 28169;
-pub const SPELL_SLIME_SPRAY:       u32 = 28158;
+pub const AURA_MUTATING_INJECTION: SpellId = SpellId(28169);
+pub const SPELL_SLIME_SPRAY:       SpellId = SpellId(28158);
 
 pub struct GrobbolusFsm {
     active: bool,

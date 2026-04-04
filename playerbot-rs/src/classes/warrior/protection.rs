@@ -8,6 +8,7 @@ use crate::{
     engine::bt_nodes::{BtNode, BtResult, action, cast_on_current_target, cd_gate,
                         cond, gcd_gate, sel, seq},
     engine::context::TickContext,
+    ffi::SpellId,
 };
 
 pub fn build_tree() -> Box<dyn BtNode> {
@@ -63,6 +64,6 @@ pub fn build_tree() -> Box<dyn BtNode> {
 
 fn target_needs_demo_shout(ctx: &TickContext<'_>) -> bool {
     let Some(target) = ctx.current_target() else { return false };
-    !ctx.interface.has_aura(target, 11556)
-        && !ctx.interface.has_aura(target, DEMORALIZING_SHOUT)
+    use crate::engine::aura_helpers::{has_any_rank, DEMORALIZING_SHOUT_RANKS};
+    !has_any_rank(ctx.interface, target, DEMORALIZING_SHOUT_RANKS)
 }

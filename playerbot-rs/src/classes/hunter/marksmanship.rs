@@ -10,6 +10,7 @@ use crate::{
                     cond, gcd_gate, sel, seq},
         context::TickContext,
     },
+    ffi::SpellId,
 };
 
 pub fn build_tree() -> Box<dyn BtNode> {
@@ -88,12 +89,13 @@ pub fn build_tree() -> Box<dyn BtNode> {
 fn needs_hawk_aspect(ctx: &TickContext<'_>) -> bool {
     let me = ctx.bot_handle;
     !ctx.interface.has_aura(me, ASPECT_OF_THE_HAWK)
-        && !ctx.interface.has_aura(me, 25296)
+        && !ctx.interface.has_aura(me, SpellId(25296))
 }
 
 fn target_needs_hunters_mark(ctx: &TickContext<'_>) -> bool {
     let Some(t) = ctx.current_target() else { return false };
-    !ctx.interface.has_aura(t, HUNTERS_MARK) && !ctx.interface.has_aura(t, 14325)
+    use crate::engine::aura_helpers::{has_any_rank, HUNTERS_MARK_RANKS};
+    !has_any_rank(ctx.interface, t, HUNTERS_MARK_RANKS)
 }
 
 fn enemy_is_close(ctx: &TickContext<'_>) -> bool {
@@ -109,5 +111,6 @@ fn target_is_casting(ctx: &TickContext<'_>) -> bool {
 
 fn target_needs_serpent_sting(ctx: &TickContext<'_>) -> bool {
     let Some(t) = ctx.current_target() else { return false };
-    !ctx.interface.has_aura(t, SERPENT_STING) && !ctx.interface.has_aura(t, 13555)
+    use crate::engine::aura_helpers::{has_any_rank, SERPENT_STING_RANKS};
+    !has_any_rank(ctx.interface, t, SERPENT_STING_RANKS)
 }

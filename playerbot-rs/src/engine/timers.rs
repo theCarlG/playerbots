@@ -3,6 +3,7 @@
 /// Tracked in Rust so BT nodes can check cooldowns without calling into C++.
 /// Populated by BT action nodes when spells are cast successfully.
 use std::collections::HashMap;
+use crate::ffi::SpellId;
 
 /// GCD duration in milliseconds (1500ms standard).
 const GCD_MS: u64 = 1500;
@@ -13,7 +14,7 @@ const INSTANT_GCD_MS: u64 = 1500;
 #[derive(Debug, Default)]
 pub struct BotTimers {
     /// spell_id → server_time_ms when this spell is next usable
-    cooldowns: HashMap<u32, u64>,
+    cooldowns: HashMap<SpellId, u64>,
     /// server_time_ms when GCD expires
     gcd_ready_at: u64,
 }
@@ -24,12 +25,12 @@ impl BotTimers {
     }
 
     /// Returns true if the spell is currently on cooldown.
-    pub fn spell_on_cooldown(&self, spell_id: u32, now_ms: u64) -> bool {
+    pub fn spell_on_cooldown(&self, spell_id: SpellId, now_ms: u64) -> bool {
         self.cooldowns.get(&spell_id).map_or(false, |&ready_at| now_ms < ready_at)
     }
 
     /// Milliseconds remaining on a spell cooldown (0 if ready).
-    pub fn cooldown_remaining_ms(&self, spell_id: u32, now_ms: u64) -> u32 {
+    pub fn cooldown_remaining_ms(&self, spell_id: SpellId, now_ms: u64) -> u32 {
         self.cooldowns.get(&spell_id)
             .map(|&ready_at| ready_at.saturating_sub(now_ms) as u32)
             .unwrap_or(0)
@@ -42,16 +43,12 @@ impl BotTimers {
 
     /// Called by action nodes when a spell is successfully cast.
     /// Records the GCD and the spell's own cooldown.
-    pub fn on_spell_cast(&mut self, spell_id: u32, now_ms: u64) {
+    pub fn on_spell_cast(&mut self, spell_id: SpellId, now_ms: u64) {
         self.gcd_ready_at = now_ms + INSTANT_GCD_MS;
-        // The actual cooldown duration is queried from C++ once and stored here.
-        // CooldownGate nodes call this after a successful cast.
-        // For spells without a base cooldown, this is a no-op cooldown entry.
-        // The real cooldown will be set by on_spell_cast_with_cd.
     }
 
     /// Called when we know the exact cooldown duration (from C++ spell_cooldown_ms).
-    pub fn set_cooldown(&mut self, spell_id: u32, duration_ms: u32, now_ms: u64) {
+    pub fn set_cooldown(&mut self, spell_id: SpellId, duration_ms: u32, now_ms: u64) {
         if duration_ms > 0 {
             self.cooldowns.insert(spell_id, now_ms + duration_ms as u64);
         }
@@ -70,21 +67,21 @@ mod tests {
     #[test]
     fn spell_not_on_cooldown_initially() {
         let t = BotTimers::new();
-        assert!(!t.spell_on_cooldown(1, 1000));
+        assert!(!t.spell_on_cooldown(SpellId(1), 1000));
     }
 
     #[test]
     fn spell_on_cooldown_after_set() {
         let mut t = BotTimers::new();
-        t.set_cooldown(1, 5000, 1000); // ready at 6000
-        assert!(t.spell_on_cooldown(1, 3000));
-        assert!(!t.spell_on_cooldown(1, 6001));
+        t.set_cooldown(SpellId(1), 5000, 1000); // ready at 6000
+        assert!(t.spell_on_cooldown(SpellId(1), 3000));
+        assert!(!t.spell_on_cooldown(SpellId(1), 6001));
     }
 
     #[test]
     fn gcd_active_after_cast() {
         let mut t = BotTimers::new();
-        t.on_spell_cast(1, 1000); // gcd_ready_at = 2500
+        t.on_spell_cast(SpellId(1), 1000); // gcd_ready_at = 2500
         assert!(t.gcd_active(2000));
         assert!(!t.gcd_active(2501));
     }
@@ -92,8 +89,8 @@ mod tests {
     #[test]
     fn advance_clears_expired_cooldowns() {
         let mut t = BotTimers::new();
-        t.set_cooldown(1, 100, 1000); // expires at 1100
+        t.set_cooldown(SpellId(1), 100, 1000); // expires at 1100
         t.advance(1200);
-        assert!(!t.spell_on_cooldown(1, 1200));
+        assert!(!t.spell_on_cooldown(SpellId(1), 1200));
     }
 }

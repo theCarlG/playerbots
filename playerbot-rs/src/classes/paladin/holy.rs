@@ -8,6 +8,7 @@ use crate::{
         bt_nodes::{BtNode, BtResult, action, cd_gate, cond, gcd_gate, sel, seq},
         context::TickContext,
     },
+    ffi::SpellId,
 };
 
 pub fn build_tree() -> Box<dyn BtNode> {
@@ -77,5 +78,5 @@ fn self_needs_blessing(ctx: &TickContext<'_>) -> bool {
     !ctx.interface.has_aura(me, BLESSING_OF_WISDOM)
         && !ctx.interface.has_aura(me, BLESSING_OF_MIGHT)
         && !ctx.interface.has_aura(me, BLESSING_OF_KINGS)
-        && !ctx.interface.has_aura(me, 19742) // Greater Blessing of Wisdom
+        && !ctx.interface.has_aura(me, SpellId(19742)) // Greater Blessing of Wisdom
 }

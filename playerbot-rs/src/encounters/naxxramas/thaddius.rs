@@ -23,10 +23,11 @@
 ///   - Phase 2: check own polarity aura, immediately run to correct side after shift.
 
 use super::super::{EncounterEvent, EncounterFsm};
+use crate::ffi::SpellId;
 
-pub const SPELL_POLARITY_SHIFT:    u32 = 28089;
-pub const AURA_POSITIVE_CHARGE:    u32 = 29659;
-pub const AURA_NEGATIVE_CHARGE:    u32 = 29660;
+pub const SPELL_POLARITY_SHIFT:    SpellId = SpellId(28089);
+pub const AURA_POSITIVE_CHARGE:    SpellId = SpellId(29659);
+pub const AURA_NEGATIVE_CHARGE:    SpellId = SpellId(29660);
 
 pub const ENTRY_STALAGG: u32 = 15929;
 pub const ENTRY_FEUGEN:  u32 = 15930;

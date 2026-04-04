@@ -10,6 +10,7 @@ use crate::{
                     cond, gcd_gate, sel, seq},
         context::TickContext,
     },
+    ffi::SpellId,
 };
 
 pub fn build_tree() -> Box<dyn BtNode> {
@@ -84,11 +85,11 @@ pub fn build_tree() -> Box<dyn BtNode> {
 fn target_needs_sw_pain(ctx: &TickContext<'_>) -> bool {
     let Some(t) = ctx.current_target() else { return false };
     !ctx.interface.has_aura(t, SHADOW_WORD_PAIN)
-        && !ctx.interface.has_aura(t, 10894) // check all ranks
+        && !ctx.interface.has_aura(t, SpellId(10894)) // check all ranks
 }
 
 fn target_needs_devouring_plague(ctx: &TickContext<'_>) -> bool {
     let Some(t) = ctx.current_target() else { return false };
     !ctx.interface.has_aura(t, DEVOURING_PLAGUE)
-        && !ctx.interface.has_aura(t, 19276)
+        && !ctx.interface.has_aura(t, SpellId(19276))
 }

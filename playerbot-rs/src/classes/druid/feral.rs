@@ -10,6 +10,7 @@ use crate::{
                     cond, gcd_gate, sel, seq},
         context::TickContext,
     },
+    ffi::SpellId,
 };
 
 // Combo point tracking isn't available directly — we approximate via aura checks.
@@ -18,8 +19,8 @@ use crate::{
 // finishers at 0 CPs.
 
 // Bear form specific spells
-const GROWL: u32 = 6795;
-const FRENZIED_REGENERATION: u32 = 22842; // rank 3
+const GROWL: SpellId = SpellId(6795);
+const FRENZIED_REGENERATION: SpellId = SpellId(22842); // rank 3
 
 pub fn build_tree() -> Box<dyn BtNode> {
     sel(vec![
@@ -140,27 +141,29 @@ fn cat_dps_tree() -> Box<dyn BtNode> {
 }
 
 fn is_tank_role(ctx: &TickContext<'_>) -> bool {
-    use crate::bot::state::BotRole;
-    // We check snap.self_.role bitmask
     ctx.snap.self_.role & 1 != 0 // TANK bit
 }
 
 fn target_needs_faerie_fire(ctx: &TickContext<'_>) -> bool {
     let Some(t) = ctx.current_target() else { return false };
-    !ctx.interface.has_aura(t, FAERIE_FIRE_FERAL) && !ctx.interface.has_aura(t, 770)
+    use crate::engine::aura_helpers::{has_any_rank, FAERIE_FIRE_RANKS};
+    !has_any_rank(ctx.interface, t, FAERIE_FIRE_RANKS)
 }
 
 fn target_needs_demo_roar(ctx: &TickContext<'_>) -> bool {
     let Some(t) = ctx.current_target() else { return false };
-    !ctx.interface.has_aura(t, DEMORALIZING_ROAR) && !ctx.interface.has_aura(t, 26998)
+    use crate::engine::aura_helpers::{has_any_rank, DEMO_ROAR_RANKS};
+    !has_any_rank(ctx.interface, t, DEMO_ROAR_RANKS)
 }
 
 fn target_needs_rip(ctx: &TickContext<'_>) -> bool {
     let Some(t) = ctx.current_target() else { return false };
-    !ctx.interface.has_aura(t, RIP) && !ctx.interface.has_aura(t, 9896)
+    use crate::engine::aura_helpers::{has_any_rank, RIP_RANKS};
+    !has_any_rank(ctx.interface, t, RIP_RANKS)
 }
 
 fn target_needs_rake(ctx: &TickContext<'_>) -> bool {
     let Some(t) = ctx.current_target() else { return false };
-    !ctx.interface.has_aura(t, RAKE) && !ctx.interface.has_aura(t, 9904)
+    use crate::engine::aura_helpers::{has_any_rank, RAKE_RANKS};
+    !has_any_rank(ctx.interface, t, RAKE_RANKS)
 }

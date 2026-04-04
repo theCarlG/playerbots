@@ -22,6 +22,8 @@ pub mod naxxramas;
 #[cfg(any(feature = "tbc", feature = "wotlk"))]
 pub mod karazhan;
 
+use crate::ffi::SpellId;
+
 /// Trait all encounter FSMs implement.
 pub trait EncounterFsm: Send {
     /// Update the FSM from a push event and current boss HP.
@@ -53,9 +55,9 @@ pub enum EncounterEvent {
     /// A unit died (could be boss, player, or add).
     UnitDied { victim: u64 },
     /// A unit started or completed a spell cast.
-    SpellCast { caster: u64, spell_id: u32, success: bool },
+    SpellCast { caster: u64, spell_id: SpellId, success: bool },
     /// An aura was applied to or removed from a unit.
-    AuraChanged { unit: u64, spell_id: u32, applied: bool },
+    AuraChanged { unit: u64, spell_id: SpellId, applied: bool },
     /// This bot was pulled into combat.
     CombatStarted,
     /// The group wiped (all players dead / boss reset).

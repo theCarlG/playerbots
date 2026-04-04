@@ -8,6 +8,7 @@ use crate::{
         bt_nodes::{BtNode, cast_on_current_target, cond, sel, seq},
         context::TickContext,
     },
+    ffi::SpellId,
 };
 
 pub fn build_tree() -> Box<dyn BtNode> {
@@ -68,15 +69,18 @@ fn cast_heal_self() -> Box<dyn BtNode> {
 
 fn target_needs_faerie_fire(ctx: &TickContext<'_>) -> bool {
     let Some(t) = ctx.current_target() else { return false };
-    !ctx.interface.has_aura(t, FAERIE_FIRE_FERAL) && !ctx.interface.has_aura(t, 770)
+    use crate::engine::aura_helpers::{has_any_rank, FAERIE_FIRE_RANKS};
+    !has_any_rank(ctx.interface, t, FAERIE_FIRE_RANKS)
 }
 
 fn target_needs_insect_swarm(ctx: &TickContext<'_>) -> bool {
     let Some(t) = ctx.current_target() else { return false };
-    !ctx.interface.has_aura(t, INSECT_SWARM) && !ctx.interface.has_aura(t, 24977)
+    use crate::engine::aura_helpers::{has_any_rank, INSECT_SWARM_RANKS};
+    !has_any_rank(ctx.interface, t, INSECT_SWARM_RANKS)
 }
 
 fn target_needs_moonfire(ctx: &TickContext<'_>) -> bool {
     let Some(t) = ctx.current_target() else { return false };
-    !ctx.interface.has_aura(t, MOONFIRE) && !ctx.interface.has_aura(t, 26987)
+    use crate::engine::aura_helpers::{has_any_rank, MOONFIRE_RANKS};
+    !has_any_rank(ctx.interface, t, MOONFIRE_RANKS)
 }

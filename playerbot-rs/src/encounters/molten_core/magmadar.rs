@@ -16,10 +16,11 @@
 ///   - Ranged and healers: maintain > 30 yards from Magmadar.
 
 use super::super::{EncounterEvent, EncounterFsm};
+use crate::ffi::SpellId;
 
-pub const SPELL_LAVA_BOMB:    u32 = 19411;
-pub const AURA_PANIC:         u32 = 19408; // fear
-pub const AURA_FLAME_BUFFET:  u32 = 19634;
+pub const SPELL_LAVA_BOMB:    SpellId = SpellId(19411);
+pub const AURA_PANIC:         SpellId = SpellId(19408); // fear
+pub const AURA_FLAME_BUFFET:  SpellId = SpellId(19634);
 
 /// Minimum range for ranged/heals to avoid Flame Buffet.
 pub const MAGMADAR_RANGED_MIN_RANGE: f32 = 30.0;

@@ -16,14 +16,15 @@
 ///   - Phase 2: burn boss, kill Sons as spawned.
 
 use super::super::{EncounterEvent, EncounterFsm};
+use crate::ffi::SpellId;
 
 /// NPC entry for Son of Flame.
 pub const ENTRY_SON_OF_FLAME: u32 = 12143;
 
 /// Spell IDs
-pub const SPELL_WRATH_OF_RAGNAROS:  u32 = 20566; // AoE knockback
-pub const SPELL_HAND_OF_RAGNAROS:   u32 = 19780; // melee knockback
-pub const SPELL_ELEMENTAL_FIRE:     u32 = 20563; // DoT
+pub const SPELL_WRATH_OF_RAGNAROS:  SpellId = SpellId(20566); // AoE knockback
+pub const SPELL_HAND_OF_RAGNAROS:   SpellId = SpellId(19780); // melee knockback
+pub const SPELL_ELEMENTAL_FIRE:     SpellId = SpellId(20563); // DoT
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RagnarosPhase {

@@ -9,6 +9,7 @@ use crate::{
                     cond, gcd_gate, sel, seq},
         context::TickContext,
     },
+    ffi::SpellId,
 };
 
 #[cfg(feature = "wotlk")]
@@ -74,13 +75,13 @@ pub fn build_tree() -> Box<dyn BtNode> {
 #[cfg(feature = "wotlk")]
 fn target_needs_frost_fever(ctx: &TickContext<'_>) -> bool {
     // Frost Fever aura: 55095
-    ctx.current_target().map_or(false, |t| !ctx.interface.has_aura(t, 55095))
+    ctx.current_target().map_or(false, |t| !ctx.interface.has_aura(t, SpellId(55095)))
 }
 
 #[cfg(feature = "wotlk")]
 fn target_needs_blood_plague(ctx: &TickContext<'_>) -> bool {
     // Blood Plague aura: 55078
-    ctx.current_target().map_or(false, |t| !ctx.interface.has_aura(t, 55078))
+    ctx.current_target().map_or(false, |t| !ctx.interface.has_aura(t, SpellId(55078)))
 }
 
 #[cfg(not(feature = "wotlk"))]

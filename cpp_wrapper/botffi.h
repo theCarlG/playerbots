@@ -156,6 +156,13 @@ void playerbot_init(void);
 void playerbot_shutdown(void);
 
 /**
+ * Set bot configuration. Must be called after playerbot_init() and before
+ * any bots are created. Values of 0/0.0/false use built-in defaults.
+ */
+void playerbot_set_config(uint32_t react_delay_ms, uint32_t max_wait_for_move_ms,
+                          float eat_hp_pct, float drink_mana_pct, bool debug);
+
+/**
  * Create AI state for one bot. Called when bot Player logs in.
  * Returns an opaque pointer (BotState*) stored by PlayerbotRust.
  * cbs must remain valid for the lifetime of the returned state.

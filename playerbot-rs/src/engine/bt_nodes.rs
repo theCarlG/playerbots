@@ -12,6 +12,7 @@
 /// - ActionLeaf: issues a command, returns Success/Failure
 /// - PhaseSelector: routes to a subtree based on current encounter phase
 use crate::engine::context::TickContext;
+use crate::ffi::SpellId;
 
 /// Result of a single BT node tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,7 +103,7 @@ impl BtNode for UtilitySelector {
 /// Returns Failure if the spell is still on cooldown (don't try this action).
 /// Returns the child's result if the spell is ready.
 pub struct CooldownGate {
-    pub spell_id: u32,
+    pub spell_id: SpellId,
     pub child: Box<dyn BtNode>,
 }
 
@@ -226,7 +227,7 @@ pub fn util(children: Vec<(f32, Box<dyn BtNode>)>) -> Box<dyn BtNode> {
 }
 
 /// CooldownGate wrapping a child.
-pub fn cd_gate(spell_id: u32, child: Box<dyn BtNode>) -> Box<dyn BtNode> {
+pub fn cd_gate(spell_id: SpellId, child: Box<dyn BtNode>) -> Box<dyn BtNode> {
     Box::new(CooldownGate { spell_id, child })
 }
 
@@ -246,7 +247,7 @@ pub fn throttle(interval_ms: u64, child: Box<dyn BtNode>) -> Box<dyn BtNode> {
 }
 
 /// Cast a spell at a unit target: GCD gate + cooldown gate + cast action.
-pub fn cast_on_target(spell_id: u32, target_fn: impl Fn(&TickContext<'_>) -> Option<u64> + Send + 'static) -> Box<dyn BtNode> {
+pub fn cast_on_target(spell_id: SpellId, target_fn: impl Fn(&TickContext<'_>) -> Option<u64> + Send + 'static) -> Box<dyn BtNode> {
     gcd_gate(cd_gate(spell_id, action(move |ctx| {
         if let Some(target) = target_fn(ctx) {
             if ctx.interface.cast_spell(spell_id, target) {
@@ -262,7 +263,7 @@ pub fn cast_on_target(spell_id: u32, target_fn: impl Fn(&TickContext<'_>) -> Opt
 }
 
 /// Cast a spell at the current target.
-pub fn cast_on_current_target(spell_id: u32) -> Box<dyn BtNode> {
+pub fn cast_on_current_target(spell_id: SpellId) -> Box<dyn BtNode> {
     cast_on_target(spell_id, |ctx| {
         let h = ctx.snap.self_.current_target;
         if h == 0 { None } else { Some(h) }
@@ -330,16 +331,16 @@ mod tests {
 
     #[test]
     fn cooldown_gate_blocks_when_spell_on_cd() {
-        let tree = cd_gate(1234, cond(|_| true));
+        let tree = cd_gate(SpellId(1234), cond(|_| true));
         let mut owned = make_test_ctx();
         let now = owned.time_ms;
-        owned.timers.set_cooldown(1234, 5000, now);
+        owned.timers.set_cooldown(SpellId(1234), 5000, now);
         assert_eq!(tree.tick(&mut owned.ctx()), BtResult::Failure);
     }
 
     #[test]
     fn cooldown_gate_passes_when_spell_ready() {
-        let tree = cd_gate(1234, cond(|_| true));
+        let tree = cd_gate(SpellId(1234), cond(|_| true));
         let mut owned = make_test_ctx();
         assert_eq!(tree.tick(&mut owned.ctx()), BtResult::Success);
     }

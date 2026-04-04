@@ -4,7 +4,7 @@ use crate::{
         bt_nodes::{BtNode, BtResult, action, cd_gate, gcd_gate},
         context::TickContext,
     },
-    ffi::UnitHandle,
+    ffi::{SpellId, UnitHandle},
 };
 
 /// Find the group member (including self) with lowest HP% below `threshold`.
@@ -78,7 +78,7 @@ pub fn any_party_member_below(ctx: &TickContext<'_>, threshold: f32) -> bool {
 
 /// Build a heal action: cast `spell_id` on the lowest-HP group member below `threshold`.
 /// Wraps in GCD gate + cooldown gate.
-pub fn heal_action(spell_id: u32, threshold: f32) -> Box<dyn BtNode> {
+pub fn heal_action(spell_id: SpellId, threshold: f32) -> Box<dyn BtNode> {
     gcd_gate(cd_gate(spell_id, action(move |ctx| {
         if let Some(target) = find_heal_target(ctx, threshold) {
             if ctx.interface.cast_spell(spell_id, target) {
@@ -94,7 +94,7 @@ pub fn heal_action(spell_id: u32, threshold: f32) -> Box<dyn BtNode> {
 }
 
 /// Build a heal action that only targets party members (not self).
-pub fn heal_party_action(spell_id: u32, threshold: f32) -> Box<dyn BtNode> {
+pub fn heal_party_action(spell_id: SpellId, threshold: f32) -> Box<dyn BtNode> {
     gcd_gate(cd_gate(spell_id, action(move |ctx| {
         if let Some(target) = find_injured_party_member(ctx, threshold) {
             if ctx.interface.cast_spell(spell_id, target) {
@@ -110,7 +110,7 @@ pub fn heal_party_action(spell_id: u32, threshold: f32) -> Box<dyn BtNode> {
 }
 
 /// Build a self-buff action: cast `spell_id` on self if `check` returns true.
-pub fn self_buff_action(spell_id: u32, check: impl Fn(&TickContext<'_>) -> bool + Send + 'static)
+pub fn self_buff_action(spell_id: SpellId, check: impl Fn(&TickContext<'_>) -> bool + Send + 'static)
     -> Box<dyn BtNode>
 {
     gcd_gate(cd_gate(spell_id, action(move |ctx| {

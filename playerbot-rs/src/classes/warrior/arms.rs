@@ -104,27 +104,15 @@ fn target_hp_below_20pct(ctx: &TickContext<'_>) -> bool {
 
 fn target_needs_rend(ctx: &TickContext<'_>) -> bool {
     let Some(target) = ctx.current_target() else { return false };
-    // Rend ranks: 772, 6546, 6547, 6548, 11572, 11574
-    // Check all ranks so we don't reapply when a lower rank is already ticking.
-    !ctx.interface.has_aura(target, 772)
-        && !ctx.interface.has_aura(target, 6546)
-        && !ctx.interface.has_aura(target, 6547)
-        && !ctx.interface.has_aura(target, 6548)
-        && !ctx.interface.has_aura(target, 11572)
-        && !ctx.interface.has_aura(target, REND)
+    use crate::engine::aura_helpers::{has_any_rank, REND_RANKS};
+    !has_any_rank(ctx.interface, target, REND_RANKS)
 }
 
 fn needs_battle_shout(ctx: &TickContext<'_>) -> bool {
     let me = ctx.bot_handle;
     if me == 0 { return false; }
-    // All Battle Shout ranks (1-6, plus vanilla r7 25289)
-    !ctx.interface.has_aura(me, 6673)
-        && !ctx.interface.has_aura(me, 5242)
-        && !ctx.interface.has_aura(me, 6192)
-        && !ctx.interface.has_aura(me, 11549)
-        && !ctx.interface.has_aura(me, 11550)
-        && !ctx.interface.has_aura(me, BATTLE_SHOUT)
-        && !ctx.interface.has_aura(me, 25289)
+    use crate::engine::aura_helpers::{has_any_rank, BATTLE_SHOUT_RANKS};
+    !has_any_rank(ctx.interface, me, BATTLE_SHOUT_RANKS)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────

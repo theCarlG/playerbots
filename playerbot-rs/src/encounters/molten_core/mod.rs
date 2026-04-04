@@ -29,7 +29,7 @@ pub const ENTRY_MAJORDOMO:  u32 = 12018;
 pub const ENTRY_RAGNAROS:   u32 = 11502;
 
 // Spell IDs for in-zone mechanics (shared across bosses)
-pub const SPELL_FIRE_PROTECTION_POTION: u32 = 17543; // pre-fight consumable
+pub const SPELL_FIRE_PROTECTION_POTION: crate::ffi::SpellId = crate::ffi::SpellId(17543); // pre-fight consumable
 
 /// Top-level FSM for Molten Core.  Delegates to per-boss FSMs.
 ///

@@ -8,22 +8,8 @@
 use super::{
     BotAuraInfo, BotCallbacks, BotHandle, BotPosition, BotSafePosition, BotThreatEntry,
     BotUnitSnapshot, BotWorldSnapshot, UnitHandle,
+    types::{BotRole, SpellId, ItemId},
 };
-
-/// Role bitmask — matches the `role` field in BotUnitSnapshot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct BotRole(pub u8);
-
-impl BotRole {
-    pub const NONE: BotRole = BotRole(0);
-    pub const TANK: BotRole = BotRole(1);
-    pub const HEAL: BotRole = BotRole(2);
-    pub const DPS: BotRole = BotRole(4);
-
-    pub fn is_tank(self) -> bool { self.0 & 1 != 0 }
-    pub fn is_heal(self) -> bool { self.0 & 2 != 0 }
-    pub fn is_dps(self) -> bool  { self.0 & 4 != 0 }
-}
 
 /// The complete interface a bot has to the game world.
 /// All queries return owned data — no lifetimes tied to C++ pointers.
@@ -38,8 +24,8 @@ pub trait BotInterface: Send {
 
     /* ── Aura queries ────────────────────────────────────────────────── */
 
-    fn has_aura(&self, unit: UnitHandle, spell_id: u32) -> bool;
-    fn get_aura(&self, unit: UnitHandle, spell_id: u32) -> Option<BotAuraInfo>;
+    fn has_aura(&self, unit: UnitHandle, spell_id: SpellId) -> bool;
+    fn get_aura(&self, unit: UnitHandle, spell_id: SpellId) -> Option<BotAuraInfo>;
     /// All auras on `unit`. Used for encounter phase detection and debuff tracking.
     fn get_auras(&self, unit: UnitHandle) -> Vec<BotAuraInfo>;
 
@@ -53,8 +39,8 @@ pub trait BotInterface: Send {
     /* ── Unit queries ────────────────────────────────────────────────── */
 
     fn unit_distance(&self, target: UnitHandle) -> f32;
-    fn can_cast(&self, spell_id: u32, target: UnitHandle) -> bool;
-    fn spell_cooldown_ms(&self, spell_id: u32) -> u32;
+    fn can_cast(&self, spell_id: SpellId, target: UnitHandle) -> bool;
+    fn spell_cooldown_ms(&self, spell_id: SpellId) -> u32;
     fn has_los(&self, target: UnitHandle) -> bool;
     fn get_nearby_units(&self, range: f32, hostile: bool) -> Vec<UnitHandle>;
 
@@ -71,15 +57,15 @@ pub trait BotInterface: Send {
 
     /* ── Commands ────────────────────────────────────────────────────── */
 
-    fn cast_spell(&self, spell_id: u32, target: UnitHandle) -> bool;
-    fn cast_spell_pos(&self, spell_id: u32, x: f32, y: f32, z: f32) -> bool;
+    fn cast_spell(&self, spell_id: SpellId, target: UnitHandle) -> bool;
+    fn cast_spell_pos(&self, spell_id: SpellId, x: f32, y: f32, z: f32) -> bool;
     fn move_to(&self, x: f32, y: f32, z: f32) -> bool;
     fn follow(&self, target: UnitHandle, dist: f32, angle: f32) -> bool;
     fn stop_moving(&self) -> bool;
     fn attack(&self, target: UnitHandle) -> bool;
     fn auto_attack(&self, enable: bool) -> bool;
     fn say(&self, msg: &str, lang: u32) -> bool;
-    fn use_item(&self, item_id: u32, target: UnitHandle) -> bool;
+    fn use_item(&self, item_id: ItemId, target: UnitHandle) -> bool;
     fn taunt(&self, target: UnitHandle) -> bool;
 
     /* ── Group / raid ────────────────────────────────────────────────── */
@@ -110,7 +96,6 @@ impl RealInterface {
 
 impl BotInterface for RealInterface {
     fn get_snapshot(&self) -> BotWorldSnapshot {
-        // SAFETY: cbs function pointers are valid for the lifetime of this struct
         unsafe { (self.cbs.get_snapshot.unwrap())(self.handle) }
     }
 
@@ -118,12 +103,12 @@ impl BotInterface for RealInterface {
         unsafe { (self.cbs.get_unit_snapshot.unwrap())(self.handle, target) }
     }
 
-    fn has_aura(&self, unit: UnitHandle, spell_id: u32) -> bool {
-        unsafe { (self.cbs.has_aura.unwrap())(self.handle, unit, spell_id) }
+    fn has_aura(&self, unit: UnitHandle, spell_id: SpellId) -> bool {
+        unsafe { (self.cbs.has_aura.unwrap())(self.handle, unit, spell_id.raw()) }
     }
 
-    fn get_aura(&self, unit: UnitHandle, spell_id: u32) -> Option<BotAuraInfo> {
-        let info = unsafe { (self.cbs.get_aura.unwrap())(self.handle, unit, spell_id) };
+    fn get_aura(&self, unit: UnitHandle, spell_id: SpellId) -> Option<BotAuraInfo> {
+        let info = unsafe { (self.cbs.get_aura.unwrap())(self.handle, unit, spell_id.raw()) };
         if info.spell_id == 0 { None } else { Some(info) }
     }
 
@@ -153,12 +138,12 @@ impl BotInterface for RealInterface {
         unsafe { (self.cbs.unit_distance.unwrap())(self.handle, target) }
     }
 
-    fn can_cast(&self, spell_id: u32, target: UnitHandle) -> bool {
-        unsafe { (self.cbs.can_cast.unwrap())(self.handle, spell_id, target) }
+    fn can_cast(&self, spell_id: SpellId, target: UnitHandle) -> bool {
+        unsafe { (self.cbs.can_cast.unwrap())(self.handle, spell_id.raw(), target) }
     }
 
-    fn spell_cooldown_ms(&self, spell_id: u32) -> u32 {
-        unsafe { (self.cbs.spell_cooldown_ms.unwrap())(self.handle, spell_id) }
+    fn spell_cooldown_ms(&self, spell_id: SpellId) -> u32 {
+        unsafe { (self.cbs.spell_cooldown_ms.unwrap())(self.handle, spell_id.raw()) }
     }
 
     fn has_los(&self, target: UnitHandle) -> bool {
@@ -195,12 +180,12 @@ impl BotInterface for RealInterface {
         unsafe { (self.cbs.can_reach.unwrap())(self.handle, x, y, z) }
     }
 
-    fn cast_spell(&self, spell_id: u32, target: UnitHandle) -> bool {
-        unsafe { (self.cbs.cast_spell.unwrap())(self.handle, spell_id, target) }
+    fn cast_spell(&self, spell_id: SpellId, target: UnitHandle) -> bool {
+        unsafe { (self.cbs.cast_spell.unwrap())(self.handle, spell_id.raw(), target) }
     }
 
-    fn cast_spell_pos(&self, spell_id: u32, x: f32, y: f32, z: f32) -> bool {
-        unsafe { (self.cbs.cast_spell_pos.unwrap())(self.handle, spell_id, x, y, z) }
+    fn cast_spell_pos(&self, spell_id: SpellId, x: f32, y: f32, z: f32) -> bool {
+        unsafe { (self.cbs.cast_spell_pos.unwrap())(self.handle, spell_id.raw(), x, y, z) }
     }
 
     fn move_to(&self, x: f32, y: f32, z: f32) -> bool {
@@ -228,8 +213,8 @@ impl BotInterface for RealInterface {
         unsafe { (self.cbs.say.unwrap())(self.handle, c_str.as_ptr(), lang) }
     }
 
-    fn use_item(&self, item_id: u32, target: UnitHandle) -> bool {
-        unsafe { (self.cbs.use_item.unwrap())(self.handle, item_id, target) }
+    fn use_item(&self, item_id: ItemId, target: UnitHandle) -> bool {
+        unsafe { (self.cbs.use_item.unwrap())(self.handle, item_id.raw(), target) }
     }
 
     fn taunt(&self, target: UnitHandle) -> bool {

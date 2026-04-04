@@ -9,11 +9,12 @@ use crate::{
                     cond, gcd_gate, sel, seq},
         context::TickContext,
     },
+    ffi::SpellId,
 };
 
 // Fire Vulnerability stacks (from Improved Scorch talent):
 // aura 22959 (rank 5 = max stacks)
-const FIRE_VULNERABILITY: u32 = 22959;
+const FIRE_VULNERABILITY: SpellId = SpellId(22959);
 const FIRE_VULNERABILITY_STACKS: u8 = 5;
 
 pub fn build_tree() -> Box<dyn BtNode> {

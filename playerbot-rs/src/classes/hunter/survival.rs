@@ -7,10 +7,11 @@ use crate::{
     data::spells::vanilla::hunter::*,
     engine::bt_nodes::{BtNode, BtResult, action, cast_on_current_target, cd_gate,
                         cond, gcd_gate, sel, seq},
+    ffi::SpellId,
 };
 
 // Counterattack: 19306 rank 1, 20909 rank 2, 20910 rank 3
-const COUNTERATTACK: u32 = 20910;
+const COUNTERATTACK: SpellId = SpellId(20910);
 
 pub fn build_tree() -> Box<dyn BtNode> {
     sel(vec![

@@ -1,9 +1,9 @@
 /// Bot initialization — builds the root behavior tree from (class, spec).
 use crate::{
-    bot::state::{BotRole, BotState, PlayerClass, PlayerSpec},
+    bot::state::{BotState, PlayerClass, PlayerSpec},
     engine::bt_nodes::{BtNode, cond, sel},
-    ffi::interface::BotInterface,
-    noncombat::{self, GroupBuff},
+    ffi::{interface::BotInterface, BotRole},
+    noncombat,
 };
 
 /// Build a BotState from its handle, interface, class, and spec.

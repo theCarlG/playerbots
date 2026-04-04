@@ -9,10 +9,11 @@ use crate::{
                     cond, gcd_gate, sel, seq},
         context::TickContext,
     },
+    ffi::SpellId,
 };
 
 // Riposte: 14251 (requires parry proc)
-const RIPOSTE: u32 = 14251;
+const RIPOSTE: SpellId = SpellId(14251);
 
 pub fn build_tree() -> Box<dyn BtNode> {
     sel(vec![
@@ -102,5 +103,6 @@ fn needs_slice_and_dice(ctx: &TickContext<'_>) -> bool {
 
 fn target_needs_rupture(ctx: &TickContext<'_>) -> bool {
     let Some(t) = ctx.current_target() else { return false };
-    !ctx.interface.has_aura(t, RUPTURE) && !ctx.interface.has_aura(t, 11275)
+    use crate::engine::aura_helpers::{has_any_rank, RUPTURE_RANKS};
+    !has_any_rank(ctx.interface, t, RUPTURE_RANKS)
 }

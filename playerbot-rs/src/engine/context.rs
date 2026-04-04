@@ -68,7 +68,7 @@ impl<'a> TickContext<'a> {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::ffi::{BotUnitSnapshot, BotWorldSnapshot};
+    use crate::ffi::{BotUnitSnapshot, BotWorldSnapshot, SpellId, ItemId};
     use crate::engine::{blackboard::Blackboard, timers::BotTimers};
 
     /// Minimal mock interface for unit tests of BT node logic.
@@ -76,33 +76,33 @@ pub mod tests {
     impl BotInterface for NullInterface {
         fn get_snapshot(&self) -> BotWorldSnapshot { BotWorldSnapshot::default() }
         fn get_unit_snapshot(&self, _: UnitHandle) -> BotUnitSnapshot { BotUnitSnapshot::default() }
-        fn has_aura(&self, _: UnitHandle, _: u32) -> bool { false }
-        fn get_aura(&self, _: UnitHandle, _: u32) -> Option<crate::ffi::BotAuraInfo> { None }
+        fn has_aura(&self, _: UnitHandle, _: SpellId) -> bool { false }
+        fn get_aura(&self, _: UnitHandle, _: SpellId) -> Option<crate::ffi::BotAuraInfo> { None }
         fn get_auras(&self, _: UnitHandle) -> Vec<crate::ffi::BotAuraInfo> { vec![] }
         fn get_threat_list(&self, _: UnitHandle) -> Vec<crate::ffi::BotThreatEntry> { vec![] }
         fn get_unit_threat(&self, _: UnitHandle, _: UnitHandle) -> f32 { 0.0 }
         fn unit_distance(&self, _: UnitHandle) -> f32 { 0.0 }
-        fn can_cast(&self, _: u32, _: UnitHandle) -> bool { true }
-        fn spell_cooldown_ms(&self, _: u32) -> u32 { 0 }
+        fn can_cast(&self, _: SpellId, _: UnitHandle) -> bool { true }
+        fn spell_cooldown_ms(&self, _: SpellId) -> u32 { 0 }
         fn has_los(&self, _: UnitHandle) -> bool { true }
         fn get_nearby_units(&self, _: f32, _: bool) -> Vec<UnitHandle> { vec![] }
         fn get_behind_position(&self, _: UnitHandle, _: f32) -> crate::ffi::BotPosition { Default::default() }
         fn get_safe_position(&self, _: f32) -> Option<crate::ffi::BotPosition> { None }
         fn get_spread_position(&self, _: UnitHandle, _: f32, _: u8, _: u8) -> crate::ffi::BotPosition { Default::default() }
         fn can_reach(&self, _: f32, _: f32, _: f32) -> bool { true }
-        fn cast_spell(&self, _: u32, _: UnitHandle) -> bool { true }
-        fn cast_spell_pos(&self, _: u32, _: f32, _: f32, _: f32) -> bool { true }
+        fn cast_spell(&self, _: SpellId, _: UnitHandle) -> bool { true }
+        fn cast_spell_pos(&self, _: SpellId, _: f32, _: f32, _: f32) -> bool { true }
         fn move_to(&self, _: f32, _: f32, _: f32) -> bool { true }
         fn follow(&self, _: UnitHandle, _: f32, _: f32) -> bool { true }
         fn stop_moving(&self) -> bool { true }
         fn attack(&self, _: UnitHandle) -> bool { true }
         fn auto_attack(&self, _: bool) -> bool { true }
         fn say(&self, _: &str, _: u32) -> bool { true }
-        fn use_item(&self, _: u32, _: UnitHandle) -> bool { true }
+        fn use_item(&self, _: ItemId, _: UnitHandle) -> bool { true }
         fn taunt(&self, _: UnitHandle) -> bool { true }
         fn group_get_tank(&self) -> Option<UnitHandle> { None }
         fn group_get_healer(&self) -> Option<UnitHandle> { None }
-        fn group_get_role(&self, _: UnitHandle) -> crate::ffi::interface::BotRole { Default::default() }
+        fn group_get_role(&self, _: UnitHandle) -> crate::ffi::BotRole { Default::default() }
     }
 
     /// Build a minimal TickContext for use in unit tests.

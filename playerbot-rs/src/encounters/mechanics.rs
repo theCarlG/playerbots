@@ -3,6 +3,7 @@
 /// These nodes are used by individual boss encounter subtrees.  They are
 /// composable with the class-specific combat rotation subtrees.
 use crate::engine::bt_nodes::{BtNode, BtResult, action, cond, seq, sel};
+use crate::ffi::SpellId;
 
 /// Flee to the nearest safe position (away from ground AoEs / hazards).
 ///
@@ -25,7 +26,7 @@ pub fn flee_to_safe_position(search_radius: f32) -> Box<dyn BtNode> {
 ///
 /// `debuff_spell_id`: the aura spell ID to check on self.
 /// `run_distance`: how far to search for a safe spot.
-pub fn isolate_if_debuffed(debuff_spell_id: u32, run_distance: f32) -> Box<dyn BtNode> {
+pub fn isolate_if_debuffed(debuff_spell_id: SpellId, run_distance: f32) -> Box<dyn BtNode> {
     seq(vec![
         cond(move |ctx| ctx.interface.has_aura(ctx.bot_handle, debuff_spell_id)),
         flee_to_safe_position(run_distance),

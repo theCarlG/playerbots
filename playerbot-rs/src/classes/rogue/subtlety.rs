@@ -9,10 +9,11 @@ use crate::{
                     cond, gcd_gate, sel, seq},
         context::TickContext,
     },
+    ffi::SpellId,
 };
 
 // Premeditation: 14183 (rank 1), 14185 (rank 2) — adds combo points
-const PREMEDITATION: u32 = 14185;
+const PREMEDITATION: SpellId = SpellId(14185);
 
 pub fn build_tree() -> Box<dyn BtNode> {
     sel(vec![

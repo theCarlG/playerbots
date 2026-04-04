@@ -18,11 +18,12 @@
 ///   Abominations from the portals.  Continue DPS on KT.
 
 use super::super::{EncounterEvent, EncounterFsm};
+use crate::ffi::SpellId;
 
-pub const AURA_FROST_BLAST:     u32 = 27808;
-pub const SPELL_CHAINS_OF_KT:   u32 = 28410;
-pub const SPELL_SHADOW_FISSURE: u32 = 27810;
-pub const SPELL_GLACIAL_BLAST:  u32 = 29258;
+pub const AURA_FROST_BLAST:     SpellId = SpellId(27808);
+pub const SPELL_CHAINS_OF_KT:   SpellId = SpellId(28410);
+pub const SPELL_SHADOW_FISSURE: SpellId = SpellId(27810);
+pub const SPELL_GLACIAL_BLAST:  SpellId = SpellId(29258);
 
 /// Entry ID for Kel'Thuzad himself (emerges from sarcophagus in Phase 2).
 pub const ENTRY_SARCOPHAGUS_KT: u32 = 15990;

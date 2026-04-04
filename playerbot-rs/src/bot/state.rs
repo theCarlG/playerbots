@@ -14,7 +14,7 @@ use crate::{
         group_state::GroupState,
         timers::BotTimers,
     },
-    ffi::{interface::BotInterface, BotWorldSnapshot, UnitHandle},
+    ffi::{interface::BotInterface, BotRole, BotWorldSnapshot, UnitHandle},
 };
 
 /// Which WoW class this bot is.
@@ -56,17 +56,6 @@ pub enum PlayerSpec {
     WarlockAffliction, WarlockDemonology, WarlockDestruction,
     // Death Knight
     DeathKnightBlood, DeathKnightFrost, DeathKnightUnholy,
-}
-
-/// Role bitmask (mirrors C-side role field in BotUnitSnapshot).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct BotRole(pub u8);
-
-impl BotRole {
-    pub const NONE: Self = Self(0);
-    pub const TANK: Self = Self(1);
-    pub const HEAL: Self = Self(2);
-    pub const DPS:  Self = Self(4);
 }
 
 /// The complete per-bot AI state.

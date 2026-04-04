@@ -7,6 +7,7 @@
 /// Throttled at 5 s so we don't poll every tick.  In combat the subtree
 /// returns Failure immediately so it never interrupts the rotation.
 use crate::engine::bt_nodes::{BtNode, BtResult, action, cond, seq, throttle};
+use crate::ffi::SpellId;
 
 /// Who can receive this buff.
 #[derive(Clone, Copy)]
@@ -25,23 +26,23 @@ pub enum BuffTarget {
 #[derive(Clone)]
 pub struct GroupBuff {
     /// Spell ID to cast.
-    pub spell_id: u32,
+    pub spell_id: SpellId,
     /// Aura ID to check (often == spell_id; use the buff's spell effect ID when different).
-    pub aura_id:  u32,
+    pub aura_id:  SpellId,
     /// Who should receive the buff.
     pub target:   BuffTarget,
 }
 
 impl GroupBuff {
-    pub fn on_self(spell_id: u32) -> Self {
+    pub fn on_self(spell_id: SpellId) -> Self {
         Self { spell_id, aura_id: spell_id, target: BuffTarget::Me }
     }
 
-    pub fn on_party(spell_id: u32) -> Self {
+    pub fn on_party(spell_id: SpellId) -> Self {
         Self { spell_id, aura_id: spell_id, target: BuffTarget::AnyMember }
     }
 
-    pub fn on_party_aura(spell_id: u32, aura_id: u32) -> Self {
+    pub fn on_party_aura(spell_id: SpellId, aura_id: SpellId) -> Self {
         Self { spell_id, aura_id, target: BuffTarget::AnyMember }
     }
 }

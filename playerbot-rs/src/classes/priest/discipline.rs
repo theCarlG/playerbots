@@ -9,6 +9,7 @@ use crate::{
         bt_nodes::{BtNode, BtResult, action, cd_gate, cond, gcd_gate, sel, seq},
         context::TickContext,
     },
+    ffi::SpellId,
 };
 
 pub fn build_tree() -> Box<dyn BtNode> {
@@ -30,7 +31,7 @@ pub fn build_tree() -> Box<dyn BtNode> {
             use crate::combat::targeting::find_heal_target;
             if let Some(target) = find_heal_target(ctx, 0.80) {
                 if !ctx.interface.has_aura(target, POWER_WORD_SHIELD)
-                    && !ctx.interface.has_aura(target, 6788) {
+                    && !ctx.interface.has_aura(target, SpellId(6788)) {
                     if ctx.interface.cast_spell(POWER_WORD_SHIELD, target) {
                         ctx.timers.on_spell_cast(POWER_WORD_SHIELD, ctx.server_time_ms);
                         return BtResult::Success;

@@ -18,14 +18,15 @@
 ///   - Deep Breath from Phase 2 may still occur briefly at landing.
 
 use super::{EncounterEvent, EncounterFsm};
+use crate::ffi::SpellId;
 
 pub const ENTRY_ONYXIA: u32 = 10184;
 
 /// Spell / aura IDs
-pub const SPELL_DEEP_BREATH:    u32 = 22267; // Phase 2 dive bomb
-pub const SPELL_FLAME_BREATH:   u32 = 18435; // Frontal cone
-pub const SPELL_FIREBALL_VOLLEY:u32 = 18392; // Phase 2 AoE fireball
-pub const SPELL_WING_BUFFET:    u32 = 18500; // Knockback
+pub const SPELL_DEEP_BREATH:    SpellId = SpellId(22267); // Phase 2 dive bomb
+pub const SPELL_FLAME_BREATH:   SpellId = SpellId(18435); // Frontal cone
+pub const SPELL_FIREBALL_VOLLEY:SpellId = SpellId(18392); // Phase 2 AoE fireball
+pub const SPELL_WING_BUFFET:    SpellId = SpellId(18500); // Knockback
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OnyxiaPhase {

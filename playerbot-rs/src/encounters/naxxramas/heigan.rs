@@ -26,15 +26,16 @@
 ///   - During Phase 2: follow the eruption rotation on the dance floor.
 
 use super::super::{EncounterEvent, EncounterFsm};
+use crate::ffi::SpellId;
 
 /// Spell IDs for Heigan's eruption in each zone.
-pub const SPELL_ERUPTION_ZONE1: u32 = 29998;
-pub const SPELL_ERUPTION_ZONE2: u32 = 30004;
-pub const SPELL_ERUPTION_ZONE3: u32 = 30006;
-pub const SPELL_ERUPTION_ZONE4: u32 = 30010;
+pub const SPELL_ERUPTION_ZONE1: SpellId = SpellId(29998);
+pub const SPELL_ERUPTION_ZONE2: SpellId = SpellId(30004);
+pub const SPELL_ERUPTION_ZONE3: SpellId = SpellId(30006);
+pub const SPELL_ERUPTION_ZONE4: SpellId = SpellId(30010);
 
 /// Plague Cloud (damage aura on the dance floor when not dancing correctly).
-pub const SPELL_PLAGUE_CLOUD:   u32 = 29350;
+pub const SPELL_PLAGUE_CLOUD:   SpellId = SpellId(29350);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeiganPhase {

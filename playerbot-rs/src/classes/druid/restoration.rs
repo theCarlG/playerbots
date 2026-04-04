@@ -9,12 +9,13 @@ use crate::{
         bt_nodes::{BtNode, BtResult, action, cd_gate, cond, gcd_gate, sel, seq},
         context::TickContext,
     },
+    ffi::SpellId,
 };
 
 pub fn build_tree() -> Box<dyn BtNode> {
     sel(vec![
         // Rebirth — combat res on dead group member (critical utility)
-        gcd_gate(cd_gate(0, action(|_| BtResult::Failure))), // placeholder for rebirth logic
+        gcd_gate(cd_gate(SpellId(0), action(|_| BtResult::Failure))), // placeholder for rebirth logic
 
         // Innervate self when very low mana
         seq(vec![

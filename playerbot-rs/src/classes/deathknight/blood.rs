@@ -6,6 +6,7 @@
 pub fn build_tree() -> Box<dyn crate::engine::bt_nodes::BtNode> {
     use crate::engine::bt_nodes::{BtResult, action, cast_on_current_target, cd_gate,
                                     cond, gcd_gate, sel, seq};
+    use crate::ffi::SpellId;
 
     #[cfg(feature = "wotlk")]
     use crate::data::spells::vanilla::deathknight::*;
@@ -42,12 +43,12 @@ pub fn build_tree() -> Box<dyn crate::engine::bt_nodes::BtNode> {
                 // Icy Touch + Plague Strike — diseases
                 seq(vec![
                     cond(|ctx| ctx.current_target().map_or(false, |t|
-                        !ctx.interface.has_aura(t, 55095))), // Frost Fever
+                        !ctx.interface.has_aura(t, SpellId(55095)))), // Frost Fever
                     cast_on_current_target(ICY_TOUCH),
                 ]),
                 seq(vec![
                     cond(|ctx| ctx.current_target().map_or(false, |t|
-                        !ctx.interface.has_aura(t, 55078))), // Blood Plague
+                        !ctx.interface.has_aura(t, SpellId(55078)))), // Blood Plague
                     cast_on_current_target(PLAGUE_STRIKE),
                 ]),
 

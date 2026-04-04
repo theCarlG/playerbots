@@ -10,9 +10,10 @@ use crate::{
                     cond, gcd_gate, sel, seq},
         context::TickContext,
     },
+    ffi::SpellId,
 };
 
-const CURSE_OF_AGONY: u32 = 11722;
+const CURSE_OF_AGONY: SpellId = SpellId(11722);
 
 pub fn build_tree() -> Box<dyn BtNode> {
     sel(vec![

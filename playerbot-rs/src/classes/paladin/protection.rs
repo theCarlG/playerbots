@@ -10,11 +10,12 @@ use crate::{
                     cond, gcd_gate, sel, seq},
         context::TickContext,
     },
+    ffi::SpellId,
 };
 
 // Holy Shield: 20925 rank 1, 20927 rank 2, 20928 rank 3, 27179 rank 4
-const HOLY_SHIELD: u32 = 27179; // rank 4 (talent)
-const RIGHTEOUS_FURY: u32 = 25780;
+const HOLY_SHIELD: SpellId = SpellId(27179); // rank 4 (talent)
+const RIGHTEOUS_FURY: SpellId = SpellId(25780);
 
 pub fn build_tree() -> Box<dyn BtNode> {
     sel(vec![
@@ -114,6 +115,6 @@ fn self_has_seal(ctx: &TickContext<'_>) -> bool {
     if me == 0 { return false; }
     ctx.interface.has_aura(me, SEAL_OF_RIGHTEOUSNESS)
         || ctx.interface.has_aura(me, SEAL_OF_COMMAND)
-        || ctx.interface.has_aura(me, 21082)
-        || ctx.interface.has_aura(me, 20920)
+        || ctx.interface.has_aura(me, SpellId(21082))
+        || ctx.interface.has_aura(me, SpellId(20920))
 }
