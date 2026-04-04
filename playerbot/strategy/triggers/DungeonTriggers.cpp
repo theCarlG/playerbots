@@ -249,6 +249,30 @@ bool CloseToCreatureTrigger::IsActive()
     return false;
 }
 
+bool TooFarFromCreatureTrigger::IsActive()
+{
+    if (bot->IsInWorld() && !bot->IsBeingTeleported())
+    {
+        const float searchRadius = 60.0f;
+        std::list<Unit*> units;
+        MaNGOS::AllCreaturesOfEntryInRangeCheck u_check(bot, creatureID, searchRadius);
+        MaNGOS::UnitListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(units, u_check);
+        Cell::VisitAllObjects(bot, searcher, searchRadius);
+
+        for (Unit* unit : units)
+        {
+            Creature* creature = dynamic_cast<Creature*>(unit);
+            if (creature && creature->IsAlive())
+            {
+                if (bot->GetDistance(creature) > range)
+                    return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 bool ItemReadyTrigger::IsActive()
 {
     // Check if the bot has the item or if it has cheats enabled

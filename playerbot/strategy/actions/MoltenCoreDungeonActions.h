@@ -77,6 +77,34 @@ namespace ai
         BaronGeddonRunAwayAction(PlayerbotAI* ai) : RunAwayFromGroupAction(ai, "baron geddon run away") {}
     };
 
+    // Flamewaker Imps (entry 11666): melee DPS back away so ranged handles them
+    class FlamewakeriampsMoveAwayAction : public MoveAwayFromCreature
+    {
+    public:
+        FlamewakeriampsMoveAwayAction(PlayerbotAI* ai) : MoveAwayFromCreature(ai, "move away from flamewaker imps", 11666, 16.0f) {}
+    };
+
+    // Stone Elemental / Lava Surger (entry 12076): all bots stack in melee to prevent Surge
+    class MoveCloseToStoneElementalAction : public MoveCloseToCreature
+    {
+    public:
+        MoveCloseToStoneElementalAction(PlayerbotAI* ai) : MoveCloseToCreature(ai, "move close to stone elemental", 12076, 4.0f) {}
+    };
+
+    // Core Hound (entry 11671): tank drags it away from group to avoid cleaving the raid
+    class TankRunCoreHoundFromGroupAction : public RunAwayFromGroupAction
+    {
+    public:
+        TankRunCoreHoundFromGroupAction(PlayerbotAI* ai) : RunAwayFromGroupAction(ai, "tank run core hound from group") {}
+    };
+
+    // Baron Geddon Inferno: all bots flee while Inferno channels
+    class BaronGeddonInfernoFleeAction : public MoveAwayFromCreature
+    {
+    public:
+        BaronGeddonInfernoFleeAction(PlayerbotAI* ai) : MoveAwayFromCreature(ai, "baron geddon inferno flee", 12056, 15.0f) {}
+    };
+
     // Lucifron
     class LucifronEnableFightStrategyAction : public ChangeAllStrategyAction
     {

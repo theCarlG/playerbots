@@ -91,6 +91,57 @@ bool RunAwayFromGroupAction::IsHazardNearby(const WorldPosition& point, const st
     return false;
 }
 
+bool MoveCloseToCreature::Execute(Event& event)
+{
+    const float searchRadius = 60.0f;
+    std::list<Unit*> units;
+    MaNGOS::AllCreaturesOfEntryInRangeCheck u_check(bot, creatureID, searchRadius);
+    MaNGOS::UnitListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(units, u_check);
+    Cell::VisitAllObjects(bot, searcher, searchRadius);
+
+    Creature* closestCreature = nullptr;
+    float closestDist = 9999.0f;
+    for (Unit* unit : units)
+    {
+        Creature* creature = dynamic_cast<Creature*>(unit);
+        if (creature && creature->IsAlive())
+        {
+            float dist = bot->GetDistance(creature);
+            if (dist < closestDist)
+            {
+                closestDist = dist;
+                closestCreature = creature;
+            }
+        }
+    }
+
+    if (!closestCreature)
+        return false;
+
+    float dx = bot->GetPositionX() - closestCreature->GetPositionX();
+    float dy = bot->GetPositionY() - closestCreature->GetPositionY();
+    float dist = sqrt(dx * dx + dy * dy);
+    if (dist < 0.1f)
+        return false;
+
+    dx /= dist;
+    dy /= dist;
+
+    float targetX = closestCreature->GetPositionX() + dx * targetRange;
+    float targetY = closestCreature->GetPositionY() + dy * targetRange;
+    WorldPosition targetPos(bot->GetMapId(), targetX, targetY, bot->GetPositionZ(), 0.0f);
+    targetPos.setZ(targetPos.getHeight());
+
+    return MoveTo(bot->GetMapId(), targetPos.getX(), targetPos.getY(), targetPos.getZ(), false, false, false, true);
+}
+
+bool MoveCloseToCreature::isPossible()
+{
+    if (MovementAction::isPossible())
+        return ai->CanMove();
+    return false;
+}
+
 bool MoveAwayFromHazard::Execute(Event& event)
 {
     const std::list<HazardPosition>& hazards = AI_VALUE(std::list<HazardPosition>, "hazards");

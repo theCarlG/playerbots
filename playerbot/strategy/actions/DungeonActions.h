@@ -40,6 +40,21 @@ namespace ai
         bool IsHazardNearby(const WorldPosition& point, const std::list<HazardPosition>& hazards) const;
     };
 
+    // Moves the bot to melee range of the nearest alive creature of the given entry.
+    // Used for "stack on mob" mechanics where everyone must be in melee range.
+    class MoveCloseToCreature : public MovementAction
+    {
+    public:
+        MoveCloseToCreature(PlayerbotAI* ai, std::string name, uint32 creatureID, float targetRange)
+        : MovementAction(ai, name), creatureID(creatureID), targetRange(targetRange) {}
+        bool Execute(Event& event) override;
+        bool isPossible() override;
+
+    protected:
+        uint32 creatureID;
+        float targetRange;
+    };
+
     class MoveAwayFromCreature : public MovementAction
     {
     public:

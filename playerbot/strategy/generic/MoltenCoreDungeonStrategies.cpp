@@ -37,6 +37,25 @@ void MoltenCoreDungeonStrategy::InitCombatTriggers(std::list<TriggerNode*>& trig
     triggers.push_back(new TriggerNode(
         "start ragnaros fight",
         NextAction::array(0, new NextAction("enable ragnaros fight strategy", 100.0f), NULL)));
+
+    // Flamewaker Imps (entry 11666): melee DPS back off, tank holds them, ranged handles them
+    Player* bot = ai->GetBot();
+    if (!ai->IsRanged(bot) && !ai->IsHeal(bot) && !ai->IsTank(bot))
+    {
+        triggers.push_back(new TriggerNode(
+            "flamewaker imps too close",
+            NextAction::array(0, new NextAction("move away from flamewaker imps", ACTION_MOVE + 2), NULL)));
+    }
+
+    // Stone Elemental / Lava Surger (entry 12076): everyone stacks in melee to prevent Surge charges
+    triggers.push_back(new TriggerNode(
+        "stone elemental too far",
+        NextAction::array(0, new NextAction("move close to stone elemental", ACTION_MOVE + 1), NULL)));
+
+    // Core Hound (entry 11671): tank drags Core Hound away from raid to avoid Flame Breath cleave
+    triggers.push_back(new TriggerNode(
+        "tank fighting core hound near group",
+        NextAction::array(0, new NextAction("tank run core hound from group", ACTION_MOVE + 3), NULL)));
 }
 
 void MoltenCoreDungeonStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
@@ -117,6 +136,11 @@ void MagmadarFightStrategy::InitCombatMultipliers(std::list<Multiplier*>& multip
 
 void BaronGeddonFightStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 {
+    // Inferno: channeled AoE ring ~10 yards — all bots (including tank) must flee (priority 160 > Living Bomb 150)
+    triggers.push_back(new TriggerNode(
+        "baron geddon inferno active",
+        NextAction::array(0, new NextAction("baron geddon inferno flee", 160.0f), NULL)));
+
     // Living Bomb: bot must immediately run away from group — very high priority
     triggers.push_back(new TriggerNode(
         "has living bomb debuff",

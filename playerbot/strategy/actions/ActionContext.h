@@ -375,6 +375,10 @@ namespace ai
             creators["enable baron geddon fight strategy"] = [](PlayerbotAI* ai) { return new BaronGeddonEnableFightStrategyAction(ai); };
             creators["disable baron geddon fight strategy"] = [](PlayerbotAI* ai) { return new BaronGeddonDisableFightStrategyAction(ai); };
             creators["baron geddon run away"] = [](PlayerbotAI* ai) { return new BaronGeddonRunAwayAction(ai); };
+            creators["baron geddon inferno flee"] = [](PlayerbotAI* ai) { return new BaronGeddonInfernoFleeAction(ai); };
+            creators["move away from flamewaker imps"] = [](PlayerbotAI* ai) { return new FlamewakeriampsMoveAwayAction(ai); };
+            creators["move close to stone elemental"] = [](PlayerbotAI* ai) { return new MoveCloseToStoneElementalAction(ai); };
+            creators["tank run core hound from group"] = [](PlayerbotAI* ai) { return new TankRunCoreHoundFromGroupAction(ai); };
 
             creators["enable lucifron fight strategy"] = [](PlayerbotAI* ai) { return new LucifronEnableFightStrategyAction(ai); };
             creators["disable lucifron fight strategy"] = [](PlayerbotAI* ai) { return new LucifronDisableFightStrategyAction(ai); };

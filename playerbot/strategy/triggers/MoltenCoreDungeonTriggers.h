@@ -52,7 +52,7 @@ namespace ai
         MCRuneInSightTrigger(PlayerbotAI* ai) : ValueTrigger(ai, "mc rune in sight", 1)
         {
             qualifier = "and::{"
-                "action possible::use id::17333,"
+                "or::{action possible::use id::17333,action possible::use id::22754},"
                 "has object::go usable filter::go trapped filter::entry filter::{gos in sight,mc runes},"
                 "not::has object::entry filter::{gos close,mc runes}"
                 "}";
@@ -209,5 +209,38 @@ namespace ai
     {
     public:
         SonsOfFlameHazardTrigger(PlayerbotAI* ai) : CloseToCreatureHazardTrigger(ai, "sons of flame hazard", 12100, 8.0f, 30) {}
+    };
+
+    // Flamewaker Imps (entry 11666): fast trash before Lucifron; melee DPS back off so ranged handles them
+    class FlamewakerimpsCloseTrigger : public CloseToCreatureTrigger
+    {
+    public:
+        FlamewakerimpsCloseTrigger(PlayerbotAI* ai) : CloseToCreatureTrigger(ai, "flamewaker imps too close", 11666, 15.0f) {}
+    };
+
+    // Stone Elemental / Lava Surger trash (entry 12076): Surge charges random distant targets
+    // Everyone stacks in melee range to remove valid distant targets
+    class StoneElementalTooFarTrigger : public TooFarFromCreatureTrigger
+    {
+    public:
+        StoneElementalTooFarTrigger(PlayerbotAI* ai) : TooFarFromCreatureTrigger(ai, "stone elemental too far", 12076, 6.0f) {}
+    };
+
+    // Core Hound (entry 11671): directional Flame Breath — tank drags it away from raid
+    // Fires when bot is a tank, current target is a Core Hound, and group members are close
+    class TankFightingCoreHoundNearGroupTrigger : public Trigger
+    {
+    public:
+        TankFightingCoreHoundNearGroupTrigger(PlayerbotAI* ai) : Trigger(ai, "tank fighting core hound near group", 2) {}
+        bool IsActive() override;
+    };
+
+    // Baron Geddon Inferno: channeled AoE ring ~10 yards — all bots must flee
+    // Fires when Baron Geddon (entry 12056) nearby has the Inferno aura active
+    class BaronGeddonInfernoActiveTrigger : public Trigger
+    {
+    public:
+        BaronGeddonInfernoActiveTrigger(PlayerbotAI* ai) : Trigger(ai, "baron geddon inferno active", 1) {}
+        bool IsActive() override;
     };
 }

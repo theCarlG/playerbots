@@ -143,6 +143,23 @@ namespace ai
         float range;
     };
 
+    // Fires when the nearest alive creature of given entry exists within searchRadius but is farther
+    // than `range` yards from this bot (used for "stack on mob" mechanics like elemental surges).
+    class TooFarFromCreatureTrigger : public Trigger
+    {
+    public:
+        TooFarFromCreatureTrigger(PlayerbotAI* ai, std::string name, uint32 creatureID, float range)
+        : Trigger(ai, name, 1)
+        , creatureID(creatureID)
+        , range(range) {}
+
+        bool IsActive() override;
+
+    protected:
+        uint32 creatureID;
+        float range;
+    };
+
     class ItemReadyTrigger : public Trigger
     {
     public:

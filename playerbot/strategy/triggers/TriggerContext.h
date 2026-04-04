@@ -314,6 +314,7 @@ namespace ai
             creators["start baron geddon fight"] = [](PlayerbotAI* ai) { return new BaronGeddonStartFightTrigger(ai); };
             creators["end baron geddon fight"] = [](PlayerbotAI* ai) { return new BaronGeddonEndFightTrigger(ai); };
             creators["has living bomb debuff"] = [](PlayerbotAI* ai) { return new HasLivingBombDebuffTrigger(ai); };
+            creators["baron geddon inferno active"] = [](PlayerbotAI* ai) { return new BaronGeddonInfernoActiveTrigger(ai); };
 
             creators["start lucifron fight"] = [](PlayerbotAI* ai) { return new LucifronStartFightTrigger(ai); };
             creators["end lucifron fight"] = [](PlayerbotAI* ai) { return new LucifronEndFightTrigger(ai); };
@@ -343,6 +344,9 @@ namespace ai
             creators["end ragnaros fight"] = [](PlayerbotAI* ai) { return new RagnarosEndFightTrigger(ai); };
             creators["ragnaros too close"] = [](PlayerbotAI* ai) { return new RagnarosTooCloseTrigger(ai); };
             creators["sons of flame hazard"] = [](PlayerbotAI* ai) { return new SonsOfFlameHazardTrigger(ai); };
+            creators["flamewaker imps too close"] = [](PlayerbotAI* ai) { return new FlamewakerimpsCloseTrigger(ai); };
+            creators["stone elemental too far"] = [](PlayerbotAI* ai) { return new StoneElementalTooFarTrigger(ai); };
+            creators["tank fighting core hound near group"] = [](PlayerbotAI* ai) { return new TankFightingCoreHoundNearGroupTrigger(ai); };
 
             creators["fire protection potion ready"] = [](PlayerbotAI* ai) { return new FireProtectionPotionReadyTrigger(ai); };
 
