@@ -23,6 +23,15 @@ namespace ai
             if (AI_VALUE2(bool, "trigger active", "castnc"))
                 return false;
 
+            if (ai->HasStrategy("wander", BotState::BOT_STATE_NON_COMBAT))
+            {
+                float dist = AI_VALUE2(float, "distance", "master target");
+                bool wanderTooFar = dist > ai->GetRange("wandermax");
+
+                if (wanderTooFar)
+                    return false;
+            }
+
             return true;
         }
     };
@@ -130,14 +139,14 @@ namespace ai
     class CanFightEliteValue : public BoolCalculatedValue
     {
     public:
-        CanFightEliteValue(PlayerbotAI* ai) : BoolCalculatedValue(ai, "can fight elite") {}
+        CanFightEliteValue(PlayerbotAI* ai) : BoolCalculatedValue(ai, "can fight elite", 2) {}
         virtual bool Calculate() override { return bot->GetGroup() && AI_VALUE2(bool, "group and", "can fight equal") && AI_VALUE2(bool, "group and", "following party") && !AI_VALUE2(bool, "group or", "should sell,can sell"); };
     };
 
     class CanFightBossValue : public BoolCalculatedValue
     {
     public:
-        CanFightBossValue(PlayerbotAI* ai) : BoolCalculatedValue(ai, "can fight boss") {}
+        CanFightBossValue(PlayerbotAI* ai) : BoolCalculatedValue(ai, "can fight boss", 2) {}
         virtual bool Calculate() override { return bot->GetGroup() && bot->GetGroup()->GetMembersCount() > 3 && AI_VALUE2(bool, "group and", "can fight equal") && AI_VALUE2(bool, "group and", "following party") && !AI_VALUE2(bool, "group or", "should sell,can sell"); };
     };        
 

@@ -52,6 +52,7 @@
 #include "LuaEngine/LuaEngine.h"
 #endif
 #include "AI/ScriptDevAI/ScriptDevAIMgr.h"
+#include "strategy/values/GuildValues.h"
 
 using namespace ai;
 
@@ -1291,6 +1292,7 @@ bool PlayerbotAI::IsAllowedCommand(std::string text)
     if (unsecuredCommands.empty())
     {
         unsecuredCommands.insert("who");
+        unsecuredCommands.insert("where");
         unsecuredCommands.insert("wts");
         unsecuredCommands.insert("sendmail");
         unsecuredCommands.insert("invite");
@@ -1926,6 +1928,7 @@ void PlayerbotAI::ChangeEngine(BotState type)
     }
 }
 
+
 void PlayerbotAI::DoNextAction(bool min)
 {
     if (!bot->IsInWorld() || bot->IsBeingTeleported() || (GetMaster() && GetMaster()->IsBeingTeleported()))
@@ -1954,7 +1957,7 @@ void PlayerbotAI::DoNextAction(bool min)
 
     if (minimal)
     {
-        if(!bot->isAFK() && !bot->InBattleGround() && !HasRealPlayerMaster())
+        if (!MovementAction::MinimalMove(this) && !bot->isAFK() && !bot->InBattleGround() && !HasRealPlayerMaster())
             bot->ToggleAFK();
 
         SetAIInternalUpdateDelay(sPlayerbotAIConfig.passiveDelay);
@@ -3375,6 +3378,11 @@ bool PlayerbotAI::TellPlayerNoFacing(Player* player, std::string text, Playerbot
     {
         whispers[text] = time(0);
 
+        if (m_recordMessages)
+        {
+            m_recordedMessages.push_back(text);
+        }
+
         std::vector<Player*> recievers;
 
         ChatMsg type = CHAT_MSG_SYSTEM;
@@ -3393,6 +3401,9 @@ bool PlayerbotAI::TellPlayerNoFacing(Player* player, std::string text, Playerbot
 
         if (type == CHAT_MSG_SYSTEM && (sPlayerbotAIConfig.randomBotSayWithoutMaster || HasStrategy("debug", BotState::BOT_STATE_NON_COMBAT)))
             type = CHAT_MSG_SAY;
+
+        if (type == CHAT_MSG_SYSTEM && player->isRealPlayer())
+            type = CHAT_MSG_WHISPER;
 
         if ((sPlayerbotAIConfig.hasLog("chat_log.csv") && HasStrategy("debug log", BotState::BOT_STATE_NON_COMBAT)) || HasStrategy("debug logname", BotState::BOT_STATE_NON_COMBAT))
         {
@@ -3453,7 +3464,7 @@ bool PlayerbotAI::TellPlayerNoFacing(Player* player, std::string text, Playerbot
                 if (!IsTellAllowed(player, securityLevel))
                     return false;
 
-                if (!HasRealPlayerMaster())
+                if (!HasRealPlayerMaster() && !player->isRealPlayer())
                     return false;
 
                 whispers[text] = time(0);
@@ -5826,10 +5837,28 @@ ActivePiorityType PlayerbotAI::GetPriorityType()
         return ActivePiorityType::IN_BATTLEGROUND;
 
     if (!WorldPosition(bot).isOverworld())
-        return ActivePiorityType::IN_INSTANCE;
+    {
+        if (!sPlayerbotAIConfig.enableMinimalMove)
+            return ActivePiorityType::IN_INSTANCE;
+        else
+        {
+            AiObjectContext* context = GetAiObjectContext();
+            LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
+            if (lastMove.lastPath.empty())
+                return ActivePiorityType::IN_INSTANCE;
+        }
+    }
 
     if (HasPlayerNearby())
         return ActivePiorityType::VISIBLE_FOR_PLAYER;
+
+    if (sPlayerbotAIConfig.guildOrderAlwaysActive && bot->IsInWorld() && bot->GetGuildId())
+    {
+        AiObjectContext* context = GetAiObjectContext();
+        GuildOrder guildOrder = AI_VALUE(GuildOrder, "guild order");
+        if (guildOrder.IsValid())
+            return ActivePiorityType::IS_ALWAYS_ACTIVE;
+    }
 
     if (sServerFacade.IsInCombat(bot))
         return ActivePiorityType::IN_COMBAT;
@@ -5860,6 +5889,14 @@ ActivePiorityType PlayerbotAI::GetPriorityType()
 
     if (isLFG)
         return ActivePiorityType::IN_LFG;
+
+    if (sPlayerbotAIConfig.enableMinimalMove)
+    {
+        AiObjectContext* context = GetAiObjectContext();
+        LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
+        if (lastMove.lastPath.empty() && !urand(0, 5))
+            return ActivePiorityType::NO_PATH;
+    }
 
     //If has real players - slow down continents without player
     //This means we first disable bots in a different continent/area.
@@ -5905,8 +5942,14 @@ std::pair<uint32, uint32> PlayerbotAI::GetPriorityBracket(ActivePiorityType type
     case ActivePiorityType::IN_INSTANCE:
         return { 0,5 };
     case ActivePiorityType::IS_ALWAYS_ACTIVE:
+        return { 0,0 };
     case ActivePiorityType::IN_COMBAT:
+    {
+        if (sPlayerbotAIConfig.limitCombatActivity)
+            return { 99,100 };
+
         return { 0,10 };
+    }
     case ActivePiorityType::IN_BG_QUEUE:
         return { 0,20 };
     case ActivePiorityType::IN_LFG:
@@ -5916,9 +5959,11 @@ std::pair<uint32, uint32> PlayerbotAI::GetPriorityBracket(ActivePiorityType type
     case ActivePiorityType::PLAYER_FRIEND:
     case ActivePiorityType::PLAYER_GUILD:
         return { 0,50 };
+    case ActivePiorityType::NO_PATH:
+        return { 50, 99};
     case ActivePiorityType::IN_ACTIVE_AREA:
     case ActivePiorityType::IN_EMPTY_SERVER:
-        return { 50,100 };
+        return { 50,100 }; //Note lower 100 means multiply by activity percentage.
     case ActivePiorityType::IN_ACTIVE_MAP:
         return { 70,100 };
     case ActivePiorityType::IN_INACTIVE_MAP:
@@ -5952,6 +5997,7 @@ bool PlayerbotAI::AllowActive(ActivityType activityType)
         case ActivePiorityType::IN_LFG:
         case ActivePiorityType::PLAYER_FRIEND:
         case ActivePiorityType::PLAYER_GUILD:
+        case ActivePiorityType::NO_PATH:
         case ActivePiorityType::IN_ACTIVE_AREA:
         case ActivePiorityType::IN_EMPTY_SERVER:
         case ActivePiorityType::IN_ACTIVE_MAP:
@@ -5970,14 +6016,17 @@ bool PlayerbotAI::AllowActive(ActivityType activityType)
         case ActivePiorityType::IN_INSTANCE:
         case ActivePiorityType::IS_ALWAYS_ACTIVE:
             return true;
-            break;
         case ActivePiorityType::VISIBLE_FOR_PLAYER:
+            if (sPlayerbotAIConfig.forceActiveWhenNearPlayer)
+                return true;
+            break;
         case ActivePiorityType::IN_COMBAT:
         case ActivePiorityType::NEARBY_PLAYER:
         case ActivePiorityType::IN_BG_QUEUE:
         case ActivePiorityType::IN_LFG:
         case ActivePiorityType::PLAYER_FRIEND:
         case ActivePiorityType::PLAYER_GUILD:
+        case ActivePiorityType::NO_PATH:
         case ActivePiorityType::IN_ACTIVE_AREA:
         case ActivePiorityType::IN_EMPTY_SERVER:
         case ActivePiorityType::IN_ACTIVE_MAP:
@@ -7828,10 +7877,10 @@ static const uint32 uPriorizedSharpStoneIds[8] =
     SOLID_SHARPENING_DISPLAYID, HEAVY_SHARPENING_DISPLAYID, COARSE_SHARPENING_DISPLAYID, ROUGH_SHARPENING_DISPLAYID
 };
 
-static const uint32 uPriorizedWeightStoneIds[7] =
+static const uint32 uPriorizedWeightStoneIds[8] =
 {
-    ADAMANTITE_WEIGHTSTONE_DISPLAYID, FEL_WEIGHTSTONE_DISPLAYID, DENSE_WEIGHTSTONE_DISPLAYID, SOLID_WEIGHTSTONE_DISPLAYID,
-    HEAVY_WEIGHTSTONE_DISPLAYID, COARSE_WEIGHTSTONE_DISPLAYID, ROUGH_WEIGHTSTONE_DISPLAYID
+    ADAMANTITE_WEIGHTSTONE_DISPLAYID, FEL_WEIGHTSTONE_DISPLAYID, ELEMENTAL_SHARPENING_DISPLAYID, DENSE_WEIGHTSTONE_DISPLAYID,
+    SOLID_WEIGHTSTONE_DISPLAYID, HEAVY_WEIGHTSTONE_DISPLAYID, COARSE_WEIGHTSTONE_DISPLAYID, ROUGH_WEIGHTSTONE_DISPLAYID
 };
 
 /**
@@ -8145,7 +8194,11 @@ void PlayerbotAI::StopMoving()
     if (bot->IsBeingTeleportedFar())
         return;
 
-    bot->m_movementInfo.SetMovementFlags(MOVEFLAG_NONE);
+    if (bot->GetTransport())
+        bot->m_movementInfo.SetMovementFlags(MOVEFLAG_ONTRANSPORT);
+    else
+        bot->m_movementInfo.SetMovementFlags(MOVEFLAG_NONE);
+
     bot->InterruptMoving(true);
     MovementInfo mInfo = bot->m_movementInfo;
     float x, y, z;

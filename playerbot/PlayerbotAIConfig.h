@@ -137,8 +137,10 @@ public:
     std::list<std::string> toggleAlwaysOnlineAccounts;
     std::list<std::string> toggleAlwaysOnlineChars;
     bool enableRandomTeleports;
+    bool enableMinimalMove;
     uint32 randomBotTeleportDistance;
     bool randomBotTeleportNearPlayer;
+    uint32 transportTeleportType;
     uint32 randomBotTeleportNearPlayerMaxAmount;
     float randomBotTeleportNearPlayerMaxAmountRadius;
     uint32 randomBotTeleportMinInterval, randomBotTeleportMaxInterval;
@@ -168,6 +170,7 @@ public:
     uint32 minRandomBotReviveTime, maxRandomBotReviveTime;
     uint32 minRandomBotPvpTime, maxRandomBotPvpTime;
     uint32 randomBotsMaxLoginsPerInterval;
+    uint32 randomBotsPerInterval;
     uint32 minRandomBotsPriceChangeInterval, maxRandomBotsPriceChangeInterval;
     //Auction house settings
     bool shouldQueryAHListingsOutsideOfAH;
@@ -231,6 +234,9 @@ public:
     float playerbotsXPrate;
     bool disableBotOptimizations;
     bool disableActivityPriorities;
+    bool forceActiveWhenNearPlayer;
+    bool limitCombatActivity;
+    bool guildOrderAlwaysActive;
     uint32 botActiveAlone;
     uint32 diffWithPlayer;
     uint32 diffEmpty;
@@ -244,6 +250,9 @@ public:
     bool randomBotFormGuild;
     bool randomBotRandomPassword;
     bool inviteChat;
+    bool enableOffSpecStrategies;
+    bool useWanderAsDefaultFollowStrategy;
+    std::string defaultFormation;
 
     uint32 guildMaxBotLimit;
 
@@ -413,6 +422,7 @@ public:
 
 private:
     void LoadTalentSpecs();
+    void LoadLLMDefaultPrompts(const std::string& fileName);
 
     Config config;
 };

@@ -100,7 +100,10 @@ void HunterStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
 
     triggers.push_back(new TriggerNode(
         "no ammo",
-        NextAction::array(0, new NextAction("say::no ammo", ACTION_NORMAL), NULL)));
+    NextAction::array(0,
+        new NextAction("equip ammo", ACTION_EMERGENCY),
+        new NextAction("say::no ammo", ACTION_NORMAL),
+        NULL)));
 
     triggers.push_back(new TriggerNode(
         "no pet",
@@ -570,7 +573,10 @@ void HunterStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
 
     triggers.push_back(new TriggerNode(
         "no ammo",
-        NextAction::array(0, new NextAction("say::no ammo", ACTION_NORMAL), NULL)));
+    NextAction::array(0,
+        new NextAction("equip ammo", ACTION_EMERGENCY),
+        new NextAction("say::no ammo", ACTION_NORMAL),
+        NULL)));
 
     triggers.push_back(new TriggerNode(
         "no pet",
@@ -1029,7 +1035,10 @@ void HunterStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
 
     triggers.push_back(new TriggerNode(
         "no ammo",
-        NextAction::array(0, new NextAction("say::no ammo", ACTION_NORMAL), NULL)));
+    NextAction::array(0,
+        new NextAction("equip ammo", ACTION_EMERGENCY),
+        new NextAction("say::no ammo", ACTION_NORMAL),
+        NULL)));
 
     triggers.push_back(new TriggerNode(
         "no pet",

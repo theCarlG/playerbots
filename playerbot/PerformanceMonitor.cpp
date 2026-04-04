@@ -116,8 +116,14 @@ void PerformanceMonitor::PrintStats(bool perTick, bool fullStack, bool showMap)
                     
                     if (showMap)
                     {
-                        if (metric != PERF_MON_TOTAL || (newStack[0].find("PlayerbotAIBase::FullTick") == std::string::npos && (newStack[0].find("PlayerbotAI::UpdateAI") == std::string::npos || newStack[0].find(" I") != newStack[0].size() - 2)))
+                        if (metric != PERF_MON_TOTAL)
                             newStack[0] = newStack[0] + " " + std::to_string(mapId) + (instanceId ? " (" + std::to_string(instanceId) + ")" : "");
+                        else if (newStack[0].find(" I") != std::string::npos)
+                            newStack[0] = newStack[0] + " " + std::to_string(mapId) + (instanceId ? " (" + std::to_string(instanceId) + ")" : "");
+                        else if (newStack[0].find("PlayerbotAI::UpdateAI") == std::string::npos && newStack[0].find("PlayerbotAIBase::FullTick") == std::string::npos)
+                            newStack[0] = newStack[0] + " " + std::to_string(mapId) + (instanceId ? " (" + std::to_string(instanceId) + ")" : "");                           
+                        else
+                            newStack[0] = newStack[0];
                     }                    
 
                     PerformanceData& pd = data[metric][newStack];
@@ -204,7 +210,7 @@ void PerformanceMonitor::PrintStats(bool perTick, bool fullStack, bool showMap)
             float avg = (float)pd.totalTime / (float)pd.count;
             float amount = (float)pd.count / (perTick ? (float)totalCount : 1);
 
-            std::string disName = StackString(stack);
+            std::string disName = StackString(stack, fullStack);
             if (!fullStack && disName.find("|") != std::string::npos)
                 disName = disName.substr(0, disName.find("|")) + disName.substr(disName.find("]"));
 
@@ -255,13 +261,13 @@ void PerformanceMonitor::PrintStats(bool perTick, bool fullStack, bool showMap)
     uint32 maxMapTime = 0;
 
     for (auto& [stack, performanceData] : data[PERF_MON_TOTAL])
-        if (stack[0].find("PlayerbotAI::UpdateAI ") == 0 && stack[0].find(" I") == stack[0].size() - 2)
+        if (stack[0].find("PlayerbotAI::UpdateAI ") == 0)
             maxMapTime = std::max(performanceData.totalTime, maxMapTime);
 
     if (total)
     {
         float avgDiff = data[PERF_MON_TOTAL][{"PlayerbotAIBase::FullTick"}].totalTime / data[PERF_MON_TOTAL][{"PlayerbotAIBase::FullTick"}].count;
-        float aiPerc = (maxMapTime * 100.0f) / (float)(total);
+        float aiPerc = (maxMapTime * 100.0f) / (float)(data[PERF_MON_TOTAL][{"PlayerbotAIBase::FullTick"}].totalTime);
 
         sLog.outString("Estimated avg diff: %3.2f with ai load at least: %5.2f%%", avgDiff, aiPerc);
 

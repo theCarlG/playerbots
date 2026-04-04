@@ -1,11 +1,15 @@
-
 #include "playerbot/playerbot.h"
 #include "ItemCountValue.h"
 #include "Entities/Item.h"
 #include "Entities/ItemPrototype.h"
 #include "Entities/Player.h"
+#include <unordered_map>
+#include <ctime>
 
 using namespace ai;
+
+struct CacheEntry { uint32 count; time_t tick; };
+static std::unordered_map<Player*, std::unordered_map<std::string, CacheEntry>> g_itemCountCache;
 
 static std::list<Item*> Find(PlayerbotAI* ai, std::string qualifier)
 {
@@ -18,14 +22,23 @@ static std::list<Item*> Find(PlayerbotAI* ai, std::string qualifier)
 
 uint32 ItemCountValue::Calculate()
 {
-    uint32 count = 0;
-    std::list<Item*> items = Find(ai, qualifier);
-    for (std::list<Item*>::iterator i = items.begin(); i != items.end(); ++i)
+    Player* bot = ai->GetBot();
+    time_t currentTick = std::time(nullptr);
+
+    auto& botCache = g_itemCountCache[bot];
+    auto it = botCache.find(qualifier);
+    if (it != botCache.end())
     {
-        Item* item = *i;
-        count += item->GetCount();
+        if (it->second.tick == currentTick)
+            return it->second.count;
     }
 
+    uint32 count = 0;
+    std::list<Item*> items = Find(ai, qualifier);
+    for (Item* item : items)
+        count += item->GetCount();
+
+    botCache[qualifier] = CacheEntry{ count, currentTick };
     return count;
 }
 
@@ -66,4 +79,20 @@ std::list<Item*> EquipedUsableTrinketValue::Calculate()
 	}
 
 	return result;
+}
+
+namespace ai {
+    void InvalidateItemCountCache(Player* bot)
+    {
+        if (!bot) return;
+        g_itemCountCache.erase(bot);
+    }
+
+    void InvalidateItemCountCache(Player* bot, const std::string& qualifier)
+    {
+        if (!bot) return;
+        auto it = g_itemCountCache.find(bot);
+        if (it != g_itemCountCache.end())
+            it->second.erase(qualifier);
+    }
 }

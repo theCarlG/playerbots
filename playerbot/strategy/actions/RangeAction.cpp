@@ -58,4 +58,3 @@ void RangeAction::PrintRange(std::string type, Player* requester)
 
     ai->TellPlayer(requester, out.str());
 }
-

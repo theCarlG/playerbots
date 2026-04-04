@@ -25,6 +25,7 @@ namespace ai
         void addAura(uint32 spellId, Unit* target);
     private:
         // Handler methods for each debug command
+        bool HandleDebugHelp(Event& event, Player* requester, const std::string& text, bool isMod);
         bool HandleAvoidScan(Event& event, Player* requester, const std::string& text);
         bool HandleAvoidAdd(Event& event, Player* requester, const std::string& text);
         bool HandleMount(Event& event, Player* requester, const std::string& text);
@@ -45,6 +46,8 @@ namespace ai
         bool HandlePOI(Event& event, Player* requester, const std::string& text);
         bool HandleMotion(Event& event, Player* requester, const std::string& text);
         bool HandleTransport(Event& event, Player* requester, const std::string& text);
+        bool HandlePointOnTrans(Event& event, Player* requester, const std::string& text);
+        bool HandleDoTransport(Event& event, Player* requester, const std::string& text);
         bool HandleOnTrans(Event& event, Player* requester, const std::string& text);
         bool HandleOffTrans(Event& event, Player* requester, const std::string& text);
         bool HandlePathable(Event& event, Player* requester, const std::string& text);

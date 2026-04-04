@@ -202,6 +202,8 @@ bool QuestRelationTravelDestination::IsActive(Player* bot, const PlayerTravelInf
 std::string QuestRelationTravelDestination::GetTitle() const {
     std::ostringstream out;
 
+    out << "talk to ";
+
     if (GetRelation() == 0)
         out << "questgiver ";
     else
@@ -416,16 +418,17 @@ bool QuestObjectiveTravelDestination::IsActive(Player* bot, const PlayerTravelIn
 std::string QuestObjectiveTravelDestination::GetTitle() const {
     std::ostringstream out;
 
-    out << "objective " << (GetObjective() + 1);
-
     if (GetQuestTemplate()->ReqItemCount[GetObjective()] > 0)
-        out << " loot " << ChatHelper::formatItem(sObjectMgr.GetItemPrototype(GetQuestTemplate()->ReqItemId[GetObjective()]), 0, 0) << " from";
+        out << "loot " << ChatHelper::formatItem(sObjectMgr.GetItemPrototype(GetQuestTemplate()->ReqItemId[GetObjective()]), 0, 0) << " from";
     else if (GetEntry() > 0)
-        out << " to kill";
+        out << "kill";
     else
-        out << " to use";
+        out << "use";
 
     out << " " << ChatHelper::formatWorldEntry(GetEntry());
+
+    out << " (objective " << (GetObjective() + 1) << ")";
+
     return out.str();
 }
 
@@ -486,39 +489,44 @@ std::string RpgTravelDestination::GetTitle() const
 {
     std::ostringstream out;
 
-    out << GetShortName();
-
-    if(GetEntry() > 0)
-        out << " npc ";
-    else
-        out << " object ";
-
-    out << ChatHelper::formatWorldEntry(GetEntry());
-
     switch (GetPurpose())
     {    
     case TravelDestinationPurpose::Vendor:
-        out << " to sell items";
+        out << "sell items to";
         break;
     case TravelDestinationPurpose::AH:
-        out << " to put items on auction";
+        out << "put items on auction at";
         break;
     case TravelDestinationPurpose::Repair:
-        out << " to repair";
+        out << "repair at";
         break;
     case TravelDestinationPurpose::Mail:
-        out << " to receive mail";
+        out << "receive mail from";
         break;
     case TravelDestinationPurpose::Trainer:
-        out << " to train a skill";
+        out << "train a skill at";
         break;
     case TravelDestinationPurpose::GenericRpg: 
-        out << ""; //Named travel purpose.
+        out << "find"; //Named travel purpose.
         break;
     default:
         out << "";
         break;
     }
+
+    /*
+    out << " " << GetShortName();
+
+    if (GetEntry() > 0)
+        out << " npc ";
+    else
+        out << " object ";
+
+    */
+
+    out << " ";
+
+    out << ChatHelper::formatWorldEntry(GetEntry());
 
     return out.str();
 }
@@ -616,7 +624,7 @@ std::string GrindTravelDestination::GetTitle() const
 {
     std::ostringstream out;
 
-    out << "grind mob ";
+    out << "get xp or gold from killing ";
 
     out << ChatHelper::formatWorldEntry(GetEntry());
 
@@ -699,7 +707,7 @@ std::string BossTravelDestination::GetTitle() const
 {
     std::ostringstream out;
 
-    out << "boss mob ";
+    out << "get loot from ";
 
     out << ChatHelper::formatWorldEntry(GetEntry());
 
@@ -816,11 +824,22 @@ std::string GatherTravelDestination::GetTitle() const {
 
     if (GetPurpose() == TravelDestinationPurpose::GatherFishing)
     {
-        out << "fishing spot ";
+        out << "fish";
     }
     else
-    {        
-        out << "gathering node ";
+    {   
+        switch (GetPurpose())
+        {
+            case TravelDestinationPurpose::GatherSkinning:
+                out << "skin ";
+                break;
+            case TravelDestinationPurpose::GatherMining:
+                out << "mine ";
+                break;
+            case TravelDestinationPurpose::GatherHerbalism:
+                out << "gather from ";
+                break;
+        }
 
         out << ChatHelper::formatWorldEntry(GetEntry());
     }
@@ -904,18 +923,24 @@ bool TravelTarget::IsConditionsActive(bool clear)
             player = member;
     }
 
-    if (!player->GetPlayerbotAI()) //No ai so clear target.
+    if (!player || !player->GetPlayerbotAI()) //No ai so clear target.
         return false;
         
     AiObjectContext* playerContext = player->GetPlayerbotAI()->GetAiObjectContext();
+
+    if (!playerContext)
+        return false;
 
     if (clear)
         for (auto& condition : travelConditions)
             playerContext->ClearValues(condition);
 
     for (auto& condition : travelConditions)
-        if (!PAI_VALUE(bool, condition))
+    {
+        auto* value = playerContext->GetValue<bool>(condition);
+        if (!value || !value->Get())
             return false;
+    }
 
     return true;
 }
@@ -947,6 +972,7 @@ void TravelTarget::CheckStatus()
     {
         ai->TellDebug(ai->GetMaster(), "Travel target expired because the status time was exceeded.", "debug travel");
         SetStatus(TravelStatus::TRAVEL_STATUS_EXPIRED);
+        ai->GetAiObjectContext()->ClearValues("no active travel destinations");
         return;
     }
 
@@ -971,11 +997,18 @@ void TravelTarget::CheckStatus()
         else if(IsForced()) return; //While traveling do not go into cooldown
     }
 
-    if (GetStatus() != TravelStatus::TRAVEL_STATUS_COOLDOWN && ((!IsDestinationActive() && !IsForced()) || !IsConditionsActive())) //Target has become invalid. Stop.
+    if (GetStatus() != TravelStatus::TRAVEL_STATUS_COOLDOWN)
     {
-        ai->TellDebug(ai->GetMaster(), "The target is cooling down because the destination was no longer active or the conditions are no longer true.", "debug travel");
-        SetStatus(TravelStatus::TRAVEL_STATUS_COOLDOWN);
-        return;
+        bool destinationInactive = !IsDestinationActive() && !IsForced();
+        bool conditionsInactive = !destinationInactive && !IsConditionsActive(); // Only check conditions if destination is still active
+
+        if (destinationInactive || conditionsInactive)
+        {
+            ai->TellDebug(ai->GetMaster(), "The target is cooling down because the destination was no longer active or the conditions are no longer true.", "debug travel");
+            forced = false;
+            SetStatus(TravelStatus::TRAVEL_STATUS_COOLDOWN);
+            return;
+        }
     }
 }
 

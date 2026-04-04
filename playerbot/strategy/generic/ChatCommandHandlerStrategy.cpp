@@ -72,6 +72,7 @@ ChatCommandHandlerStrategy::ChatCommandHandlerStrategy(PlayerbotAI* ai) : PassTr
     supported.push_back("position");
     supported.push_back("summon");
     supported.push_back("who");
+    supported.push_back("where");
     supported.push_back("save mana");
     supported.push_back("formation");
     supported.push_back("stance");
@@ -161,6 +162,10 @@ void ChatCommandHandlerStrategy::InitReactionTriggers(std::list<TriggerNode*> &t
 
     triggers.push_back(new TriggerNode(
         "e",
+        NextAction::array(0, new NextAction("equip", relevance), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "equip",
         NextAction::array(0, new NextAction("equip", relevance), NULL)));
 
     triggers.push_back(new TriggerNode(

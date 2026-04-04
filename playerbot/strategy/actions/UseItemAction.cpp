@@ -9,6 +9,9 @@
 #include "playerbot/TravelMgr.h"
 #include "CheckMountStateAction.h"
 #include "TellLosAction.h"
+#include "playerbot/strategy/values/ItemUsageValue.h"
+#include "playerbot/strategy/values/ItemCountValue.h"
+#include "playerbot/TravelMgr.h"
 
 using namespace ai;
 
@@ -632,6 +635,12 @@ bool UseAction::UseItemInternal(Player* requester, uint32 itemId, Unit* unit, Ga
 
         if (validTarget)
         {
+            // Validate spellInfo is a proper sSpellTemplate entry before constructing (mirrors MANGOS_ASSERT in Spell::Spell)
+            if (!spellInfo || spellInfo != sSpellTemplate.LookupEntry<SpellEntry>(spellInfo->Id))
+            {
+                continue;
+            }
+
             // Use triggered flag only for items with many spell casts and for not first cast
             BotUseItemSpell* spell = new BotUseItemSpell(bot, spellInfo, (successCasts > 0) ? TRIGGERED_OLD_TRIGGERED : TRIGGERED_NONE);
             spell->m_clientCast = true;
@@ -673,11 +682,13 @@ bool UseAction::UseItemInternal(Player* requester, uint32 itemId, Unit* unit, Ga
 
             if (successCast)
             {
-                // Only add cooldown if the spell doesn't use a real item
-                if (itemUsed == nullptr && HasItemCooldown(itemId))
+                if (itemUsed == nullptr && ai->HasCheat(BotCheatMask::item))
                 {
-                    bot->RemoveSpellCooldown(*spellInfo, false);
-                    bot->AddCooldown(*spellInfo, proto, false);
+                    if (!HasItemCooldown(itemId))
+                    {
+                        bot->RemoveSpellCooldown(*spellInfo, false);
+                        bot->AddCooldown(*spellInfo, proto, false);
+                    }
                 }
 
                 if (IsFood(proto) || IsDrink(proto))
@@ -727,7 +738,6 @@ bool UseAction::UseItemInternal(Player* requester, uint32 itemId, Unit* unit, Ga
                 replyStr << " " << BOT_TEXT("command_target_self");
             }
 
-            // Stackable
             if (itemUsed && proto->Stackable > 1)
             {
                 uint32 count = itemUsed->GetCount();
@@ -744,7 +754,9 @@ bool UseAction::UseItemInternal(Player* requester, uint32 itemId, Unit* unit, Ga
 
             ai->TellPlayerNoFacing(requester, BOT_TEXT2(replyStr.str(), replyArgs), PlayerbotSecurityLevel::PLAYERBOT_SECURITY_ALLOW_ALL, false);
         }
-        
+
+        ai::InvalidateItemCountCache(bot);
+
         return true;
     }
     else
@@ -912,29 +924,48 @@ bool UseAction::UseGameObject(Player* requester, Event& event, GameObject* gameO
 
 bool UseAction::UseQuestGiverItem(Player* requester, Item* item)
 {
-    if (item)
+    if (!item)
+        return false;
+
+    const ItemPrototype* proto = item->GetProto();
+    if (!proto || !proto->StartQuest)
+        return false;
+
+    const Quest* quest = sObjectMgr.GetQuestTemplate(proto->StartQuest);
+    if (!quest)
+        return false;
+
+    if (!bot->CanTakeQuest(quest, false))
+        return false;
+
+    if (item->GetOwnerGuid() != bot->GetObjectGuid())
+        return false;
+
+    if (!bot->HasItemCount(proto->ItemId, 1))
+        return false;
+
+    Item* validItem = bot->GetItemByGuid(item->GetObjectGuid());
+    if (!validItem || validItem != item)
+        return false;
+
+    if (!bot->CanAddQuest(quest, true))
+        return false;
+
+    bot->AddQuest(quest, nullptr);
+
+    if (bot->CanCompleteQuest(quest->GetQuestId()))
+        bot->CompleteQuest(quest->GetQuestId());
+
+    bot->DestroyItemCount(proto->ItemId, 1, true);
+
+    if (verbose)
     {
-        const Quest* quest = sObjectMgr.GetQuestTemplate(item->GetProto()->StartQuest);
-        if (quest)
-        {
-            WorldPacket packet(CMSG_QUESTGIVER_ACCEPT_QUEST, 8 + 4 + 4);
-            packet << item->GetObjectGuid();
-            packet << quest->GetQuestId();
-            packet << uint32(0);
-            bot->GetSession()->HandleQuestgiverAcceptQuestOpcode(packet);
-
-            if (verbose)
-            {
-                std::map<std::string, std::string> replyArgs;
-                replyArgs["%quest"] = chat->formatQuest(quest);
-                ai->TellPlayerNoFacing(requester, BOT_TEXT2("quest_accepted", replyArgs), PlayerbotSecurityLevel::PLAYERBOT_SECURITY_ALLOW_ALL, false);
-            }
-
-            return true;
-        }
+        std::map<std::string, std::string> replyArgs;
+        replyArgs["%quest"] = chat->formatQuest(quest);
+        ai->TellPlayerNoFacing(requester, BOT_TEXT2("quest_accepted", replyArgs), PlayerbotSecurityLevel::PLAYERBOT_SECURITY_ALLOW_ALL, false);
     }
 
-    return false;
+    return true;
 }
 
 bool UseAction::OpenItem(Player* requester, Item* item)
@@ -1136,8 +1167,9 @@ bool UseItemIdAction::isPossible()
     if (HasItemCooldown(itemId))
         return false;
 
-    if (!ai->HasCheat(BotCheatMask::item) && !bot->HasItemCount(itemId, 1))
+        if (!ai->HasCheat(BotCheatMask::item) && !bot->HasItemCount(itemId, 1))
         return false;
+
 
     uint32 spellCount = 0;
 
@@ -1279,7 +1311,7 @@ bool UseHearthStoneAction::isUseful()
 
 bool UseRandomRecipeAction::isUseful()
 {
-   return !bot->IsInCombat() && !ai->HasActivePlayerMaster() && !bot->InBattleGround();
+   return !bot->IsInCombat() && !bot->InBattleGround();
 }
 
 bool UseRandomRecipeAction::Execute(Event& event)

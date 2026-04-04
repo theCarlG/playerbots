@@ -291,6 +291,7 @@ enum class ActivePiorityType : uint8
     NEARBY_PLAYER,
     PLAYER_FRIEND,
     PLAYER_GUILD,
+    NO_PATH,
     IN_ACTIVE_AREA,
     IN_ACTIVE_MAP,
     IN_INACTIVE_MAP,
@@ -674,6 +675,9 @@ public:
     bool HandleSpellClick(uint32 entry);
     bool HandleSpellClick(ObjectGuid guid);
 
+    void SetLastEvent(Event& event) { lastEvent = event; }
+    Event& GetLastEvent() { return lastEvent; }
+
 #ifdef BUILD_ELUNA
     MaNGOS::unique_weak_ptr<PlayerbotAI> GetWeakPtr() const { return m_weakRef; }
     void SetWeakPtr(MaNGOS::unique_weak_ptr<PlayerbotAI> weakRef) { m_weakRef = std::move(weakRef); }
@@ -716,6 +720,15 @@ protected:
     bool isPlayerFriend = false;
     bool isMovingToTransport = false;
     bool shouldLogOut = false;
+    bool m_recordMessages = false;
+    std::vector<std::string> m_recordedMessages;
+    Event lastEvent;
+
+public:
+    void RecordMessages(bool record) { m_recordMessages = record; if (!record) m_recordedMessages.clear(); }
+    bool IsRecordingMessages() const { return m_recordMessages; }
+    std::vector<std::string> GetRecordedMessages() { m_recordMessages = false; auto msgs = m_recordedMessages; m_recordedMessages.clear(); return msgs; }
+    void ClearRecordedMessages() { m_recordedMessages.clear(); m_recordMessages = false; }
 
 #ifdef BUILD_ELUNA
     MaNGOS::unique_weak_ptr<PlayerbotAI> m_weakRef;

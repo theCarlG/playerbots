@@ -70,6 +70,15 @@ AiPlayerbot.RandomBotAccountCount = 200
 # (0-1), default 0
 # AiPlayerbot.DisableActivityPriorities = 0
 
+# Force bots to become active when a player is nearby
+#AiPlayerbot.ForceActiveWhenNearPlayer = 0
+
+# Force bots to become active when guild orders are enabled
+#AiPlayerbot.GuildOrderAlwaysActive = 1
+
+# Limit combat activity for slight performance boost.
+#AiPlayerbot.LimitCombatActivity = 0
+
 # Percentage of fully active bots. Default is 10, higher numbers may affect performance
 # AiPlayerbot.botActiveAlone = 10
 
@@ -148,6 +157,9 @@ AiPlayerbot.RandomBotRpgChance = 0.20
 
 # Limit whithin what distance between other bots they teleport to points in zones around real player
 # AiPlayerbot.RandomBotTeleportNearPlayerMaxAmountRadius = 0
+
+# Bot transport use style: 0 = walk on transports (currently not available), 1 = teleport on transports and ride it, 2 = teleport from dock to dock bypassing transport.
+# AiPlayerbot.TransportTeleportType = 2
 
 # Chance for bot to use potions
 #AiPlayerbot.UsePotionChance = 1.0
@@ -364,6 +376,9 @@ AiPlayerbot.AutoLearnDroppedSpells = 0
 # Random Bots will pick quests on their own and try to complete
 # Default: 1 (enabled)
 # AiPlayerbot.AutoDoQuests = 1
+
+# Random Bots will also move to destinations when not seen by the player
+# AiPlayerbot.EnableMinimalMove = 1
 
 ##################################################################################
 #                                                                                #
@@ -846,6 +861,9 @@ AiPlayerbot.FleeingEnabled = 1
 #AiPlayerbot.ReactStrategies = 
 #AiPlayerbot.DeadStrategies = 
 
+# Toggle offheal and offdps strategies for hybrid classes.
+#AiPlayerbot.EnableOffSpecStrategies = 1
+
 # Quest items to leave (do not destroy)
 #AiPlayerbot.RandomBotQuestItems = 6948,5175,5176,5177,5178,16309,12382,13704,11000
 
@@ -930,6 +948,12 @@ AiPlayerbot.JumpChase = 1
 
 # Allow knockbacks work on bots
 AiPlayerbot.UseKnockback = 1
+
+# Set 'wander' as a default following strategy instead of 'follow' (Bots have freedom to move around while near master)
+#AiPlayerbot.UseWanderAsDefaultFollowStrategy = 1
+
+# Default bot formation
+#AiPlayerbot.DefaultFormation = near
 
 # Debug switches
 #AiPlayerbot.SpellDump = 0
@@ -1035,6 +1059,20 @@ AiPlayerbot.PerfMonEnabled = 0
 # AiPlayerbot.LLMResponseDeletePattern = (\\n|<sender name>:|\\[^ ]+)
 # Step4: What pattern the server should look for to split the repsonse in multiple lines. Note only lines that follow this pattern will be extracted.
 # AiPlayerbot.LLMResponseSplitPattern = (\*.*?\*)|(\[.*?\])|(\'.*\')|([^\*\[\] ][^\*\[\]]+?[.?!])
+
+# The file llm_character_card.txt allows you to define how individual bots speak. You need to create this file in the root folder.
+# Each new line adds an additional prompt to the specified bot, which can be used to adjust specific bot's personality and speaking style.
+# The format must be as follows:
+# name1::text1
+# name2::text2
+# name3::text3
+
+# Examples:
+# Celguar::I am the Keeper of the Source.
+# Mostlikely::I like to travel a lot.
+# Flekz::I hold the power of ancient wizardry.
+
+AiPlayerbot.LLMDefaultPromptsFile = llm_character_card.txt
 
 # Should previous conversations from all channels be mixed?
 # AiPlayerbot.LLMGlobalContext = 0

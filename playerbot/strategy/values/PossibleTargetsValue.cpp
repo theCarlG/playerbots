@@ -110,10 +110,16 @@ bool PossibleTargetsValue::IsValid(Unit* target, Player* player, bool ignoreLos)
             return false;
         }
 
-        // If the target is not visible (to the owner bot)
-        if (!ignoreLos && !target->IsVisibleForOrDetect(player, player->GetCamera().GetBody(), true))
+        bool isInCombatWithTarget = target->GetVictim() == player || 
+                                     target->getThreatManager().getThreat(player) > 0.0f ||
+                                     player->IsInCombat();
+
+        if (!ignoreLos && !isInCombatWithTarget)
         {
-            return false;
+            if (!target->IsVisibleForOrDetect(player, player->GetCamera().GetBody(), true))
+            {
+                return false;
+            }
         }
 
         if (!PAI_VALUE2(bool, "can free attack", GuidPosition(target).to_string()))

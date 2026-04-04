@@ -3,6 +3,7 @@
 #include "playerbot/PlayerbotAIConfig.h"
 #include "playerbot/ServerFacade.h"
 #include "Spells/SpellAuraDefines.h"
+#include "DungeonTriggers.h"
 
 namespace ai
 {
@@ -1257,6 +1258,17 @@ namespace ai
         DispelEnrageOnTargetTrigger(PlayerbotAI* ai, std::string name = "dispel enrage") : DispelOnTargetTrigger(ai, name, DISPEL_ENRAGE) {}
     };
 
+    class HasPoisonDebuffTrigger : public Trigger
+    {
+    public:
+        HasPoisonDebuffTrigger(PlayerbotAI* ai) : Trigger(ai, "has poison debuff", 3) {}
+
+        bool IsActive() override
+        {
+            return ai->HasAuraToDispel(bot, DISPEL_POISON);
+        }
+    };
+
     class RtscJumpTrigger : public Trigger
     {
     public:
@@ -1273,6 +1285,34 @@ namespace ai
         bool IsActive() override;
     };
 }
+
+class PotionCooldownTrigger : public ai::ItemBuffReadyTrigger
+{
+public:
+    PotionCooldownTrigger(PlayerbotAI* ai, uint32 itemID = 0, uint32 buffID = 0)
+        : ai::ItemBuffReadyTrigger(ai, "potion cooldown", itemID, buffID), lastPotionTime(0), localItemID(itemID), localBuffID(buffID) {}
+
+    virtual bool IsActive() override
+    {
+        if (localItemID == 0 && localBuffID == 0)
+        {
+            time_t now = time(0);
+            if (now - lastPotionTime >= 120)
+            {
+                lastPotionTime = now;
+                return true;
+            }
+            return false;
+        }
+
+        return ai::ItemBuffReadyTrigger::IsActive();
+    }
+
+private:
+    time_t lastPotionTime;
+    uint32 localItemID;
+    uint32 localBuffID;
+};
 
 #include "RangeTriggers.h"
 #include "HealthTriggers.h"
