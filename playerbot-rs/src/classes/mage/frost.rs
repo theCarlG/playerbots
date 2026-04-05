@@ -15,6 +15,8 @@ const FROST_NOVA_AURA_B: SpellId = SpellId(42397);
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (mage-wide list).
+        super::boost(),
         MaintainRange(10.0),
         Seq!(Cmp(SelfHealthPct, Below(20)), CastOnSelf(ICE_BLOCK)),
         Seq!(Cmp(SelfManaPct, Below(15)), CastOnSelf(EVOCATION)),

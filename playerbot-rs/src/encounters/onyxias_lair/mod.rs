@@ -5,9 +5,9 @@
 ///   Phase 2 (65%→40%): Air. Melee hold, dodge Deep Breath, ranged normal.
 ///   Phase 3 (<40%): Ground again + whelp spawns.
 use super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
-use crate::{Seq, Sel};
+use crate::engine::bt::Bt::{self, *};
 use crate::ffi::SpellId;
+use crate::{Sel, Seq};
 
 pub const ENTRY_ONYXIA: u32 = 10184;
 
@@ -16,43 +16,25 @@ pub const SPELL_FLAME_BREATH: SpellId = SpellId(18435);
 pub const SPELL_FIREBALL_VOLLEY: SpellId = SpellId(18392);
 pub const SPELL_WING_BUFFET: SpellId = SpellId(18500);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OnyxiaPhase {
+    #[default]
     Idle,
     Phase1,
     Phase2,
     Phase3,
 }
 
+#[derive(Default)]
 pub struct OnyxiaFsm {
     pub phase: OnyxiaPhase,
     done: bool,
-    air_bt: Bt,
-    ground_bt: Bt,
 }
 
 impl OnyxiaFsm {
-    pub fn new() -> Self {
-        Self {
-            phase: OnyxiaPhase::Idle,
-            done: false,
-            air_bt: Sel!(
-                Seq!(Bt::target_has(SPELL_DEEP_BREATH), FleeToSafe(40.0)),
-                Seq!(IsMeleeDps, HoldPosition),
-            ),
-            ground_bt: Seq!(IsMeleeDps, MoveBehind(5.0)),
-        }
-    }
-
     pub const PHASE_IDLE: u32 = 0;
     pub const PHASE_GROUND: u32 = 1;
     pub const PHASE_AIR: u32 = 2;
-}
-
-impl Default for OnyxiaFsm {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl EncounterFsm for OnyxiaFsm {
@@ -93,11 +75,14 @@ impl EncounterFsm for OnyxiaFsm {
         ENTRY_ONYXIA
     }
 
-    fn phase_bt(&self) -> Option<&Bt> {
+    fn phase_bt(&self) -> Option<Bt> {
         match self.phase {
             OnyxiaPhase::Idle => None,
-            OnyxiaPhase::Phase2 => Some(&self.air_bt),
-            _ => Some(&self.ground_bt),
+            OnyxiaPhase::Phase2 => Some(Sel!(
+                Seq!(Bt::target_has(SPELL_DEEP_BREATH), FleeToSafe(40.0)),
+                Seq!(IsMeleeDps, HoldPosition),
+            )),
+            _ => Some(Seq!(IsMeleeDps, MoveBehind(5.0))),
         }
     }
 }
@@ -113,7 +98,7 @@ mod tests {
 
     #[test]
     fn transitions_phases() {
-        let mut fsm = OnyxiaFsm::new();
+        let mut fsm = OnyxiaFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
         assert_eq!(fsm.phase, OnyxiaPhase::Phase1);
         fsm.update(&EncounterEvent::None, 0.64, 0);
@@ -124,7 +109,7 @@ mod tests {
 
     #[test]
     fn air_melee_holds_position() {
-        let mut fsm = OnyxiaFsm::new();
+        let mut fsm = OnyxiaFsm::default();
         fsm.phase = OnyxiaPhase::Phase2;
         let bt = fsm.phase_bt().unwrap();
         let iface = TestInterface::new();
@@ -136,6 +121,6 @@ mod tests {
 
     #[test]
     fn no_bt_when_idle() {
-        assert!(OnyxiaFsm::new().phase_bt().is_none());
+        assert!(OnyxiaFsm::default().phase_bt().is_none());
     }
 }

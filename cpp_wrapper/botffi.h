@@ -62,6 +62,22 @@ typedef struct {
     uint32_t        area_id;
     uint64_t        server_time_ms;     /* GetMSTime() at snapshot */
     bool            is_leader;          /* true if this bot is group/raid leader */
+
+    /* ── Chat-filter state ──────────────────────────────────────────
+     * These fields back the `CompositeChatFilter` port. They're cheap
+     * to fill (just player getters) and the filter code on the Rust
+     * side reads them synchronously from the snapshot, so it never has
+     * to round-trip back into C++ to decide whether to drop a chat
+     * command. */
+    uint8_t  subgroup;                  /* 1..8 subgroup index, 0 = not in group */
+    bool     is_raid_group;             /* bot is in a raid (vs. party or solo) */
+    bool     in_guild;                  /* bot is a guild member */
+    bool     is_guild_leader;           /* bot is the guild leader */
+    uint32_t guild_id;                  /* 0 = no guild */
+    uint8_t  durability_pct;            /* 0..100, lowest equipped-slot durability */
+    uint8_t  bag_space_pct;             /* 0..100, percent of inventory slots *used* */
+    uint32_t equip_gear_score;          /* average ilvl of equipped gear */
+    bool     is_overworld;              /* true for maps 0/1/530/571, false inside instances */
 } BotWorldSnapshot;
 
 typedef struct {
@@ -244,8 +260,33 @@ typedef struct BotCallbacks {
     bool (*auto_attack)(BotHandle bot, bool enable);
     bool (*say)(BotHandle bot, const char* msg, uint32_t lang);
     bool (*whisper)(BotHandle bot, uint64_t target_guid, const char* msg);
+    /* PB2-style TellPlayerNoFacing routing: broadcasts to the bot's party/raid
+     * when it has a group, otherwise whispers the sender. target_guid is the
+     * requester's ObjectGuid (used only for the whisper fallback). */
+    bool (*tell_player)(BotHandle bot, uint64_t target_guid, const char* msg);
     bool (*use_item)(BotHandle bot, uint32_t item_id, UnitHandle target);
     bool (*taunt)(BotHandle bot, UnitHandle target);
+    /* Teleport the bot to (`map_id`, x, y, z, o). When `map_id` matches the
+     * bot's current map, wraps `Player::NearTeleportTo`; otherwise wraps
+     * `Player::TeleportTo`. Returns false when the bot is dead/offline or
+     * the target map cannot be loaded. Used by the `summon` command. */
+    bool (*teleport_to)(BotHandle bot, uint32_t map_id, float x, float y, float z, float o);
+    /* Resolve a player `ObjectGuid` to their current world position. When the
+     * player is online, writes the position into `*out_pos` and returns true;
+     * otherwise leaves `*out_pos` untouched and returns false. Used by the
+     * `summon` command to find the requester. */
+    bool (*get_player_position)(BotHandle bot, uint64_t player_guid, BotPosition* out_pos);
+    /* Full-fat summon: mirrors PB2 `SummonAction::Teleport` exactly.
+     *   1. Validates that `requester` is online and not being teleported.
+     *   2. Iterates angles around the requester's follow offset to pick a
+     *      LOS-clear position and snaps Z to ground.
+     *   3. If the bot is dead, revives at 100% HP and spawns corpse bones.
+     *   4. Interrupts taxi flight, clears the motion master, and teleports.
+     *   5. Re-parents to the requester's transport if one is present.
+     *   6. Updates any active `stay` / `guard` position entries so the bot
+     *      holds its new spot after the summon.
+     * Returns true if the bot was successfully moved to a valid position. */
+    bool (*summon_to_player)(BotHandle bot, uint64_t requester_guid);
 
     /* ── Group / raid queries ────────────────────────────────────────── */
     UnitHandle (*group_get_tank)(BotHandle bot);
@@ -259,6 +300,11 @@ typedef struct BotCallbacks {
     bool        (*accept_resurrect)(BotHandle bot);
     BotPosition (*get_corpse_position)(BotHandle bot);  /* returns {0,0,0} if N/A */
     bool        (*use_spirit_healer)(BotHandle bot);
+    /* In-place self-resurrection used by the `summon` command to mirror
+     * PB2's `SummonAction::Teleport` behavior (revive dead bot at full HP,
+     * spawn corpse bones, then teleport). Returns false if the bot is
+     * already alive or cannot be safely revived. */
+    bool        (*resurrect_self)(BotHandle bot);
 
     /* ── Mount ───────────────────────────────────────────────────────── */
     bool (*is_mounted)(BotHandle bot);
@@ -568,6 +614,31 @@ void* playerbot_create(BotHandle bot, const BotCallbacks* cbs);
  * After this call, the state pointer is invalid.
  */
 void playerbot_destroy(void* state);
+
+/**
+ * Set (or clear) the bot's master — the player that commands this bot.
+ * `guid = 0` clears the master.
+ *
+ * Called whenever `PlayerbotRust::SetMaster` runs: explicit assignment via
+ * PlayerbotMgr, per-tick master auto-claim (PB2 DoNextAction parity), or
+ * group-disband cleanup. Mirrors PB2's `PlayerbotAI::m_master`.
+ */
+void playerbot_set_master(void* state, uint64_t guid);
+
+/**
+ * Read the current master guid (0 = no master). Mostly used for asserts
+ * and diagnostics on the C++ side; the authoritative value for security
+ * checks is still `PlayerbotRust::m_masterGuid`.
+ */
+uint64_t playerbot_get_master(const void* state);
+
+/**
+ * Drop all per-bot strategy/cache state (pending commands, blackboard,
+ * cooldown throttles, encounter FSM). Called when the master changes or
+ * when a full reinit is requested. Equivalent to PB2's
+ * `PlayerbotAI::ResetStrategies`.
+ */
+void playerbot_reset_strategies(void* state);
 
 /**
  * Main AI tick. Called from Player::UpdateAI on the map worker thread.

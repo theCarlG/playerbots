@@ -38,6 +38,12 @@ pub struct TickContext<'a> {
     /// self-buffs, self-casts, or any operation that needs "cast on myself".
     pub bot_handle: UnitHandle,
 
+    /// Raw `ObjectGuid` of the player that commands this bot (master).
+    /// `None` means the bot is solo / unclaimed — Follow falls back to RPG
+    /// behaviour, and stranger whispers get the `INVITE` security tier so
+    /// that RaidControl commands can still claim the bot.
+    pub master_guid: Option<UnitHandle>,
+
     // ── Encounter ──────────────────────────────────────────────────────
     /// Active encounter FSM, if inside a known raid/dungeon.
     pub encounter: Option<&'a dyn EncounterFsm>,
@@ -251,6 +257,7 @@ pub mod tests {
             elapsed_ms: 100,
             minimal: false,
             bot_handle: 0,
+            master_guid: None,
             encounter: None,
             class: PlayerClass::Warrior,
             role: BotRole::DPS,
@@ -305,6 +312,7 @@ pub mod tests {
                 elapsed_ms: 100,
                 minimal: false,
                 bot_handle: 0,
+                master_guid: None,
                 encounter: None,
                 class: PlayerClass::Warrior,
                 role: BotRole::DPS,
@@ -333,6 +341,7 @@ pub mod tests {
         pub auras: Vec<crate::ffi::SpellId>,
         pub has_safe_pos: bool,
         pub unit_dist: f32,
+        pub wander_point: Option<crate::ffi::BotPosition>,
     }
 
     impl TestInterface {
@@ -341,6 +350,7 @@ pub mod tests {
                 auras: vec![],
                 has_safe_pos: false,
                 unit_dist: 10.0,
+                wander_point: None,
             }
         }
 
@@ -356,6 +366,17 @@ pub mod tests {
 
         pub fn with_unit_dist(mut self, dist: f32) -> Self {
             self.unit_dist = dist;
+            self
+        }
+
+        pub fn with_wander_point(mut self, x: f32, y: f32, z: f32) -> Self {
+            self.wander_point = Some(crate::ffi::BotPosition {
+                x,
+                y,
+                z,
+                o: 0.0,
+                map_id: 0,
+            });
             self
         }
     }
@@ -384,6 +405,9 @@ pub mod tests {
         }
         fn unit_distance(&self, _: UnitHandle) -> f32 {
             self.unit_dist
+        }
+        fn get_random_point_nearby(&self, _: f32) -> Option<crate::ffi::BotPosition> {
+            self.wander_point
         }
         fn can_cast(&self, _: SpellId, _: UnitHandle) -> bool {
             true

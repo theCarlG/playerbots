@@ -15,6 +15,8 @@ const FIRE_VULN_MAX: u8 = 5;
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (mage-wide list).
+        super::boost(),
         MaintainRange(10.0),
         Seq!(Cmp(SelfHealthPct, Below(20)), CastOnSelf(ICE_BLOCK)),
         Seq!(Cmp(SelfManaPct, Below(15)), CastOnSelf(EVOCATION)),

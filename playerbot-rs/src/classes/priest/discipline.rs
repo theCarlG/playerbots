@@ -9,6 +9,8 @@ use crate::{Seq, Sel};
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (priest-wide list).
+        super::boost(),
         // Maintain Inner Fire.
         Seq!(Bt::self_missing(INNER_FIRE), CastOnSelf(INNER_FIRE)),
         // Fade aggro dump.

@@ -4,13 +4,26 @@ pub mod protection;
 pub mod retribution;
 
 use crate::{
+    Seq,
+    bot::settings::CombatOrder,
     bot::state::PlayerSpec,
     classes::ClassKit,
     data::spells::vanilla::paladin::{
-        BLESSING_OF_KINGS, BLESSING_OF_MIGHT, BLESSING_OF_WISDOM, DEVOTION_AURA, RETRIBUTION_AURA,
+        BLESSING_OF_KINGS, BLESSING_OF_MIGHT, BLESSING_OF_WISDOM, DEVOTION_AURA, DIVINE_FAVOR,
+        RETRIBUTION_AURA,
     },
+    engine::bt::Bt::{self, CastOnSelf, CombatOrderHas, InCombat},
     noncombat::GroupBuff,
 };
+
+/// `co +boost` burst subtree — paladin offensive cooldowns.
+pub fn boost() -> Bt {
+    Seq!(
+        CombatOrderHas(CombatOrder::BOOST),
+        InCombat,
+        CastOnSelf(DIVINE_FAVOR),
+    )
+}
 
 const HOLY_BUFFS: &[GroupBuff] = &[
     GroupBuff::on_party(BLESSING_OF_WISDOM),

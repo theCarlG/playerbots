@@ -10,7 +10,7 @@ use crate::bot::class_prefs::{
     TotemSlot, WarlockCurse, WarriorStance, WeaponHand,
 };
 use crate::bot::settings::{
-    BehaviorMode, ChatChannel, CombatOrder, FollowFormation, Reactivity, StrategyFlags,
+    BehaviorMode, ChatChannel, CombatOrder, FollowFormation, LootPolicy, Reactivity, StrategyFlags,
 };
 use crate::commands::BotCommand;
 use crate::data::spells::lookup_spell_by_name;
@@ -42,6 +42,14 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec { names: &["co"], parse: |_, a| parse_combat_order(a) },
     CommandSpec { names: &["nc"], parse: |_, a| parse_strategies(a) },
     CommandSpec { names: &["react"], parse: |_, a| parse_reactivity(a) },
+    // Mangosbot sends `de +spec,?` to toggle "dead-state" strategies in PB2's
+    // 4-state model. The Rust bot collapses combat/noncombat/dead/reaction
+    // into a single strategies bitfield, so `de` is an alias for `nc` that
+    // keeps Mangosbot's class/spec toggles happy without emitting Unknown.
+    CommandSpec { names: &["de"], parse: |_, a| parse_strategies(a) },
+    CommandSpec { names: &["ll"], parse: |_, a| parse_loot_policy(a) },
+    // Mangosbot sends the two-word form `save mana [?|on|off]`.
+    CommandSpec { names: &["save"], parse: |_, a| parse_save(a) },
     // -- Targeting --
     CommandSpec { names: &["focus"], parse: |_, _| Some(BotCommand::Focus(None)) },
     CommandSpec { names: &["attack"], parse: |_, a| parse_attack(a) },
@@ -228,8 +236,8 @@ pub fn parse(text: &str) -> Option<BotCommand> {
 /// Flags are comma- or space-separated; multi-word names (`tank assist`,
 /// `dps assist`, `pull back`) are matched greedily.
 fn parse_combat_order(args: &[&str]) -> Option<BotCommand> {
-    if args.is_empty() {
-        return Some(BotCommand::Unknown("co: missing order".into()));
+    if args.is_empty() || args == ["?"] {
+        return Some(BotCommand::QueryCombatOrder);
     }
 
     // Re-join so we can split on commas (the addon sends `co x,y` as one arg chain).
@@ -246,11 +254,20 @@ fn parse_combat_order(args: &[&str]) -> Option<BotCommand> {
     }
 
     // Signed form: walk tokens, each token starts with +/-, followed by flag name(s).
+    // A bare `?` chunk (e.g. `co +tank assist,?`) is Mangosbot's request to
+    // apply *and* re-query the flags in one round-trip — strip it and set
+    // `query=true` on the emitted command.
     let mut add = CombatOrder::NONE;
     let mut remove = CombatOrder::NONE;
+    let mut query = false;
 
     for chunk in joined.split(',') {
-        let tokens: Vec<&str> = chunk.split_whitespace().collect();
+        let chunk_trim = chunk.trim();
+        if chunk_trim == "?" {
+            query = true;
+            continue;
+        }
+        let tokens: Vec<&str> = chunk_trim.split_whitespace().collect();
         let mut i = 0;
         while i < tokens.len() {
             let tok = tokens[i];
@@ -296,16 +313,119 @@ fn parse_combat_order(args: &[&str]) -> Option<BotCommand> {
         }
     }
 
-    Some(BotCommand::ApplyCombatOrder { add, remove })
+    Some(BotCommand::ApplyCombatOrder { add, remove, query })
 }
 
 fn parse_reactivity(args: &[&str]) -> Option<BotCommand> {
+    // `react` has two totally disjoint forms in the addon vocabulary:
+    //
+    //   * plain level setter — `react passive|defensive|aggressive` — adjusts
+    //     the bot's passive/defensive/aggressive stance (Rust's native
+    //     `Reactivity` setting).
+    //
+    //   * PB2 signed strategy list — `react +tank feral,?` — in PB2 this
+    //     toggled strategies in a separate "reaction" BotState slot. The
+    //     Rust bot does not split strategy state across slots, so a signed
+    //     `react` command is treated as an alias of `nc` and emits the same
+    //     `Non Combat Strategies:` reply when `,?` is trailing.
+    //
+    // Dispatch on the first token's sign prefix.
+    if let Some(first) = args.first().copied() {
+        if first.starts_with('+') || first.starts_with('-') {
+            return parse_strategies(args);
+        }
+    }
     match args.first().copied() {
+        None | Some("?") => Some(BotCommand::QueryReactivity),
         Some("passive") => Some(BotCommand::SetReactivity(Reactivity::Passive)),
         Some("defensive") => Some(BotCommand::SetReactivity(Reactivity::Defensive)),
         Some("aggressive") => Some(BotCommand::SetReactivity(Reactivity::Aggressive)),
         _ => Some(BotCommand::Unknown(
             "react: missing level (passive/defensive/aggressive)".into(),
+        )),
+    }
+}
+
+/// `ll` — loot list / policy.
+///   `ll` or `ll ?`      → query current policy
+///   `ll <cat>`          → full replacement (single category)
+///   `ll +cat,-cat,~cat` → signed apply (add / remove / toggle)
+fn parse_loot_policy(args: &[&str]) -> Option<BotCommand> {
+    if args.is_empty() || args == ["?"] {
+        return Some(BotCommand::QueryLootPolicy);
+    }
+    let joined = args.join(" ");
+    let signed = joined.contains('+') || joined.contains('-') || joined.contains('~');
+
+    if !signed {
+        // Bare single category: full replacement.
+        let name = joined.trim();
+        match LootPolicy::parse_name(name) {
+            Some(flag) => Some(BotCommand::ApplyLootPolicy {
+                add: flag,
+                remove: LootPolicy::all_categories() - flag,
+                toggle: LootPolicy::NONE,
+            }),
+            None => Some(BotCommand::Unknown(format!(
+                "ll: unknown category `{name}`"
+            ))),
+        }
+    } else {
+        let mut add = LootPolicy::NONE;
+        let mut remove = LootPolicy::NONE;
+        let mut toggle = LootPolicy::NONE;
+
+        for chunk in joined.split(',') {
+            let chunk = chunk.trim();
+            if chunk.is_empty() || chunk == "?" {
+                continue;
+            }
+            let (sign, name): (u8, &str) = match chunk.chars().next() {
+                Some('+') => (1, chunk[1..].trim()),
+                Some('-') => (2, chunk[1..].trim()),
+                Some('~') => (3, chunk[1..].trim()),
+                _ => {
+                    return Some(BotCommand::Unknown(format!(
+                        "ll: expected +/-/~ prefix on `{chunk}`"
+                    )));
+                }
+            };
+            match LootPolicy::parse_name(name) {
+                Some(flag) => match sign {
+                    1 => add.insert(flag),
+                    2 => remove.insert(flag),
+                    _ => toggle.insert(flag),
+                },
+                None => {
+                    return Some(BotCommand::Unknown(format!(
+                        "ll: unknown category `{name}`"
+                    )));
+                }
+            }
+        }
+        Some(BotCommand::ApplyLootPolicy { add, remove, toggle })
+    }
+}
+
+/// `save <subcommand>` — currently only `save mana [?|on|off]`.
+fn parse_save(args: &[&str]) -> Option<BotCommand> {
+    match args.first().copied() {
+        Some("mana") => match args.get(1).copied() {
+            None => Some(BotCommand::ToggleSaveMana),
+            Some("?") => Some(BotCommand::QuerySaveMana),
+            Some("on") | Some("1") | Some("yes") | Some("true") => {
+                Some(BotCommand::SetSaveMana(true))
+            }
+            Some("off") | Some("0") | Some("no") | Some("false") => {
+                Some(BotCommand::SetSaveMana(false))
+            }
+            Some("toggle") | Some("~") => Some(BotCommand::ToggleSaveMana),
+            Some(other) => Some(BotCommand::Unknown(format!(
+                "save mana: unknown `{other}` (expected ?/on/off/toggle)"
+            ))),
+        },
+        _ => Some(BotCommand::Unknown(
+            "save: expected `save mana [?|on|off]`".into(),
         )),
     }
 }
@@ -434,17 +554,26 @@ fn parse_cc(args: &[&str]) -> Option<BotCommand> {
 
 /// `nc +a,-b c,+d e` — comma-separated list of ±strategy names. Multi-word
 /// names ("rpg bg", "rpg maintenance") are one token per chunk.
+///
+/// A bare `?` chunk (`nc +dps assist,?`) is Mangosbot's apply-and-query
+/// shorthand — stripped here and surfaced as `query=true` on the emitted
+/// command so the handler whispers the new state after applying.
 fn parse_strategies(args: &[&str]) -> Option<BotCommand> {
-    if args.is_empty() {
-        return Some(BotCommand::Unknown("nc: missing strategy list".into()));
+    if args.is_empty() || args == ["?"] {
+        return Some(BotCommand::QueryStrategies);
     }
     let joined = args.join(" ");
     let mut add = StrategyFlags::NONE;
     let mut remove = StrategyFlags::NONE;
+    let mut query = false;
 
     for chunk in joined.split(',') {
         let chunk = chunk.trim();
         if chunk.is_empty() {
+            continue;
+        }
+        if chunk == "?" {
+            query = true;
             continue;
         }
 
@@ -474,7 +603,7 @@ fn parse_strategies(args: &[&str]) -> Option<BotCommand> {
         }
     }
 
-    Some(BotCommand::ApplyStrategies { add, remove })
+    Some(BotCommand::ApplyStrategies { add, remove, query })
 }
 
 /// `cast <spell name>` or `cast self <spell name>`. Uses the spell-name
@@ -500,10 +629,11 @@ fn parse_cast(args: &[&str]) -> Option<BotCommand> {
 
 fn parse_formation(args: &[&str]) -> Option<BotCommand> {
     let Some(first) = args.first().copied() else {
-        return Some(BotCommand::Unknown(
-            "formation: need type (near/line/circle/chaos/box/queue/arrow/wedge/pairs)".into(),
-        ));
+        return Some(BotCommand::QueryFormation);
     };
+    if first == "?" {
+        return Some(BotCommand::QueryFormation);
+    }
     match FollowFormation::from_str(first) {
         Some(f) => Some(BotCommand::SetFormation(f)),
         None => Some(BotCommand::Unknown(format!("formation: unknown `{first}`"))),
@@ -538,10 +668,11 @@ fn parse_range(args: &[&str]) -> Option<BotCommand> {
 fn parse_stance(args: &[&str]) -> Option<BotCommand> {
     // Accept numeric 0..=3 or named battle/defensive/berserker.
     let Some(first) = args.first().copied() else {
-        return Some(BotCommand::Unknown(
-            "stance: need 1/2/3 or battle/defensive/berserker".into(),
-        ));
+        return Some(BotCommand::QueryStance);
     };
+    if first == "?" {
+        return Some(BotCommand::QueryStance);
+    }
     let st: u8 = match first {
         "none" | "0" => 0,
         "battle" | "1" => 1,
@@ -609,7 +740,19 @@ fn parse_chat(args: &[&str]) -> Option<BotCommand> {
 }
 
 fn parse_rti_cmd(args: &[&str]) -> Option<BotCommand> {
+    // `rti cc ...` — CC raid-target preference (Mangosbot's per-bot CC mark).
+    if args.first().copied() == Some("cc") {
+        return match args.get(1).copied() {
+            Some("?") => Some(BotCommand::QueryCcRti),
+            None | Some("clear") | Some("none") => Some(BotCommand::SetPreferredCcRti(None)),
+            Some(tok) => match parse_rti(tok) {
+                Some(icon) => Some(BotCommand::SetPreferredCcRti(Some(icon))),
+                None => Some(BotCommand::Unknown(format!("rti cc: unknown `{tok}`"))),
+            },
+        };
+    }
     match args.first().copied() {
+        Some("?") => Some(BotCommand::QueryRti),
         None | Some("clear") | Some("none") => Some(BotCommand::SetPreferredRti(None)),
         Some(tok) => match parse_rti(tok) {
             Some(icon) => Some(BotCommand::SetPreferredRti(Some(icon))),
@@ -908,7 +1051,7 @@ mod tests {
         // Simple additive.
         assert_eq!(
             parse("co +tank"),
-            Some(BotCommand::ApplyCombatOrder {
+            Some(BotCommand::ApplyCombatOrder { query: false,
                 add: CombatOrder::TANK,
                 remove: CombatOrder::NONE,
             }),
@@ -916,7 +1059,7 @@ mod tests {
         // Subtractive.
         assert_eq!(
             parse("co -threat"),
-            Some(BotCommand::ApplyCombatOrder {
+            Some(BotCommand::ApplyCombatOrder { query: false,
                 add: CombatOrder::NONE,
                 remove: CombatOrder::THREAT,
             }),
@@ -924,7 +1067,7 @@ mod tests {
         // Multi-word flag.
         assert_eq!(
             parse("co +tank assist"),
-            Some(BotCommand::ApplyCombatOrder {
+            Some(BotCommand::ApplyCombatOrder { query: false,
                 add: CombatOrder::TANK_ASSIST,
                 remove: CombatOrder::NONE,
             }),
@@ -932,7 +1075,7 @@ mod tests {
         // Comma-separated mixed.
         assert_eq!(
             parse("co -tank assist,+dps assist"),
-            Some(BotCommand::ApplyCombatOrder {
+            Some(BotCommand::ApplyCombatOrder { query: false,
                 add: CombatOrder::DPS_ASSIST,
                 remove: CombatOrder::TANK_ASSIST,
             }),
@@ -940,7 +1083,7 @@ mod tests {
         // Space-separated mixed, multi-flag.
         assert_eq!(
             parse("co -threat -dps assist -close +tank assist"),
-            Some(BotCommand::ApplyCombatOrder {
+            Some(BotCommand::ApplyCombatOrder { query: false,
                 add: CombatOrder::TANK_ASSIST,
                 remove: CombatOrder::THREAT | CombatOrder::DPS_ASSIST | CombatOrder::CLOSE,
             }),
@@ -948,7 +1091,7 @@ mod tests {
         // pull back — two-word flag in subtractive form.
         assert_eq!(
             parse("co -pull back"),
-            Some(BotCommand::ApplyCombatOrder {
+            Some(BotCommand::ApplyCombatOrder { query: false,
                 add: CombatOrder::NONE,
                 remove: CombatOrder::PULL_BACK,
             }),
@@ -1044,21 +1187,21 @@ mod tests {
     fn nc_strategy_toggles() {
         assert_eq!(
             parse("nc +rtsc"),
-            Some(BotCommand::ApplyStrategies {
+            Some(BotCommand::ApplyStrategies { query: false,
                 add: StrategyFlags::RTSC,
                 remove: StrategyFlags::NONE,
             }),
         );
         assert_eq!(
             parse("nc -rpg bg"),
-            Some(BotCommand::ApplyStrategies {
+            Some(BotCommand::ApplyStrategies { query: false,
                 add: StrategyFlags::NONE,
                 remove: StrategyFlags::RPG_BG,
             }),
         );
         assert_eq!(
             parse("nc +rtsc,-rpg,-rpg bg,-rpg explore"),
-            Some(BotCommand::ApplyStrategies {
+            Some(BotCommand::ApplyStrategies { query: false,
                 add: StrategyFlags::RTSC,
                 remove: StrategyFlags::RPG | StrategyFlags::RPG_BG | StrategyFlags::RPG_EXPLORE,
             }),
@@ -1213,6 +1356,80 @@ mod tests {
         assert_eq!(parse("mail takeall"), Some(BotCommand::MailTakeAll));
         assert_eq!(parse("mail all"), Some(BotCommand::MailTakeAll));
         assert_eq!(parse("leave"), Some(BotCommand::GuildLeave));
+    }
+
+    #[test]
+    fn mangosbot_probe_query_commands() {
+        // Mangosbot addon probes every setting via the `?` query operator.
+        // Each of these must yield a Query* variant (never Unknown) so the
+        // addon's probe loop sees a valid response.
+        assert_eq!(parse("formation ?"), Some(BotCommand::QueryFormation));
+        assert_eq!(parse("stance ?"), Some(BotCommand::QueryStance));
+        assert_eq!(parse("co ?"), Some(BotCommand::QueryCombatOrder));
+        assert_eq!(parse("nc ?"), Some(BotCommand::QueryStrategies));
+        assert_eq!(parse("react ?"), Some(BotCommand::QueryReactivity));
+        assert_eq!(parse("rti ?"), Some(BotCommand::QueryRti));
+        assert_eq!(parse("ll ?"), Some(BotCommand::QueryLootPolicy));
+        assert_eq!(parse("save mana ?"), Some(BotCommand::QuerySaveMana));
+    }
+
+    #[test]
+    fn save_mana_explicit_set() {
+        assert_eq!(parse("save mana on"), Some(BotCommand::SetSaveMana(true)));
+        assert_eq!(parse("save mana off"), Some(BotCommand::SetSaveMana(false)));
+        assert_eq!(parse("save mana"), Some(BotCommand::ToggleSaveMana));
+    }
+
+    #[test]
+    fn loot_policy_parse_forms() {
+        // Bare category: full replacement — only that one category is kept.
+        let all = LootPolicy::all_categories();
+        assert_eq!(
+            parse("ll equip"),
+            Some(BotCommand::ApplyLootPolicy {
+                add: LootPolicy::EQUIP,
+                remove: all - LootPolicy::EQUIP,
+                toggle: LootPolicy::NONE,
+            }),
+        );
+        // Signed: add quest, remove vendor.
+        assert_eq!(
+            parse("ll +quest,-vendor"),
+            Some(BotCommand::ApplyLootPolicy {
+                add: LootPolicy::QUEST,
+                remove: LootPolicy::VENDOR,
+                toggle: LootPolicy::NONE,
+            }),
+        );
+        // Toggle with ~.
+        assert_eq!(
+            parse("ll ~equip"),
+            Some(BotCommand::ApplyLootPolicy {
+                add: LootPolicy::NONE,
+                remove: LootPolicy::NONE,
+                toggle: LootPolicy::EQUIP,
+            }),
+        );
+    }
+
+    #[test]
+    fn co_boost_flag_parses() {
+        // RaidControl burst-cooldown keyword.
+        assert_eq!(
+            parse("co +boost"),
+            Some(BotCommand::ApplyCombatOrder { query: false,
+                add: CombatOrder::BOOST,
+                remove: CombatOrder::NONE,
+            }),
+        );
+        // Mangosbot uses `i` as alias for boost.
+        assert_eq!(
+            parse("co +i"),
+            Some(BotCommand::ApplyCombatOrder { query: false,
+                add: CombatOrder::BOOST,
+                remove: CombatOrder::NONE,
+            }),
+        );
     }
 
     #[test]

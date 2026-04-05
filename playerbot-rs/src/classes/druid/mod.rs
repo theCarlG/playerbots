@@ -2,12 +2,30 @@ pub mod balance;
 pub mod feral;
 pub mod restoration;
 
-use crate::{bot::state::PlayerSpec, classes::ClassKit, ffi::SpellId, noncombat::GroupBuff};
+use crate::{
+    Seq, Sel,
+    bot::settings::CombatOrder,
+    bot::state::PlayerSpec,
+    classes::ClassKit,
+    data::spells::vanilla::druid::{NATURE_SWIFTNESS, TIGERS_FURY},
+    engine::bt::Bt::{self, CastOnSelf, CombatOrderHas, InCombat},
+    ffi::SpellId,
+    noncombat::GroupBuff,
+};
 
 // Mark of the Wild rank 7.
 const MARK_OF_THE_WILD: SpellId = SpellId(9885);
 
 const BUFFS: &[GroupBuff] = &[GroupBuff::on_party(MARK_OF_THE_WILD)];
+
+/// `co +boost` burst subtree — druid offensive cooldowns.
+pub fn boost() -> Bt {
+    Seq!(
+        CombatOrderHas(CombatOrder::BOOST),
+        InCombat,
+        Sel!(CastOnSelf(TIGERS_FURY), CastOnSelf(NATURE_SWIFTNESS)),
+    )
+}
 
 pub fn kit(spec: PlayerSpec) -> ClassKit {
     use PlayerSpec::{DruidBalance, DruidFeral, DruidRestoration};

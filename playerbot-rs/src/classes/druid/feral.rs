@@ -18,6 +18,8 @@ const FRENZIED_REGENERATION: SpellId = SpellId(22842);
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (druid-wide list).
+        super::boost(),
         // Close gap.
         StickToTarget(5.0),
         // Tank path.

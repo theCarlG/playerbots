@@ -10,8 +10,25 @@
 //! names. `(file, line)` is stable per source location and unique enough for
 //! our purposes (collisions would only happen if two throttles were declared
 //! on the same line, which is not something we do).
+//!
+//! ## Running-transparency
+//!
+//! A throttle that wraps a long-running action (e.g. `RpgWander` → `move_to`
+//! → `BtResult::Running`) must *not* interrupt that action when the cooldown
+//! window has not yet elapsed. Before running-transparency, the sequence was:
+//!
+//! 1. tick N: child picks a target, calls `move_to`, returns Running. Throttle
+//!    records `last_fire = N`.
+//! 2. tick N+1: throttle sees `now - last_fire < interval`, returns Failure
+//!    **without** ticking the child. The parent `Sel` falls through to the
+//!    next arm — typically `StopMoving` — and halts the bot mid-movement.
+//!
+//! We fix this by tracking a "running" flag per throttle key. If the child
+//! returned Running on the previous tick, the throttle bypasses its cooldown
+//! check and ticks the child directly, letting the in-progress action
+//! continue. The flag clears as soon as the child returns Success or Failure.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Stable identifier for a single `Bt::Throttle` call site.
 ///
@@ -32,6 +49,7 @@ pub struct ThrottleKey {
 #[derive(Debug, Default)]
 pub struct Throttles {
     last_fire_ms: HashMap<ThrottleKey, u64>,
+    running: HashSet<ThrottleKey>,
 }
 
 impl Throttles {
@@ -47,6 +65,21 @@ impl Throttles {
     /// Record that this throttle has just fired at `now_ms`.
     pub fn mark_fired(&mut self, key: ThrottleKey, now_ms: u64) {
         self.last_fire_ms.insert(key, now_ms);
+    }
+
+    /// Is the child of this throttle currently in a Running phase (i.e. its
+    /// last tick returned [`crate::engine::bt::BtResult::Running`])?
+    pub fn is_running(&self, key: ThrottleKey) -> bool {
+        self.running.contains(&key)
+    }
+
+    /// Set or clear the running flag for a throttle key.
+    pub fn set_running(&mut self, key: ThrottleKey, running: bool) {
+        if running {
+            self.running.insert(key);
+        } else {
+            self.running.remove(&key);
+        }
     }
 }
 
@@ -78,5 +111,16 @@ mod tests {
         t.mark_fired(k2, 200);
         assert_eq!(t.last_fire(k1), 100);
         assert_eq!(t.last_fire(k2), 200);
+    }
+
+    #[test]
+    fn running_flag_set_and_cleared() {
+        let mut t = Throttles::new();
+        let k = ThrottleKey { file: "a.rs", line: 1 };
+        assert!(!t.is_running(k));
+        t.set_running(k, true);
+        assert!(t.is_running(k));
+        t.set_running(k, false);
+        assert!(!t.is_running(k));
     }
 }

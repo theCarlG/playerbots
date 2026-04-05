@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include <memory>
+
 #include "playerbot/PlayerbotAIBase.h"
 #include "playerbot/PlayerbotAIConfig.h"
 #include "Entities/ObjectGuid.h"
@@ -84,34 +86,74 @@ public:
     void OnDamageTaken(uint32_t damage, uint32_t spell_id, uint64_t dealer);
 
     // ── Packet forwarding ────────────────────────────────────────────────
-    void HandleMasterIncomingPacket(const WorldPacket& /*packet*/) {}
-    void HandleMasterOutgoingPacket(const WorldPacket& /*packet*/) {}
+    //
+    // Called from the core's packet-dispatch hooks whenever the bot's master
+    // sends or receives a WoW packet that the bot should react to
+    // (movement updates, target changes, loot rolls, etc.). We hand the raw
+    // buffer to the Rust side via `playerbot_packet_{in,out}`; the Rust
+    // tick queues it as a `BotEvent::PacketIn/Out` and reacts from there.
+    void HandleMasterIncomingPacket(const WorldPacket& packet);
+    void HandleMasterOutgoingPacket(const WorldPacket& packet);
 
     // ── Command handling ─────────────────────────────────────────────────
     void HandleCommand(uint32 type, const std::string& text, Player& sender, uint32 lang = 0);
-    void HandleTeleportAck() {}
+
+    /// Handle a near/far teleport ACK. Mirrors PB2's
+    /// `PlayerbotAI::HandleTeleportAck` — interrupts the current movement
+    /// generator, replies to the near-teleport opcode, and forwards the
+    /// world-port ACK for long-distance teleports. Called from
+    /// `PlayerbotMgr::UpdateSessions` whenever `IsBeingTeleported()` is
+    /// true, so skipping it leaves a bot frozen in the teleport pending
+    /// state forever.
+    void HandleTeleportAck();
 
     // ── Accessors ─────────────────────────────────────────────────────────
     Player* GetBot() const { return m_bot; }
     Player* GetMaster() const;
     ObjectGuid GetMasterGuid() const { return m_masterGuid; }
 
-    // ── Management stubs (called by PlayerbotMgr/RandomPlayerbotMgr) ──
-    bool HasRealPlayerMaster() const { return false; }
-    bool IsInRealGuild() const { return false; }
+    // ── Management hooks (called by PlayerbotMgr/RandomPlayerbotMgr) ──
+    //
+    // The rest of the "legacy stub" block below is still empty because no
+    // current caller consumes the return value meaningfully — they either
+    // ignore it or are slated for removal as the C++ strategy code is
+    // torn out. The three hooks we *do* implement are the ones PB2 uses
+    // to decide whether a bot is a random/free bot versus one claimed by
+    // a real player; getting them wrong makes RandomPlayerbotMgr treat
+    // every bot as owned and skip wandering / re-gearing work.
+    bool HasRealPlayerMaster() const;
+    /// True iff the bot is a member of a guild that contains at least one
+    /// real (non-bot) player. Mirrors PB2's check used by
+    /// `RandomPlayerbotMgr` / `PlayerbotFactory` to decide whether a
+    /// random bot should be re-rolled or left alone. For now approximated
+    /// by "bot is in any guild" — guild rosters in this fork are
+    /// player/bot-mixed, and the stricter check would need to walk the
+    /// guild member list. The looser check matches PB2's behavior of
+    /// treating guilded bots as "claimed".
+    bool IsInRealGuild() const;
     bool IsRealPlayer() const { return false; }
     bool GetShouldLogOut() const { return false; }
-    void StopMoving() {}
-    void TellPlayer(Player* /*target*/, const std::string& /*msg*/) {}
+    /// Stop the bot's current movement. Mirrors PB2's
+    /// `PlayerbotAI::StopMoving`. Called from `PlayerbotMgr` on bot
+    /// removal and from `HandleTeleportAck` to clear the pre-teleport
+    /// movement state.
+    void StopMoving();
+    /// Whisper `msg` to `target`. Real impl equivalent to PB2's
+    /// `TellPlayerNoFacing` with `isPrivate=true`. Called from
+    /// `PlayerbotMgr` for logout/goodbye/hello messages. `target` may be
+    /// null (e.g. masterless bot) — in that case the call is a no-op.
+    void TellPlayer(Player* target, const std::string& msg);
     void SetPlayerFriend(bool /*val*/) {}
     AreaTableEntry const* GetCurrentZone() const { return nullptr; }
     std::string GetLocalizedAreaName(AreaTableEntry const* /*area*/) const { return ""; }
 
     enum class GrouperType { SOLO, MEMBER, LEADER_2, LEADER_3, LEADER_4, LEADER_5 };
-    GrouperType GetGrouperType() const { return GrouperType::SOLO; }
+    GrouperType GetGrouperType() const;
     std::string HandleRemoteCommand(const std::string& /*cmd*/) { return ""; }
     bool HasCheat(BotCheatMask /*mask*/) const { return false; }
-    void ResetStrategies(bool /*incremental*/ = false) {}
+    /// Drop cached strategy/encounter state so the next tick rebuilds
+    /// behaviour from scratch. Forwarded into Rust.
+    void ResetStrategies(bool /*incremental*/ = false);
     void AllowActivity(uint32_t /*activity*/, bool /*allow*/) {}
     void SetMaster(Player* master);
     float GetLevelFloat() const { return 0.0f; }
@@ -160,12 +202,34 @@ public:
     static void WorldUpdate(uint32_t elapsed_ms);
 
 private:
+    // RAII deleter for the Rust-owned `BotState*`. Ensures that any
+    // `m_rustState` escape path — normal dtor, stack unwinding through the
+    // ctor, `reset()` — runs the Rust-side destructor exactly once.
+    struct RustStateDeleter {
+        void operator()(void* p) const noexcept
+        {
+            if (p)
+                playerbot_destroy(p);
+        }
+    };
+
     Player*      m_bot;           // the CMaNGOS Player this AI drives
     ObjectGuid   m_masterGuid;    // the player that commands this bot (if any)
     BotCallbacks m_callbacks;     // the vtable passed to playerbot_create
-    void*        m_rustState;     // opaque BotState* from playerbot_create
+    std::unique_ptr<void, RustStateDeleter> m_rustState;  // opaque BotState* from playerbot_create
 
     /// Compute the chat-command security tier for `sender`. Mirrors PB2's
     /// PlayerbotSecurity::LevelFor with GUILD collapsed into TALK.
     BotSecurityLevel ComputeSenderSecurity(Player& sender) const;
+
+    /// Accept any pending group invite the bot has received. Mirrors PB2's
+    /// `AcceptInvitationAction::Execute`. Called once per tick from
+    /// `UpdateAIInternal` before the Rust update.
+    void AutoAcceptGroupInvite();
+
+    /// Validate the current master and, if the bot is masterless in a
+    /// group, claim the first real player in that group. Mirrors PB2's
+    /// `PlayerbotAI::DoNextAction` master-assignment loop. Called once per
+    /// tick from `UpdateAIInternal`.
+    void RefreshMaster();
 };

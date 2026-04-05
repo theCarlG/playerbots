@@ -3,7 +3,6 @@
 /// This is the opaque `void*` returned by `playerbot_create` and stored by
 /// the C++ `PlayerbotRust` class. It owns everything the AI needs.
 use std::collections::VecDeque;
-use std::sync::{Arc, RwLock};
 
 use crate::{
     bot::class_prefs::ClassPrefs,
@@ -12,7 +11,10 @@ use crate::{
     commands::PendingCommand,
     encounters::EncounterFsm,
     engine::{
-        blackboard::Blackboard, bt::Bt, group_state::GroupState, throttles::Throttles,
+        blackboard::Blackboard,
+        bt::Bt,
+        group_registry::{self, GroupHandle},
+        throttles::Throttles,
         timers::BotTimers,
     },
     ffi::{BotRole, BotWorldSnapshot, UnitHandle, interface::BotInterface},
@@ -111,8 +113,23 @@ pub struct BotState {
     /// Per-bot typed key-value store.
     pub blackboard: Blackboard,
 
-    /// Shared group/encounter assignments. None if not in a group.
-    pub group_state: Option<Arc<RwLock<GroupState>>>,
+    /// Shared group/encounter assignments. `None` if the bot is solo.
+    ///
+    /// This is a RAII handle — dropping it (by assigning `None`, or because
+    /// the `BotState` itself is dropped) automatically deregisters the bot's
+    /// reference from the process-wide group registry. When the last
+    /// handle for a group is dropped, the registry entry is removed on the
+    /// spot; no lazy housekeeping pass is required.
+    pub group_state: Option<GroupHandle>,
+
+    /// Raw `ObjectGuid` of the player that currently commands this bot.
+    ///
+    /// Mirrors PB2's `PlayerbotAI::m_master`. Set from C++ via
+    /// `playerbot_set_master` when `PlayerbotRust::SetMaster` is called or
+    /// when the per-tick master auto-claim logic finds a real player in the
+    /// bot's group. `None` means "solo / unclaimed" — the bot's default
+    /// behaviour mode is treated as `Rpg` rather than `Follow` in that case.
+    pub master_guid: Option<u64>,
 
     /// Active raid/dungeon encounter FSM. None outside of known instances.
     /// Created by `encounters::coordinator::encounter_for_zone` when the bot
@@ -162,6 +179,7 @@ impl BotState {
             events: VecDeque::new(),
             blackboard: Blackboard::default(),
             group_state: None,
+            master_guid: None,
             encounter: None,
             root_tree,
             class,
@@ -172,5 +190,65 @@ impl BotState {
             last_attackers_refresh_ms: 0,
             last_nearby_refresh_ms: 0,
         }
+    }
+
+    /// Reconcile `self.group_state` with the current snapshot.
+    ///
+    /// Called once at the top of every tick. Reads the snapshot's
+    /// `group_members` array, computes the stable group key
+    /// (`group_registry::group_key`), and makes sure we hold a `GroupHandle`
+    /// for that key. Dropping the previous handle (via reassignment or via
+    /// `None`) is what releases the registry entry — no explicit cleanup.
+    pub fn refresh_group_membership(&mut self) {
+        let size = self.snap.group_size as usize;
+        let cap = self.snap.group_members.len();
+        let members = &self.snap.group_members[..size.min(cap)];
+        match group_registry::group_key(members) {
+            None => {
+                // Solo or left the group — drop the handle so the registry
+                // entry can be reclaimed by `GroupHandle::drop`.
+                self.group_state = None;
+            }
+            Some(key) => {
+                // Keep the existing handle if it already points at this
+                // group; otherwise swap. Assignment drops the old handle
+                // first, which is exactly how we deregister from the old
+                // group before joining the new one.
+                let same = self
+                    .group_state
+                    .as_ref()
+                    .is_some_and(|h| h.key() == key);
+                if !same {
+                    self.group_state = Some(group_registry::acquire(key));
+                }
+            }
+        }
+    }
+
+    /// Set (or clear) this bot's master. `None` means solo / unclaimed.
+    ///
+    /// Called through the FFI from `PlayerbotRust::SetMaster` in the C++
+    /// shim. Kept as a typed method (rather than a raw field write in
+    /// `lib.rs`) so any future invariant that needs to fire on master
+    /// change has one place to live.
+    pub fn set_master(&mut self, guid: Option<u64>) {
+        self.master_guid = guid;
+    }
+
+    /// Clear all cached per-bot strategy state.
+    ///
+    /// Called by the C++ shim whenever the master changes or the core
+    /// decides a full reinit is needed (PB2 parity: `ResetStrategies`).
+    /// Living next to the field declarations means adding a new cache
+    /// field to `BotState` makes the necessary reset clear at the point
+    /// where the field is introduced, instead of hiding it in a scattered
+    /// `extern "C"` wrapper.
+    pub fn reset_strategies(&mut self) {
+        self.pending_commands.clear();
+        self.events.clear();
+        self.blackboard = Blackboard::default();
+        self.throttles = Throttles::new();
+        self.timers = BotTimers::new();
+        self.encounter = None;
     }
 }

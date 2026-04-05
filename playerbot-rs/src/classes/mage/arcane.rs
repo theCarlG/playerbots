@@ -10,6 +10,8 @@ use crate::{Seq, Sel};
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (mage-wide list).
+        super::boost(),
         // Kite melee attackers.
         MaintainRange(10.0),
         // Emergency Ice Block.

@@ -54,6 +54,37 @@ impl CombatOrder {
     pub const TANK_ASSIST: Self = Self(1 << 11);
     pub const DPS_ASSIST: Self = Self(1 << 12);
     pub const PULL_BACK: Self = Self(1 << 13);
+    /// Use offensive cooldowns/trinkets during combat ("burst DPS"). Read
+    /// by class rotations to decide whether to pop Blood Fury / Berserking /
+    /// Blade Flurry / trinkets / Bloodlust etc. Alias: `i` (Mangosbot icon).
+    pub const BOOST: Self = Self(1 << 14);
+    /// Position behind the target (melee dps). Matches the
+    /// `RaidControl` `+behind/-behind` hint.
+    pub const BEHIND: Self = Self(1 << 15);
+    /// Hold off damage until the tank has a few seconds of threat.
+    /// Multi-word name: `wait for attack`.
+    pub const WAIT_FOR_ATTACK: Self = Self(1 << 16);
+    /// Prefer crowd-control spells (mage sheep, priest shackle, hunter trap,
+    /// druid roots, warlock banish, rogue sap). `RaidControl` sends
+    /// `@mage co +cc` before pulls with multiple caster targets.
+    pub const CC: Self = Self(1 << 17);
+    /// Fight at ranged distance (default for casters/hunters). The
+    /// `RaidControl` `+range` / `+ranged` alias.
+    pub const RANGED: Self = Self(1 << 18);
+    /// Role flag: prefer healing-centric rotation. `@priest co +heal` etc.
+    pub const HEAL: Self = Self(1 << 19);
+    /// Shaman restoration spec hint (`@shaman co +restoration`). Distinct
+    /// from `HEAL` in that it implies totem layouts + water-shield usage.
+    pub const RESTORATION: Self = Self(1 << 20);
+    /// Prefer stealthed opening / shadowmeld on engage.
+    pub const STEALTH: Self = Self(1 << 21);
+    /// Druid feral form hint (`@druid co +feral`, `+tank feral`,
+    /// `+dps feral`). Decides bear vs cat form on engage.
+    pub const FERAL: Self = Self(1 << 22);
+    /// Druid main-tank feral (bear-form tank). Multi-word: `tank feral`.
+    pub const TANK_FERAL: Self = Self(1 << 23);
+    /// Druid dps feral (cat-form dps). Multi-word: `dps feral`.
+    pub const DPS_FERAL: Self = Self(1 << 24);
 
     /// True if all bits in `other` are set in `self`.
     pub const fn contains(self, other: Self) -> bool {
@@ -71,38 +102,100 @@ impl CombatOrder {
     }
 
     /// Parse a flag name from the addon vocabulary. Supports multi-word
-    /// forms ("tank assist", "dps assist", "pull back").
+    /// forms ("tank assist", "dps assist", "pull back", "wait for attack",
+    /// "tank feral", "dps feral"). Returns `(flag, words_consumed)`.
     ///
-    /// Consumes 1 or 2 tokens from `tokens` — returns `(flag, consumed)`.
+    /// Greedy: always tries the longest match first (3-word → 2-word →
+    /// 1-word) so `wait for attack` is parsed as a single flag rather than
+    /// three bad words.
     pub fn parse_flag(tokens: &[&str]) -> Option<(Self, usize)> {
         let first = *tokens.first()?;
+        // 3-word: `wait for attack`.
+        if let (Some(b), Some(c)) = (tokens.get(1).copied(), tokens.get(2).copied())
+            && (first, b, c) == ("wait", "for", "attack")
+        {
+            return Some((Self::WAIT_FOR_ATTACK, 3));
+        }
+        // 2-word greedy.
         if let Some(second) = tokens.get(1).copied() {
-            // Try 2-word match first (greedy).
             let pair: Self = match (first, second) {
                 ("tank", "assist") => Self::TANK_ASSIST,
                 ("dps", "assist") => Self::DPS_ASSIST,
                 ("pull", "back") => Self::PULL_BACK,
+                ("tank", "feral") => Self::TANK_FERAL,
+                ("dps", "feral") => Self::DPS_FERAL,
                 _ => Self::NONE,
             };
             if !pair.is_empty() {
                 return Some((pair, 2));
             }
         }
+        // 1-word fallback. Aliases and typo-tolerance live here.
         let single: Self = match first {
             "tank" => Self::TANK,
             "assist" => Self::ASSIST,
             "protect" => Self::PROTECT,
             "pull" => Self::PULL,
-            "threat" => Self::THREAT,
+            "threat" | "threath" => Self::THREAT, // RaidControl typo
             "passive" => Self::PASSIVE,
             "fury" => Self::FURY,
             "dps" => Self::DPS,
             "close" => Self::CLOSE,
             "aoe" => Self::AOE,
             "grind" => Self::GRIND,
+            "boost" | "i" => Self::BOOST, // Mangosbot keybind alias
+            "behind" => Self::BEHIND,
+            "cc" => Self::CC,
+            "range" | "ranged" => Self::RANGED,
+            "heal" | "healer" => Self::HEAL,
+            "restoration" | "resto" => Self::RESTORATION,
+            "stealth" => Self::STEALTH,
+            "feral" => Self::FERAL,
             _ => return None,
         };
         Some((single, 1))
+    }
+
+    /// Render as a stable string for query responses. Order and punctuation
+    /// mirror what the addons expect to see echoed back.
+    pub fn describe(self) -> String {
+        if self.is_empty() {
+            return "none".to_string();
+        }
+        let mut parts: Vec<&str> = Vec::new();
+        let pairs: &[(Self, &str)] = &[
+            (Self::TANK, "tank"),
+            (Self::ASSIST, "assist"),
+            (Self::PROTECT, "protect"),
+            (Self::PULL, "pull"),
+            (Self::THREAT, "threat"),
+            (Self::PASSIVE, "passive"),
+            (Self::FURY, "fury"),
+            (Self::DPS, "dps"),
+            (Self::CLOSE, "close"),
+            (Self::AOE, "aoe"),
+            (Self::GRIND, "grind"),
+            (Self::TANK_ASSIST, "tank assist"),
+            (Self::DPS_ASSIST, "dps assist"),
+            (Self::PULL_BACK, "pull back"),
+            (Self::BOOST, "boost"),
+            (Self::BEHIND, "behind"),
+            (Self::WAIT_FOR_ATTACK, "wait for attack"),
+            (Self::CC, "cc"),
+            (Self::RANGED, "ranged"),
+            (Self::HEAL, "heal"),
+            (Self::RESTORATION, "restoration"),
+            (Self::STEALTH, "stealth"),
+            (Self::FERAL, "feral"),
+            (Self::TANK_FERAL, "tank feral"),
+            (Self::DPS_FERAL, "dps feral"),
+        ];
+        for (flag, name) in pairs {
+            if self.contains(*flag) {
+                parts.push(name);
+            }
+        }
+        parts.join(", ")
     }
 }
 
@@ -188,6 +281,139 @@ impl StrategyFlags {
             _ => return None,
         })
     }
+
+    /// Render as a comma-separated string for query responses.
+    pub fn describe(self) -> String {
+        if self.0 == 0 {
+            return "none".to_string();
+        }
+        let mut parts: Vec<&str> = Vec::new();
+        let pairs: &[(Self, &str)] = &[
+            (Self::RPG, "rpg"),
+            (Self::RPG_BG, "rpg bg"),
+            (Self::RPG_EXPLORE, "rpg explore"),
+            (Self::RPG_GUILD, "rpg guild"),
+            (Self::RPG_MAINTENANCE, "rpg maintenance"),
+            (Self::RPG_PLAYER, "rpg player"),
+            (Self::RPG_QUEST, "rpg quest"),
+            (Self::RPG_VENDOR, "rpg vendor"),
+            (Self::RTSC, "rtsc"),
+            (Self::WBUFF, "wbuff"),
+            (Self::GRIND, "grind"),
+            (Self::FLEE, "flee"),
+            (Self::EMOTE, "emote"),
+            (Self::CC, "cc"),
+        ];
+        for (flag, name) in pairs {
+            if self.contains(*flag) {
+                parts.push(name);
+            }
+        }
+        parts.join(", ")
+    }
+}
+
+/// Loot-policy bitfield driven by the Mangosbot `ll` command. Each flag is
+/// a class of items the bot is allowed to auto-loot; the autoloot module
+/// consults the active set on kills and on inventory sorting.
+///
+/// Addon vocabulary: `ll +equip`, `ll -equip`, `ll ~equip` (toggle),
+/// `ll ?` (query).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct LootPolicy(pub u32);
+
+impl LootPolicy {
+    pub const NONE: Self = Self(0);
+    /// Items the bot can equip (armor/weapon upgrades).
+    pub const EQUIP: Self = Self(1 << 0);
+    /// Quest items and objective drops.
+    pub const QUEST: Self = Self(1 << 1);
+    /// Tradeskill materials the bot's professions can use.
+    pub const SKILL: Self = Self(1 << 2);
+    /// Items worth disenchanting (for enchanters).
+    pub const DISENCHANT: Self = Self(1 << 3);
+    /// Consumable / useful items (potions, scrolls, reagents).
+    pub const USE: Self = Self(1 << 4);
+    /// Grey / junk items worth selling to vendor.
+    pub const VENDOR: Self = Self(1 << 5);
+    /// Anything else — trash. Bots typically keep this off.
+    pub const TRASH: Self = Self(1 << 6);
+
+    /// Default loot policy: the "useful" categories enabled.
+    pub const fn defaults() -> Self {
+        Self(Self::EQUIP.0 | Self::QUEST.0 | Self::SKILL.0 | Self::USE.0 | Self::VENDOR.0)
+    }
+
+    /// All known loot categories (the set of every bit above).
+    pub const fn all_categories() -> Self {
+        Self(
+            Self::EQUIP.0
+                | Self::QUEST.0
+                | Self::SKILL.0
+                | Self::DISENCHANT.0
+                | Self::USE.0
+                | Self::VENDOR.0
+                | Self::TRASH.0,
+        )
+    }
+
+    pub const fn contains(self, other: Self) -> bool {
+        (self.0 & other.0) == other.0
+    }
+    pub fn insert(&mut self, other: Self) {
+        self.0 |= other.0;
+    }
+    pub fn remove(&mut self, other: Self) {
+        self.0 &= !other.0;
+    }
+    pub fn toggle(&mut self, other: Self) {
+        self.0 ^= other.0;
+    }
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn parse_name(name: &str) -> Option<Self> {
+        Some(match name.trim() {
+            "equip" => Self::EQUIP,
+            "quest" => Self::QUEST,
+            "skill" => Self::SKILL,
+            "disenchant" | "de" => Self::DISENCHANT,
+            "use" => Self::USE,
+            "vendor" => Self::VENDOR,
+            "trash" => Self::TRASH,
+            _ => return None,
+        })
+    }
+
+    pub fn describe(self) -> String {
+        if self.is_empty() {
+            return "none".to_string();
+        }
+        let mut parts: Vec<&str> = Vec::new();
+        let pairs: &[(Self, &str)] = &[
+            (Self::EQUIP, "equip"),
+            (Self::QUEST, "quest"),
+            (Self::SKILL, "skill"),
+            (Self::DISENCHANT, "disenchant"),
+            (Self::USE, "use"),
+            (Self::VENDOR, "vendor"),
+            (Self::TRASH, "trash"),
+        ];
+        for (flag, name) in pairs {
+            if self.contains(*flag) {
+                parts.push(name);
+            }
+        }
+        parts.join(", ")
+    }
+}
+
+impl std::ops::Sub for LootPolicy {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self {
+        Self(self.0 & !rhs.0)
+    }
 }
 
 impl Default for StrategyFlags {
@@ -243,6 +469,20 @@ impl FollowFormation {
             _ => return None,
         })
     }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Near => "near",
+            Self::Line => "line",
+            Self::Circle => "circle",
+            Self::Chaos => "chaos",
+            Self::Box => "box",
+            Self::Queue => "queue",
+            Self::Arrow => "arrow",
+            Self::Wedge => "wedge",
+            Self::Pairs => "pairs",
+        }
+    }
 }
 
 /// Reactivity level for autonomous combat engagement.
@@ -255,6 +495,16 @@ pub enum Reactivity {
     Defensive,
     /// Engage any hostile in range.
     Aggressive,
+}
+
+impl Reactivity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Passive => "passive",
+            Self::Defensive => "defensive",
+            Self::Aggressive => "aggressive",
+        }
+    }
 }
 
 /// Per-bot runtime settings. Modified by chat commands.
@@ -311,6 +561,8 @@ pub struct BotSettings {
     /// `save mana` toggle — when true, the bot prefers cheap casts and avoids
     /// full-cost rotation spells until mana is topped up.
     pub save_mana: bool,
+    /// Loot-policy bitfield driven by the Mangosbot `ll` command.
+    pub loot_policy: LootPolicy,
     /// `self res` toggle — when true, the bot will use a soulstone / ankh /
     /// reincarnation when it dies, instead of running back from graveyard.
     pub self_res: bool,
@@ -326,6 +578,10 @@ pub struct BotSettings {
     /// Persistent raid-target-icon preference set by `rti <icon>`. When set,
     /// world/combat modules may use it as the bot's default focus icon.
     pub preferred_rti_icon: Option<u8>,
+    /// Persistent CC raid-target-icon preference set by `rti cc <icon>`.
+    /// Mangosbot's per-bot CC mark selector. When set, the reactive/CC
+    /// subtree targets the mob bearing this icon with the class CC spell.
+    pub preferred_cc_rti_icon: Option<u8>,
 
     /// Class-specific preferences (rogue weapon poisons, shaman totem
     /// loadout, etc). Only the variant matching the bot's class is ever
@@ -405,11 +661,13 @@ impl Default for BotSettings {
             rtsc_waypoints: HashMap::new(),
             stance: 0,
             save_mana: false,
+            loot_policy: LootPolicy::defaults(),
             self_res: false,
             cheat_flags: 0,
             keep_items: HashSet::new(),
             chat_channels: 0,
             preferred_rti_icon: None,
+            preferred_cc_rti_icon: None,
             class_prefs: ClassPrefs::None,
             encounter_prefs: EncounterPrefs::default(),
         }

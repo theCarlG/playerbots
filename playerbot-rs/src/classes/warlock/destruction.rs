@@ -14,6 +14,8 @@ const CURSE_OF_AGONY: SpellId = SpellId(11722);
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (warlock-wide list).
+        super::boost(),
         MaintainRange(25.0),
         Seq!(Bt::self_missing(DEMON_ARMOR), CastOnSelf(DEMON_ARMOR)),
         Seq!(

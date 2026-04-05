@@ -10,6 +10,8 @@ use crate::{Seq, Sel};
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (shaman-wide list).
+        super::boost(),
         MaintainRange(20.0),
         // Totem upkeep driven by per-bot preferences
         // (see `bot::class_prefs::ShamanPrefs`).

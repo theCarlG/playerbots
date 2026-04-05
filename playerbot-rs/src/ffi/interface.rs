@@ -110,8 +110,37 @@ pub trait BotInterface: Send {
     fn whisper(&self, _target_guid: u64, _msg: &str) -> bool {
         false
     }
+    /// PB2-style `TellPlayerNoFacing` routing: broadcasts the reply to the
+    /// bot's PARTY/RAID channel when it is in a group, otherwise whispers
+    /// the sender. Used by [`crate::commands::reply`] so bots respond in
+    /// whatever channel PB2 would have — group chat for group members,
+    /// whisper for solo bots answering a stranger.
+    fn tell_player(&self, _target_guid: u64, _msg: &str) -> bool {
+        false
+    }
     fn use_item(&self, item_id: ItemId, target: UnitHandle) -> bool;
     fn taunt(&self, target: UnitHandle) -> bool;
+
+    /// Teleport the bot to an absolute world position. Used by the
+    /// `summon` chat command to snap the bot to the requester.
+    fn teleport_to(&self, _map_id: u32, _x: f32, _y: f32, _z: f32, _o: f32) -> bool {
+        false
+    }
+
+    /// Resolve a player GUID to its current world position. Returns
+    /// `None` if the player is offline or not found. Used by the
+    /// `summon` command to look up the requester's location.
+    fn get_player_position(&self, _player_guid: u64) -> Option<BotPosition> {
+        None
+    }
+
+    /// Full-fat summon: mirrors PB2 `SummonAction::Teleport` exactly
+    /// (angle search + LOS check around the requester, in-place revive
+    /// if the bot is dead, motion-master clear, teleport, transport
+    /// re-parenting). Returns true when the bot was successfully moved.
+    fn summon_to_player(&self, _requester_guid: u64) -> bool {
+        false
+    }
 
     /// Find the nearest hostile unit currently marked with the given raid
     /// target icon (1 = star, 2 = circle, 3 = diamond, 4 = triangle,
@@ -137,6 +166,13 @@ pub trait BotInterface: Send {
         None
     }
     fn use_spirit_healer(&self) -> bool {
+        false
+    }
+    /// In-place revive at full HP — used by the `summon` command when the
+    /// bot is being teleported while dead, mirroring PB2's
+    /// `SummonAction::Teleport` behavior (revive → spawn corpse bones →
+    /// teleport). Returns false if the bot is already alive.
+    fn resurrect_self(&self) -> bool {
         false
     }
 
@@ -797,12 +833,33 @@ impl BotInterface for RealInterface {
         unsafe { (self.cbs.whisper.unwrap())(self.handle, target_guid, c_str.as_ptr()) }
     }
 
+    fn tell_player(&self, target_guid: u64, msg: &str) -> bool {
+        let c_str = std::ffi::CString::new(msg).unwrap_or_default();
+        unsafe { (self.cbs.tell_player.unwrap())(self.handle, target_guid, c_str.as_ptr()) }
+    }
+
     fn use_item(&self, item_id: ItemId, target: UnitHandle) -> bool {
         unsafe { (self.cbs.use_item.unwrap())(self.handle, item_id.raw(), target) }
     }
 
     fn taunt(&self, target: UnitHandle) -> bool {
         unsafe { (self.cbs.taunt.unwrap())(self.handle, target) }
+    }
+
+    fn teleport_to(&self, map_id: u32, x: f32, y: f32, z: f32, o: f32) -> bool {
+        unsafe { (self.cbs.teleport_to.unwrap())(self.handle, map_id, x, y, z, o) }
+    }
+
+    fn get_player_position(&self, player_guid: u64) -> Option<BotPosition> {
+        let mut out: BotPosition = unsafe { std::mem::zeroed() };
+        let ok = unsafe {
+            (self.cbs.get_player_position.unwrap())(self.handle, player_guid, &mut out)
+        };
+        if ok { Some(out) } else { None }
+    }
+
+    fn summon_to_player(&self, requester_guid: u64) -> bool {
+        unsafe { (self.cbs.summon_to_player.unwrap())(self.handle, requester_guid) }
     }
 
     fn group_get_tank(&self) -> Option<UnitHandle> {
@@ -841,6 +898,10 @@ impl BotInterface for RealInterface {
 
     fn use_spirit_healer(&self) -> bool {
         unsafe { (self.cbs.use_spirit_healer.unwrap())(self.handle) }
+    }
+
+    fn resurrect_self(&self) -> bool {
+        unsafe { (self.cbs.resurrect_self.unwrap())(self.handle) }
     }
 
     /* ── Mount ──────────────────────────────────────────────────────── */

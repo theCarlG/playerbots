@@ -11,42 +11,22 @@
 ///   - Mutating Injection on self → flee 20yd from raid.
 ///   - Otherwise: normal rotation.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
-use crate::{Seq, Sel};
+use crate::Seq;
+use crate::engine::bt::Bt::{self, *};
 use crate::ffi::SpellId;
 
 pub const AURA_MUTATING_INJECTION: SpellId = SpellId(28169);
 pub const SPELL_SLIME_SPRAY: SpellId = SpellId(28158);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct GrobbolusFsm {
     active: bool,
     done: bool,
-    bt: Bt,
-}
-
-impl PartialEq for GrobbolusFsm {
-    fn eq(&self, other: &Self) -> bool {
-        self.active == other.active && self.done == other.done
-    }
 }
 
 impl GrobbolusFsm {
     pub fn new() -> Self {
-        Self {
-            active: false,
-            done: false,
-            bt: Seq!(
-                Bt::self_has(AURA_MUTATING_INJECTION),
-                MoveAwayFromRaid(20.0),
-            ),
-        }
-    }
-}
-
-impl Default for GrobbolusFsm {
-    fn default() -> Self {
-        Self::new()
+        Self::default()
     }
 }
 
@@ -75,8 +55,15 @@ impl EncounterFsm for GrobbolusFsm {
         super::ENTRY_GROBBULUS
     }
 
-    fn phase_bt(&self) -> Option<&Bt> {
-        if self.active { Some(&self.bt) } else { None }
+    fn phase_bt(&self) -> Option<Bt> {
+        if self.active {
+            Some(Seq!(
+                Bt::self_has(AURA_MUTATING_INJECTION),
+                MoveAwayFromRaid(20.0),
+            ))
+        } else {
+            None
+        }
     }
 }
 

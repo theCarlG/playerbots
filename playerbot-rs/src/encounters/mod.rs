@@ -18,8 +18,8 @@ pub mod macros;
 
 // Raids
 pub mod molten_core;
-// pub mod naxxramas;
-// pub mod onyxias_lair;
+pub mod naxxramas;
+pub mod onyxias_lair;
 
 // TBC content
 #[cfg(any(feature = "tbc", feature = "wotlk"))]

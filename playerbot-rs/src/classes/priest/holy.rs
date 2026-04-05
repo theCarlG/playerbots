@@ -13,6 +13,8 @@ const WEAKENED_SOUL: SpellId = SpellId(6788);
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (priest-wide list).
+        super::boost(),
         // Shield self when shield usable (no PW:S, no Weakened Soul).
         Seq!(
             Cmp(SelfHealthPct, Below(50)),

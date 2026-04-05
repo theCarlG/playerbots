@@ -33,6 +33,11 @@ pub enum Key {
     LastVendorVisitMs, // u64: when we last vendored
     LastRepairMs,      // u64: when we last repaired
 
+    // ── RPG mode keys ───────────────────────────────────────────────
+    RpgWanderDestX, // f32: current wander destination, held until arrival
+    RpgWanderDestY,
+    RpgWanderDestZ,
+
     // Add new keys above this line. Keep count accurate.
     _Count,
 }

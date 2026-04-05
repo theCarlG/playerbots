@@ -5,9 +5,23 @@ pub mod restoration;
 pub mod totems;
 
 use crate::{
-    bot::state::PlayerSpec, classes::ClassKit, data::spells::vanilla::shaman::LIGHTNING_SHIELD,
+    Seq, Sel,
+    bot::settings::CombatOrder,
+    bot::state::PlayerSpec,
+    classes::ClassKit,
+    data::spells::vanilla::shaman::{ELEMENTAL_MASTERY, LIGHTNING_SHIELD, NATURE_SWIFTNESS},
+    engine::bt::Bt::{self, CastOnSelf, CombatOrderHas, InCombat},
     noncombat::GroupBuff,
 };
+
+/// `co +boost` burst subtree — shaman offensive cooldowns.
+pub fn boost() -> Bt {
+    Seq!(
+        CombatOrderHas(CombatOrder::BOOST),
+        InCombat,
+        Sel!(CastOnSelf(ELEMENTAL_MASTERY), CastOnSelf(NATURE_SWIFTNESS)),
+    )
+}
 
 // Only enhancement maintains a persistent self buff; ele/resto rely on
 // situational totems handled inside their rotations.

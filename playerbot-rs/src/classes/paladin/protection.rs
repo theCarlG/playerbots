@@ -30,6 +30,8 @@ const SEAL_RANKS: &[SpellId] = &[
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (paladin-wide list).
+        super::boost(),
         // Maintain Righteous Fury (100% bonus threat).
         Seq!(
             Bt::self_missing(RIGHTEOUS_FURY),

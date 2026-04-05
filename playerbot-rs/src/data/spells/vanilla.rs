@@ -32,8 +32,9 @@ pub mod warrior {
     pub const CHARGE: SpellId = SpellId(11578); // rank 3 (8-25 yd range, Battle Stance)
     pub const MORTAL_STRIKE: SpellId = SpellId(21553); // rank 4
     pub const SWEEPING_STRIKES: SpellId = SpellId(12292);
-    pub const DEATH_WISH: SpellId = SpellId(12292); // note: DEATH_WISH is actually 12328
+    pub const DEATH_WISH: SpellId = SpellId(12328);
     pub const RETALIATION: SpellId = SpellId(20230);
+    pub const RECKLESSNESS: SpellId = SpellId(1719);
 
     // Fury — general
     pub const BLOODTHIRST: SpellId = SpellId(25251); // rank 5 (talent, level 40+)
@@ -115,6 +116,7 @@ pub mod priest {
     pub const HOLY_NOVA: SpellId = SpellId(25331); // rank 5
     pub const SHADOWFORM: SpellId = SpellId(15473);
     pub const RESURRECTION: SpellId = SpellId(10881); // rank 5
+    pub const INNER_FOCUS: SpellId = SpellId(14751);
 }
 
 // ── Druid ─────────────────────────────────────────────────────────────────
@@ -149,6 +151,8 @@ pub mod druid {
     pub const BEAR_FORM: SpellId = SpellId(5487);
     pub const TRAVEL_FORM: SpellId = SpellId(783);
     pub const AQUATIC_FORM: SpellId = SpellId(1066);
+    pub const NATURE_SWIFTNESS: SpellId = SpellId(17116);
+    pub const TIGERS_FURY: SpellId = SpellId(9846); // rank 4
 }
 
 // ── Hunter ────────────────────────────────────────────────────────────────
@@ -175,6 +179,7 @@ pub mod hunter {
     pub const WING_CLIP: SpellId = SpellId(14268); // rank 3
     pub const SCATTER_SHOT: SpellId = SpellId(19503);
     pub const BESTIAL_WRATH: SpellId = SpellId(19574);
+    pub const RAPID_FIRE: SpellId = SpellId(3045);
     pub const PET_ATTACK: SpellId = SpellId(2641);
 }
 
@@ -203,6 +208,10 @@ pub mod mage {
     pub const EVOCATION: SpellId = SpellId(12051);
     pub const ARCANE_INTELLECT: SpellId = SpellId(10157); // rank 5
     pub const ARCANE_BRILLIANCE: SpellId = SpellId(23028);
+    // Burst cooldowns (BOOST combat order)
+    pub const COMBUSTION: SpellId = SpellId(11129);
+    pub const ARCANE_POWER: SpellId = SpellId(12042);
+    pub const PRESENCE_OF_MIND: SpellId = SpellId(12043);
 }
 
 // ── Rogue ─────────────────────────────────────────────────────────────────
@@ -257,6 +266,7 @@ pub mod shaman {
     pub const FLAMETONGUE_TOTEM: SpellId = SpellId(16387); // rank 5
     pub const STORMSTRIKE: SpellId = SpellId(17364);
     pub const PURGE: SpellId = SpellId(8012); // rank 2
+    pub const ELEMENTAL_MASTERY: SpellId = SpellId(16166);
 }
 
 // ── Warlock ───────────────────────────────────────────────────────────────

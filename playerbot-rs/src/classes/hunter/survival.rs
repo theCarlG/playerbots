@@ -16,6 +16,8 @@ const COUNTERATTACK: SpellId = SpellId(20910); // rank 3
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (hunter-wide list).
+        super::boost(),
         // Emergency FD.
         Seq!(Cmp(SelfHealthPct, Below(15)), CastOnSelf(FEIGN_DEATH)),
         Seq!(

@@ -10,7 +10,17 @@ use crate::{Seq, Sel};
 
 pub fn build_tree() -> Bt {
     Sel!(
-        // TODO: Rebirth on dead party member (needs dead-target variant).
+        // `co +boost` burst cooldowns (druid-wide list).
+        super::boost(),
+        // Rebirth (battle res) on a dead party member. Runs at the top of
+        // the resto rotation so a combat wipe can still be partially
+        // saved. `ResurrectParty` handles dead-target lookup, class
+        // spell selection, and the in-combat allowance for Rebirth
+        // specifically. It is also wired into the generic reactive
+        // subtree as a fallback, but placing it here first gives the
+        // resto druid priority over lower heal nodes when a teammate
+        // has just died.
+        Seq!(IsClass(crate::bot::state::PlayerClass::Druid), ResurrectParty),
         // Innervate self when very low mana.
         Seq!(Cmp(SelfManaPct, Below(10)), CastOnSelf(INNERVATE)),
         // Barkskin when taking damage.

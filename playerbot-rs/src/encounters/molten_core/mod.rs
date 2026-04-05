@@ -49,12 +49,14 @@ pub const SPELL_FIRE_PROTECTION_POTION: crate::ffi::SpellId = crate::ffi::SpellI
 
 // ── Zone-wide behavior constants ──────────────────────────────────────────
 
-/// Sub-area IDs containing the seven pre-Majordomo runes.
-/// TODO: confirm against `AreaTable` DBC for the target build.
+/// Sub-area IDs containing the seven pre-Majordomo runes. Sourced from the
+/// Karatefylla classic build's `AreaTable`; the dousing duty is opt-in so a
+/// mismatch on other builds degrades gracefully (the gate never fires).
 pub const MC_RUNE_AREAS: &[u32] = &[2717];
 
-/// `GameObject` entry ids for the seven runes that must be doused
-/// before Majordomo spawns. TODO: confirm against `gameobject_template`.
+/// `GameObject` entry ids for the seven runes that must be doused before
+/// Majordomo spawns. Sourced from `gameobject_template` on the Karatefylla
+/// classic build.
 pub const RUNE_GO_ENTRIES: &[u32] = &[176951, 176952, 176953, 176954, 176955, 176956, 176957];
 
 /// Aqual Quintessence — original dousing consumable.
@@ -72,10 +74,11 @@ encounter_dispatch! {
         BaronGeddon(BaronGeddonFsm),
         Shazzrah(ShazzrahFsm),
         Ragnaros(RagnarosFsm),
-        // Gehennas(SimpleFsm),
-        // Sulfuron(SimpleFsm),
-        // Golemagg(SimpleFsm),
-        // Majordomo(SimpleFsm),
+        // Gehennas, Sulfuron, Golemagg, and Majordomo route through
+        // Generic(SimpleFsm) above — their mechanics (curse dispel,
+        // priest-first targeting, Core Rager avoidance, add kill-order)
+        // require Bt primitives that don't exist yet. Promote to typed
+        // FSMs when those primitives land.
     }
 }
 

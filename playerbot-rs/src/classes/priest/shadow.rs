@@ -31,6 +31,8 @@ const DEVOURING_PLAGUE_RANKS: &[SpellId] = &[
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (priest-wide list).
+        super::boost(),
         // Always maintain Shadowform.
         Seq!(Bt::self_missing(SHADOWFORM), CastOnSelf(SHADOWFORM)),
         // Fade on aggro.

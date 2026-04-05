@@ -4,11 +4,25 @@ pub mod destruction;
 pub mod prefs;
 
 use crate::{
-    bot::state::PlayerSpec, classes::ClassKit, data::spells::vanilla::warlock::DEMON_ARMOR,
+    Seq,
+    bot::settings::CombatOrder,
+    bot::state::PlayerSpec,
+    classes::ClassKit,
+    data::spells::vanilla::warlock::{DARK_PACT, DEMON_ARMOR},
+    engine::bt::Bt::{self, CastOnSelf, CombatOrderHas, InCombat},
     noncombat::GroupBuff,
 };
 
 const BUFFS: &[GroupBuff] = &[GroupBuff::on_self(DEMON_ARMOR)];
+
+/// `co +boost` burst subtree — warlock offensive cooldowns.
+pub fn boost() -> Bt {
+    Seq!(
+        CombatOrderHas(CombatOrder::BOOST),
+        InCombat,
+        CastOnSelf(DARK_PACT),
+    )
+}
 
 pub fn kit(spec: PlayerSpec) -> ClassKit {
     use PlayerSpec::{WarlockAffliction, WarlockDemonology, WarlockDestruction};

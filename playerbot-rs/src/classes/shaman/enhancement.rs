@@ -14,6 +14,8 @@ const LIGHTNING_SHIELD_RANKS: &[SpellId] = &[LIGHTNING_SHIELD, SpellId(10432)];
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (shaman-wide list).
+        super::boost(),
         // Self buffs.
         Seq!(
             Bt::self_missing_any_rank(LIGHTNING_SHIELD_RANKS),

@@ -115,9 +115,27 @@ fn combat_wrapper(class_rotation: Bt) -> Bt {
 fn mode_dispatch() -> Bt {
     use Bt::{ModeIs, Follow, StrategyEnabled};
     Sel!(
+        // Follow mode — try to follow (tank → master → group member).
+        // `Follow` returns Success whenever a follow target exists, even
+        // if the bot is already close enough to stay put; only when the
+        // bot is genuinely solo and masterless does it return Failure and
+        // fall through to RPG/Grind so unclaimed random bots still do
+        // something. This matches PB2's semantics and prevents grouped
+        // bots from wandering off to grind while standing next to their
+        // master ("restless" bug).
+        //
+        // Not throttled: `tick_follow` already gates the actual re-follow
+        // call on `unit_distance > REFOLLOW_THRESHOLD`, so running it
+        // every tick is cheap and avoids leaving a Follow-mode bot in a
+        // gap where the throttle had started cooling and the selector
+        // would otherwise route into RPG/Grind.
         Seq!(
             ModeIs(BehaviorMode::Follow),
-            Bt::throttle(2_000, Follow),
+            Sel!(
+                Follow,
+                world::rpg::rpg_subtree(),
+                world::grind::grind_subtree(),
+            ),
         ),
         Seq!(
             ModeIs(BehaviorMode::Stay),

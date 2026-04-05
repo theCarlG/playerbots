@@ -100,6 +100,53 @@ pub unsafe extern "C" fn playerbot_create(
     Box::into_raw(state).cast()
 }
 
+/// Set (or clear) the bot's master. `guid = 0` clears.
+///
+/// Called from the C++ shim whenever `PlayerbotRust::SetMaster` runs —
+/// including the per-tick master auto-claim, explicit master assignment via
+/// `PlayerbotMgr`, and random-bot cleanup when the previous master logs out.
+/// The guid is the raw `ObjectGuid` value of the master Player.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_set_master(state: *mut (), guid: u64) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    bot.set_master(if guid == 0 { None } else { Some(guid) });
+}
+
+/// Read the current master guid (0 = no master).
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_get_master(state: *const ()) -> u64 {
+    if state.is_null() {
+        return 0;
+    }
+    let bot = unsafe { &*state.cast::<BotState>() };
+    bot.master_guid.unwrap_or(0)
+}
+
+/// Reset all per-bot strategy/cache state (pending commands, blackboard,
+/// cooldown throttles, encounter FSM). Called from the C++ shim when the
+/// master changes or when `PlayerbotMgr` decides a full reinit is needed.
+/// Equivalent to PB2's `PlayerbotAI::ResetStrategies`.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_reset_strategies(state: *mut ()) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    bot.reset_strategies();
+}
+
 /// Destroy AI state for one bot.
 ///
 /// # Safety
@@ -258,16 +305,10 @@ pub unsafe extern "C" fn playerbot_chat_command(
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
     let c_str = unsafe { std::ffi::CStr::from_ptr(text) };
-    if let Ok(text) = c_str.to_str()
-        && let Some(cmd) = commands::parser::parse(text) {
-            let sec = commands::SecurityLevel::from_raw(security);
-            let pc = if sender_guid == 0 {
-                commands::PendingCommand::internal(cmd)
-            } else {
-                commands::PendingCommand::external(sender_guid, sec, cmd)
-            };
-            bot.pending_commands.push_back(pc);
-        }
+    if let Ok(text) = c_str.to_str() {
+        let sec = commands::SecurityLevel::from_raw(security);
+        commands::preprocess::preprocess_and_enqueue(bot, sender_guid, sec, text);
+    }
 }
 
 // ── Global coordination tick ──────────────────────────────────────────────

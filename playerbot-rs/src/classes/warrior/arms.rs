@@ -13,6 +13,8 @@ use crate::{Seq, Sel};
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (warrior-wide list).
+        super::boost(),
         // Close the gap: Charge if out of range, otherwise stick.
         CastOnTarget(CHARGE),
         StickToTarget(5.0),

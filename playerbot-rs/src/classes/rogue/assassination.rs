@@ -15,6 +15,8 @@ use crate::{Seq, Sel};
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (rogue-wide list).
+        super::boost(),
         // 0. OUT-OF-COMBAT MAINTENANCE: keep weapon poisons applied.
         //    Throttled so we don't spam cast attempts on a failed apply.
         Seq!(

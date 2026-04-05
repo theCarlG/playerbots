@@ -1,15 +1,17 @@
+use crate::{Sel, Seq};
 /// Restoration Shaman behavior tree (Classic / Vanilla).
 ///
 /// Priority: Mana Spring Totem → Nature's Swiftness panic → critical heals →
 ///   fast heals → Chain Heal when multiple hurt → sustained heals → Purge
 use crate::{
     data::spells::vanilla::shaman::*,
-    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::bt::Bt::{self, *},
 };
-use crate::{Seq, Sel};
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (shaman-wide list).
+        super::boost(),
         // Totem upkeep driven by per-bot preferences
         // (see `bot::class_prefs::ShamanPrefs`).
         Bt::throttle(2_000, DropConfiguredTotems),

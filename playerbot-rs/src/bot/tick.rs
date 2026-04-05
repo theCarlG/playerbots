@@ -21,6 +21,12 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     bot.snap = bot.interface.get_snapshot();
     let now_ms = bot.snap.server_time_ms;
 
+    // 1a. Reconcile the shared GroupState handle with the snapshot. The
+    // RAII `GroupHandle` returned by the registry automatically deregisters
+    // itself when dropped, so reassignment here is also how we leave the
+    // previous group.
+    bot.refresh_group_membership();
+
     // 2. Throttled attacker/nearby refresh
     if !minimal && now_ms.saturating_sub(bot.last_attackers_refresh_ms) >= cfg.attacker_refresh_ms {
         bot.attackers = bot
@@ -66,6 +72,7 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         ref mut timers,
         ref mut throttles,
         ref group_state,
+        master_guid,
         ref encounter,
         ref root_tree,
         handle: bot_handle,
@@ -75,7 +82,9 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         ..
     } = *bot;
 
-    let ctx_group = group_state.as_ref().and_then(|arc| arc.try_read().ok());
+    let ctx_group = group_state
+        .as_ref()
+        .and_then(|handle| handle.state().try_read().ok());
 
     let mut ctx = TickContext {
         snap,
@@ -90,6 +99,7 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         elapsed_ms,
         minimal,
         bot_handle,
+        master_guid,
         encounter: encounter.as_deref(),
         class,
         role,

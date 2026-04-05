@@ -9,6 +9,8 @@ use crate::{Seq, Sel};
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (warrior-wide list).
+        super::boost(),
         // Close gap: Intercept (Berserker), Charge (Battle), then stick.
         CastOnTarget(INTERCEPT),
         CastOnTarget(CHARGE),

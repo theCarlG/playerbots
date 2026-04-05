@@ -26,6 +26,8 @@ const SEAL_RANKS: &[SpellId] = &[
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (paladin-wide list).
+        super::boost(),
         // Close gap.
         StickToTarget(5.0),
         // Emergency bubble.

@@ -13,6 +13,8 @@ use crate::{Seq, Sel};
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (warrior-wide list).
+        super::boost(),
         // Emergency survival CDs.
         Seq!(
             Cmp(SelfHealthPct, Below(20)),

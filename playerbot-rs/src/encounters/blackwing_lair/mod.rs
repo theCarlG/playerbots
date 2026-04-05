@@ -20,6 +20,9 @@
 /// boss FSM.
 pub mod broodlord;
 pub mod chromaggus;
+pub mod ebonroc;
+pub mod firemaw;
+pub mod flamegor;
 pub mod nefarian;
 pub mod vaelastrasz;
 
@@ -34,6 +37,9 @@ use crate::engine::bt_nodes::BtResult;
 use crate::engine::context::TickContext;
 pub use broodlord::BroodlordFsm;
 pub use chromaggus::ChromaggusFsm;
+pub use ebonroc::EbonrocFsm;
+pub use firemaw::FiremawFsm;
+pub use flamegor::FlamegorFsm;
 pub use nefarian::NefarianFsm;
 pub use vaelastrasz::VaelastraszFsm;
 
@@ -51,8 +57,9 @@ pub const ENTRY_NEFARIAN: u32 = 11583;
 // ── Zone-wide behavior constants ──────────────────────────────────────────
 
 /// Sub-area id for the Suppression Room corridor leading to Broodlord.
-/// TODO: confirm against `AreaTable` DBC for the target build. If
-/// wrong, the gate silently never fires — the behavior is opt-in.
+/// Pulled from `AreaTable` on the Karatefylla classic build; the encounter
+/// behaviour is opt-in (enabled via the `suppression` duty), so a mismatch
+/// on other builds degrades gracefully — the gate simply does not fire.
 pub const AREA_SUPPRESSION_ROOM: u32 = 2802;
 
 /// `GameObject` entry id for the Suppression Device trap in the
@@ -65,9 +72,9 @@ encounter_dispatch! {
         Razorgore(SimpleFsm),
         Vaelastrasz(VaelastraszFsm),
         Broodlord(BroodlordFsm),
-        Firemaw(SimpleFsm),
-        Ebonroc(SimpleFsm),
-        Flamegor(SimpleFsm),
+        Firemaw(FiremawFsm),
+        Ebonroc(EbonrocFsm),
+        Flamegor(FlamegorFsm),
         Chromaggus(ChromaggusFsm),
         Nefarian(NefarianFsm),
     }
@@ -80,9 +87,9 @@ impl TryFrom<u32> for BlackwingLairBoss {
             ENTRY_RAZORGORE => Ok(Self::Razorgore(SimpleFsm::new(entry))),
             ENTRY_VAELASTRASZ => Ok(Self::Vaelastrasz(VaelastraszFsm::default())),
             ENTRY_BROODLORD => Ok(Self::Broodlord(BroodlordFsm::default())),
-            ENTRY_FIREMAW => Ok(Self::Firemaw(SimpleFsm::new(entry))),
-            ENTRY_EBONROC => Ok(Self::Ebonroc(SimpleFsm::new(entry))),
-            ENTRY_FLAMEGOR => Ok(Self::Flamegor(SimpleFsm::new(entry))),
+            ENTRY_FIREMAW => Ok(Self::Firemaw(FiremawFsm::default())),
+            ENTRY_EBONROC => Ok(Self::Ebonroc(EbonrocFsm::default())),
+            ENTRY_FLAMEGOR => Ok(Self::Flamegor(FlamegorFsm::default())),
             ENTRY_CHROMAGGUS => Ok(Self::Chromaggus(ChromaggusFsm::default())),
             ENTRY_NEFARIAN => Ok(Self::Nefarian(NefarianFsm::default())),
             _ => Err(()),

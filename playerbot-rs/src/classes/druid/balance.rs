@@ -13,6 +13,8 @@ use crate::{Seq, Sel};
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (druid-wide list).
+        super::boost(),
         // Emergency self-heal + Barkskin.
         Seq!(
             Cmp(SelfHealthPct, Below(35)),

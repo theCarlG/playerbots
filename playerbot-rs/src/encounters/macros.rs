@@ -53,6 +53,9 @@ macro_rules! encounter_dispatch {
             fn phase_bt(&self) -> Option<$crate::engine::bt::Bt> {
                 match self { $( Self::$variant(fsm) => fsm.phase_bt(), )+ }
             }
+            fn safe_zone_hint(&self) -> u8 {
+                match self { $( Self::$variant(fsm) => fsm.safe_zone_hint(), )+ }
+            }
         }
     };
 }

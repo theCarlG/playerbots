@@ -17,6 +17,8 @@ const RIPOSTE: SpellId = SpellId(14251);
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (rogue-wide list).
+        super::boost(),
         // Out-of-combat: keep weapon poisons applied.
         Seq!(
             InCombat.not(),

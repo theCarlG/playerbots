@@ -316,6 +316,12 @@ pub enum Bt {
     PetUnhappy,
     /// Bot should proactively engage based on reactivity + attackers/nearby.
     ShouldEngage,
+    /// Bot should flee: either an explicit flee command is active
+    /// (`BotSettings::flee_override_until_ms` not yet expired), or health
+    /// has dropped below `BotSettings::flee_hp_pct` while `StrategyFlags::FLEE`
+    /// is enabled. Reads live settings so threshold changes take effect
+    /// next tick.
+    ShouldFlee,
 
     // ── Movement — encounter ─────────────────────────────────────────────
     /// Dodge an area effect — move to nearest safe position.
@@ -652,13 +658,32 @@ impl BtNode for Bt {
                 child,
             } => {
                 let now = ctx.server_time_ms;
-                let last = ctx.throttles.last_fire(*key);
-                if now.saturating_sub(last) < *interval_ms {
-                    return BtResult::Failure;
+                // Running-transparency: if the child is already in a Running
+                // phase (previous tick returned Running), bypass the cooldown
+                // check and tick it again so the in-progress action can
+                // continue. Otherwise a long-running move_to would be
+                // interrupted by the throttle returning Failure, causing the
+                // parent `Sel` to fall through to a sibling arm
+                // (e.g. `StopMoving`) and halt the bot mid-movement.
+                if !ctx.throttles.is_running(*key) {
+                    let last = ctx.throttles.last_fire(*key);
+                    if now.saturating_sub(last) < *interval_ms {
+                        return BtResult::Failure;
+                    }
                 }
                 let result = child.tick(ctx);
-                if result != BtResult::Failure {
-                    ctx.throttles.mark_fired(*key, now);
+                match result {
+                    BtResult::Running => {
+                        ctx.throttles.mark_fired(*key, now);
+                        ctx.throttles.set_running(*key, true);
+                    }
+                    BtResult::Success => {
+                        ctx.throttles.mark_fired(*key, now);
+                        ctx.throttles.set_running(*key, false);
+                    }
+                    BtResult::Failure => {
+                        ctx.throttles.set_running(*key, false);
+                    }
                 }
                 result
             }
@@ -765,6 +790,24 @@ impl BtNode for Bt {
                 Reactivity::Defensive => !ctx.attackers.is_empty(),
                 Reactivity::Aggressive => !ctx.attackers.is_empty() || !ctx.nearby.is_empty(),
             }),
+            Bt::ShouldFlee => {
+                // Command-driven override takes precedence.
+                if ctx.server_time_ms < ctx.settings.flee_override_until_ms {
+                    return BtResult::Success;
+                }
+                // Strategy-gated HP-triggered flee.
+                let threshold = ctx.settings.flee_hp_pct;
+                if threshold > 0.0
+                    && ctx
+                        .settings
+                        .strategies
+                        .contains(crate::bot::settings::StrategyFlags::FLEE)
+                    && ctx.self_hp_pct() < threshold
+                {
+                    return BtResult::Success;
+                }
+                BtResult::Failure
+            }
 
             // ── Movement — encounter ─────────────────────────────────────
             Bt::FleeToSafe(radius) => move_to_safe(ctx, *radius),
@@ -1158,25 +1201,61 @@ const FOLLOW_DIST: f32 = 3.0;
 const REFOLLOW_THRESHOLD: f32 = 8.0;
 
 fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
-    // Prefer following the designated tank.
+    // Follow-target priority order, mirroring PB2:
+    //   1. The designated group tank.
+    //   2. The recorded master (real player that claimed this bot).
+    //   3. Any other group member.
+    //
+    // Result semantics — this is load-bearing for `mode_dispatch`:
+    //
+    //   * Success — a follow target was resolvable (we either kicked off a
+    //     re-follow movement, or we're already close enough to stay put).
+    //     The selector in `mode_dispatch` stops here and the bot idles,
+    //     which is what a raid player expects when they're standing still
+    //     next to their bots.
+    //
+    //   * Failure — there is literally no follow target for this bot
+    //     (solo, masterless random bot). The selector falls through to
+    //     RPG/Grind so unclaimed bots still do something.
+    //
+    // The "only re-follow when far enough away" gate avoids fighting the
+    // movement generator on every tick — CMaNGOS already handles the
+    // close-range stick-with-target case via the chase generator.
+
+    // 1) Tank.
     if let Some(tank) = ctx.interface.group_get_tank()
-        && ctx.interface.unit_distance(tank) > REFOLLOW_THRESHOLD
-        && ctx.interface.follow(tank, FOLLOW_DIST, 0.0)
+        && tank != ctx.bot_handle
     {
+        if ctx.interface.unit_distance(tank) > REFOLLOW_THRESHOLD {
+            ctx.interface.follow(tank, FOLLOW_DIST, 0.0);
+        }
         return BtResult::Success;
     }
-    // Fall back to any group member far enough away.
-    let member = ctx.snap.group_members[..ctx.snap.group_size as usize]
+
+    // 2) Master.
+    if let Some(master) = ctx.master_guid
+        && master != 0
+        && master != ctx.bot_handle
+    {
+        if ctx.interface.unit_distance(master) > REFOLLOW_THRESHOLD {
+            ctx.interface.follow(master, FOLLOW_DIST, 0.0);
+        }
+        return BtResult::Success;
+    }
+
+    // 3) Any other group member.
+    if let Some(member) = ctx.snap.group_members[..ctx.snap.group_size as usize]
         .iter()
         .copied()
-        .find(|&h| {
-            h != 0 && h != ctx.bot_handle && ctx.interface.unit_distance(h) > REFOLLOW_THRESHOLD
-        });
-    if let Some(target) = member
-        && ctx.interface.follow(target, FOLLOW_DIST, 0.0)
+        .find(|&h| h != 0 && h != ctx.bot_handle)
     {
+        if ctx.interface.unit_distance(member) > REFOLLOW_THRESHOLD {
+            ctx.interface.follow(member, FOLLOW_DIST, 0.0);
+        }
         return BtResult::Success;
     }
+
+    // No follow target at all — let the selector fall through.
     BtResult::Failure
 }
 
@@ -1638,10 +1717,52 @@ fn tick_bg_attack(ctx: &mut TickContext<'_>) -> BtResult {
 
 // ── RPG helpers ─────────────────────────────────────────────────────────────
 
+/// Stateful wander: picks a random point within 20 yards, commits the
+/// destination to the blackboard, and keeps returning Running until the bot
+/// arrives. Only rerolls after arrival.
+///
+/// Without this statefulness `get_random_point_nearby` would be called every
+/// tick, rerouting the bot to a different point continuously and never
+/// actually letting it arrive anywhere. The arrival threshold (3 yards²≈sqrt
+/// distance 1.7y) matches the stop distance of the movement system.
 fn tick_rpg_wander(ctx: &mut TickContext<'_>) -> BtResult {
+    use crate::engine::blackboard::{Key, Value};
+
+    const ARRIVAL_SQ: f32 = 3.0 * 3.0;
+
+    // Resume an in-progress destination if one is saved.
+    if let (Some(dx), Some(dy), Some(dz)) = (
+        ctx.blackboard.get_f32(Key::RpgWanderDestX),
+        ctx.blackboard.get_f32(Key::RpgWanderDestY),
+        ctx.blackboard.get_f32(Key::RpgWanderDestZ),
+    ) {
+        let pos = &ctx.snap.self_.pos;
+        let dist_sq = (pos.x - dx).powi(2) + (pos.y - dy).powi(2);
+        if dist_sq <= ARRIVAL_SQ {
+            // Arrived — clear the destination so the next activation rerolls.
+            ctx.blackboard.clear(Key::RpgWanderDestX);
+            ctx.blackboard.clear(Key::RpgWanderDestY);
+            ctx.blackboard.clear(Key::RpgWanderDestZ);
+            return BtResult::Success;
+        }
+        if ctx.interface.move_to(dx, dy, dz) {
+            return BtResult::Running;
+        }
+        // Movement request failed — drop the destination so we can reroll
+        // next time and fall through to Failure.
+        ctx.blackboard.clear(Key::RpgWanderDestX);
+        ctx.blackboard.clear(Key::RpgWanderDestY);
+        ctx.blackboard.clear(Key::RpgWanderDestZ);
+        return BtResult::Failure;
+    }
+
+    // No saved destination — pick a new one.
     if let Some(pos) = ctx.interface.get_random_point_nearby(20.0)
         && ctx.interface.move_to(pos.x, pos.y, pos.z)
     {
+        ctx.blackboard.set(Key::RpgWanderDestX, Value::F32(pos.x));
+        ctx.blackboard.set(Key::RpgWanderDestY, Value::F32(pos.y));
+        ctx.blackboard.set(Key::RpgWanderDestZ, Value::F32(pos.z));
         return BtResult::Running;
     }
     BtResult::Failure
@@ -1701,7 +1822,9 @@ fn tick_gather(ctx: &mut TickContext<'_>) -> BtResult {
 mod tests {
     use super::*;
     use crate::encounters::{EncounterEvent, EncounterFsm};
-    use crate::engine::context::tests::{TestCtxOwned, TestInterface, make_encounter_ctx};
+    use crate::engine::context::tests::{
+        TestCtxOwned, TestInterface, make_encounter_ctx, make_test_ctx_with,
+    };
     use crate::ffi::BotRole;
 
     struct MockEncounter {
@@ -1902,5 +2025,167 @@ mod tests {
 
         owned.settings.auto_loot = false;
         assert_eq!(tree.tick(&mut owned.ctx()), BtResult::Failure);
+    }
+
+    // ── RPG wander (stateful destination) ────────────────────────────────
+
+    #[test]
+    fn rpg_wander_commits_destination_on_first_tick() {
+        use crate::engine::blackboard::Key;
+
+        let iface = TestInterface::new().with_wander_point(100.0, 200.0, 50.0);
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.pos.x = 0.0;
+        owned.snap.self_.pos.y = 0.0;
+        owned.snap.self_.pos.z = 50.0;
+
+        let mut bb = owned.blackboard;
+        let mut timers = owned.timers;
+        let mut throttles = owned.throttles;
+        let mut ctx = make_test_ctx_with(
+            &owned.snap,
+            &owned.nearby,
+            &owned.attackers,
+            &iface,
+            &mut bb,
+            &mut timers,
+            &mut throttles,
+        );
+
+        assert_eq!(Bt::RpgWander.tick(&mut ctx), BtResult::Running);
+        assert_eq!(ctx.blackboard.get_f32(Key::RpgWanderDestX), Some(100.0));
+        assert_eq!(ctx.blackboard.get_f32(Key::RpgWanderDestY), Some(200.0));
+    }
+
+    #[test]
+    fn rpg_wander_keeps_destination_while_in_transit() {
+        use crate::engine::blackboard::{Key, Value};
+
+        // Pre-populate a saved destination far from current position.
+        let iface = TestInterface::new().with_wander_point(999.0, 999.0, 50.0);
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.pos.x = 0.0;
+        owned.snap.self_.pos.y = 0.0;
+        owned.blackboard.set(Key::RpgWanderDestX, Value::F32(100.0));
+        owned.blackboard.set(Key::RpgWanderDestY, Value::F32(200.0));
+        owned.blackboard.set(Key::RpgWanderDestZ, Value::F32(50.0));
+
+        let mut bb = owned.blackboard;
+        let mut timers = owned.timers;
+        let mut throttles = owned.throttles;
+        let mut ctx = make_test_ctx_with(
+            &owned.snap,
+            &owned.nearby,
+            &owned.attackers,
+            &iface,
+            &mut bb,
+            &mut timers,
+            &mut throttles,
+        );
+
+        assert_eq!(Bt::RpgWander.tick(&mut ctx), BtResult::Running);
+        // Must not have been rerolled to the interface's wander_point.
+        assert_eq!(ctx.blackboard.get_f32(Key::RpgWanderDestX), Some(100.0));
+        assert_eq!(ctx.blackboard.get_f32(Key::RpgWanderDestY), Some(200.0));
+    }
+
+    #[test]
+    fn rpg_wander_clears_destination_on_arrival() {
+        use crate::engine::blackboard::{Key, Value};
+
+        let iface = TestInterface::new();
+        let mut owned = TestCtxOwned::new();
+        // Position is essentially at the saved destination.
+        owned.snap.self_.pos.x = 100.5;
+        owned.snap.self_.pos.y = 200.5;
+        owned.blackboard.set(Key::RpgWanderDestX, Value::F32(100.0));
+        owned.blackboard.set(Key::RpgWanderDestY, Value::F32(200.0));
+        owned.blackboard.set(Key::RpgWanderDestZ, Value::F32(50.0));
+
+        let mut bb = owned.blackboard;
+        let mut timers = owned.timers;
+        let mut throttles = owned.throttles;
+        let mut ctx = make_test_ctx_with(
+            &owned.snap,
+            &owned.nearby,
+            &owned.attackers,
+            &iface,
+            &mut bb,
+            &mut timers,
+            &mut throttles,
+        );
+
+        assert_eq!(Bt::RpgWander.tick(&mut ctx), BtResult::Success);
+        assert!(matches!(
+            ctx.blackboard.get(Key::RpgWanderDestX),
+            crate::engine::blackboard::Value::None
+        ));
+    }
+
+    // ── Throttle running-transparency ────────────────────────────────────
+
+    #[test]
+    fn throttle_bypasses_cooldown_while_child_running() {
+        use crate::engine::blackboard::{Key, Value};
+
+        // Wrap a stateful RpgWander in a throttle so we can observe that the
+        // throttle ticks the child on consecutive ticks even though the
+        // cooldown window has not yet elapsed.
+        let tree = Bt::throttle(10_000, Bt::RpgWander);
+        let iface = TestInterface::new().with_wander_point(100.0, 200.0, 50.0);
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.pos.x = 0.0;
+        owned.snap.self_.pos.y = 0.0;
+
+        let mut bb = owned.blackboard;
+        let mut timers = owned.timers;
+        let mut throttles = owned.throttles;
+        let mut ctx = make_test_ctx_with(
+            &owned.snap,
+            &owned.nearby,
+            &owned.attackers,
+            &iface,
+            &mut bb,
+            &mut timers,
+            &mut throttles,
+        );
+
+        // Tick 1: picks dest, move_to → Running, throttle marks fired+running.
+        ctx.server_time_ms = 10_000;
+        assert_eq!(tree.tick(&mut ctx), BtResult::Running);
+        assert_eq!(ctx.blackboard.get_f32(Key::RpgWanderDestX), Some(100.0));
+
+        // Tick 2: cooldown not elapsed, but child was Running last tick, so
+        // throttle must bypass the check and keep ticking. Without the fix
+        // this would return Failure and the Sel parent would fall through.
+        ctx.server_time_ms = 10_500;
+        assert_eq!(tree.tick(&mut ctx), BtResult::Running);
+
+        // Place bot at destination. Next tick child returns Success and the
+        // running flag clears.
+        ctx.blackboard.set(Key::RpgWanderDestX, Value::F32(100.0));
+        ctx.blackboard.set(Key::RpgWanderDestY, Value::F32(200.0));
+        // Simulate arrival by tweaking the snap — we can't mutate snap
+        // through the ctx borrow, so this case is covered by the dedicated
+        // `rpg_wander_clears_destination_on_arrival` test above.
+    }
+
+    #[test]
+    fn throttle_enforces_cooldown_after_success() {
+        // A child that always returns Success must still be throttled once
+        // the cooldown has been armed.
+        let tree = Bt::throttle(10_000, Bt::HoldPosition); // HoldPosition returns Success.
+        let mut owned = TestCtxOwned::new();
+
+        owned.time_ms = 10_000;
+        assert_eq!(tree.tick(&mut owned.ctx()), BtResult::Success);
+
+        // Within the cooldown window — throttle must inhibit.
+        owned.time_ms = 15_000;
+        assert_eq!(tree.tick(&mut owned.ctx()), BtResult::Failure);
+
+        // After cooldown — child fires again.
+        owned.time_ms = 21_000;
+        assert_eq!(tree.tick(&mut owned.ctx()), BtResult::Success);
     }
 }

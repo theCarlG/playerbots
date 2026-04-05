@@ -8,15 +8,15 @@
 /// so the combat wrapper is built in `bot::init` as a `Box<dyn BtNode>`
 /// selector containing both `Bt` enum nodes and the class rotation.
 use crate::bot::state::PlayerClass;
-use crate::engine::bt::{Bt::{self, *}, Op::*, Resource::*};
+use crate::engine::bt::Bt::{self, *};
 use crate::{Seq, Sel};
 
-/// Flee at critically low HP.
+/// Flee on an explicit `flee` command or when HP drops below the bot's
+/// configured `flee_hp_pct` threshold (with `StrategyFlags::FLEE` enabled).
+/// `ShouldFlee` reads live settings so the raid can re-tune thresholds at
+/// runtime without rebuilding the tree.
 pub fn flee_subtree() -> Bt {
-    Seq!(
-        Cmp(SelfHealthPct, Below(0)), // flee_hp_pct checked via the dynamic threshold
-        FleeToSafe(20.0),
-    )
+    Seq!(ShouldFlee, FleeToSafe(20.0))
 }
 
 /// Interrupt enemy casts (class-appropriate).
@@ -76,10 +76,19 @@ pub fn targeting_subtree() -> Bt {
             CombatOrderHas(crate::bot::settings::CombatOrder::PROTECT),
             ProtectAttacker,
         ),
-        // Aggressive: attack nearest hostile.
+        // Aggressive: attack nearest hostile (bot reaches out and grabs
+        // the closest mob even if nothing is currently hitting it).
         Seq!(
             ReactivityIs(crate::bot::settings::Reactivity::Aggressive),
             AttackNearest,
         ),
+        // Default attack-back fallback. Whenever anything is hitting the
+        // bot and none of the higher-priority arms produced a target
+        // (tank idle, assist leader has no target, protect list empty),
+        // any non-passive bot should at minimum fight its attackers back
+        // instead of standing still getting killed. `ShouldEngage`
+        // upstream already ensured the bot is allowed to be in combat,
+        // so we can attack unconditionally here.
+        Seq!(HasAttackers, AttackNearest),
     )
 }

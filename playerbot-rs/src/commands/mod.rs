@@ -3,6 +3,7 @@
 /// Commands arrive as whispers from the master player, parsed by `parser::parse()`,
 /// queued on `BotState::pending_commands`, and applied here before each tick.
 pub mod parser;
+pub mod preprocess;
 
 use crate::bot::class_prefs::{
     HunterAspect, HunterTrap, PaladinAura, PaladinBlessing, PoisonKind, ShamanImbue, TotemRole,
@@ -21,14 +22,21 @@ pub enum BotCommand {
     SetMode(BehaviorMode),
     SetCombatOrder(CombatOrder),
     /// Additive/subtractive combat order edit (`co +tank -fury`).
+    /// `query` is `true` when the original command ended with `,?` —
+    /// Mangosbot uses that form to both apply *and* re-query the flags in
+    /// one round-trip, so the handler whispers the current state after
+    /// applying.
     ApplyCombatOrder {
         add: CombatOrder,
         remove: CombatOrder,
+        query: bool,
     },
-    /// Additive/subtractive strategy toggles (`nc +rtsc,-rpg bg`).
+    /// Additive/subtractive strategy toggles (`nc +rtsc,-rpg bg`). See
+    /// [`ApplyCombatOrder::query`] for the `,?` trailing-query semantics.
     ApplyStrategies {
         add: StrategyFlags,
         remove: StrategyFlags,
+        query: bool,
     },
     /// Reset strategies back to the default loadout (`reset ai`).
     ResetStrategies,
@@ -129,6 +137,8 @@ pub enum BotCommand {
     MaxDps,
     /// `save mana` toggle.
     ToggleSaveMana,
+    /// `save mana on|off` — explicit set (Mangosbot addon sends both forms).
+    SetSaveMana(bool),
     /// `self res` toggle.
     ToggleSelfRes,
     /// `cheat <flags>` — dev bitfield.
@@ -142,6 +152,10 @@ pub enum BotCommand {
     /// `rti <icon>` — set the bot's preferred raid-target-icon focus.
     /// `rti clear` sends `None`.
     SetPreferredRti(Option<u8>),
+    /// `rti cc <icon>` — set the bot's preferred raid-target-icon for CC.
+    /// `rti cc none` / `rti cc clear` sends `None`. Used by the CC subtree
+    /// to decide which marked mob to sheep/sap/banish/etc.
+    SetPreferredCcRti(Option<u8>),
     /// `emote <id>` — play an emote.
     Emote(u32),
     /// `debug` / `cdebug` — diagnostic dump reply.
@@ -245,6 +259,36 @@ pub enum BotCommand {
     /// Reply with the current `encounter_prefs`.
     ShowEncounterPrefs,
 
+    // -- Loot policy (Mangosbot `ll` command) --
+    /// Toggle (`ll ~equip`), set (`ll +equip`), or clear (`ll -equip`) one
+    /// or more loot-policy categories. The dispatcher applies XORs before
+    /// sets/clears so `ll ~equip+quest` ends up symmetrically toggling both.
+    ApplyLootPolicy {
+        add: crate::bot::settings::LootPolicy,
+        remove: crate::bot::settings::LootPolicy,
+        toggle: crate::bot::settings::LootPolicy,
+    },
+
+    // -- Query commands (whisper current value, do not mutate state) --
+    /// `formation ?` — whisper current formation name.
+    QueryFormation,
+    /// `stance ?` — whisper current warrior stance.
+    QueryStance,
+    /// `co ?` — whisper current combat-order flags.
+    QueryCombatOrder,
+    /// `nc ?` — whisper current strategy flags.
+    QueryStrategies,
+    /// `react ?` — whisper current reactivity level.
+    QueryReactivity,
+    /// `rti ?` — whisper current preferred raid target icon.
+    QueryRti,
+    /// `rti cc ?` — whisper current preferred CC raid target icon.
+    QueryCcRti,
+    /// `save mana ?` — whisper current save-mana toggle state.
+    QuerySaveMana,
+    /// `ll ?` — whisper current loot policy.
+    QueryLootPolicy,
+
     // -- Unknown --
     Unknown(String),
 }
@@ -266,7 +310,10 @@ impl BotCommand {
             // Information queries — anyone who can talk to the bot.
             Status | ListSettings | Where | Help | Ready | Unknown(_) | Debug | CheckLos
             | ListQuests | ListTalents | ListSpells | ListReputation | ListSkills
-            | MailSummary => SecurityLevel::Talk,
+            | MailSummary
+            // Addon probes — must be readable by anyone who can whisper.
+            | QueryFormation | QueryStance | QueryCombatOrder | QueryStrategies
+            | QueryReactivity | QueryRti | QueryCcRti | QuerySaveMana | QueryLootPolicy => SecurityLevel::Talk,
 
             // Destructive / account-level — master only.
             Reset | ResetStrategies | BlacklistSpell(_) | UnblacklistSpell(_)
@@ -312,11 +359,13 @@ impl BotCommand {
             | SetStance(_)
             | MaxDps
             | ToggleSaveMana
+            | SetSaveMana(_)
             | ToggleSelfRes
             | KeepItem(_)
             | UnkeepItem(_)
             | SetChatChannel { .. }
             | SetPreferredRti(_)
+            | SetPreferredCcRti(_)
             | Emote(_)
             | ReleaseSpirit
             | AcceptRevive
@@ -344,7 +393,8 @@ impl BotCommand {
             | ShowWarriorPrefs
             | SetSuppressionDuty(_)
             | SetDouseDuty(_)
-            | ShowEncounterPrefs => SecurityLevel::Invite,
+            | ShowEncounterPrefs
+            | ApplyLootPolicy { .. } => SecurityLevel::Invite,
         }
     }
 }
@@ -446,15 +496,38 @@ fn class_cc_spell(class: crate::bot::state::PlayerClass) -> Option<SpellId> {
     })
 }
 
-/// Reply to the sender of `pc` — whisper if external, say if internal.
+/// Reply to the sender of `pc`, matching PB2's `TellPlayerNoFacing`
+/// routing: if the bot is in a group, broadcast to PARTY/RAID so every
+/// group member sees the response; otherwise whisper the sender. The
+/// C++ bridge's `tell_player` callback encapsulates that rule.
+///
+/// Internal/system-injected commands (`pc.sender == None`) fall back to
+/// `say` so anything the bot utters without a requester still goes out
+/// on a real channel.
 fn reply(bot: &BotState, pc: &PendingCommand, msg: &str) {
     match pc.sender {
         Some(guid) => {
-            bot.interface.whisper(guid, msg);
+            bot.interface.tell_player(guid, msg);
         }
         None => {
             bot.interface.say(msg, 0);
         }
+    }
+}
+
+/// Map an RTI icon index (1..=8) to Mangosbot's lowercase name. `None` and
+/// out-of-range values render as `"none"` (the addon uses this to clear).
+fn rti_icon_name(icon: Option<u8>) -> &'static str {
+    match icon {
+        Some(1) => "star",
+        Some(2) => "circle",
+        Some(3) => "diamond",
+        Some(4) => "triangle",
+        Some(5) => "moon",
+        Some(6) => "square",
+        Some(7) => "cross",
+        Some(8) => "skull",
+        _ => "none",
     }
 }
 
@@ -473,13 +546,21 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         BotCommand::SetCombatOrder(order) => {
             s.combat_order = *order;
         }
-        BotCommand::ApplyCombatOrder { add, remove } => {
+        BotCommand::ApplyCombatOrder { add, remove, query } => {
             s.combat_order.remove(*remove);
             s.combat_order.insert(*add);
+            if *query {
+                let msg = format!("Combat Strategies: {}", s.combat_order.describe());
+                reply(bot, pc, &msg);
+            }
         }
-        BotCommand::ApplyStrategies { add, remove } => {
+        BotCommand::ApplyStrategies { add, remove, query } => {
             s.strategies.remove(*remove);
             s.strategies.insert(*add);
+            if *query {
+                let msg = format!("Non Combat Strategies: {}", s.strategies.describe());
+                reply(bot, pc, &msg);
+            }
         }
         BotCommand::ResetStrategies => {
             s.strategies = StrategyFlags::defaults();
@@ -658,8 +739,32 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         BotCommand::Reset => {
             *s = BotSettings::default();
         }
-        BotCommand::Mount | BotCommand::Resurrect => {
-            // Handled by world behavior modules when they exist.
+        BotCommand::Mount => {
+            // Toggle mount: if already mounted, dismount; otherwise cast
+            // the best available mount. Mirrors PB2's `mount` / `dismount`
+            // chat aliases (both end up toggling the mount state via the
+            // same action node).
+            let ok = if bot.interface.is_mounted() {
+                bot.interface.dismount()
+            } else {
+                bot.interface.mount_up()
+            };
+            if s.verbose {
+                reply(bot, pc, if ok { "Ok" } else { "Cannot mount" });
+            }
+        }
+        BotCommand::Resurrect => {
+            // Mirrors PB2's dead-strategy resurrect fallback chain:
+            //   1. Accept any pending resurrect request (from a priest,
+            //      paladin, druid, shaman, soulstone, etc).
+            //   2. Otherwise repop at the spirit healer.
+            // The `release` and `revive` commands exist for the individual
+            // steps — this one is the "do whatever it takes" alias.
+            let accepted = bot.interface.accept_resurrect();
+            let ok = accepted || bot.interface.use_spirit_healer();
+            if s.verbose {
+                reply(bot, pc, if ok { "Ok" } else { "Cannot resurrect" });
+            }
         }
 
         BotCommand::Flee => {
@@ -675,8 +780,20 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             // Leave mode alone — "free" clears overrides, doesn't reset everything.
         }
         BotCommand::Summon => {
-            // Meeting-stone summon — world behavior module accepts the summon
-            // dialog. No immediate action needed here.
+            // Mirrors PB2 `SummonAction`: teleport the bot to the requester
+            // (in-place revive if dead), offset by follow range. LoS, angle
+            // search, transport re-parenting, and motion-master cleanup are
+            // all handled server-side in `CB_SummonToPlayer`.
+            //
+            // Internal commands (`pc.sender == None`) fall back to the
+            // master via blackboard — no sender means there is nobody to
+            // teleport to so we just skip and whisper nothing.
+            if let Some(requester) = pc.sender {
+                let ok = bot.interface.summon_to_player(requester);
+                if s.verbose {
+                    reply(bot, pc, if ok { "Coming!" } else { "Cannot summon" });
+                }
+            }
         }
         BotCommand::CastOne { spell, on_self } => {
             let target = if *on_self {
@@ -731,7 +848,33 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             let verbose = s.verbose;
             let now = s.save_mana;
             if verbose {
-                reply(bot, pc, if now { "save mana: on" } else { "save mana: off" });
+                // Mangosbot parses `Mana save level set: <val>` (line 3397).
+                reply(
+                    bot,
+                    pc,
+                    if now {
+                        "Mana save level set: on"
+                    } else {
+                        "Mana save level set: off"
+                    },
+                );
+            }
+        }
+        BotCommand::SetSaveMana(on) => {
+            s.save_mana = *on;
+            let verbose = s.verbose;
+            let now = s.save_mana;
+            if verbose {
+                // Mangosbot parses `Mana save level set: <val>` (line 3397).
+                reply(
+                    bot,
+                    pc,
+                    if now {
+                        "Mana save level set: on"
+                    } else {
+                        "Mana save level set: off"
+                    },
+                );
             }
         }
         BotCommand::ToggleSelfRes => {
@@ -761,6 +904,15 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         }
         BotCommand::SetPreferredRti(icon) => {
             s.preferred_rti_icon = *icon;
+            let name = rti_icon_name(*icon);
+            let msg = format!("rti set to: {name}");
+            reply(bot, pc, &msg);
+        }
+        BotCommand::SetPreferredCcRti(icon) => {
+            s.preferred_cc_rti_icon = *icon;
+            let name = rti_icon_name(*icon);
+            let msg = format!("rti cc set to: {name}");
+            reply(bot, pc, &msg);
         }
         BotCommand::Emote(id) => {
             bot.interface.emote(*id);
@@ -1118,6 +1270,66 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 p.suppression_duty.as_word(),
                 p.douse_duty.as_word()
             );
+            reply(bot, pc, &msg);
+        }
+
+        BotCommand::ApplyLootPolicy { add, remove, toggle } => {
+            s.loot_policy.remove(*remove);
+            s.loot_policy.insert(*add);
+            s.loot_policy.toggle(*toggle);
+        }
+
+        // -- Query replies ---------------------------------------------
+        BotCommand::QueryFormation => {
+            // Mangosbot parses `Formation: <name>` (line 3391 in Mangosbot.lua).
+            let msg = format!("Formation: {}", s.follow_formation.as_str());
+            reply(bot, pc, &msg);
+        }
+        BotCommand::QueryStance => {
+            let name = match s.stance {
+                1 => "battle",
+                2 => "defensive",
+                3 => "berserker",
+                _ => "none",
+            };
+            // Mangosbot parses `Stance: <name>` (line 3394).
+            let msg = format!("Stance: {name}");
+            reply(bot, pc, &msg);
+        }
+        BotCommand::QueryCombatOrder => {
+            // Mangosbot parses `Combat Strategies: ...` (line 3358, trim=19).
+            let msg = format!("Combat Strategies: {}", s.combat_order.describe());
+            reply(bot, pc, &msg);
+        }
+        BotCommand::QueryStrategies => {
+            // Mangosbot parses `Non Combat Strategies: ...` (line 3362, trim=23).
+            let msg = format!("Non Combat Strategies: {}", s.strategies.describe());
+            reply(bot, pc, &msg);
+        }
+        BotCommand::QueryReactivity => {
+            let msg = format!("react: {}", s.reactivity.as_str());
+            reply(bot, pc, &msg);
+        }
+        BotCommand::QueryRti => {
+            let msg = format!("rti: {}", rti_icon_name(s.preferred_rti_icon));
+            reply(bot, pc, &msg);
+        }
+        BotCommand::QueryCcRti => {
+            let msg = format!("rti cc: {}", rti_icon_name(s.preferred_cc_rti_icon));
+            reply(bot, pc, &msg);
+        }
+        BotCommand::QuerySaveMana => {
+            // Mangosbot parses `Mana save level: <val>` (line 3400).
+            let msg = if s.save_mana {
+                "Mana save level: on"
+            } else {
+                "Mana save level: off"
+            };
+            reply(bot, pc, msg);
+        }
+        BotCommand::QueryLootPolicy => {
+            // Mangosbot parses `Loot strategy: <val>` (line 3403).
+            let msg = format!("Loot strategy: {}", s.loot_policy.describe());
             reply(bot, pc, &msg);
         }
 

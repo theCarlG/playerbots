@@ -47,9 +47,21 @@
 #include "Guilds/Guild.h"
 #include "Guilds/GuildMgr.h"
 #include "Server/WorldSession.h"
+#include "Server/Opcodes.h"
+#include "Server/WorldPacket.h"
+#include "Entities/Transports.h"
+#include "BattleGround/BattleGround.h"
+#include "BattleGround/BattleGroundWS.h"
+#include "BattleGround/BattleGroundAB.h"
+#include "Chat/Chat.h"
+#include "Groups/Group.h"
 
 #ifdef CMANGOS
 #include "Combat/ThreatManager.h"
+#endif
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
 #endif
 
 // ── Platform helpers ──────────────────────────────────────────────────────
@@ -195,9 +207,13 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.attack              = CB_Attack;
     cbs.auto_attack         = CB_AutoAttack;
     cbs.say                 = CB_Say;
+    cbs.tell_player         = CB_TellPlayer;
     cbs.whisper             = CB_Whisper;
     cbs.use_item            = CB_UseItem;
     cbs.taunt               = CB_Taunt;
+    cbs.teleport_to         = CB_TeleportTo;
+    cbs.get_player_position = CB_GetPlayerPosition;
+    cbs.summon_to_player    = CB_SummonToPlayer;
 
     // Group / raid
     cbs.group_get_tank      = CB_GroupGetTank;
@@ -209,6 +225,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.accept_resurrect    = CB_AcceptResurrect;
     cbs.get_corpse_position = CB_GetCorpsePosition;
     cbs.use_spirit_healer   = CB_UseSpiritHealer;
+    cbs.resurrect_self      = CB_ResurrectSelf;
 
     // Mount
     cbs.is_mounted          = CB_IsMounted;
@@ -369,6 +386,8 @@ BotWorldSnapshot BotBridge::CB_GetSnapshot(BotHandle bot)
     {
         uint8_t count = 0;
         snap.is_leader = (group->GetLeaderGuid() == b->GetObjectGuid());
+        snap.is_raid_group = group->IsRaidGroup();
+        snap.subgroup = static_cast<uint8_t>(b->GetSubGroup() + 1);
 
         for (GroupReference* ref = group->GetFirstMember(); ref != nullptr && count < 40;
              ref = ref->next())
@@ -384,6 +403,108 @@ BotWorldSnapshot BotBridge::CB_GetSnapshot(BotHandle bot)
     else
     {
         snap.group_size = 0;
+        snap.is_raid_group = false;
+        snap.subgroup = 0;
+    }
+
+    // Guild
+    snap.guild_id = b->GetGuildId();
+    snap.in_guild = (snap.guild_id != 0);
+    snap.is_guild_leader = false;
+    if (snap.guild_id)
+    {
+        if (Guild* guild = sGuildMgr.GetGuildById(snap.guild_id))
+            snap.is_guild_leader = (guild->GetLeaderGuid() == b->GetObjectGuid());
+    }
+
+    // Durability — lowest slot, as a 0..100 percentage. Used by the
+    // `@needrepair` chat filter and by anyone else who wants to gate on
+    // "needs to visit a vendor". We report the minimum across equipped
+    // slots rather than the average because PB2's `AI_VALUE("durability")`
+    // is the single worst slot (the one that limits the bot first).
+    {
+        uint32_t worstPct = 100;
+        bool any = false;
+        for (int i = EQUIPMENT_SLOT_START; i < EQUIPMENT_SLOT_END; ++i)
+        {
+            Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, i);
+            if (!item)
+                continue;
+            uint32_t maxD = item->GetUInt32Value(ITEM_FIELD_MAXDURABILITY);
+            uint32_t curD = item->GetUInt32Value(ITEM_FIELD_DURABILITY);
+            if (maxD == 0)
+                continue;
+            uint32_t pct = (curD * 100) / maxD;
+            if (!any || pct < worstPct)
+            {
+                worstPct = pct;
+                any = true;
+            }
+        }
+        snap.durability_pct = any ? static_cast<uint8_t>(worstPct) : 100;
+    }
+
+    // Bag space — percent of inventory slots *used* (PB2's "bag space"
+    // value is a used-percent, not a free-percent). Counts backpack + all
+    // equipped bags. `@bagfull` fires at 100% used, `@bagalmostfull` at ≥80%.
+    {
+        uint32_t used = 0;
+        uint32_t total = 0;
+        // Backpack (main bag, 16 slots).
+        for (int i = INVENTORY_SLOT_ITEM_START; i < INVENTORY_SLOT_ITEM_END; ++i)
+        {
+            total++;
+            if (b->GetItemByPos(INVENTORY_SLOT_BAG_0, i))
+                used++;
+        }
+        // Equipped bags.
+        for (int bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
+        {
+            Bag* pBag = static_cast<Bag*>(b->GetItemByPos(INVENTORY_SLOT_BAG_0, bag));
+            if (!pBag)
+                continue;
+            for (uint32_t slot = 0; slot < pBag->GetBagSize(); ++slot)
+            {
+                total++;
+                if (b->GetItemByPos(bag, slot))
+                    used++;
+            }
+        }
+        snap.bag_space_pct = (total > 0)
+            ? static_cast<uint8_t>((used * 100) / total)
+            : 0;
+    }
+
+    // Average equipped item level (rough gear score for the `@tierN`
+    // chat filter). This deliberately mirrors the simple average used by
+    // PB2's `PlayerbotAI::GetEquipGearScore(bot, false, false)` — ignore
+    // bags/bank, just average non-null equipped slots.
+    {
+        uint32_t sum = 0;
+        uint32_t n = 0;
+        for (int i = EQUIPMENT_SLOT_START; i < EQUIPMENT_SLOT_END; ++i)
+        {
+            Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, i);
+            if (!item)
+                continue;
+            ItemPrototype const* proto = item->GetProto();
+            if (!proto)
+                continue;
+            sum += proto->ItemLevel;
+            n++;
+        }
+        snap.equip_gear_score = (n > 0) ? (sum / n) : 0;
+    }
+
+    // Overworld vs. instance. Classic-era overworld maps are Eastern
+    // Kingdoms (0) and Kalimdor (1). TBC adds Outland (530); WotLK adds
+    // Northrend (571). Everything else is an instance/BG. Matching PB2's
+    // `WorldPosition(bot).isOverworld()` exactly is overkill for the chat
+    // filter, which only needs to distinguish "inside an instance" from
+    // "not".
+    {
+        uint32_t mapId = b->GetMapId();
+        snap.is_overworld = (mapId == 0 || mapId == 1 || mapId == 530 || mapId == 571);
     }
 
     return snap;
@@ -817,6 +938,36 @@ bool BotBridge::CB_Whisper(BotHandle bot, uint64_t target_guid, const char* msg)
     return true;
 }
 
+// PB2 TellPlayerNoFacing routing rule: if the bot is in a group, broadcast
+// the reply to that group's PARTY/RAID channel (so every group member sees
+// it, not just the command sender). If the bot is solo, fall back to a
+// whisper so a random player asking a question still gets an answer.
+bool BotBridge::CB_TellPlayer(BotHandle bot, uint64_t target_guid, const char* msg)
+{
+    Player* b = FindBot(bot);
+    if (!b || !msg)
+        return false;
+
+    Group* group = b->GetGroup();
+    if (group)
+    {
+        const ChatMsg msgType = group->IsRaidGroup() ? CHAT_MSG_RAID : CHAT_MSG_PARTY;
+        WorldPacket data;
+        ChatHandler::BuildChatPacket(data, msgType, msg, LANG_UNIVERSAL, CHAT_TAG_NONE,
+                                     b->GetObjectGuid(), b->GetName());
+        group->BroadcastPacket(data, false);
+        return true;
+    }
+
+    if (target_guid)
+    {
+        ObjectGuid target(target_guid);
+        b->Whisper(msg, LANG_UNIVERSAL, target);
+        return true;
+    }
+    return false;
+}
+
 bool BotBridge::CB_UseItem(BotHandle bot, uint32_t item_id, UnitHandle target)
 {
     Player* b = FindBot(bot);
@@ -881,6 +1032,104 @@ bool BotBridge::CB_Taunt(BotHandle bot, UnitHandle target)
             SpellCastTargets targets;
             targets.setUnitTarget(t);
             spell->SpellStart(&targets);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool BotBridge::CB_TeleportTo(BotHandle bot, uint32_t map_id, float x, float y, float z, float o)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    // Interrupt any in-progress spell / movement before teleporting, the
+    // same way the old PB2 SummonAction did.
+    if (b->IsTaxiFlying())
+        return false;
+    if (b->IsNonMeleeSpellCasted(true))
+        b->InterruptNonMeleeSpells(true);
+
+    return b->TeleportTo(map_id, x, y, z, o);
+}
+
+bool BotBridge::CB_GetPlayerPosition(BotHandle /*bot*/, uint64_t player_guid, BotPosition* out_pos)
+{
+    if (!out_pos)
+        return false;
+    Player* target = sObjectAccessor.FindPlayer(ObjectGuid(player_guid));
+    if (!target)
+        return false;
+    out_pos->x      = target->GetPositionX();
+    out_pos->y      = target->GetPositionY();
+    out_pos->z      = target->GetPositionZ();
+    out_pos->o      = target->GetOrientation();
+    out_pos->map_id = target->GetMapId();
+    return true;
+}
+
+bool BotBridge::CB_SummonToPlayer(BotHandle bot, uint64_t requester_guid)
+{
+    // Mirrors PB2 `SummonAction::Teleport` exactly — angle search around the
+    // requester for a LOS-clear spot offset by the configured follow range,
+    // reviving the bot in place if it is dead, then teleporting.
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    Player* requester = sObjectAccessor.FindPlayer(ObjectGuid(requester_guid));
+    if (!requester || requester->IsBeingTeleported())
+        return false;
+    if (b->IsBeingTeleported() || b->IsTaxiFlying())
+        return false;
+
+    const float followRange = sPlayerbotAIConfig.followDistance > 0.0f
+                                  ? sPlayerbotAIConfig.followDistance
+                                  : 3.0f;
+
+    // PB2 iterates angle ± π in π/4 steps starting from the bot's follow
+    // angle. We don't have the AI context here so start at 0 — the search
+    // still covers the full circle, just rotated.
+    for (double angle = -M_PI; angle <= M_PI; angle += M_PI / 4.0)
+    {
+        uint32_t mapId = requester->GetMapId();
+        float x = requester->GetPositionX() + std::cos(angle) * followRange;
+        float y = requester->GetPositionY() + std::sin(angle) * followRange;
+        float z = requester->GetPositionZ();
+        requester->UpdateGroundPositionZ(x, y, z);
+
+        float los_z = z + b->GetCollisionHeight();
+        if (!requester->IsWithinLOS(x, y, los_z, true))
+        {
+            // Fall back to the requester's exact position (guaranteed in LOS).
+            x = requester->GetPositionX();
+            y = requester->GetPositionY();
+            z = requester->GetPositionZ();
+        }
+
+        if (requester->IsWithinLOS(x, y, z + b->GetCollisionHeight(), true))
+        {
+            if (!b->IsAlive() && requester->IsAlive())
+            {
+                b->ResurrectPlayer(1.0f, false);
+                b->SpawnCorpseBones();
+            }
+
+            if (b->IsTaxiFlying())
+            {
+                b->TaxiFlightInterrupt();
+                b->GetMotionMaster()->MovementExpired();
+            }
+
+            if (b->IsNonMeleeSpellCasted(true))
+                b->InterruptNonMeleeSpells(true);
+
+            b->GetMotionMaster()->Clear();
+            b->TeleportTo(mapId, x, y, z, 0.0f);
+
+            if (GenericTransport* transport = requester->GetTransport())
+                transport->AddPassenger(b, false);
+
             return true;
         }
     }
@@ -1038,6 +1287,20 @@ bool BotBridge::CB_UseSpiritHealer(BotHandle bot)
     return true;
 }
 
+bool BotBridge::CB_ResurrectSelf(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b || b->IsAlive())
+        return false;
+
+    // Mirror PB2 `SummonAction::Teleport`: full-HP in-place revive and
+    // clean up the corpse. Caller (Rust summon handler) teleports
+    // immediately after so position is irrelevant here.
+    b->ResurrectPlayer(1.0f, false);
+    b->SpawnCorpseBones();
+    return true;
+}
+
 // ── Mount ─────────────────────────────────────────────────────────────────
 
 bool BotBridge::CB_IsMounted(BotHandle bot)
@@ -1141,19 +1404,65 @@ UnitHandle* BotBridge::CB_GetNearbyLootable(BotHandle bot, float range, uint32_t
     return arr;
 }
 
-bool BotBridge::CB_OpenLoot(BotHandle /*bot*/, UnitHandle /*target*/)
+bool BotBridge::CB_OpenLoot(BotHandle bot, UnitHandle target)
 {
-    // Loot APIs in this fork (Player::SendLoot, Loot::GetMaxSlotInLootFor,
-    // Player::StoreLootItem, WorldSession::DoLootRelease) are either renamed,
-    // relocated, or go through a packet flow that is not currently exposed
-    // to the bridge. Stubbed until a Rust consumer actually requires it.
-    return false;
+    // Mirrors PB2 `OpenLootAction::DoLoot` + `StoreLootAction::Execute`
+    // collapsed into a single call: send CMSG_LOOT to construct the Loot,
+    // then iterate and take every allowed item plus the gold, and finally
+    // release. This matches what PB2 did — the two actions were split
+    // only because its BT needed a gap for the network round-trip to the
+    // real client, which we don't need here.
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    Unit* t = FindUnit(bot, target);
+    if (!t)
+        return false;
+
+    Creature* c = dynamic_cast<Creature*>(t);
+    if (!c)
+        return false;
+    if (!c->HasFlag(UNIT_DYNAMIC_FLAGS, UNIT_DYNFLAG_LOOTABLE))
+        return false;
+    if (b->GetDistance(c) > INTERACTION_DISTANCE)
+        return false;
+
+    ObjectGuid targetGuid = c->GetObjectGuid();
+
+    // 1. Open the loot window (this initializes Loot for the bot).
+    WorldPacket openPacket(CMSG_LOOT, 8);
+    openPacket << targetGuid;
+    b->GetSession()->HandleLootOpcode(openPacket);
+
+    Loot* loot = sLootMgr.GetLoot(b, targetGuid);
+    if (!loot)
+        return false;
+
+    // 2. Grab any gold.
+    if (loot->GetGoldAmount() > 0)
+    {
+        WorldPacket moneyPacket(CMSG_LOOT_MONEY, 0);
+        b->GetSession()->HandleLootMoneyOpcode(moneyPacket);
+    }
+
+    // 3. AutoStore handles filtering (permission, inventory space,
+    //    blocked-for-roll) and removes taken items from the loot list.
+    loot->AutoStore(b);
+
+    // 4. Release the corpse window.
+    WorldPacket releasePacket(CMSG_LOOT_RELEASE, 8);
+    releasePacket << targetGuid;
+    b->GetSession()->HandleLootReleaseOpcode(releasePacket);
+
+    return true;
 }
 
 bool BotBridge::CB_TakeAllLoot(BotHandle /*bot*/)
 {
-    // See CB_OpenLoot — stubbed until ported to this fork's loot API.
-    return false;
+    // CB_OpenLoot already performs the full open → take → release flow
+    // in one step, so the Rust side's follow-up call is a no-op success.
+    return true;
 }
 
 // ── NPC interaction ───────────────────────────────────────────────────────
@@ -1702,6 +2011,112 @@ uint8_t BotBridge::CB_BattlegroundType(BotHandle bot)
     }
 }
 
+namespace
+{
+    // Collect the entry ids that represent "objective" GameObjects for the bot's
+    // current battleground. The returned list contains every GO entry the bot
+    // may want to move toward or interact with to further its faction's goals.
+    //
+    // For WSG this is:
+    //   - if the bot already carries a flag: its OWN team's base flag GO (capture point),
+    //   - otherwise: the enemy base flag GO plus dropped-flag GOs (pickup + return).
+    //
+    // For AB this is every banner that is not currently controlled by the bot's team
+    // (neutral/contested/enemy banners at each of the five bases).
+    std::vector<uint32> CollectBgObjectiveEntries(Player* b, BattleGround* bg)
+    {
+        std::vector<uint32> out;
+        const Team myTeam = b->GetTeam();
+
+        switch (bg->GetTypeId())
+        {
+            case BATTLEGROUND_WS:
+            {
+                const bool carryingFlag =
+                    b->HasAura(BG_WS_SPELL_SILVERWING_FLAG) ||
+                    b->HasAura(BG_WS_SPELL_WARSONG_FLAG);
+
+                if (carryingFlag)
+                {
+                    // Walk to own team's base flag GO to capture.
+                    out.push_back(myTeam == ALLIANCE ? GO_WS_SILVERWING_FLAG
+                                                    : GO_WS_WARSONG_FLAG);
+                }
+                else
+                {
+                    // Enemy base flag (pick up) + both dropped flags (return own / grab enemy).
+                    out.push_back(myTeam == ALLIANCE ? GO_WS_WARSONG_FLAG
+                                                    : GO_WS_SILVERWING_FLAG);
+                    out.push_back(GO_WS_SILVERWING_FLAG_DROP);
+                    out.push_back(GO_WS_WARSONG_FLAG_DROP);
+                }
+                break;
+            }
+            case BATTLEGROUND_AB:
+            {
+                // Any banner that is not already our own colour is a valid capture target.
+                out.push_back(BG_AB_BANNER_CONTESTED_A);
+                out.push_back(BG_AB_BANNER_CONTESTED_H);
+                out.push_back(myTeam == ALLIANCE ? BG_AB_BANNER_HORDE
+                                                : BG_AB_BANNER_ALLIANCE);
+                // Neutral pedestals (initial state before any team claims a base).
+                out.push_back(BG_AB_BANNER_STABLE);
+                out.push_back(BG_AB_BANNER_BLACKSMITH);
+                out.push_back(BG_AB_BANNER_FARM);
+                out.push_back(BG_AB_BANNER_LUMBER_MILL);
+                out.push_back(BG_AB_BANNER_MINE);
+                break;
+            }
+            default:
+                break;
+        }
+        return out;
+    }
+
+    // Scan the bot's map for the closest spawned GameObject matching any of the
+    // given entries. Uses a wide search radius (the whole BG grid fits) so the
+    // bot can navigate to an objective from anywhere on the map.
+    GameObject* FindClosestBgObjective(Player* b, const std::vector<uint32>& entries,
+                                       float searchRange)
+    {
+        if (entries.empty())
+            return nullptr;
+
+        GameObjectList gameObjects;
+        MaNGOS::GameObjectInPosRangeCheck check(*b,
+            b->GetPositionX(), b->GetPositionY(), b->GetPositionZ(), searchRange);
+        MaNGOS::GameObjectListSearcher<MaNGOS::GameObjectInPosRangeCheck> searcher(
+            gameObjects, check);
+        Cell::VisitAllObjects(b, searcher, searchRange);
+
+        GameObject* best = nullptr;
+        float bestDistSq = searchRange * searchRange + 1.0f;
+        for (GameObject* go : gameObjects)
+        {
+            if (!go || !go->IsSpawned())
+                continue;
+            const uint32 entry = go->GetEntry();
+            bool match = false;
+            for (uint32 e : entries)
+            {
+                if (e == entry) { match = true; break; }
+            }
+            if (!match)
+                continue;
+            float dx = go->GetPositionX() - b->GetPositionX();
+            float dy = go->GetPositionY() - b->GetPositionY();
+            float dz = go->GetPositionZ() - b->GetPositionZ();
+            float distSq = dx * dx + dy * dy + dz * dz;
+            if (distSq < bestDistSq)
+            {
+                bestDistSq = distSq;
+                best = go;
+            }
+        }
+        return best;
+    }
+} // namespace
+
 BotSafePosition BotBridge::CB_GetBgObjective(BotHandle bot)
 {
     BotSafePosition result{};
@@ -1715,15 +2130,19 @@ BotSafePosition BotBridge::CB_GetBgObjective(BotHandle bot)
     if (!bg)
         return result;
 
-    // Simple: return the center of the BG map as a default objective.
-    // In practice this would use BG-specific logic for flag/base positions.
-    // For now, return bot's current position + offset toward center.
-    float cx = b->GetPositionX();
-    float cy = b->GetPositionY();
-    float cz = b->GetPositionZ();
+    // Search wide enough to cover the entire battleground map (WSG ≈ 450y diagonal,
+    // AB ≈ 700y). Cell::VisitAllObjects will page through grid cells as needed.
+    const float kBgSearchRange = 800.0f;
 
-    // TODO: BG-specific objective logic. For now return not-found
-    // so the BT falls through to follow/attack behavior.
+    std::vector<uint32> entries = CollectBgObjectiveEntries(b, bg);
+    GameObject* go = FindClosestBgObjective(b, entries, kBgSearchRange);
+    if (!go)
+        return result;
+
+    result.x = go->GetPositionX();
+    result.y = go->GetPositionY();
+    result.z = go->GetPositionZ();
+    result.found = true;
     return result;
 }
 
@@ -1733,10 +2152,20 @@ bool BotBridge::CB_CaptureBgObjective(BotHandle bot)
     if (!b)
         return false;
 
-    // This would interact with nearby BG objects (flags, bases).
-    // Requires BG-specific GameObject interaction.
-    // TODO: implement per-BG capture logic
-    return false;
+    BattleGround* bg = b->GetBattleGround();
+    if (!bg)
+        return false;
+
+    // Interact only with objective GameObjects within normal interaction range.
+    // Use()/HandlePlayerClickedOnFlag drives the full capture/pickup/return flow
+    // — the BG class itself handles team rules, spell application and scoring.
+    std::vector<uint32> entries = CollectBgObjectiveEntries(b, bg);
+    GameObject* go = FindClosestBgObjective(b, entries, INTERACTION_DISTANCE);
+    if (!go)
+        return false;
+
+    go->Use(b);
+    return true;
 }
 
 UnitHandle* BotBridge::CB_GetNearbyEnemies(BotHandle bot, float range, uint32_t* out_count)

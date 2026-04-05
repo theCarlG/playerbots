@@ -19,6 +19,8 @@ const BLESSING_RANKS: &[SpellId] = &[
 
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (paladin-wide list).
+        super::boost(),
         // Emergency: Lay on Hands on anyone dying.
         HealLowest(LAY_ON_HANDS, 0.10),
         // Bubble self when critical.

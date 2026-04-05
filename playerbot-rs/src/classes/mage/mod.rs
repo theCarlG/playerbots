@@ -3,9 +3,14 @@ pub mod fire;
 pub mod frost;
 
 use crate::{
+    Seq, Sel,
+    bot::settings::CombatOrder,
     bot::state::PlayerSpec,
     classes::ClassKit,
-    data::spells::vanilla::mage::{ARCANE_BRILLIANCE, ARCANE_INTELLECT},
+    data::spells::vanilla::mage::{
+        ARCANE_BRILLIANCE, ARCANE_INTELLECT, ARCANE_POWER, COMBUSTION, PRESENCE_OF_MIND,
+    },
+    engine::bt::Bt::{self, CastOnSelf, CombatOrderHas, InCombat},
     noncombat::GroupBuff,
 };
 
@@ -14,6 +19,19 @@ const BUFFS: &[GroupBuff] = &[GroupBuff::on_party_aura(
     ARCANE_BRILLIANCE,
     ARCANE_INTELLECT,
 )];
+
+/// `co +boost` burst subtree — mage offensive cooldowns.
+pub fn boost() -> Bt {
+    Seq!(
+        CombatOrderHas(CombatOrder::BOOST),
+        InCombat,
+        Sel!(
+            CastOnSelf(COMBUSTION),
+            CastOnSelf(ARCANE_POWER),
+            CastOnSelf(PRESENCE_OF_MIND),
+        ),
+    )
+}
 
 pub fn kit(spec: PlayerSpec) -> ClassKit {
     use PlayerSpec::{MageArcane, MageFire, MageFrost};
