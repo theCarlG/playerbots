@@ -38,6 +38,14 @@ pub enum Key {
     RpgWanderDestY,
     RpgWanderDestZ,
 
+    // ── Formation (chaos) persistence ───────────────────────────────
+    // Per-bot state for the `chaos` follow-formation jitter. Rerolled
+    // every 3 seconds by `tick_follow`; other formations leave these
+    // untouched. See `bot::formation::ChaosState`.
+    ChaosDx,              // f32
+    ChaosDy,              // f32
+    ChaosLastChangeSecs,  // u64
+
     // Add new keys above this line. Keep count accurate.
     _Count,
 }

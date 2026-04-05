@@ -89,6 +89,34 @@ pub enum BotCommand {
     RtscShow,
     /// Position received from spell 30758 cast on ground.
     RtscSpellPosition(f32, f32, f32),
+    /// `rtsc reset` — unlearn Aedm and clear all RTSC state for this bot.
+    RtscReset,
+    /// `rtsc last` — move to the last observed Aedm cast position.
+    RtscLast,
+    /// `rtsc jump` — two-stage jump recording. First call records the
+    /// `jump` slot, second call records `jump point`. Cancel with
+    /// `rtsc jump reset`.
+    RtscJump,
+    /// `rtsc jump reset` — clear both jump slots and disable the
+    /// `rtsc jump` strategy.
+    RtscJumpReset,
+    /// `rtsc file save <file> [name_glob] [bot_glob]` — serialize saved
+    /// locations for this bot (or matching bots in the group) to a log
+    /// file under the server LogsDir. `name_glob == "*"` matches all
+    /// saved locations. When `bot_glob` is `None` PB2 restricts the
+    /// export to this bot only.
+    RtscFileSave {
+        file: String,
+        name_glob: String,
+        bot_glob: Option<String>,
+    },
+    /// `rtsc file load <file> [name_glob] [bot_glob]` — reload saved
+    /// locations from a log file. Same glob semantics as `file save`.
+    RtscFileLoad {
+        file: String,
+        name_glob: String,
+        bot_glob: Option<String>,
+    },
 
     // -- Economy --
     Repair,
@@ -355,6 +383,12 @@ impl BotCommand {
             | RtscGo(_)
             | RtscShow
             | RtscSpellPosition(_, _, _)
+            | RtscReset
+            | RtscLast
+            | RtscJump
+            | RtscJumpReset
+            | RtscFileSave { .. }
+            | RtscFileLoad { .. }
             | Repair
             | Vendor
             | SetHealThreshold(_)
@@ -778,6 +812,43 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                     }
                 }
             }
+        }
+        // The behavior for the commands below lands in Part 5 Step 10
+        // (`playerbot-rs/src/rtsc.rs`). Step 9 only wires the parser and
+        // dispatch entries so downstream matching stays exhaustive.
+        BotCommand::RtscReset => {
+            s.rtsc_selected = false;
+            s.rtsc_pending_action = None;
+            s.rtsc_waypoints.clear();
+            // TODO(step10): call `bot.interface.unlearn_spell(30758)` and
+            // reset the `RTSC saved location::*` blackboard slots once the
+            // rtsc module owns that state.
+        }
+        BotCommand::RtscLast => {
+            // TODO(step10): move to last observed Aedm cast position.
+            // Needs the `see spell location` blackboard slot that the
+            // spell-land consumer writes.
+        }
+        BotCommand::RtscJump => {
+            // TODO(step10): two-stage jump recorder. First call queues
+            // the pending action as `jump`; the spell-land consumer
+            // writes the `jump` slot, then the strategy engine prompts
+            // for the second cast which writes `jump point`.
+        }
+        BotCommand::RtscJumpReset => {
+            s.rtsc_waypoints.remove("jump");
+            s.rtsc_waypoints.remove("jump point");
+            // TODO(step10): also strip the `rtsc jump` strategy flag
+            // from the non-combat slot once that flag exists.
+        }
+        BotCommand::RtscFileSave { .. } => {
+            // TODO(step10): serialize matching saved locations via the
+            // new `bot_write_log_file` FFI (already exists on the C++
+            // side; wired in Part 5 Step 2).
+        }
+        BotCommand::RtscFileLoad { .. } => {
+            // TODO(step10): reload saved locations via
+            // `bot_read_log_file`.
         }
         BotCommand::Repair => {
             bot.interface.repair_all();

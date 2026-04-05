@@ -451,6 +451,15 @@ fn parse_rtsc(args: &[&str]) -> Option<BotCommand> {
         Some("select") => Some(BotCommand::RtscSelect),
         Some("cancel") => Some(BotCommand::RtscCancel),
         Some("toggle") => Some(BotCommand::RtscToggle),
+        Some("reset") => Some(BotCommand::RtscReset),
+        Some("last") => Some(BotCommand::RtscLast),
+        Some("jump") => {
+            if args.get(1).copied() == Some("reset") {
+                Some(BotCommand::RtscJumpReset)
+            } else {
+                Some(BotCommand::RtscJump)
+            }
+        }
         Some("move") => {
             if args.get(1).copied() == Some("exact") {
                 Some(BotCommand::RtscMoveExact)
@@ -479,8 +488,48 @@ fn parse_rtsc(args: &[&str]) -> Option<BotCommand> {
             Some(BotCommand::RtscGo(name))
         }
         Some("show") => Some(BotCommand::RtscShow),
+        Some("file") => parse_rtsc_file(&args[1..]),
         _ => Some(BotCommand::Unknown(
-            "rtsc: select/cancel/toggle/move/save/go/show".into(),
+            "rtsc: select/cancel/toggle/reset/move/save/unsave/go/show/last/jump/file"
+                .into(),
+        )),
+    }
+}
+
+/// Parse the tail of `rtsc file save|load <file> [name_glob] [bot_glob]`.
+///
+/// PB2 reference: `RtscAction.cpp:104-270`. The PB2 parser requires at
+/// least two arguments after `file` (the verb + filename); if
+/// `name_glob` is missing it defaults to `"*"`. When `bot_glob` is
+/// absent PB2 restricts the export/import to the executing bot only —
+/// we model that by leaving `bot_glob` as `None`.
+fn parse_rtsc_file(args: &[&str]) -> Option<BotCommand> {
+    let verb = args.first().copied()?;
+    let file = match args.get(1) {
+        Some(f) if !f.is_empty() => (*f).to_string(),
+        _ => {
+            return Some(BotCommand::Unknown(
+                "rtsc file needs at least 2 parameters: \
+                 rtsc file save|load <file> [name_glob] [bot_glob]"
+                    .into(),
+            ));
+        }
+    };
+    let name_glob = args.get(2).copied().unwrap_or("*").to_string();
+    let bot_glob = args.get(3).map(|s| (*s).to_string());
+    match verb {
+        "save" => Some(BotCommand::RtscFileSave {
+            file,
+            name_glob,
+            bot_glob,
+        }),
+        "load" => Some(BotCommand::RtscFileLoad {
+            file,
+            name_glob,
+            bot_glob,
+        }),
+        _ => Some(BotCommand::Unknown(
+            "rtsc file: expected save|load".into(),
         )),
     }
 }
@@ -1173,6 +1222,84 @@ mod tests {
             Some(BotCommand::RtscGo("tankpos".into()))
         );
         assert_eq!(parse("rtsc show"), Some(BotCommand::RtscShow));
+    }
+
+    #[test]
+    fn parse_rtsc_reset_last_jump() {
+        assert_eq!(parse("rtsc reset"), Some(BotCommand::RtscReset));
+        assert_eq!(parse("rtsc last"), Some(BotCommand::RtscLast));
+        assert_eq!(parse("rtsc jump"), Some(BotCommand::RtscJump));
+        assert_eq!(
+            parse("rtsc jump reset"),
+            Some(BotCommand::RtscJumpReset)
+        );
+    }
+
+    #[test]
+    fn parse_rtsc_file_commands() {
+        // Minimum form: save/load + filename → name_glob defaults to
+        // "*", bot_glob stays None (PB2: bot-only scope).
+        assert_eq!(
+            parse("rtsc file save mc_positions"),
+            Some(BotCommand::RtscFileSave {
+                file: "mc_positions".into(),
+                name_glob: "*".into(),
+                bot_glob: None,
+            })
+        );
+        assert_eq!(
+            parse("rtsc file load mc_positions"),
+            Some(BotCommand::RtscFileLoad {
+                file: "mc_positions".into(),
+                name_glob: "*".into(),
+                bot_glob: None,
+            })
+        );
+
+        // With name glob.
+        assert_eq!(
+            parse("rtsc file save mc magmadar"),
+            Some(BotCommand::RtscFileSave {
+                file: "mc".into(),
+                name_glob: "magmadar".into(),
+                bot_glob: None,
+            })
+        );
+
+        // With name glob + bot glob — PB2 widens the scope to all
+        // matching group bots when the 4th arg is present. Note that
+        // `parse()` lowercases the whole command line (parser.rs:221),
+        // so the PB2 sentinel `BOTNAME` arrives as `botname` here.
+        // Step 10's file writer must do a case-insensitive replacement
+        // of `botname` with the bot's actual name when serializing.
+        assert_eq!(
+            parse("rtsc file save mc * BOTNAME"),
+            Some(BotCommand::RtscFileSave {
+                file: "mc".into(),
+                name_glob: "*".into(),
+                bot_glob: Some("botname".into()),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_rtsc_file_rejects_missing_filename() {
+        assert!(matches!(
+            parse("rtsc file save"),
+            Some(BotCommand::Unknown(_))
+        ));
+        assert!(matches!(
+            parse("rtsc file load"),
+            Some(BotCommand::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn parse_rtsc_file_rejects_bad_verb() {
+        assert!(matches!(
+            parse("rtsc file wibble foo"),
+            Some(BotCommand::Unknown(_))
+        ));
     }
 
     #[test]

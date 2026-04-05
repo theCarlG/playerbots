@@ -19,12 +19,16 @@
 ///     Seq(vec![Not(Box::new(InCombat)), Follow]),
 /// ])
 /// ```
+use crate::bot::formation::{
+    ChaosState, FormationContext, FormationMember, FormationOutput, resolve_formation,
+};
 use crate::bot::settings::{BehaviorMode, CombatOrder, Reactivity, StrategyFlags};
 use crate::bot::state::PlayerClass;
+use crate::engine::blackboard::{Key as BbKey, Value as BbValue};
 use crate::engine::bt_nodes::{BtNode, BtResult};
 use crate::engine::context::TickContext;
 use crate::engine::throttles::ThrottleKey;
-use crate::ffi::{ItemId, SpellId};
+use crate::ffi::{ItemId, SpellId, UnitHandle};
 use crate::noncombat::buffing::GroupBuff;
 
 /// Terse constructor for [`Bt::Seq`]. Accepts a comma-separated list of
@@ -1203,16 +1207,21 @@ fn check_setting(ctx: &TickContext<'_>, s: Setting) -> bool {
 
 // ── Follow ──────────────────────────────────────────────────────────────────
 
-/// Re-issue a chase command once the bot drifts farther than this from
-/// its follow target. Matches PB2 `PlayerbotAIConfig::tooFarDistance` —
-/// chase is sticky inside this radius, so we avoid thrashing the movement
-/// generator on every tick. The **per-bot** follow distance itself comes
-/// from `ctx.settings.follow_distance` (PB2 default 1.5, overridable via
-/// the `follow <n>` chat command); formation offsets land in Step 8.
+/// Re-issue a chase/move command once the bot drifts farther than this
+/// from its follow target. Matches PB2 `PlayerbotAIConfig::tooFarDistance`
+/// — chase is sticky inside this radius, so we avoid thrashing the
+/// movement generator on every tick. The **per-bot** follow distance
+/// itself comes from `ctx.settings.follow_distance` (PB2 default 1.5,
+/// overridable via the `follow <n>` chat command); the formation offset
+/// on top of it is resolved via [`bot::formation::resolve_formation`].
 const REFOLLOW_THRESHOLD: f32 = 8.0;
 
+/// Humanoid collision-pad radius — PB2 `Unit::GetObjectBoundingRadius()`
+/// returns ~0.389 for a player character. Used by the `near` formation
+/// so tightly packed bots don't clip into the leader.
+const HUMANOID_BOUNDING_RADIUS: f32 = 0.389;
+
 fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
-    let follow_dist = ctx.settings.follow_distance;
     // Follow-target priority order, mirroring PB2:
     //   1. The designated group tank.
     //   2. The recorded master (real player that claimed this bot).
@@ -1222,10 +1231,6 @@ fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
     //
     //   * Success — a follow target was resolvable (we either kicked off a
     //     re-follow movement, or we're already close enough to stay put).
-    //     The selector in `mode_dispatch` stops here and the bot idles,
-    //     which is what a raid player expects when they're standing still
-    //     next to their bots.
-    //
     //   * Failure — there is literally no follow target for this bot
     //     (solo, masterless random bot). The selector falls through to
     //     RPG/Grind so unclaimed bots still do something.
@@ -1234,41 +1239,127 @@ fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
     // movement generator on every tick — CMaNGOS already handles the
     // close-range stick-with-target case via the chase generator.
 
-    // 1) Tank.
-    if let Some(tank) = ctx.interface.group_get_tank()
-        && tank != ctx.bot_handle
-    {
-        if ctx.interface.unit_distance(tank) > REFOLLOW_THRESHOLD {
-            ctx.interface.follow(tank, follow_dist, 0.0);
-        }
+    let Some(target) = pick_follow_target(ctx) else {
+        return BtResult::Failure;
+    };
+
+    if ctx.interface.unit_distance(target) <= REFOLLOW_THRESHOLD {
+        // Already in chase range — don't re-issue. Sticky behavior matches
+        // PB2's `tooFarDistance` gate regardless of formation type.
         return BtResult::Success;
     }
 
-    // 2) Master.
+    apply_formation_follow(ctx, target);
+    BtResult::Success
+}
+
+/// Pick the follow target handle per PB2's tank → master → peer order.
+/// Excludes `bot_handle` (a bot never follows itself).
+fn pick_follow_target(ctx: &TickContext<'_>) -> Option<UnitHandle> {
+    if let Some(tank) = ctx.interface.group_get_tank()
+        && tank != ctx.bot_handle
+    {
+        return Some(tank);
+    }
     if let Some(master) = ctx.master_guid
         && master != 0
         && master != ctx.bot_handle
     {
-        if ctx.interface.unit_distance(master) > REFOLLOW_THRESHOLD {
-            ctx.interface.follow(master, follow_dist, 0.0);
-        }
-        return BtResult::Success;
+        return Some(master);
     }
-
-    // 3) Any other group member.
-    if let Some(member) = ctx.snap.group_members[..ctx.snap.group_size as usize]
+    ctx.snap.group_members[..ctx.snap.group_size as usize]
         .iter()
         .copied()
         .find(|&h| h != 0 && h != ctx.bot_handle)
-    {
-        if ctx.interface.unit_distance(member) > REFOLLOW_THRESHOLD {
-            ctx.interface.follow(member, follow_dist, 0.0);
+}
+
+/// Resolve the bot's formation slot against `target` and issue the
+/// resulting movement command. Chase-offset formations go through
+/// `interface.follow(target, offset, angle)`; position-based formations
+/// go through `interface.move_to(x, y, z)`.
+fn apply_formation_follow(ctx: &mut TickContext<'_>, target: UnitHandle) {
+    let follow_range = ctx.settings.follow_distance;
+    let formation = ctx.settings.follow_formation;
+
+    // Pull the follow target's world position via an extra unit-snapshot
+    // FFI call. Position-based formations need the target's `(x,y,z,o)`
+    // to rotate offsets; chase-offset formations only need `o` for the
+    // angle computation, but the call cost is identical.
+    let target_unit = ctx.interface.get_unit_snapshot(target);
+    let follow_target = target_unit.pos;
+
+    // Build the group roster for formations that care (line, shield,
+    // arrow, raid, near's `group_follow_angle`). Each member's role is
+    // resolved via `group_get_role` — this is the only place in the
+    // tick that walks the roster, so the cost is bounded.
+    let members = &ctx.snap.group_members[..ctx.snap.group_size as usize];
+    let mut roster: Vec<FormationMember> = Vec::with_capacity(members.len());
+    for &h in members {
+        if h == 0 || h == target {
+            // Skip empty slots and the leader itself — PB2's roster walks
+            // exclude the follow target, and `group_follow_angle` expects
+            // the leader already stripped.
+            continue;
         }
-        return BtResult::Success;
+        let role = ctx.interface.group_get_role(h);
+        roster.push(FormationMember {
+            handle: h,
+            is_tank: role.is_tank(),
+            is_heal: role.is_heal(),
+            // No dedicated "is alive" flag on `BotRole`; dead bots stop
+            // following anyway (Dead state engine takes over). Treat
+            // every roster entry as alive — mirrors PB2's behavior where
+            // Formation::GetFollowAngle only walks living members via
+            // `GroupReference::next()`.
+            is_alive: true,
+        });
     }
 
-    // No follow target at all — let the selector fall through.
-    BtResult::Failure
+    // Load chaos state from blackboard so the jitter stays stable
+    // within each 3-second window.
+    let chaos_in = ChaosState {
+        dx: ctx.blackboard.get_f32(BbKey::ChaosDx).unwrap_or(0.0),
+        dy: ctx.blackboard.get_f32(BbKey::ChaosDy).unwrap_or(0.0),
+        last_change_secs: ctx.blackboard.get_u64(BbKey::ChaosLastChangeSecs).unwrap_or(0),
+    };
+
+    let fctx = FormationContext {
+        self_handle: ctx.bot_handle,
+        follow_target,
+        follow_range,
+        bounding_radius: HUMANOID_BOUNDING_RADIUS,
+        current_target: None,
+        group: &roster,
+        now_secs: ctx.server_time_ms / 1000,
+        chaos_state: chaos_in,
+        // `custom` formation offset plumbing lands when the
+        // `setposition` command is ported (PB2 `SetPositionAction`).
+        // Until then Custom falls back to `near`.
+        custom_offset: None,
+    };
+
+    let result = resolve_formation(formation, &fctx);
+
+    // Persist chaos state for the next tick.
+    if result.chaos_state != chaos_in {
+        ctx.blackboard
+            .set(BbKey::ChaosDx, BbValue::F32(result.chaos_state.dx));
+        ctx.blackboard
+            .set(BbKey::ChaosDy, BbValue::F32(result.chaos_state.dy));
+        ctx.blackboard.set(
+            BbKey::ChaosLastChangeSecs,
+            BbValue::U64(result.chaos_state.last_change_secs),
+        );
+    }
+
+    match result.output {
+        FormationOutput::ChaseOffset { offset, angle } => {
+            ctx.interface.follow(target, offset, angle);
+        }
+        FormationOutput::Position { x, y, z } => {
+            ctx.interface.move_to(x, y, z);
+        }
+    }
 }
 
 // ── Guard return ────────────────────────────────────────────────────────────
@@ -2180,6 +2271,53 @@ mod tests {
         // Simulate arrival by tweaking the snap — we can't mutate snap
         // through the ctx borrow, so this case is covered by the dedicated
         // `rpg_wander_clears_destination_on_arrival` test above.
+    }
+
+    #[test]
+    fn tick_follow_fails_without_any_target() {
+        // Solo bot: no master, no group tank, empty group → Failure so the
+        // selector in `mode_dispatch` falls through to RPG/Grind.
+        let mut owned = TestCtxOwned::new();
+        let result = tick_follow(&mut owned.ctx());
+        assert_eq!(result, BtResult::Failure);
+    }
+
+    #[test]
+    fn tick_follow_succeeds_with_master_in_range() {
+        // Master set, default TestInterface returns unit_dist = 10.0 which is
+        // > REFOLLOW_THRESHOLD (8.0), so the follow path kicks in and we get
+        // Success back. This also exercises the formation dispatch path:
+        // `Near` is the default formation and produces a `Position` output,
+        // which goes through `interface.move_to` (stub returns true).
+        let mut owned = TestCtxOwned::new();
+        let mut ctx = owned.ctx();
+        ctx.master_guid = Some(0xDEAD_BEEF);
+        ctx.bot_handle = 0x1234_5678;
+        assert_eq!(tick_follow(&mut ctx), BtResult::Success);
+    }
+
+    #[test]
+    fn tick_follow_is_sticky_when_close_to_target() {
+        // Master in chase range → don't re-issue, just return Success.
+        // The existing TestInterface has a configurable `unit_dist`; set it
+        // below the re-follow threshold and make sure we still report
+        // Success (bot is already following) without needing to dispatch a
+        // formation at all.
+        use crate::engine::context::tests::TestInterface;
+        let iface = TestInterface::new().with_unit_dist(2.0);
+        let mut owned = TestCtxOwned::new();
+        let mut ctx = make_test_ctx_with(
+            &owned.snap,
+            &owned.nearby,
+            &owned.attackers,
+            &iface,
+            &mut owned.blackboard,
+            &mut owned.timers,
+            &mut owned.throttles,
+        );
+        ctx.master_guid = Some(0xDEAD_BEEF);
+        ctx.bot_handle = 0x1234_5678;
+        assert_eq!(tick_follow(&mut ctx), BtResult::Success);
     }
 
     #[test]
