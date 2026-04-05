@@ -734,7 +734,13 @@ impl BtNode for Bt {
             Bt::IsMoving => ok(ctx.snap.self_.is_moving),
             Bt::ModeIs(mode) => ok(ctx.settings.mode == *mode),
             Bt::CombatOrderHas(flags) => ok(ctx.settings.combat_order.contains(*flags)),
-            Bt::StrategyEnabled(flags) => ok(ctx.settings.strategies.contains(*flags)),
+            // True if *any* of the four per-state strategy engines has
+            // this flag set. Typed filters (`@nc=`, `@co=`, `@react=`,
+            // `@dead=`) key on a specific slot via the chat-filter layer;
+            // `StrategyEnabled` is the cross-state runtime gate used by
+            // mode dispatch and subtrees that do not care which engine
+            // owns the flag.
+            Bt::StrategyEnabled(flags) => ok(ctx.settings.strategies.has_any(*flags)),
             Bt::ReactivityIs(r) => ok(ctx.settings.reactivity == *r),
             Bt::UsesMana => ok(ctx.snap.self_.power_type == 0),
             Bt::Cmp(res, op) => ok(eval_cmp(ctx, *res, *op)),
@@ -801,7 +807,7 @@ impl BtNode for Bt {
                     && ctx
                         .settings
                         .strategies
-                        .contains(crate::bot::settings::StrategyFlags::FLEE)
+                        .has_any(crate::bot::settings::StrategyFlags::FLEE)
                     && ctx.self_hp_pct() < threshold
                 {
                     return BtResult::Success;

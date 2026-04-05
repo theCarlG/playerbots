@@ -218,6 +218,58 @@ impl std::ops::BitOrAssign for CombatOrder {
     }
 }
 
+/// PB2 has four independent strategy engines per bot, one per `BotState`.
+/// Each engine owns its own strategy list, toggled by a separate chat
+/// command: `co` → combat, `nc` → non-combat, `react` → reaction, `de` →
+/// dead. The `StrategyChatFilter` and every `HasStrategy(name, state)`
+/// call key on this enum.
+///
+/// Reference: PB2 `PlayerbotAI.h` `BotState` enum and
+/// `PlayerbotAI::HasStrategy(const string&, BotState)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BotStateKind {
+    /// Strategies that run while the bot is fighting. Addon command: `co`.
+    Combat = 0,
+    /// Strategies that run while the bot is out of combat. Addon command: `nc`.
+    NonCombat = 1,
+    /// Reactive / always-on strategies layered over the active state engine.
+    /// Addon command: `react` (when used with signed `+/-` args).
+    Reaction = 2,
+    /// Strategies that run while the bot is dead. Addon command: `de`.
+    Dead = 3,
+}
+
+impl BotStateKind {
+    /// The four slots in canonical order, used for per-state iteration.
+    pub const ALL: [Self; 4] = [
+        Self::Combat,
+        Self::NonCombat,
+        Self::Reaction,
+        Self::Dead,
+    ];
+
+    /// Short name used in the addon command vocabulary.
+    pub fn addon_command(self) -> &'static str {
+        match self {
+            Self::Combat => "co",
+            Self::NonCombat => "nc",
+            Self::Reaction => "react",
+            Self::Dead => "de",
+        }
+    }
+
+    /// Human label used in reply strings. Mangosbot's `OnWhisper` parser
+    /// keys on these exact prefixes (`Mangosbot.lua:3358, 3362, 3366` …).
+    pub fn reply_prefix(self) -> &'static str {
+        match self {
+            Self::Combat => "Combat Strategies",
+            Self::NonCombat => "Non Combat Strategies",
+            Self::Reaction => "Reaction Strategies",
+            Self::Dead => "Dead Strategies",
+        }
+    }
+}
+
 /// Named strategies the bot can toggle at runtime via `nc +x,-y` commands.
 ///
 /// Mirrors the C++ "strategies" vocabulary the `RaidControl` addon sends.
@@ -310,6 +362,75 @@ impl StrategyFlags {
             }
         }
         parts.join(", ")
+    }
+}
+
+/// Four independent `StrategyFlags` slots — one per PB2 `BotState`.
+///
+/// Each slot is toggled by its own chat command (`co`/`nc`/`react`/`de`)
+/// and queried independently. The `StrategyChatFilter` at PB2
+/// `ChatFilter.cpp:22–148` resolves `@nc=<name>`, `@co=<name>`,
+/// `@react=<name>`, `@dead=<name>` (plus negated `@noco=` etc.) against
+/// whichever slot the filter names. See
+/// `PlayerbotAI::HasStrategy(name, BotState)`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StrategySet {
+    slots: [StrategyFlags; 4],
+}
+
+impl StrategySet {
+    /// Per-state defaults matching PB2 `AiFactory.cpp` / `PlayerbotAIConfig`:
+    ///
+    /// - `combatStrategies       = ""`
+    /// - `nonCombatStrategies    = "+return,+delayed roll"`
+    /// - `reactStrategies        = ""`
+    /// - `deadStrategies         = ""`
+    ///
+    /// Until the `return` and `delayed roll` strategy flags exist in the
+    /// Rust port, the non-combat slot ships with the existing Rust
+    /// defaults (RTSC + FLEE + RPG + RPG_MAINTENANCE) so current
+    /// behavior is preserved. Replace with PB2's exact list as those
+    /// strategies are ported (tracked under Part 5 Step 5).
+    pub fn pb2_defaults() -> Self {
+        let mut s = Self::default();
+        s.slots[BotStateKind::NonCombat as usize] = StrategyFlags::defaults();
+        s
+    }
+
+    pub fn get(&self, kind: BotStateKind) -> StrategyFlags {
+        self.slots[kind as usize]
+    }
+
+    pub fn get_mut(&mut self, kind: BotStateKind) -> &mut StrategyFlags {
+        &mut self.slots[kind as usize]
+    }
+
+    pub fn set(&mut self, kind: BotStateKind, flags: StrategyFlags) {
+        self.slots[kind as usize] = flags;
+    }
+
+    /// `HasStrategy(name, state)` equivalent — does the named state's
+    /// engine have this flag set?
+    pub fn has(&self, kind: BotStateKind, flag: StrategyFlags) -> bool {
+        self.slots[kind as usize].contains(flag)
+    }
+
+    /// True if any state slot has `flag` set. Used when the caller does
+    /// not care which engine owns the flag (cross-state UI queries,
+    /// blanket runtime gates).
+    pub fn has_any(&self, flag: StrategyFlags) -> bool {
+        self.slots.iter().any(|s| s.contains(flag))
+    }
+
+    /// Reset every slot to PB2 defaults (`reset ai` / `reset strats`).
+    pub fn reset_to_defaults(&mut self) {
+        *self = Self::pb2_defaults();
+    }
+
+    /// Reset a single slot back to its PB2 default.
+    pub fn reset_slot(&mut self, kind: BotStateKind) {
+        let defaults = Self::pb2_defaults();
+        self.slots[kind as usize] = defaults.slots[kind as usize];
     }
 }
 
@@ -514,7 +635,10 @@ pub struct BotSettings {
     pub mode: BehaviorMode,
     pub combat_order: CombatOrder,
     pub reactivity: Reactivity,
-    pub strategies: StrategyFlags,
+    /// Per-state strategy engines — PB2 has four independent engines
+    /// per bot (combat / non-combat / reaction / dead), each with its
+    /// own strategy list toggled by `co` / `nc` / `react` / `de`.
+    pub strategies: StrategySet,
 
     // -- Combat tuning --
     pub focus_target: Option<UnitHandle>,
@@ -637,7 +761,7 @@ impl Default for BotSettings {
             mode: BehaviorMode::Follow,
             combat_order: CombatOrder::ASSIST,
             reactivity: Reactivity::Defensive,
-            strategies: StrategyFlags::defaults(),
+            strategies: StrategySet::pb2_defaults(),
             focus_target: None,
             protect_target: None,
             spell_blacklist: HashSet::new(),

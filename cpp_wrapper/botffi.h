@@ -555,6 +555,30 @@ typedef struct BotCallbacks {
      * not in a guild or is the guild master (leader must disband or
      * transfer leadership first). */
     bool            (*bot_guild_leave)(BotHandle bot);
+
+    /* ── RTSC / file I/O helpers ─────────────────────────────────────── */
+    /* Summon a temporary marker creature at (x,y,z,o) in the bot's map.
+     * `despawn_ms` is the timed-despawn lifetime; `scale` is applied via
+     * SetObjectScale after summoning. Used for RTSC waypoint markers. */
+    void            (*bot_summon_marker_creature)(BotHandle bot,
+                                                  uint32_t entry,
+                                                  float x, float y, float z, float o,
+                                                  uint32_t despawn_ms,
+                                                  float scale);
+    /* Write `body` to a bot-data file under the server logs directory.
+     * `name` is a short identifier (no path separators). Returns true on
+     * success. Used for `rtsc file save` style commands. */
+    bool            (*bot_write_log_file)(BotHandle bot,
+                                          const char* name,
+                                          const char* body);
+    /* Read the contents of a bot-data file previously written via
+     * bot_write_log_file. On success, `*out_body` points to a heap
+     * allocation that the caller must free via `bot_free_string`. */
+    bool            (*bot_read_log_file)(BotHandle bot,
+                                         const char* name,
+                                         char** out_body);
+    /* Free a string previously returned by bot_read_log_file. */
+    void            (*bot_free_string)(char* s);
 } BotCallbacks;
 
 /* ── Rust exports (entry points CMaNGOS calls into Rust) ─────────────────── */
@@ -695,10 +719,20 @@ void playerbot_damage_taken(void* state, uint32_t damage, uint32_t spell_id,
  *                  0 means "internal/system/console" and bypasses gating.
  *   security     — PLAYERBOT_SEC_* tier the sender was granted by the
  *                  C++-side security check.
+ *   chat_type    — CMaNGOS `ChatMsg` enum value (CHAT_MSG_WHISPER,
+ *                  CHAT_MSG_SAY, CHAT_MSG_YELL, CHAT_MSG_PARTY,
+ *                  CHAT_MSG_RAID*, CHAT_MSG_GUILD, CHAT_MSG_CHANNEL, …).
+ *                  Needed by the Rust side to choose the correct reply
+ *                  channel (whisper vs. CHAT_MSG_ADDON/LANG_ADDON for the
+ *                  Mangosbot `#a`/`debug` reply flow).
+ *   lang         — CMaNGOS `Language` value. `LANG_ADDON` (0xFFFFFFFE)
+ *                  signals an addon-channel payload; replies to such
+ *                  commands must go back on LANG_ADDON.
  *   text         — null-terminated command text.
  */
 void playerbot_chat_command(void* state, uint64_t sender_guid,
-                            uint8_t security, const char* text);
+                            uint8_t security, uint32_t chat_type,
+                            uint32_t lang, const char* text);
 
 /* ── RTSC (Real-Time Strategy Control) ───────────────────────────────────── */
 

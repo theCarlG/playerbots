@@ -18,6 +18,10 @@
 #include "Guilds/GuildMgr.h"
 #include "MotionGenerators/MotionMaster.h"
 #include "MotionGenerators/MovementGenerator.h"
+#include "Spells/Spell.h"
+
+// Spell id used by the RTSC "Aedm" marker to encode ground-targeted positions.
+static const uint32_t RTSC_MOVE_SPELL = 30758;
 
 // ── Log sink bridge ──────────────────────────────────────────────────────
 //
@@ -339,8 +343,8 @@ BotSecurityLevel PlayerbotRust::ComputeSenderSecurity(Player& sender) const
     return BOT_SECURITY_TALK;
 }
 
-void PlayerbotRust::HandleCommand(uint32 /*type*/, const std::string& text,
-                                   Player& sender, uint32 /*lang*/)
+void PlayerbotRust::HandleCommand(uint32 type, const std::string& text,
+                                   Player& sender, uint32 lang)
 {
     if (!m_rustState || text.empty())
         return;
@@ -349,7 +353,10 @@ void PlayerbotRust::HandleCommand(uint32 /*type*/, const std::string& text,
     BotSecurityLevel sec = ComputeSenderSecurity(sender);
 
     playerbot_chat_command(m_rustState.get(), senderGuid,
-                           static_cast<uint8_t>(sec), text.c_str());
+                           static_cast<uint8_t>(sec),
+                           static_cast<uint32_t>(type),
+                           static_cast<uint32_t>(lang),
+                           text.c_str());
 }
 
 // ── Legacy management shims ──────────────────────────────────────────────
@@ -469,6 +476,49 @@ void PlayerbotRust::HandleMasterIncomingPacket(const WorldPacket& packet)
     playerbot_packet_in(m_rustState.get(),
                         static_cast<uint16_t>(packet.GetOpcode()),
                         data, size);
+
+    // RTSC: master cast "Aedm" (30758) on the ground. Decode the destination
+    // position from CMSG_CAST_SPELL and hand it to the Rust side as a
+    // high-level command. This mirrors PB2's `SeeSpellAction`. Packet layout
+    // differs per expansion; see PB2 SeeSpellAction.cpp for reference.
+    if (packet.GetOpcode() == CMSG_CAST_SPELL && size > 0)
+    {
+        Player* master = GetMaster();
+        if (!master)
+            return;
+        try
+        {
+            WorldPacket p(packet);
+            p.rpos(0);
+            uint32 spellId = 0;
+#ifndef MANGOSBOT_TWO
+            p >> spellId;
+#endif
+#ifdef MANGOSBOT_ONE
+            uint8 castCount;
+            p >> castCount;
+#endif
+#ifdef MANGOSBOT_TWO
+            uint8 castCount, castFlags;
+            p >> castCount;
+            p >> spellId;
+            p >> castFlags;
+#endif
+            if (spellId != RTSC_MOVE_SPELL)
+                return;
+            SpellCastTargets targets;
+            p >> targets.ReadForCaster(master);
+            float x = targets.m_destPos.x;
+            float y = targets.m_destPos.y;
+            float z = targets.m_destPos.z;
+            playerbot_rtsc_spell(m_rustState.get(), x, y, z);
+        }
+        catch (...)
+        {
+            // Malformed packet — ignore silently, the server core will
+            // already have logged the underlying parse error.
+        }
+    }
 }
 
 void PlayerbotRust::HandleMasterOutgoingPacket(const WorldPacket& packet)

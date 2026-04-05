@@ -55,6 +55,12 @@
 #include "BattleGround/BattleGroundAB.h"
 #include "Chat/Chat.h"
 #include "Groups/Group.h"
+#include "Config/Config.h"
+
+#include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <sstream>
 
 #ifdef CMANGOS
 #include "Combat/ThreatManager.h"
@@ -360,6 +366,12 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.bot_mail_summary                    = CB_BotMailSummary;
     cbs.bot_mail_take_all                   = CB_BotMailTakeAll;
     cbs.bot_guild_leave                     = CB_BotGuildLeave;
+
+    // RTSC / file I/O helpers
+    cbs.bot_summon_marker_creature          = CB_BotSummonMarkerCreature;
+    cbs.bot_write_log_file                  = CB_BotWriteLogFile;
+    cbs.bot_read_log_file                   = CB_BotReadLogFile;
+    cbs.bot_free_string                     = CB_BotFreeString;
 
     return cbs;
 }
@@ -3458,4 +3470,90 @@ bool BotBridge::CB_BotKnowsSpell(BotHandle bot, uint32_t spell_id)
     if (!b)
         return false;
     return b->HasSpell(spell_id);
+}
+
+// ── RTSC / file I/O helpers ───────────────────────────────────────────────
+
+void BotBridge::CB_BotSummonMarkerCreature(BotHandle bot, uint32_t entry,
+                                           float x, float y, float z, float o,
+                                           uint32_t despawn_ms, float scale)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+    Creature* c = b->SummonCreature(entry, x, y, z, o, TEMPSPAWN_TIMED_DESPAWN,
+                                    despawn_ms);
+    if (c && scale > 0.0f)
+        c->SetObjectScale(scale);
+}
+
+static bool SanitizeBotFileName(const char* name, std::string& out)
+{
+    if (!name || !*name)
+        return false;
+    for (const char* p = name; *p; ++p)
+    {
+        char ch = *p;
+        bool ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                  (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == '.';
+        if (!ok)
+            return false;
+    }
+    out = name;
+    // Refuse traversal
+    if (out.find("..") != std::string::npos)
+        return false;
+    return true;
+}
+
+static std::string BotDataFilePath(const std::string& safeName)
+{
+    std::string dir = sConfig.GetStringDefault("LogsDir", "");
+    if (!dir.empty() && dir.back() != '/' && dir.back() != '\\')
+        dir += '/';
+    return dir + "playerbot_" + safeName + ".txt";
+}
+
+bool BotBridge::CB_BotWriteLogFile(BotHandle bot, const char* name, const char* body)
+{
+    (void)bot;
+    std::string safe;
+    if (!SanitizeBotFileName(name, safe))
+        return false;
+    std::ofstream f(BotDataFilePath(safe), std::ios::out | std::ios::trunc);
+    if (!f.is_open())
+        return false;
+    if (body)
+        f << body;
+    return f.good();
+}
+
+bool BotBridge::CB_BotReadLogFile(BotHandle bot, const char* name, char** out_body)
+{
+    (void)bot;
+    if (!out_body)
+        return false;
+    *out_body = nullptr;
+    std::string safe;
+    if (!SanitizeBotFileName(name, safe))
+        return false;
+    std::ifstream f(BotDataFilePath(safe));
+    if (!f.is_open())
+        return false;
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    std::string s = ss.str();
+    char* buf = static_cast<char*>(std::malloc(s.size() + 1));
+    if (!buf)
+        return false;
+    std::memcpy(buf, s.data(), s.size());
+    buf[s.size()] = '\0';
+    *out_body = buf;
+    return true;
+}
+
+void BotBridge::CB_BotFreeString(char* s)
+{
+    if (s)
+        std::free(s);
 }

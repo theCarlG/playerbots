@@ -243,6 +243,14 @@ namespace BotBridge
     bool                CB_BotMailTakeAll(BotHandle bot);
     bool                CB_BotGuildLeave(BotHandle bot);
 
+    // ── RTSC / file I/O helpers ────────────────────────────────────────────
+    void CB_BotSummonMarkerCreature(BotHandle bot, uint32_t entry,
+                                    float x, float y, float z, float o,
+                                    uint32_t despawn_ms, float scale);
+    bool CB_BotWriteLogFile(BotHandle bot, const char* name, const char* body);
+    bool CB_BotReadLogFile(BotHandle bot, const char* name, char** out_body);
+    void CB_BotFreeString(char* s);
+
     // ── Internal helpers ────────────────────────────────────────────────────
     Player* FindBot(BotHandle bot);
     Unit*   FindUnit(BotHandle bot, UnitHandle handle);

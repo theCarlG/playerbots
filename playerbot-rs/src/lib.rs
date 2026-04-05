@@ -301,13 +301,16 @@ pub unsafe extern "C" fn playerbot_chat_command(
     state: *mut (),
     sender_guid: u64,
     security: u8,
+    chat_type: u32,
+    lang: u32,
     text: *const std::os::raw::c_char,
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
     let c_str = unsafe { std::ffi::CStr::from_ptr(text) };
     if let Ok(text) = c_str.to_str() {
         let sec = commands::SecurityLevel::from_raw(security);
-        commands::preprocess::preprocess_and_enqueue(bot, sender_guid, sec, text);
+        let origin = commands::ChatOrigin::new(chat_type, lang);
+        commands::preprocess::preprocess_and_enqueue(bot, sender_guid, sec, origin, text);
     }
 }
 

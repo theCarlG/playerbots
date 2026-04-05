@@ -10,7 +10,8 @@ use crate::bot::class_prefs::{
     TotemSlot, WarlockCurse, WarriorStance, WeaponHand,
 };
 use crate::bot::settings::{
-    BehaviorMode, ChatChannel, CombatOrder, FollowFormation, LootPolicy, Reactivity, StrategyFlags,
+    BehaviorMode, BotStateKind, ChatChannel, CombatOrder, FollowFormation, LootPolicy, Reactivity,
+    StrategyFlags,
 };
 use crate::commands::BotCommand;
 use crate::data::spells::lookup_spell_by_name;
@@ -40,13 +41,14 @@ const COMMANDS: &[CommandSpec] = &[
     },
     // -- Combat orders / strategies / reactivity --
     CommandSpec { names: &["co"], parse: |_, a| parse_combat_order(a) },
-    CommandSpec { names: &["nc"], parse: |_, a| parse_strategies(a) },
+    CommandSpec { names: &["nc"], parse: |_, a| parse_strategies(a, BotStateKind::NonCombat) },
     CommandSpec { names: &["react"], parse: |_, a| parse_reactivity(a) },
-    // Mangosbot sends `de +spec,?` to toggle "dead-state" strategies in PB2's
-    // 4-state model. The Rust bot collapses combat/noncombat/dead/reaction
-    // into a single strategies bitfield, so `de` is an alias for `nc` that
-    // keeps Mangosbot's class/spec toggles happy without emitting Unknown.
-    CommandSpec { names: &["de"], parse: |_, a| parse_strategies(a) },
+    // PB2 4-state model: each of `co` / `nc` / `react` / `de` targets
+    // its own strategy engine. `de +spec,?` toggles *dead-state*
+    // strategies; the other three are handled by their own parsers
+    // (`co` routes to `parse_combat_order`, `react` routes to
+    // `parse_reactivity`).
+    CommandSpec { names: &["de"], parse: |_, a| parse_strategies(a, BotStateKind::Dead) },
     CommandSpec { names: &["ll"], parse: |_, a| parse_loot_policy(a) },
     // Mangosbot sends the two-word form `save mana [?|on|off]`.
     CommandSpec { names: &["save"], parse: |_, a| parse_save(a) },
@@ -323,16 +325,17 @@ fn parse_reactivity(args: &[&str]) -> Option<BotCommand> {
     //     the bot's passive/defensive/aggressive stance (Rust's native
     //     `Reactivity` setting).
     //
-    //   * PB2 signed strategy list — `react +tank feral,?` — in PB2 this
-    //     toggled strategies in a separate "reaction" BotState slot. The
-    //     Rust bot does not split strategy state across slots, so a signed
-    //     `react` command is treated as an alias of `nc` and emits the same
-    //     `Non Combat Strategies:` reply when `,?` is trailing.
+    //   * PB2 signed strategy list — `react +tank feral,?` — toggles
+    //     strategies in the `Reaction` BotState slot. PB2 uses a dedicated
+    //     reaction engine per bot; the Rust port now mirrors that with
+    //     `BotStateKind::Reaction`, so a signed `react` command routes to
+    //     `parse_strategies` with the `Reaction` slot, and emits
+    //     `Reaction Strategies: ...` when trailing `,?`.
     //
     // Dispatch on the first token's sign prefix.
     if let Some(first) = args.first().copied() {
         if first.starts_with('+') || first.starts_with('-') {
-            return parse_strategies(args);
+            return parse_strategies(args, BotStateKind::Reaction);
         }
     }
     match args.first().copied() {
@@ -558,9 +561,10 @@ fn parse_cc(args: &[&str]) -> Option<BotCommand> {
 /// A bare `?` chunk (`nc +dps assist,?`) is Mangosbot's apply-and-query
 /// shorthand — stripped here and surfaced as `query=true` on the emitted
 /// command so the handler whispers the new state after applying.
-fn parse_strategies(args: &[&str]) -> Option<BotCommand> {
+fn parse_strategies(args: &[&str], state: BotStateKind) -> Option<BotCommand> {
+    let cmd_name = state.addon_command();
     if args.is_empty() || args == ["?"] {
-        return Some(BotCommand::QueryStrategies);
+        return Some(BotCommand::QueryStrategies(state));
     }
     let joined = args.join(" ");
     let mut add = StrategyFlags::NONE;
@@ -582,7 +586,7 @@ fn parse_strategies(args: &[&str]) -> Option<BotCommand> {
             Some('-') => (-1, chunk[1..].trim()),
             _ => {
                 return Some(BotCommand::Unknown(format!(
-                    "nc: expected +/- prefix on `{chunk}`"
+                    "{cmd_name}: expected +/- prefix on `{chunk}`"
                 )));
             }
         };
@@ -597,13 +601,13 @@ fn parse_strategies(args: &[&str]) -> Option<BotCommand> {
             }
             None => {
                 return Some(BotCommand::Unknown(format!(
-                    "nc: unknown strategy `{name}`"
+                    "{cmd_name}: unknown strategy `{name}`"
                 )));
             }
         }
     }
 
-    Some(BotCommand::ApplyStrategies { add, remove, query })
+    Some(BotCommand::ApplyStrategies { state, add, remove, query })
 }
 
 /// `cast <spell name>` or `cast self <spell name>`. Uses the spell-name
@@ -1187,26 +1191,52 @@ mod tests {
     fn nc_strategy_toggles() {
         assert_eq!(
             parse("nc +rtsc"),
-            Some(BotCommand::ApplyStrategies { query: false,
+            Some(BotCommand::ApplyStrategies {
+                state: BotStateKind::NonCombat,
+                query: false,
                 add: StrategyFlags::RTSC,
                 remove: StrategyFlags::NONE,
             }),
         );
         assert_eq!(
             parse("nc -rpg bg"),
-            Some(BotCommand::ApplyStrategies { query: false,
+            Some(BotCommand::ApplyStrategies {
+                state: BotStateKind::NonCombat,
+                query: false,
                 add: StrategyFlags::NONE,
                 remove: StrategyFlags::RPG_BG,
             }),
         );
         assert_eq!(
             parse("nc +rtsc,-rpg,-rpg bg,-rpg explore"),
-            Some(BotCommand::ApplyStrategies { query: false,
+            Some(BotCommand::ApplyStrategies {
+                state: BotStateKind::NonCombat,
+                query: false,
                 add: StrategyFlags::RTSC,
                 remove: StrategyFlags::RPG | StrategyFlags::RPG_BG | StrategyFlags::RPG_EXPLORE,
             }),
         );
         assert!(matches!(parse("nc +bogus"), Some(BotCommand::Unknown(_))));
+        // `de` targets the Dead-state engine in PB2's 4-state model.
+        assert_eq!(
+            parse("de +rtsc"),
+            Some(BotCommand::ApplyStrategies {
+                state: BotStateKind::Dead,
+                query: false,
+                add: StrategyFlags::RTSC,
+                remove: StrategyFlags::NONE,
+            }),
+        );
+        // `react +flee` routes to the Reaction slot (PB2 parity).
+        assert_eq!(
+            parse("react +flee"),
+            Some(BotCommand::ApplyStrategies {
+                state: BotStateKind::Reaction,
+                query: false,
+                add: StrategyFlags::FLEE,
+                remove: StrategyFlags::NONE,
+            }),
+        );
     }
 
     #[test]
@@ -1366,7 +1396,14 @@ mod tests {
         assert_eq!(parse("formation ?"), Some(BotCommand::QueryFormation));
         assert_eq!(parse("stance ?"), Some(BotCommand::QueryStance));
         assert_eq!(parse("co ?"), Some(BotCommand::QueryCombatOrder));
-        assert_eq!(parse("nc ?"), Some(BotCommand::QueryStrategies));
+        assert_eq!(
+            parse("nc ?"),
+            Some(BotCommand::QueryStrategies(BotStateKind::NonCombat))
+        );
+        assert_eq!(
+            parse("de ?"),
+            Some(BotCommand::QueryStrategies(BotStateKind::Dead))
+        );
         assert_eq!(parse("react ?"), Some(BotCommand::QueryReactivity));
         assert_eq!(parse("rti ?"), Some(BotCommand::QueryRti));
         assert_eq!(parse("ll ?"), Some(BotCommand::QueryLootPolicy));

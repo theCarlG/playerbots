@@ -10,7 +10,8 @@ use crate::bot::class_prefs::{
     TotemSlot, WarlockCurse, WarriorStance, WeaponHand,
 };
 use crate::bot::settings::{
-    BehaviorMode, BotSettings, ChatChannel, CombatOrder, Reactivity, RtscAction, StrategyFlags,
+    BehaviorMode, BotSettings, BotStateKind, ChatChannel, CombatOrder, Reactivity, RtscAction,
+    StrategyFlags,
 };
 use crate::bot::state::BotState;
 use crate::ffi::{ItemId, SpellId, UnitHandle};
@@ -31,14 +32,17 @@ pub enum BotCommand {
         remove: CombatOrder,
         query: bool,
     },
-    /// Additive/subtractive strategy toggles (`nc +rtsc,-rpg bg`). See
+    /// Additive/subtractive strategy toggles for one `BotStateKind` slot.
+    /// `nc +rtsc,-rpg bg` → `NonCombat`; `co +aoe` → `Combat`;
+    /// `de +ghost` → `Dead`; `react +flee` → `Reaction`. See
     /// [`ApplyCombatOrder::query`] for the `,?` trailing-query semantics.
     ApplyStrategies {
+        state: BotStateKind,
         add: StrategyFlags,
         remove: StrategyFlags,
         query: bool,
     },
-    /// Reset strategies back to the default loadout (`reset ai`).
+    /// Reset every strategy slot back to the default loadout (`reset ai`).
     ResetStrategies,
     SetReactivity(Reactivity),
 
@@ -276,9 +280,16 @@ pub enum BotCommand {
     QueryStance,
     /// `co ?` — whisper current combat-order flags.
     QueryCombatOrder,
-    /// `nc ?` — whisper current strategy flags.
-    QueryStrategies,
-    /// `react ?` — whisper current reactivity level.
+    /// `nc ?` / `de ?` / `react ?` — whisper the strategy list for one
+    /// of the four per-state engines. The state kind selects which
+    /// slot to report and which Mangosbot-compatible reply prefix to
+    /// use. See [`BotStateKind::reply_prefix`].
+    QueryStrategies(BotStateKind),
+    /// `react ?` (no signed args) — whisper current reactivity level.
+    /// Distinct from `QueryStrategies(Reaction)` because the `react`
+    /// command is overloaded: plain `react passive|defensive|aggressive`
+    /// sets a stance, while `react +flee,?` toggles strategy names
+    /// in the Reaction slot.
     QueryReactivity,
     /// `rti ?` — whisper current preferred raid target icon.
     QueryRti,
@@ -312,7 +323,7 @@ impl BotCommand {
             | ListQuests | ListTalents | ListSpells | ListReputation | ListSkills
             | MailSummary
             // Addon probes — must be readable by anyone who can whisper.
-            | QueryFormation | QueryStance | QueryCombatOrder | QueryStrategies
+            | QueryFormation | QueryStance | QueryCombatOrder | QueryStrategies(_)
             | QueryReactivity | QueryRti | QueryCcRti | QuerySaveMana | QueryLootPolicy => SecurityLevel::Talk,
 
             // Destructive / account-level — master only.
@@ -426,6 +437,51 @@ impl SecurityLevel {
     }
 }
 
+/// The incoming chat channel and language a command arrived on.
+///
+/// The addons (Mangosbot UI, RaidControl) send commands via five channels:
+/// WHISPER (`SendChatMessage(cmd, "WHISPER", …)` or the spoofed
+/// `BOT\t`-prefixed whisper), PARTY, RAID, GUILD, and as CHAT_MSG_ADDON on
+/// LANG_ADDON (via `SendAddonMessage("BOT", …)`). Replies need to go back on
+/// the matching channel: debug / `#a ` queries reply on CHAT_MSG_ADDON /
+/// LANG_ADDON, everything else whispers the sender.
+///
+/// Values mirror CMaNGOS `ChatMsg` and `Language` — we keep them as raw
+/// `u32` on the Rust side so we don't couple to a core enum we don't own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChatOrigin {
+    /// CMaNGOS `ChatMsg` value (CHAT_MSG_WHISPER = 0x06, CHAT_MSG_SAY = 0x01,
+    /// CHAT_MSG_PARTY = 0x02, CHAT_MSG_RAID = 0x03, CHAT_MSG_GUILD = 0x04,
+    /// CHAT_MSG_YELL = 0x05, CHAT_MSG_CHANNEL = 0x11, …).
+    pub chat_type: u32,
+    /// CMaNGOS `Language` value. `LANG_ADDON` = `0xFFFFFFFE` (-2 as i32).
+    pub lang: u32,
+}
+
+/// CMaNGOS `LANG_ADDON` sentinel, used by addon-channel payloads.
+pub const LANG_ADDON: u32 = 0xFFFF_FFFE;
+
+impl ChatOrigin {
+    pub fn new(chat_type: u32, lang: u32) -> Self {
+        Self { chat_type, lang }
+    }
+
+    /// Sentinel for commands injected internally (RTSC spell position,
+    /// tests) that never came from a real chat packet.
+    pub const INTERNAL: Self = Self {
+        chat_type: 0,
+        lang: 0,
+    };
+
+    /// True iff the command arrived on an addon channel — either as
+    /// CHAT_MSG_ADDON or any chat channel with `LANG_ADDON`. Replies must
+    /// go back via CHAT_MSG_ADDON / LANG_ADDON so the Mangosbot UI parses
+    /// them instead of the player seeing a whisper.
+    pub fn is_addon(&self) -> bool {
+        self.lang == LANG_ADDON
+    }
+}
+
 /// A command queued for execution, tagged with its sender and trust level.
 ///
 /// `sender` is the `ObjectGuid` of the player who issued the chat, or
@@ -433,11 +489,13 @@ impl SecurityLevel {
 /// tests). `security` is the tier that C++-side `PlayerbotRust::
 /// ComputeSenderSecurity` granted the sender. The dispatcher compares it
 /// to each command's `required_security` and drops commands that don't
-/// meet the bar.
+/// meet the bar. `origin` records the chat channel + language the command
+/// arrived on so replies can be routed back on the same channel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingCommand {
     pub sender: Option<u64>,
     pub security: SecurityLevel,
+    pub origin: ChatOrigin,
     pub command: BotCommand,
 }
 
@@ -447,15 +505,22 @@ impl PendingCommand {
         Self {
             sender: None,
             security: SecurityLevel::AllowAll,
+            origin: ChatOrigin::INTERNAL,
             command,
         }
     }
 
     /// Command from a specific player with a trust tier.
-    pub fn external(sender: u64, security: SecurityLevel, command: BotCommand) -> Self {
+    pub fn external(
+        sender: u64,
+        security: SecurityLevel,
+        origin: ChatOrigin,
+        command: BotCommand,
+    ) -> Self {
         Self {
             sender: Some(sender),
             security,
+            origin,
             command,
         }
     }
@@ -537,10 +602,19 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
     match cmd {
         BotCommand::SetMode(mode) => {
             s.mode = *mode;
-            let verbose = s.verbose;
-            let label = mode.as_str();
-            if verbose {
-                reply(bot, pc, &format!("Mode: {label}"));
+            // Mangosbot's OnWhisper refresh hook (Mangosbot.lua:3149) finds
+            // `Following` / `Staying` / `Fleeing` at string position 1 and
+            // re-issues `nc ?` to refresh its non-combat strategy panel.
+            // These confirmations are UI-critical, NOT gated on verbose.
+            match mode {
+                BehaviorMode::Follow => reply(bot, pc, "Following..."),
+                BehaviorMode::Stay | BehaviorMode::Guard => reply(bot, pc, "Staying..."),
+                _ => {
+                    let verbose = s.verbose;
+                    if verbose {
+                        reply(bot, pc, &format!("Mode: {}", mode.as_str()));
+                    }
+                }
             }
         }
         BotCommand::SetCombatOrder(order) => {
@@ -554,16 +628,18 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 reply(bot, pc, &msg);
             }
         }
-        BotCommand::ApplyStrategies { add, remove, query } => {
-            s.strategies.remove(*remove);
-            s.strategies.insert(*add);
+        BotCommand::ApplyStrategies { state, add, remove, query } => {
+            let slot = s.strategies.get_mut(*state);
+            slot.remove(*remove);
+            slot.insert(*add);
             if *query {
-                let msg = format!("Non Combat Strategies: {}", s.strategies.describe());
+                let slot_val = s.strategies.get(*state);
+                let msg = format!("{}: {}", state.reply_prefix(), slot_val.describe());
                 reply(bot, pc, &msg);
             }
         }
         BotCommand::ResetStrategies => {
-            s.strategies = StrategyFlags::defaults();
+            s.strategies.reset_to_defaults();
         }
         BotCommand::SetReactivity(level) => {
             s.reactivity = *level;
@@ -807,6 +883,10 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         }
         BotCommand::SetFormation(f) => {
             s.follow_formation = *f;
+            // Mangosbot.lua:3152 watches for `Formation set to` to refresh
+            // `formation ?`. UI-critical — always emit.
+            let msg = format!("Formation set to {}", f.as_str());
+            reply(bot, pc, &msg);
         }
         BotCommand::TravelTo(loc) => {
             use crate::engine::blackboard::{Key, Value};
@@ -838,6 +918,16 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         }
         BotCommand::SetStance(st) => {
             s.stance = *st;
+            // Mangosbot.lua:3155 watches for `Stance set to` to refresh
+            // `stance ?`. UI-critical — always emit.
+            let name = match *st {
+                1 => "battle",
+                2 => "defensive",
+                3 => "berserker",
+                _ => "none",
+            };
+            let msg = format!("Stance set to {name}");
+            reply(bot, pc, &msg);
         }
         BotCommand::MaxDps => {
             s.combat_order = CombatOrder::DPS;
@@ -919,11 +1009,14 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         }
         BotCommand::Debug => {
             let msg = format!(
-                "DBG mode={} co={:#x} react={:?} strats={:#x} cheat={:#x}",
+                "DBG mode={} co={:#x} react={:?} co-strats={:#x} nc-strats={:#x} react-strats={:#x} de-strats={:#x} cheat={:#x}",
                 s.mode.as_str(),
                 s.combat_order.0,
                 s.reactivity,
-                s.strategies.0,
+                s.strategies.get(BotStateKind::Combat).0,
+                s.strategies.get(BotStateKind::NonCombat).0,
+                s.strategies.get(BotStateKind::Reaction).0,
+                s.strategies.get(BotStateKind::Dead).0,
                 s.cheat_flags,
             );
             reply(bot, pc, &msg);
@@ -1277,6 +1370,10 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             s.loot_policy.remove(*remove);
             s.loot_policy.insert(*add);
             s.loot_policy.toggle(*toggle);
+            // Mangosbot.lua:3158 watches for `Loot strategy set to ` to
+            // refresh `ll ?`. UI-critical — always emit.
+            let msg = format!("Loot strategy set to {}", s.loot_policy.describe());
+            reply(bot, pc, &msg);
         }
 
         // -- Query replies ---------------------------------------------
@@ -1301,13 +1398,18 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             let msg = format!("Combat Strategies: {}", s.combat_order.describe());
             reply(bot, pc, &msg);
         }
-        BotCommand::QueryStrategies => {
-            // Mangosbot parses `Non Combat Strategies: ...` (line 3362, trim=23).
-            let msg = format!("Non Combat Strategies: {}", s.strategies.describe());
+        BotCommand::QueryStrategies(state) => {
+            // Mangosbot parses `Non Combat Strategies: ...` (line 3362,
+            // trim=23) and `Combat Strategies: ...` (line 3358, trim=19)
+            // — the reply prefix comes from `BotStateKind::reply_prefix`.
+            let slot_val = s.strategies.get(*state);
+            let msg = format!("{}: {}", state.reply_prefix(), slot_val.describe());
             reply(bot, pc, &msg);
         }
         BotCommand::QueryReactivity => {
-            let msg = format!("react: {}", s.reactivity.as_str());
+            // Mangosbot parses `Reaction Strategies: ...` (Mangosbot.lua:3366,
+            // trim=21) — the reaction strategy panel keys on this exact prefix.
+            let msg = format!("Reaction Strategies: {}", s.reactivity.as_str());
             reply(bot, pc, &msg);
         }
         BotCommand::QueryRti => {

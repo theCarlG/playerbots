@@ -17,39 +17,35 @@
 //!
 //! ## Filter set
 //!
-//! Every PB2 chat filter whose data is reachable from the snapshot /
-//! settings / class enum is implemented here. That covers everything the
-//! shipping addons (Mangosbot UI, RaidControl) ever emit *and* everything
-//! a player can type manually without touching auction-house / item-usage
-//! infrastructure:
+//! Full port of PB2's `CompositeChatFilter` (`ChatFilter.cpp:1183`). The
+//! order below mirrors PB2's registration order; any changes must keep
+//! parity because several tags are ambiguous between filters (e.g.
+//! `@ranged` and `@melee` are used by both `RoleChatFilter` and
+//! `CombatTypeChatFilter`, `@guild` by `GuildChatFilter`, `@rank=` only
+//! by `GuildChatFilter`, etc.).
 //!
-//! | Filter        | Tags                                                                                | Source of truth                         |
-//! |---------------|-------------------------------------------------------------------------------------|-----------------------------------------|
-//! | role          | `@tank` `@dps` `@heal[er]` `@notank` `@nodps` `@noheal`                             | [`BotState::role`]                      |
-//! | combat-type   | `@ranged` `@melee`                                                                  | class + role (matches PB2's table)      |
-//! | class         | `@warrior` `@paladin` `@hunter` `@rogue` `@priest` `@shaman` `@mage` `@warlock` `@druid` `@deathknight` | [`BotState::class`]                     |
-//! | talent spec   | `@arms` `@fury` `@protection` `@holy` `@frost` …                                    | [`BotState::spec`] via [`spec_name`]    |
-//! | level         | `@60` `@10-20`                                                                      | `snap.self_.level`                      |
-//! | group         | `@group` `@nogroup` `@group2` `@group4-6` `@leader` `@raid` `@noraid` `@rleader`    | `snap.subgroup` / `is_raid_group`       |
-//! | guild         | `@guild` `@noguild` `@gleader`                                                      | `snap.in_guild` / `is_guild_leader`     |
-//! | state         | `@needrepair` `@bagfull` `@bagalmostfull` `@inside` `@outside`                      | `snap.durability_pct` / `bag_space_pct` / `is_overworld` |
-//! | gear          | `@tier1` `@tier2-3`                                                                 | `snap.equip_gear_score`                 |
-//! | rti           | `@star` `@circle` `@diamond` `@triangle` `@moon` `@square` `@cross` `@skull`        | blackboard rti assignment               |
-//! | random        | `@random` `@random=25`                                                              | thread-local RNG                        |
+//! | PB2 filter         | Tags                                                                                                     |
+//! |--------------------|----------------------------------------------------------------------------------------------------------|
+//! | StrategyChatFilter | `@nc=` `@nonc=` `@co=` `@noco=` `@react=` `@noreact=` `@dead=` `@nodead=`                                |
+//! | RoleChatFilter     | `@tank` `@dps` `@heal[er]` `@notank` `@nodps` `@noheal` `@ranged` `@melee`                               |
+//! | ClassChatFilter    | `@warrior` `@paladin` `@hunter` `@rogue` `@priest` `@shaman` `@mage` `@warlock` `@druid` `@deathknight`  |
+//! | RtiChatFilter      | `@star` `@circle` `@diamond` `@triangle` `@moon` `@square` `@cross` `@skull`                             |
+//! | CombatTypeChat     | `@ranged` `@melee` (class + role table)                                                                  |
+//! | LevelChatFilter    | `@60` `@10-20`                                                                                           |
+//! | GroupChatFilter    | `@group` `@nogroup` `@group2` `@group4-6` `@leader` `@raid` `@noraid` `@rleader`                         |
+//! | GuildChatFilter    | `@guild` `@guild=<name>` `@noguild` `@gleader` `@rank=<name>`                                            |
+//! | StateChatFilter    | `@needrepair` `@bagfull` `@bagalmostfull` `@inside` `@outside`                                           |
+//! | UsageChatFilter    | `@use=[link]` `@sell=[link]` `@need=[link]` `@greed=[link]`                                              |
+//! | TalentSpecChat     | `@arms` `@fury` `@protection` `@holy` `@frost` … (via `spec_name`)                                       |
+//! | LocationChatFilter | `@<mapname>` `@<areaname>` (lowercased)                                                                  |
+//! | RandomChatFilter   | `@random` `@random=25` `@fixedrandom` `@fixedrandom=25`                                                  |
+//! | GearChatFilter     | `@tier1` `@tier2-3`                                                                                      |
+//! | QuestChatFilter    | `@quest=<id>` `@quest=[link]`                                                                            |
 //!
-//! What is intentionally *not* ported: `@use=`, `@sell=`, `@need=`,
-//! `@greed=`, `@quest=`, `@guild=<name>`, `@rank=`, `@<mapname>`,
-//! `@<zonename>`, `@nc=<strategy>`, `@co=<strategy>`, `@react=`. All of
-//! these depend on subsystems that don't exist in the Rust port
-//! (ItemUsageValue, the string-name strategy registry, the full quest
-//! log API, raw map/zone *name* lookups). None of the shipping addons
-//! issue them; none of the `BossData` entries reference them. If a new
-//! consumer starts using one, its backing data must land first — the
-//! filter itself would be a three-line prefix check on top of that data,
-//! not a stub here.
+//! Reference: `/home/cg/Code/gitea/Karatefylla/mangos/classic/source/src/modules/PB2/playerbot/ChatFilter.cpp`.
 
 use crate::bot::state::{BotState, PlayerClass, PlayerSpec};
-use crate::commands::{PendingCommand, SecurityLevel, parser};
+use crate::commands::{ChatOrigin, PendingCommand, SecurityLevel, parser};
 use crate::ffi::{BotRole, BotWorldSnapshot};
 
 const DEFAULT_SEPARATOR: &str = "\\\\";
@@ -60,14 +56,15 @@ pub fn preprocess_and_enqueue(
     bot: &mut BotState,
     sender_guid: u64,
     security: SecurityLevel,
+    origin: ChatOrigin,
     raw: &str,
 ) {
     let text = raw.trim_start_matches("BOT\t");
 
     // Separator split: recurse into each command.
     if let Some((head, tail)) = split_once_sep(text, DEFAULT_SEPARATOR) {
-        preprocess_and_enqueue(bot, sender_guid, security, head);
-        preprocess_and_enqueue(bot, sender_guid, security, tail);
+        preprocess_and_enqueue(bot, sender_guid, security, origin, head);
+        preprocess_and_enqueue(bot, sender_guid, security, origin, tail);
         return;
     }
 
@@ -96,7 +93,7 @@ pub fn preprocess_and_enqueue(
     let pc = if sender_guid == 0 {
         PendingCommand::internal(cmd)
     } else {
-        PendingCommand::external(sender_guid, security, cmd)
+        PendingCommand::external(sender_guid, security, origin, cmd)
     };
     bot.pending_commands.push_back(pc);
 }
@@ -117,9 +114,9 @@ fn run_chat_filters(bot: &BotState, msg: String) -> Option<String> {
         return Some(current);
     }
 
-    // FILTER_COUNT = number of distinct filters below. 11 filters, we
+    // FILTER_COUNT = number of distinct filters below. 10 filters, we
     // iterate up to that many times (matches PB2's O(N) stability loop).
-    const FILTER_COUNT: usize = 11;
+    const FILTER_COUNT: usize = 10;
 
     for _ in 0..FILTER_COUNT {
         let before = current.clone();

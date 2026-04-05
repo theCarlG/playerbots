@@ -631,6 +631,31 @@ pub trait BotInterface: Send {
     fn bot_guild_leave(&self) -> bool {
         false
     }
+
+    /* ── RTSC / file I/O helpers ─────────────────────────────────────── */
+
+    /// Summon a temporary marker creature (used for RTSC waypoints).
+    fn bot_summon_marker_creature(
+        &self,
+        _entry: u32,
+        _x: f32,
+        _y: f32,
+        _z: f32,
+        _o: f32,
+        _despawn_ms: u32,
+        _scale: f32,
+    ) {
+    }
+
+    /// Write a string body to a bot-data file under the server logs dir.
+    fn bot_write_log_file(&self, _name: &str, _body: &str) -> bool {
+        false
+    }
+
+    /// Read the contents of a bot-data file written via `bot_write_log_file`.
+    fn bot_read_log_file(&self, _name: &str) -> Option<String> {
+        None
+    }
 }
 
 /// Quest info returned from the FFI.
@@ -1426,5 +1451,59 @@ impl BotInterface for RealInterface {
 
     fn bot_guild_leave(&self) -> bool {
         unsafe { (self.cbs.bot_guild_leave.unwrap())(self.handle) }
+    }
+
+    /* ── RTSC / file I/O helpers ─────────────────────────────────────── */
+
+    fn bot_summon_marker_creature(
+        &self,
+        entry: u32,
+        x: f32,
+        y: f32,
+        z: f32,
+        o: f32,
+        despawn_ms: u32,
+        scale: f32,
+    ) {
+        unsafe {
+            (self.cbs.bot_summon_marker_creature.unwrap())(
+                self.handle,
+                entry,
+                x,
+                y,
+                z,
+                o,
+                despawn_ms,
+                scale,
+            );
+        }
+    }
+
+    fn bot_write_log_file(&self, name: &str, body: &str) -> bool {
+        let Ok(cname) = std::ffi::CString::new(name) else {
+            return false;
+        };
+        let Ok(cbody) = std::ffi::CString::new(body) else {
+            return false;
+        };
+        unsafe {
+            (self.cbs.bot_write_log_file.unwrap())(self.handle, cname.as_ptr(), cbody.as_ptr())
+        }
+    }
+
+    fn bot_read_log_file(&self, name: &str) -> Option<String> {
+        let cname = std::ffi::CString::new(name).ok()?;
+        let mut out_ptr: *mut std::os::raw::c_char = std::ptr::null_mut();
+        let ok = unsafe {
+            (self.cbs.bot_read_log_file.unwrap())(self.handle, cname.as_ptr(), &mut out_ptr)
+        };
+        if !ok || out_ptr.is_null() {
+            return None;
+        }
+        let s = unsafe { std::ffi::CStr::from_ptr(out_ptr) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { (self.cbs.bot_free_string.unwrap())(out_ptr) };
+        Some(s)
     }
 }
