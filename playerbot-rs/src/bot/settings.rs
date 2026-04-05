@@ -731,42 +731,52 @@ impl std::ops::BitOr for StrategyFlags {
 }
 
 /// How followers arrange themselves around the master when in Follow mode.
-/// Mirrors the C++ formation vocabulary the `RaidControl` addon sends.
+///
+/// Exact 1:1 mirror of PB2's 11 formations registered in
+/// `PB2/playerbot/strategy/values/Formations.cpp::FormationValue::Load`
+/// (lines 543–600). Chat commands must accept these names verbatim
+/// because `RaidControl` and PB2-compatible addons speak this vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FollowFormation {
-    /// Cluster tightly near the leader (default).
+    /// Cluster tightly near the leader using follow-angle slot (default).
     #[default]
     Near,
-    /// Side-by-side line.
-    Line,
-    /// Circle around the leader.
-    Circle,
-    /// Random-ish scatter.
-    Chaos,
-    /// 3x3 box.
-    Box,
-    /// Single-file queue behind leader.
+    /// Tight melee range (follow-angle slot, offset = follow range).
+    Melee,
+    /// Single-file queue directly behind leader (angle = π).
     Queue,
-    /// Arrow / V shape.
+    /// Near + random jitter, re-rolled every 3 seconds.
+    Chaos,
+    /// Circle around the current combat target (or follow target).
+    Circle,
+    /// Group-wide single line perpendicular to leader's facing.
+    Line,
+    /// Two lines — tanks front, DPS/healers back — of leader's facing.
+    Shield,
+    /// Arrow/V wedge behind leader; group roster placed symmetrically.
     Arrow,
-    /// Wedge shape (inverted arrow).
-    Wedge,
-    /// Paired buddies.
-    Pairs,
+    /// Raid blocks: lines of 5 with depth offset.
+    Raid,
+    /// Maintain a far angle relative to leader's facing.
+    Far,
+    /// Fixed offset relative to leader, saved in per-bot position map.
+    Custom,
 }
 
 impl FollowFormation {
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
-            "near" => Self::Near,
-            "line" => Self::Line,
-            "circle" => Self::Circle,
-            "chaos" => Self::Chaos,
-            "box" => Self::Box,
+            "near" | "default" => Self::Near,
+            "melee" => Self::Melee,
             "queue" => Self::Queue,
+            "chaos" => Self::Chaos,
+            "circle" => Self::Circle,
+            "line" => Self::Line,
+            "shield" => Self::Shield,
             "arrow" => Self::Arrow,
-            "wedge" => Self::Wedge,
-            "pairs" => Self::Pairs,
+            "raid" => Self::Raid,
+            "far" => Self::Far,
+            "custom" => Self::Custom,
             _ => return None,
         })
     }
@@ -774,14 +784,16 @@ impl FollowFormation {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Near => "near",
-            Self::Line => "line",
-            Self::Circle => "circle",
-            Self::Chaos => "chaos",
-            Self::Box => "box",
+            Self::Melee => "melee",
             Self::Queue => "queue",
+            Self::Chaos => "chaos",
+            Self::Circle => "circle",
+            Self::Line => "line",
+            Self::Shield => "shield",
             Self::Arrow => "arrow",
-            Self::Wedge => "wedge",
-            Self::Pairs => "pairs",
+            Self::Raid => "raid",
+            Self::Far => "far",
+            Self::Custom => "custom",
         }
     }
 }

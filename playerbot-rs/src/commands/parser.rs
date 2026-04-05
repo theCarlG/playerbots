@@ -1281,8 +1281,21 @@ mod tests {
             Some(BotCommand::SetFormation(FollowFormation::Near)),
         );
         assert_eq!(
-            parse("formation wedge"),
-            Some(BotCommand::SetFormation(FollowFormation::Wedge)),
+            parse("formation arrow"),
+            Some(BotCommand::SetFormation(FollowFormation::Arrow)),
+        );
+        assert_eq!(
+            parse("formation melee"),
+            Some(BotCommand::SetFormation(FollowFormation::Melee)),
+        );
+        assert_eq!(
+            parse("formation raid"),
+            Some(BotCommand::SetFormation(FollowFormation::Raid)),
+        );
+        // PB2 accepts `default` as an alias for `near`.
+        assert_eq!(
+            parse("formation default"),
+            Some(BotCommand::SetFormation(FollowFormation::Near)),
         );
         assert!(matches!(
             parse("formation bogus"),
