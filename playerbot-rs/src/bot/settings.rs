@@ -277,24 +277,32 @@ impl BotStateKind {
 /// (combat rotations, reactive layer, mode dispatch) is NOT a strategy —
 /// strategies are the knobs a raid leader turns during a pull.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct StrategyFlags(pub u32);
+pub struct StrategyFlags(pub u128);
 
 impl StrategyFlags {
+    /// Helper: build a single-bit flag at position `n` in the u128 backing
+    /// store. `const fn` so every constant below is compile-time.
+    const fn bit(n: u32) -> Self {
+        Self(1u128 << n)
+    }
+
     pub const NONE: Self = Self(0);
-    pub const RPG: Self = Self(1 << 0);
-    pub const RPG_BG: Self = Self(1 << 1);
-    pub const RPG_EXPLORE: Self = Self(1 << 2);
-    pub const RPG_GUILD: Self = Self(1 << 3);
-    pub const RPG_MAINTENANCE: Self = Self(1 << 4);
-    pub const RPG_PLAYER: Self = Self(1 << 5);
-    pub const RPG_QUEST: Self = Self(1 << 6);
-    pub const RPG_VENDOR: Self = Self(1 << 7);
-    pub const RTSC: Self = Self(1 << 8);
-    pub const WBUFF: Self = Self(1 << 9);
-    pub const GRIND: Self = Self(1 << 10);
-    pub const FLEE: Self = Self(1 << 11);
-    pub const EMOTE: Self = Self(1 << 12);
-    pub const CC: Self = Self(1 << 13);
+
+    // ── Bits 0–15: original RPG / RTSC / Grind / Flee / CC set (pre Step 6).
+    pub const RPG: Self = Self::bit(0);
+    pub const RPG_BG: Self = Self::bit(1);
+    pub const RPG_EXPLORE: Self = Self::bit(2);
+    pub const RPG_GUILD: Self = Self::bit(3);
+    pub const RPG_MAINTENANCE: Self = Self::bit(4);
+    pub const RPG_PLAYER: Self = Self::bit(5);
+    pub const RPG_QUEST: Self = Self::bit(6);
+    pub const RPG_VENDOR: Self = Self::bit(7);
+    pub const RTSC: Self = Self::bit(8);
+    pub const WBUFF: Self = Self::bit(9);
+    pub const GRIND: Self = Self::bit(10);
+    pub const FLEE: Self = Self::bit(11);
+    pub const EMOTE: Self = Self::bit(12);
+    pub const CC: Self = Self::bit(13);
     /// PB2 `ReturnStrategy` — when the bot drifts away from its marked
     /// "return position" (set by `stay` / `guard` or encounter scripts),
     /// walk back. One of PB2's two non-combat defaults from
@@ -302,13 +310,106 @@ impl StrategyFlags {
     /// The BT leaves that consume this flag land in Part 5 Step 11 —
     /// for now the flag parses/describes so chat filters and `nc ?`
     /// reports are byte-correct.
-    pub const RETURN: Self = Self(1 << 14);
+    pub const RETURN: Self = Self::bit(14);
     /// PB2 `DelayedRollStrategy` — hold Need/Greed/Pass roll decisions
     /// for a short window so master/party policy can override. The
     /// second PB2 non-combat default. Consumer lands in Part 5 Step 16
     /// alongside the loot FSM; the flag is present now so `@nc=delayed roll`
     /// filters and `nc ?` queries match PB2.
-    pub const DELAYED_ROLL: Self = Self(1 << 15);
+    pub const DELAYED_ROLL: Self = Self::bit(15);
+
+    // ── Bits 16–30: PB2 all-bot / generic combat base (§3.1 & §3.3).
+    //
+    // These were added in Part 5 Step 6 for per-class default parity. Most
+    // of them do NOT yet have BT-consumer wiring — they exist so:
+    //   1. `@co=mount` / `@co=aoe` / etc. chat filters behave like PB2.
+    //   2. `co ?` / `nc ?` query replies list the same names PB2 ships.
+    //   3. Future Part 5 Step 11+ consumers can gate on `has(state, flag)`.
+    //
+    // Overlap with `CombatOrder`: a handful of these (TANK_ASSIST,
+    // DPS_ASSIST, PULL, PULL_BACK, CLOSE, AOE, RANGED, BEHIND, BOOST,
+    // TANK_FERAL, DPS_FERAL, STEALTH, CC) share their names with
+    // `CombatOrder` bits. PB2 stores these as *strategies*; the Rust port
+    // historically used `CombatOrder` for `co +<name>` parsing, and still
+    // does. The strategy-slot copies populated at bot-create time are for
+    // chat-filter/query parity only; rotation gating continues to read
+    // `CombatOrder` until the follow-up reconciliation (tracked as the
+    // "co → StrategySet" unification in the Step 6 end-notes).
+    pub const MOUNT: Self = Self::bit(16);
+    pub const AVOID_MOBS: Self = Self::bit(17);
+    pub const RACIALS: Self = Self::bit(18);
+    pub const DEFAULT: Self = Self::bit(19);
+    pub const DUEL: Self = Self::bit(20);
+    pub const PVP: Self = Self::bit(21);
+    pub const AI_CHAT: Self = Self::bit(22);
+    pub const TANK_ASSIST: Self = Self::bit(23);
+    pub const DPS_ASSIST: Self = Self::bit(24);
+    pub const PULL: Self = Self::bit(25);
+    pub const PULL_BACK: Self = Self::bit(26);
+    pub const CLOSE: Self = Self::bit(27);
+    pub const AOE: Self = Self::bit(28);
+    pub const RANGED: Self = Self::bit(29);
+    pub const BEHIND: Self = Self::bit(30);
+    pub const BUFF: Self = Self::bit(31);
+    pub const CURE: Self = Self::bit(32);
+    pub const BOOST: Self = Self::bit(33);
+
+    // ── Bits 34–45: class-feature strategies (§3.3 class-feature rows).
+    pub const OFFHEAL: Self = Self::bit(34);
+    pub const OFFDPS: Self = Self::bit(35);
+    pub const POISONS: Self = Self::bit(36);
+    pub const STEALTH: Self = Self::bit(37);
+    pub const TOTEMS: Self = Self::bit(38);
+    pub const AURA: Self = Self::bit(39);
+    pub const BLESSING: Self = Self::bit(40);
+    pub const ASPECT: Self = Self::bit(41);
+    pub const STING: Self = Self::bit(42);
+    pub const PET: Self = Self::bit(43);
+    pub const CURSE: Self = Self::bit(44);
+    pub const DKSQUEST: Self = Self::bit(45);
+
+    // ── Bits 46–47: druid feral hints (also present on `CombatOrder`,
+    // see header comment on the `CombatOrder` block for the overlap note).
+    pub const TANK_FERAL: Self = Self::bit(46);
+    pub const DPS_FERAL: Self = Self::bit(47);
+
+    // ── Bits 48–75: spec-name strategies (§3.2). Names are shared across
+    // classes where PB2 reuses the string ("holy" = priest Holy AND
+    // paladin Holy; "protection" = warrior AND paladin; "restoration" =
+    // druid AND shaman; "frost" = mage AND DK). The consumer (rotation
+    // or chat filter) dispatches on the bot's class to interpret the
+    // flag — we do NOT duplicate the bit per class.
+    pub const ARMS: Self = Self::bit(48);
+    pub const FURY: Self = Self::bit(49);
+    pub const PROTECTION: Self = Self::bit(50);
+    pub const DISCIPLINE: Self = Self::bit(51);
+    pub const HOLY: Self = Self::bit(52);
+    pub const SHADOW: Self = Self::bit(53);
+    pub const ARCANE: Self = Self::bit(54);
+    pub const FIRE: Self = Self::bit(55);
+    pub const FROST: Self = Self::bit(56);
+    pub const AFFLICTION: Self = Self::bit(57);
+    pub const DEMONOLOGY: Self = Self::bit(58);
+    pub const DESTRUCTION: Self = Self::bit(59);
+    pub const RETRIBUTION: Self = Self::bit(60);
+    pub const ELEMENTAL: Self = Self::bit(61);
+    pub const ENHANCEMENT: Self = Self::bit(62);
+    pub const RESTORATION: Self = Self::bit(63);
+    pub const BALANCE: Self = Self::bit(64);
+    pub const BEAST_MASTERY: Self = Self::bit(65);
+    pub const MARKSMANSHIP: Self = Self::bit(66);
+    pub const SURVIVAL: Self = Self::bit(67);
+    pub const ASSASSINATION: Self = Self::bit(68);
+    /// Rogue "combat" spec. Named `ROGUE_COMBAT` in Rust to avoid
+    /// collision with the module-level `Combat` `BotStateKind` variant.
+    /// The addon name is still `"combat"`; only the Rust identifier
+    /// differs.
+    pub const ROGUE_COMBAT: Self = Self::bit(69);
+    pub const SUBTLETY: Self = Self::bit(70);
+    pub const BLOOD: Self = Self::bit(71);
+    pub const UNHOLY: Self = Self::bit(72);
+    pub const FROST_AOE: Self = Self::bit(73);
+    pub const UNHOLY_AOE: Self = Self::bit(74);
 
     pub const fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
@@ -320,28 +421,103 @@ impl StrategyFlags {
         self.0 &= !other.0;
     }
 
+    /// Canonical flag → addon-name table. Single source of truth used by
+    /// both `parse_name` (reverse-lookup) and `describe` (forward-lookup)
+    /// so the two can never drift out of sync when a new flag is added.
+    /// Order here is the order `describe()` emits; match PB2's
+    /// `AiFactory`/`aiplayerbot.conf.dist.in` presentation where possible.
+    const NAME_TABLE: &'static [(Self, &'static str)] = &[
+        // RPG / RTSC / grind family (pre Step 6).
+        (Self::RPG, "rpg"),
+        (Self::RPG_BG, "rpg bg"),
+        (Self::RPG_EXPLORE, "rpg explore"),
+        (Self::RPG_GUILD, "rpg guild"),
+        (Self::RPG_MAINTENANCE, "rpg maintenance"),
+        (Self::RPG_PLAYER, "rpg player"),
+        (Self::RPG_QUEST, "rpg quest"),
+        (Self::RPG_VENDOR, "rpg vendor"),
+        (Self::RTSC, "rtsc"),
+        (Self::WBUFF, "wbuff"),
+        (Self::GRIND, "grind"),
+        (Self::FLEE, "flee"),
+        (Self::EMOTE, "emote"),
+        (Self::CC, "cc"),
+        (Self::RETURN, "return"),
+        (Self::DELAYED_ROLL, "delayed roll"),
+        // All-bot base.
+        (Self::MOUNT, "mount"),
+        (Self::AVOID_MOBS, "avoid mobs"),
+        (Self::RACIALS, "racials"),
+        (Self::DEFAULT, "default"),
+        (Self::DUEL, "duel"),
+        (Self::PVP, "pvp"),
+        (Self::AI_CHAT, "ai chat"),
+        // Combat-role hints.
+        (Self::TANK_ASSIST, "tank assist"),
+        (Self::DPS_ASSIST, "dps assist"),
+        (Self::PULL, "pull"),
+        (Self::PULL_BACK, "pull back"),
+        (Self::CLOSE, "close"),
+        (Self::AOE, "aoe"),
+        (Self::RANGED, "ranged"),
+        (Self::BEHIND, "behind"),
+        (Self::BUFF, "buff"),
+        (Self::CURE, "cure"),
+        (Self::BOOST, "boost"),
+        // Class-feature strategies.
+        (Self::OFFHEAL, "offheal"),
+        (Self::OFFDPS, "offdps"),
+        (Self::POISONS, "poisons"),
+        (Self::STEALTH, "stealth"),
+        (Self::TOTEMS, "totems"),
+        (Self::AURA, "aura"),
+        (Self::BLESSING, "blessing"),
+        (Self::ASPECT, "aspect"),
+        (Self::STING, "sting"),
+        (Self::PET, "pet"),
+        (Self::CURSE, "curse"),
+        (Self::DKSQUEST, "dksquest"),
+        // Druid feral hints (shared with CombatOrder).
+        (Self::TANK_FERAL, "tank feral"),
+        (Self::DPS_FERAL, "dps feral"),
+        // Spec-name strategies.
+        (Self::ARMS, "arms"),
+        (Self::FURY, "fury"),
+        (Self::PROTECTION, "protection"),
+        (Self::DISCIPLINE, "discipline"),
+        (Self::HOLY, "holy"),
+        (Self::SHADOW, "shadow"),
+        (Self::ARCANE, "arcane"),
+        (Self::FIRE, "fire"),
+        (Self::FROST, "frost"),
+        (Self::AFFLICTION, "affliction"),
+        (Self::DEMONOLOGY, "demonology"),
+        (Self::DESTRUCTION, "destruction"),
+        (Self::RETRIBUTION, "retribution"),
+        (Self::ELEMENTAL, "elemental"),
+        (Self::ENHANCEMENT, "enhancement"),
+        (Self::RESTORATION, "restoration"),
+        (Self::BALANCE, "balance"),
+        (Self::BEAST_MASTERY, "beast mastery"),
+        (Self::MARKSMANSHIP, "marksmanship"),
+        (Self::SURVIVAL, "survival"),
+        (Self::ASSASSINATION, "assassination"),
+        (Self::ROGUE_COMBAT, "combat"),
+        (Self::SUBTLETY, "subtlety"),
+        (Self::BLOOD, "blood"),
+        (Self::UNHOLY, "unholy"),
+        (Self::FROST_AOE, "frost aoe"),
+        (Self::UNHOLY_AOE, "unholy aoe"),
+    ];
+
     /// Look up a flag by the name the addon sends. Multi-word names are
-    /// joined with a space ("rpg bg", "rpg maintenance").
+    /// joined with a space ("rpg bg", "rpg maintenance", "tank assist").
     pub fn parse_name(name: &str) -> Option<Self> {
-        Some(match name.trim() {
-            "rpg" => Self::RPG,
-            "rpg bg" => Self::RPG_BG,
-            "rpg explore" => Self::RPG_EXPLORE,
-            "rpg guild" => Self::RPG_GUILD,
-            "rpg maintenance" => Self::RPG_MAINTENANCE,
-            "rpg player" => Self::RPG_PLAYER,
-            "rpg quest" => Self::RPG_QUEST,
-            "rpg vendor" => Self::RPG_VENDOR,
-            "rtsc" => Self::RTSC,
-            "wbuff" => Self::WBUFF,
-            "grind" => Self::GRIND,
-            "flee" => Self::FLEE,
-            "emote" => Self::EMOTE,
-            "cc" => Self::CC,
-            "return" => Self::RETURN,
-            "delayed roll" => Self::DELAYED_ROLL,
-            _ => return None,
-        })
+        let trimmed = name.trim();
+        Self::NAME_TABLE
+            .iter()
+            .find(|(_, n)| *n == trimmed)
+            .map(|(f, _)| *f)
     }
 
     /// Render as a comma-separated string for query responses.
@@ -350,25 +526,7 @@ impl StrategyFlags {
             return "none".to_string();
         }
         let mut parts: Vec<&str> = Vec::new();
-        let pairs: &[(Self, &str)] = &[
-            (Self::RPG, "rpg"),
-            (Self::RPG_BG, "rpg bg"),
-            (Self::RPG_EXPLORE, "rpg explore"),
-            (Self::RPG_GUILD, "rpg guild"),
-            (Self::RPG_MAINTENANCE, "rpg maintenance"),
-            (Self::RPG_PLAYER, "rpg player"),
-            (Self::RPG_QUEST, "rpg quest"),
-            (Self::RPG_VENDOR, "rpg vendor"),
-            (Self::RTSC, "rtsc"),
-            (Self::WBUFF, "wbuff"),
-            (Self::GRIND, "grind"),
-            (Self::FLEE, "flee"),
-            (Self::EMOTE, "emote"),
-            (Self::CC, "cc"),
-            (Self::RETURN, "return"),
-            (Self::DELAYED_ROLL, "delayed roll"),
-        ];
-        for (flag, name) in pairs {
+        for (flag, name) in Self::NAME_TABLE {
             if self.contains(*flag) {
                 parts.push(name);
             }
@@ -1084,6 +1242,76 @@ mod tests {
         // Formation.
         assert_eq!(c.default_formation, FollowFormation::Near);
         assert!(c.use_wander_as_default_follow_strategy);
+    }
+
+    #[test]
+    fn strategy_flags_fit_in_backing_store() {
+        // Every named strategy in NAME_TABLE must be representable in
+        // the u128 backing store. If a future edit runs off the end of
+        // the `bit(n)` range, this test catches it immediately.
+        for (flag, name) in StrategyFlags::NAME_TABLE {
+            assert_ne!(
+                flag.0, 0,
+                "strategy `{name}` has zero bit — off the end of the u128?"
+            );
+        }
+    }
+
+    #[test]
+    fn strategy_name_table_is_bijective() {
+        // NAME_TABLE is the single source of truth for parse_name /
+        // describe. No duplicate flags, no duplicate names.
+        let table = StrategyFlags::NAME_TABLE;
+        for i in 0..table.len() {
+            for j in (i + 1)..table.len() {
+                assert_ne!(
+                    table[i].0.0, table[j].0.0,
+                    "duplicate bit between `{}` and `{}`",
+                    table[i].1, table[j].1
+                );
+                assert_ne!(
+                    table[i].1, table[j].1,
+                    "duplicate name `{}`",
+                    table[i].1
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pb2_step6_strategy_names_all_parse() {
+        // Every §3.2 per-class / §3.1 all-bot name must round-trip
+        // through parse_name → describe. Catches typos in NAME_TABLE
+        // that would silently drop chat-filter / query coverage.
+        let names = [
+            // All-bot.
+            "mount", "avoid mobs", "racials", "default", "duel", "pvp", "ai chat", "wbuff",
+            // Combat-role hints.
+            "tank assist", "dps assist", "pull", "pull back", "close", "aoe", "ranged",
+            "behind", "buff", "cure", "boost", "cc", "flee",
+            // Class features.
+            "offheal", "offdps", "poisons", "stealth", "totems", "aura", "blessing",
+            "aspect", "sting", "pet", "curse", "dksquest", "tank feral", "dps feral",
+            // Spec names (warrior, priest, mage, warlock, paladin, shaman, druid,
+            // hunter, rogue, dk).
+            "arms", "fury", "protection", "discipline", "holy", "shadow", "arcane",
+            "fire", "frost", "affliction", "demonology", "destruction", "retribution",
+            "elemental", "enhancement", "restoration", "balance", "beast mastery",
+            "marksmanship", "survival", "assassination", "combat", "subtlety",
+            "blood", "unholy", "frost aoe", "unholy aoe",
+            // Pre-Step 6 set still resolves.
+            "return", "delayed roll", "rpg", "rtsc", "grind", "emote",
+        ];
+        for n in names {
+            let parsed = StrategyFlags::parse_name(n);
+            assert!(parsed.is_some(), "parse_name({n:?}) returned None");
+            let f = parsed.unwrap();
+            assert_eq!(
+                f.describe(),
+                n,
+                "describe round-trip mismatch for `{n}`"
+            );
+        }
     }
 
     #[test]
