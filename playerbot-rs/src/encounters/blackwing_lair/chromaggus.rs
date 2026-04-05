@@ -12,7 +12,8 @@
 /// Strategy: everyone stays behind the boss; ranged maintain max range to
 /// stay out of breath cones entirely in case of tank position slips.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, IsRanged, MaintainRange, Sel, Seq};
+use crate::encounters::bt::Bt::{self, *};
+use crate::{Seq, Sel};
 use crate::ffi::SpellId;
 
 pub const AURA_BROOD_AFFLICTION_BLUE: SpellId = SpellId(23170);
@@ -45,7 +46,7 @@ impl ChromaggusFsm {
     fn build_bt() -> Bt {
         // Ranged stay at 30y to stay out of all breath cones. Melee hug
         // the boss from behind — reactive facing handled by targeting.
-        Sel(vec![Seq(vec![IsRanged, MaintainRange(30.0)])])
+        Sel!(Seq!(IsRanged, MaintainRange(30.0)))
     }
 }
 

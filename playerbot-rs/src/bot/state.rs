@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
 
 use crate::{
+    bot::class_prefs::ClassPrefs,
     bot::events::BotEvent,
     bot::settings::BotSettings,
     commands::PendingCommand,
@@ -146,6 +147,10 @@ impl BotState {
         role: BotRole,
         root_tree: Bt,
     ) -> Self {
+        let settings = BotSettings {
+            class_prefs: ClassPrefs::default_for(class, spec),
+            ..BotSettings::default()
+        };
         Self {
             handle,
             interface,
@@ -162,7 +167,7 @@ impl BotState {
             class,
             spec,
             role,
-            settings: BotSettings::default(),
+            settings,
             pending_commands: VecDeque::new(),
             last_attackers_refresh_ms: 0,
             last_nearby_refresh_ms: 0,

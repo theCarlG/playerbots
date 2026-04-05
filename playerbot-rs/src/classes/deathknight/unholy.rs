@@ -2,14 +2,17 @@
 ///
 /// Priority: Bone Shield → Death Grip → diseases → Scourge Strike →
 ///   `AoE` Blood Boil → Death Coil → Death and Decay
-use crate::engine::bt::Bt::{self, Sel};
+#[allow(unused_imports)]
+use crate::engine::bt::{Bt::{self, *}, Op::*, Resource::*};
+#[allow(unused_imports)]
+use crate::{Seq, Sel};
 
 #[cfg(feature = "wotlk")]
 use crate::{data::spells::vanilla::deathknight::*, ffi::SpellId};
 
 #[cfg(not(feature = "wotlk"))]
 pub fn build_tree() -> Bt {
-    Sel(vec![])
+    Sel!()
 }
 
 #[cfg(feature = "wotlk")]
@@ -21,33 +24,33 @@ const BLOOD_PLAGUE: SpellId = SpellId(55078);
 
 #[cfg(feature = "wotlk")]
 pub fn build_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         StickToTarget(5.0),
         // Self-buff.
-        Seq(vec![SelfMissingAura(BONE_SHIELD), CastOnSelf(BONE_SHIELD)]),
+        Seq!(Bt::self_missing(BONE_SHIELD), CastOnSelf(BONE_SHIELD)),
         // Pull.
-        Seq(vec![TargetFartherThan(15.0), CastOnTarget(DEATH_GRIP)]),
-        Seq(vec![
+        Seq!(Cmp(TargetDistance, Above(15)), CastOnTarget(DEATH_GRIP)),
+        Seq!(
             InCombat,
-            Sel(vec![
+            Sel!(
                 // Diseases.
-                Seq(vec![
-                    TargetMissingAura(FROST_FEVER),
+                Seq!(
+                    Bt::target_missing(FROST_FEVER),
                     CastOnTarget(ICY_TOUCH),
-                ]),
-                Seq(vec![
-                    TargetMissingAura(BLOOD_PLAGUE),
+                ),
+                Seq!(
+                    Bt::target_missing(BLOOD_PLAGUE),
                     CastOnTarget(PLAGUE_STRIKE),
-                ]),
+                ),
                 // Main damage.
                 CastOnTarget(SCOURGE_STRIKE),
                 // AoE spread.
-                Seq(vec![NearbyAtLeast(2), CastOnTarget(BLOOD_BOIL)]),
+                Seq!(Cmp(NearbyCount, AtLeast(2)), CastOnTarget(BLOOD_BOIL)),
                 // RP dump.
                 CastOnTarget(DEATH_COIL),
                 // AoE ground.
-                Seq(vec![NearbyAtLeast(2), CastOnSelf(DEATH_AND_DECAY)]),
-            ]),
-        ]),
-    ])
+                Seq!(Cmp(NearbyCount, AtLeast(2)), CastOnSelf(DEATH_AND_DECAY)),
+            ),
+        ),
+    )
 }

@@ -3,29 +3,30 @@
 /// Priority: close gap → emergency fear → execute → bloodthirst → whirlwind → cleave/heroic strike
 use crate::{
     data::spells::vanilla::warrior::*,
-    engine::bt::Bt::{self, Sel, CastOnTarget, StickToTarget, Seq, InCombat, HpBelow, TargetHpBelow, NearbyAtLeast},
+    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
 };
+use crate::{Seq, Sel};
 
 pub fn build_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         // Close gap: Intercept (Berserker), Charge (Battle), then stick.
         CastOnTarget(INTERCEPT),
         CastOnTarget(CHARGE),
         StickToTarget(5.0),
-        Seq(vec![
+        Seq!(
             InCombat,
-            Sel(vec![
+            Sel!(
                 // Emergency fear.
-                Seq(vec![HpBelow(0.15), CastOnTarget(INTIMIDATING_SHOUT)]),
+                Seq!(Cmp(SelfHealthPct, Below(15)), CastOnTarget(INTIMIDATING_SHOUT)),
                 // Execute.
-                Seq(vec![TargetHpBelow(0.20), CastOnTarget(EXECUTE)]),
+                Seq!(Cmp(TargetHealthPct, Below(20)), CastOnTarget(EXECUTE)),
                 // Core damage.
                 CastOnTarget(BLOODTHIRST),
                 CastOnTarget(WHIRLWIND),
                 // Rage dumps (same swing slot).
                 CastOnTarget(HEROIC_STRIKE),
-                Seq(vec![NearbyAtLeast(2), CastOnTarget(CLEAVE)]),
-            ]),
-        ]),
-    ])
+                Seq!(Cmp(NearbyCount, AtLeast(2)), CastOnTarget(CLEAVE)),
+            ),
+        ),
+    )
 }

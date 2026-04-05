@@ -1,5 +1,6 @@
 pub mod beast_mastery;
 pub mod marksmanship;
+pub mod prefs;
 pub mod survival;
 
 use crate::{bot::state::PlayerSpec, classes::ClassKit, noncombat::GroupBuff};

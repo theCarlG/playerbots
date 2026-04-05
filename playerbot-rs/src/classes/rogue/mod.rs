@@ -1,5 +1,6 @@
 pub mod assassination;
 pub mod combat;
+pub mod poisons;
 pub mod subtlety;
 
 use crate::{bot::state::PlayerSpec, classes::ClassKit, noncombat::GroupBuff};

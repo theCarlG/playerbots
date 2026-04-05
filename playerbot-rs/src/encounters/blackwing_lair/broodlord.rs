@@ -10,7 +10,8 @@
 /// Strategy: melee hug the boss from the sides/back, ranged stay at max
 /// range to minimise knockback exposure.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, IsMeleeDps, IsRanged, MaintainRange, Sel, Seq};
+use crate::encounters::bt::Bt::{self, *};
+use crate::{Seq, Sel};
 use crate::ffi::SpellId;
 
 pub const SPELL_KNOCK_BACK: SpellId = SpellId(18670);
@@ -49,10 +50,10 @@ impl EncounterFsm for BroodlordFsm {
             Some(
                 // Ranged stay at max range (30y) to avoid the knockback cone
                 // and Blast Wave; melee hug close to stay in the safe arc.
-                Sel(vec![
-                    Seq(vec![IsRanged, MaintainRange(30.0)]),
-                    Seq(vec![IsMeleeDps, MaintainRange(5.0)]),
-                ]),
+                Sel!(
+                    Seq!(IsRanged, MaintainRange(30.0)),
+                    Seq!(IsMeleeDps, MaintainRange(5.0)),
+                ),
             )
         } else {
             None

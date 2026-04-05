@@ -3,21 +3,22 @@
 /// Hybrid spec — proactive PW:Shield and Inner Fire, heals like Holy with more mitigation.
 use crate::{
     data::spells::vanilla::priest::*,
-    engine::bt::Bt::{self, Sel, Seq, SelfMissingAura, CastOnSelf, AttackersAtLeast, HpBelow, HealLowest, HealInjuredParty},
+    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
 };
+use crate::{Seq, Sel};
 
 pub fn build_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         // Maintain Inner Fire.
-        Seq(vec![SelfMissingAura(INNER_FIRE), CastOnSelf(INNER_FIRE)]),
+        Seq!(Bt::self_missing(INNER_FIRE), CastOnSelf(INNER_FIRE)),
         // Fade aggro dump.
-        Seq(vec![AttackersAtLeast(1), CastOnSelf(FADE)]),
+        Seq!(Cmp(AttackerCount, AtLeast(1)), CastOnSelf(FADE)),
         // Proactive shield on self when shield usable.
-        Seq(vec![
-            HpBelow(0.80),
-            SelfMissingAura(POWER_WORD_SHIELD),
+        Seq!(
+            Cmp(SelfHealthPct, Below(80)),
+            Bt::self_missing(POWER_WORD_SHIELD),
             CastOnSelf(POWER_WORD_SHIELD),
-        ]),
+        ),
         // Critical heals.
         HealLowest(FLASH_HEAL, 0.40),
         HealInjuredParty(FLASH_HEAL, 0.40),
@@ -27,5 +28,5 @@ pub fn build_tree() -> Bt {
         // HoT top-off.
         HealInjuredParty(RENEW, 0.85),
         HealLowest(RENEW, 0.85),
-    ])
+    )
 }

@@ -44,6 +44,39 @@ pub trait BotInterface: Send {
     fn spell_cooldown_ms(&self, spell_id: SpellId) -> u32;
     fn has_los(&self, target: UnitHandle) -> bool;
     fn get_nearby_units(&self, range: f32, hostile: bool) -> Vec<UnitHandle>;
+    /// True if the bot is currently positioned in `target`'s rear arc.
+    /// Used to gate abilities like Backstab that require being behind.
+    fn bot_is_behind(&self, _target: UnitHandle) -> bool {
+        false
+    }
+    /// ItemPrototype.SubClass of the weapon in `slot` (0=mainhand, 1=offhand,
+    /// 2=ranged), or `u32::MAX` when empty / non-weapon. Values match
+    /// `ITEM_SUBCLASS_WEAPON_*` (dagger=15, sword=7, etc.).
+    fn bot_equipped_weapon_subclass(&self, _slot: u8) -> u32 {
+        u32::MAX
+    }
+    /// Total count of `item_id` in the bot's inventory (bags, not bank).
+    fn bot_item_count(&self, _item_id: ItemId) -> u32 {
+        0
+    }
+    /// Bitmask of active totem slots (bit 0=fire, 1=earth, 2=water, 3=air).
+    fn bot_active_totem_mask(&self) -> u8 {
+        0
+    }
+    /// True if the weapon in `slot` (0=main, 1=off) has a temporary enchant.
+    fn bot_weapon_enchanted(&self, _slot: u8) -> bool {
+        false
+    }
+    /// Bitmask of ready death-knight rune slots (WotLK only; bits 0–5).
+    fn bot_runes_ready_mask(&self) -> u8 {
+        0
+    }
+    /// True if the bot has learned `spell_id` (Player::HasSpell). Does not
+    /// check cooldown or power cost — use `can_cast` for full castability.
+    /// Default `true` so existing mocks stay happy; real impl calls C.
+    fn knows_spell(&self, _spell_id: SpellId) -> bool {
+        true
+    }
 
     /* ── Pathfinding / positioning ───────────────────────────────────── */
 
@@ -644,6 +677,34 @@ impl BotInterface for RealInterface {
         let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
         unsafe { (self.cbs.free_unit_list.unwrap())(ptr) };
         vec
+    }
+
+    fn bot_is_behind(&self, target: UnitHandle) -> bool {
+        unsafe { (self.cbs.bot_is_behind.unwrap())(self.handle, target) }
+    }
+
+    fn bot_equipped_weapon_subclass(&self, slot: u8) -> u32 {
+        unsafe { (self.cbs.bot_equipped_weapon_subclass.unwrap())(self.handle, slot) }
+    }
+
+    fn bot_item_count(&self, item_id: ItemId) -> u32 {
+        unsafe { (self.cbs.bot_item_count.unwrap())(self.handle, item_id.raw()) }
+    }
+
+    fn bot_active_totem_mask(&self) -> u8 {
+        unsafe { (self.cbs.bot_active_totem_mask.unwrap())(self.handle) }
+    }
+
+    fn bot_weapon_enchanted(&self, slot: u8) -> bool {
+        unsafe { (self.cbs.bot_weapon_enchanted.unwrap())(self.handle, slot) }
+    }
+
+    fn bot_runes_ready_mask(&self) -> u8 {
+        unsafe { (self.cbs.bot_runes_ready_mask.unwrap())(self.handle) }
+    }
+
+    fn knows_spell(&self, spell_id: SpellId) -> bool {
+        unsafe { (self.cbs.bot_knows_spell.unwrap())(self.handle, spell_id.raw()) }
     }
 
     fn get_behind_position(&self, target: UnitHandle, distance: f32) -> BotPosition {

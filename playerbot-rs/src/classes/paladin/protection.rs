@@ -5,9 +5,10 @@
 ///   → Judgement (with seal) → re-seal → Consecration → Holy Wrath
 use crate::{
     data::spells::vanilla::paladin::*,
-    engine::bt::Bt::{self, Sel, Seq, SelfMissingAura, CastOnSelf, HpBelow, StickToTarget, InCombat, CastOnTarget, TargetHpBelow, SelfMissingAnyRank},
+    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
     ffi::SpellId,
 };
+use crate::{Seq, Sel};
 
 const HOLY_SHIELD: SpellId = SpellId(27179); // rank 4 talent
 const RIGHTEOUS_FURY: SpellId = SpellId(25780);
@@ -28,40 +29,40 @@ const SEAL_RANKS: &[SpellId] = &[
 ];
 
 pub fn build_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         // Maintain Righteous Fury (100% bonus threat).
-        Seq(vec![
-            SelfMissingAura(RIGHTEOUS_FURY),
+        Seq!(
+            Bt::self_missing(RIGHTEOUS_FURY),
             CastOnSelf(RIGHTEOUS_FURY),
-        ]),
+        ),
         // Emergency bubble.
-        Seq(vec![HpBelow(0.15), CastOnSelf(DIVINE_SHIELD)]),
+        Seq!(Cmp(SelfHealthPct, Below(15)), CastOnSelf(DIVINE_SHIELD)),
         // Close gap.
         StickToTarget(5.0),
-        Seq(vec![
+        Seq!(
             InCombat,
-            Sel(vec![
+            Sel!(
                 // Holy Shield mitigation + damage.
                 CastOnSelf(HOLY_SHIELD),
                 // Instant damage/threat.
                 CastOnTarget(EXORCISM),
                 // Execute phase.
-                Seq(vec![TargetHpBelow(0.20), CastOnTarget(HAMMER_OF_WRATH)]),
+                Seq!(Cmp(TargetHealthPct, Below(20)), CastOnTarget(HAMMER_OF_WRATH)),
                 // Judgement with seal.
-                Seq(vec![
-                    SelfMissingAnyRank(SEAL_RANKS).not(),
+                Seq!(
+                    Bt::self_missing_any_rank(SEAL_RANKS).not(),
                     CastOnTarget(JUDGEMENT),
-                ]),
+                ),
                 // Re-seal.
-                Seq(vec![
-                    SelfMissingAnyRank(SEAL_RANKS),
+                Seq!(
+                    Bt::self_missing_any_rank(SEAL_RANKS),
                     CastOnSelf(SEAL_OF_RIGHTEOUSNESS),
-                ]),
+                ),
                 // AoE threat.
                 CastOnSelf(CONSECRATION),
                 // Undead AoE.
                 CastOnSelf(HOLY_WRATH),
-            ]),
-        ]),
-    ])
+            ),
+        ),
+    )
 }

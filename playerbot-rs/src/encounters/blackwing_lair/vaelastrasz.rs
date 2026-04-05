@@ -13,7 +13,8 @@
 /// run to the corner. Burning Adrenaline on the tank = tank swap (handled
 /// by reactive layer picking up a new MT target).
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, HasDebuff, MoveAwayFromRaid, Sel, Seq};
+use crate::encounters::bt::Bt::{self, *};
+use crate::{Seq, Sel};
 use crate::ffi::SpellId;
 
 pub const AURA_BURNING_ADRENALINE: SpellId = SpellId(18173);
@@ -43,10 +44,10 @@ impl VaelastraszFsm {
     fn build_bt() -> Bt {
         // Burning Adrenaline victims must immediately MoveAwayFromRaid.
         // Non-debuffed bots stay on the boss (burn race).
-        Sel(vec![Seq(vec![
-            HasDebuff(AURA_BURNING_ADRENALINE),
+        Sel!(Seq!(
+            Bt::self_has(AURA_BURNING_ADRENALINE),
             MoveAwayFromRaid(25.0),
-        ])])
+        ))
     }
 }
 

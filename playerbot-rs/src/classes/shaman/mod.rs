@@ -1,6 +1,8 @@
 pub mod elemental;
 pub mod enhancement;
+pub mod imbues;
 pub mod restoration;
+pub mod totems;
 
 use crate::{
     bot::state::PlayerSpec, classes::ClassKit, data::spells::vanilla::shaman::LIGHTNING_SHIELD,

@@ -1,23 +1,24 @@
 /// Pet management — summon, revive, feed (Hunter/Warlock).
-use crate::engine::bt::Bt::{self, Seq, IsPetClass, Sel, HasPet, PetAlive, InCombat, RevivePet, SummonPet, IsClass, PetUnhappy, FeedPet};
+use crate::engine::bt::Bt::{self, *};
+use crate::{Seq, Sel};
 
 pub fn pet_subtree() -> Bt {
-    Seq(vec![
+    Seq!(
         IsPetClass,
-        Sel(vec![
+        Sel!(
             // Revive dead pet.
-            Seq(vec![HasPet, PetAlive.not(), InCombat.not(), RevivePet]),
+            Seq!(HasPet, PetAlive.not(), InCombat.not(), RevivePet),
             // Summon pet if none.
-            Seq(vec![HasPet.not(), InCombat.not(), SummonPet]),
+            Seq!(HasPet.not(), InCombat.not(), SummonPet),
             // Feed unhappy pet (Hunter only).
-            Seq(vec![
+            Seq!(
                 IsClass(crate::bot::state::PlayerClass::Hunter),
                 HasPet,
                 PetAlive,
                 PetUnhappy,
                 InCombat.not(),
                 Bt::throttle(30_000, FeedPet),
-            ]),
-        ]),
-    ])
+            ),
+        ),
+    )
 }

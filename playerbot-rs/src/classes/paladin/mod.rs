@@ -1,4 +1,5 @@
 pub mod holy;
+pub mod prefs;
 pub mod protection;
 pub mod retribution;
 

@@ -4,48 +4,44 @@
 ///   Earth Shock interrupt → Flame Shock `DoT` → Earth Shock filler
 use crate::{
     data::spells::vanilla::shaman::*,
-    engine::bt::Bt::{self, Sel, Seq, SelfMissingAnyRank, CastOnSelf, SelfMissingAura, StickToTarget, InCombat, HpBelow, CastOnTarget, TargetIsCasting, TargetMissingAura},
+    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
     ffi::SpellId,
 };
+use crate::{Seq, Sel};
 
 // Higher-rank auras for self buffs.
 const LIGHTNING_SHIELD_RANKS: &[SpellId] = &[LIGHTNING_SHIELD, SpellId(10432)];
-const WINDFURY_TOTEM_RANKS: &[SpellId] = &[WINDFURY_TOTEM, SpellId(25587)];
 
 pub fn build_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         // Self buffs.
-        Seq(vec![
-            SelfMissingAnyRank(LIGHTNING_SHIELD_RANKS),
+        Seq!(
+            Bt::self_missing_any_rank(LIGHTNING_SHIELD_RANKS),
             CastOnSelf(LIGHTNING_SHIELD),
-        ]),
-        Seq(vec![
-            SelfMissingAnyRank(WINDFURY_TOTEM_RANKS),
-            CastOnSelf(WINDFURY_TOTEM),
-        ]),
-        Seq(vec![
-            SelfMissingAura(STRENGTH_OF_EARTH_TOTEM),
-            CastOnSelf(STRENGTH_OF_EARTH_TOTEM),
-        ]),
+        ),
+        // Totem loadout driven by per-bot preferences (see
+        // `bot::class_prefs::ShamanPrefs`). Throttled so we don't probe
+        // the slot mask every tick.
+        Bt::throttle(2_000, DropConfiguredTotems),
         StickToTarget(5.0),
-        Seq(vec![
+        Seq!(
             InCombat,
-            Sel(vec![
+            Sel!(
                 // Panic heal chain.
-                Seq(vec![HpBelow(0.25), CastOnSelf(NATURE_SWIFTNESS)]),
-                Seq(vec![HpBelow(0.35), CastOnSelf(LESSER_HEALING_WAVE)]),
+                Seq!(Cmp(SelfHealthPct, Below(25)), CastOnSelf(NATURE_SWIFTNESS)),
+                Seq!(Cmp(SelfHealthPct, Below(35)), CastOnSelf(LESSER_HEALING_WAVE)),
                 // Primary damage.
                 CastOnTarget(STORMSTRIKE),
                 // Interrupt.
-                Seq(vec![TargetIsCasting, CastOnTarget(EARTH_SHOCK)]),
+                Seq!(TargetIsCasting, CastOnTarget(EARTH_SHOCK)),
                 // DoT.
-                Seq(vec![
-                    TargetMissingAura(FLAME_SHOCK),
+                Seq!(
+                    Bt::target_missing(FLAME_SHOCK),
                     CastOnTarget(FLAME_SHOCK),
-                ]),
+                ),
                 // Filler instant.
                 CastOnTarget(EARTH_SHOCK),
-            ]),
-        ]),
-    ])
+            ),
+        ),
+    )
 }

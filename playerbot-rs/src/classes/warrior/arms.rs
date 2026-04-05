@@ -6,23 +6,24 @@ use crate::{
     data::spells::vanilla::warrior::*,
     engine::{
         aura_helpers::{BATTLE_SHOUT_RANKS, REND_RANKS},
-        bt::Bt::{self, Sel, CastOnTarget, StickToTarget, Seq, InCombat, HpBelow, TargetHpBelow, TargetMissingAnyRank, SelfMissingAnyRank, CastOnSelf},
+        bt::{Bt::{self, *}, Op::*, Resource::*},
     },
 };
+use crate::{Seq, Sel};
 
 pub fn build_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         // Close the gap: Charge if out of range, otherwise stick.
         CastOnTarget(CHARGE),
         StickToTarget(5.0),
         // In-combat rotation.
-        Seq(vec![
+        Seq!(
             InCombat,
-            Sel(vec![
+            Sel!(
                 // Emergency fear at very low HP.
-                Seq(vec![HpBelow(0.15), CastOnTarget(INTIMIDATING_SHOUT)]),
+                Seq!(Cmp(SelfHealthPct, Below(15)), CastOnTarget(INTIMIDATING_SHOUT)),
                 // Execute on low-HP target.
-                Seq(vec![TargetHpBelow(0.20), CastOnTarget(EXECUTE)]),
+                Seq!(Cmp(TargetHealthPct, Below(20)), CastOnTarget(EXECUTE)),
                 // Overpower proc (server gates via can_cast).
                 CastOnTarget(OVERPOWER),
                 // Core damage.
@@ -30,16 +31,16 @@ pub fn build_tree() -> Bt {
                 CastOnTarget(WHIRLWIND),
                 CastOnTarget(HEROIC_STRIKE),
                 // Bleed upkeep.
-                Seq(vec![TargetMissingAnyRank(REND_RANKS), CastOnTarget(REND)]),
-            ]),
-        ]),
+                Seq!(Bt::target_missing_any_rank(REND_RANKS), CastOnTarget(REND)),
+            ),
+        ),
         // Out-of-combat: maintain Battle Shout.
-        Seq(vec![
+        Seq!(
             InCombat.not(),
-            SelfMissingAnyRank(BATTLE_SHOUT_RANKS),
+            Bt::self_missing_any_rank(BATTLE_SHOUT_RANKS),
             CastOnSelf(BATTLE_SHOUT),
-        ]),
-    ])
+        ),
+    )
 }
 
 #[cfg(test)]

@@ -5,7 +5,8 @@
 ///   Submerged (75%/50%/25%): kill 8 Sons of Flame.
 ///   Phase 2 (< 25%): same as Ground, adds spawn continuously.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, AttackNearest, IsRanged, MaintainRange, Seq};
+use crate::encounters::bt::Bt::{self, *};
+use crate::Seq;
 use crate::ffi::SpellId;
 
 pub const ENTRY_SON_OF_FLAME: u32 = 12143;
@@ -110,7 +111,7 @@ impl EncounterFsm for RagnarosFsm {
             RagnarosPhase::Idle => None,
             RagnarosPhase::Submerged => Some(AttackNearest),
             RagnarosPhase::Ground | RagnarosPhase::Phase2 => {
-                Some(Seq(vec![IsRanged, MaintainRange(30.0)]))
+                Some(Seq!(IsRanged, MaintainRange(30.0)))
             }
         }
     }

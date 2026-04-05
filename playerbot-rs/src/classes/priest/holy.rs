@@ -4,23 +4,24 @@
 ///   Flash Heal (critical) → Greater Heal → Renew → Prayer of Healing (`AoE`)
 use crate::{
     data::spells::vanilla::priest::*,
-    engine::bt::Bt::{self, Sel, Seq, HpBelow, SelfMissingAura, CastOnSelf, AttackersAtLeast, HealLowest, HealInjuredParty, GroupMembersBelow},
+    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
     ffi::SpellId,
 };
+use crate::{Seq, Sel};
 
 const WEAKENED_SOUL: SpellId = SpellId(6788);
 
 pub fn build_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         // Shield self when shield usable (no PW:S, no Weakened Soul).
-        Seq(vec![
-            HpBelow(0.50),
-            SelfMissingAura(POWER_WORD_SHIELD),
-            SelfMissingAura(WEAKENED_SOUL),
+        Seq!(
+            Cmp(SelfHealthPct, Below(50)),
+            Bt::self_missing(POWER_WORD_SHIELD),
+            Bt::self_missing(WEAKENED_SOUL),
             CastOnSelf(POWER_WORD_SHIELD),
-        ]),
+        ),
         // Fade if being attacked.
-        Seq(vec![AttackersAtLeast(1), CastOnSelf(FADE)]),
+        Seq!(Cmp(AttackerCount, AtLeast(1)), CastOnSelf(FADE)),
         // Critical heals.
         HealLowest(FLASH_HEAL, 0.35),
         HealInjuredParty(FLASH_HEAL, 0.35),
@@ -31,9 +32,9 @@ pub fn build_tree() -> Bt {
         HealInjuredParty(RENEW, 0.90),
         HealLowest(RENEW, 0.90),
         // Raid AoE heal.
-        Seq(vec![
+        Seq!(
             GroupMembersBelow(3, 0.70),
             HealInjuredParty(PRAYER_OF_HEALING, 0.70),
-        ]),
-    ])
+        ),
+    )
 }

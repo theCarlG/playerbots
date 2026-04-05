@@ -1,5 +1,6 @@
 pub mod arms;
 pub mod fury;
+pub mod prefs;
 pub mod protection;
 
 use crate::{

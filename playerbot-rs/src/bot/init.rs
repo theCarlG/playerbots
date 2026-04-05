@@ -9,6 +9,7 @@ use crate::{
     noncombat::GroupBuff,
     world,
 };
+use crate::{Seq, Sel};
 
 /// Build a `BotState` from its handle, interface, class, and spec.
 pub fn create_bot(
@@ -64,88 +65,109 @@ fn class_kit(class: PlayerClass, spec: PlayerSpec) -> ClassKit {
 ///   6. Mode-specific out-of-combat behavior
 ///   7. Maintenance (buff, loot, pet, mount, vendor, repair)
 fn build_root_tree(class: PlayerClass, spec: PlayerSpec) -> Bt {
-    use Bt::{Sel, ModeIs, Seq, InCombat, Consumables, EncounterOverride, ShouldEngage};
+    use Bt::{ModeIs, InCombat, Consumables, EncounterOverride, ShouldEngage};
 
     let ClassKit {
         tree: combat_tree,
         buffs,
     } = class_kit(class, spec);
 
-    Sel(vec![
+    Sel!(
         // 1. Death handling.
         world::death::death_subtree(),
         // 2. Passive mode — do nothing.
         ModeIs(BehaviorMode::Passive),
         // 3. Eat/drink — out of combat only.
-        Seq(vec![InCombat.not(), Consumables]),
+        Seq!(InCombat.not(), Consumables),
         // 4. Encounter override.
         EncounterOverride,
         // 5. In combat → reactive + rotation.
-        Seq(vec![
-            Sel(vec![InCombat, ShouldEngage]),
+        Seq!(
+            Sel!(InCombat, ShouldEngage),
             combat_wrapper(combat_tree),
-        ]),
+        ),
         // 6. Out-of-combat mode dispatch.
         mode_dispatch(),
         // 7. Maintenance.
         maintenance_subtree(buffs),
-    ])
+    )
 }
 
 /// Wrap a class rotation in the shared reactive subtrees (flee, interrupt,
 /// dispel, threat, targeting) that apply to every class.
 fn combat_wrapper(class_rotation: Bt) -> Bt {
-    Bt::Sel(vec![
+    use Bt::MaintainConfiguredCurse;
+    Sel!(
         reactive::flee_subtree(),
         reactive::interrupt_subtree(),
         reactive::dispel_subtree(),
         reactive::resurrect_subtree(),
         reactive::threat_subtree(),
         reactive::targeting_subtree(),
+        // Warlock curse upkeep on the current target (no-op for other
+        // classes — self-filters via `ClassPrefs::as_warlock`).
+        Bt::throttle(2_000, MaintainConfiguredCurse),
         class_rotation,
-    ])
+    )
 }
 
 /// Mode dispatch — each behavior mode gets its own subtree.
 fn mode_dispatch() -> Bt {
-    use Bt::{Sel, Seq, ModeIs, Follow, StrategyEnabled};
-    Sel(vec![
-        Seq(vec![
+    use Bt::{ModeIs, Follow, StrategyEnabled};
+    Sel!(
+        Seq!(
             ModeIs(BehaviorMode::Follow),
             Bt::throttle(2_000, Follow),
-        ]),
-        Seq(vec![
+        ),
+        Seq!(
             ModeIs(BehaviorMode::Stay),
             world::stay::stay_subtree(),
-        ]),
-        Seq(vec![
+        ),
+        Seq!(
             ModeIs(BehaviorMode::Grind),
             world::grind::grind_subtree(),
-        ]),
-        Seq(vec![
+        ),
+        Seq!(
             ModeIs(BehaviorMode::Quest),
             world::quest::quest_subtree(),
-        ]),
-        Seq(vec![
+        ),
+        Seq!(
             ModeIs(BehaviorMode::Guard),
             world::guard::guard_subtree(),
-        ]),
+        ),
         // RPG mode is only active if the RPG strategy flag is set; without
         // it, rpg-mode bots just idle-follow instead of wandering into NPCs.
-        Seq(vec![
+        Seq!(
             ModeIs(BehaviorMode::Rpg),
             StrategyEnabled(StrategyFlags::RPG),
             world::rpg::rpg_subtree(),
-        ]),
-        Seq(vec![ModeIs(BehaviorMode::Bg), world::bg::bg_subtree()]),
-    ])
+        ),
+        Seq!(ModeIs(BehaviorMode::Bg), world::bg::bg_subtree()),
+    )
 }
 
 /// Maintenance subtree — low-priority upkeep in any non-passive mode.
 fn maintenance_subtree(buffs: &'static [GroupBuff]) -> Bt {
-    use Bt::{Sel, Seq, InCombat, Buff, Follow};
-    Sel(vec![
-        Seq(vec![InCombat.not(), Bt::throttle(5_000, Buff(buffs))]),
+    use Bt::{
+        ApplyConfiguredBlessings, ApplyShamanImbues, Buff, EnforceWarriorStance, Follow, InCombat,
+        MaintainHunterAspect, MaintainPaladinAura,
+    };
+    Sel!(
+        Seq!(InCombat.not(), Bt::throttle(5_000, Buff(buffs))),
+        // Class-prefs upkeep: each handler self-filters by `ClassPrefs`
+        // variant, so only the one matching the bot's class ever does
+        // work. Safe to run unconditionally.
+        Bt::throttle(2_000, MaintainPaladinAura),
+        Bt::throttle(2_000, MaintainHunterAspect),
+        Bt::throttle(1_000, EnforceWarriorStance),
+        Seq!(
+            InCombat.not(),
+            Bt::throttle(5_000, ApplyConfiguredBlessings),
+        ),
+        Seq!(
+            InCombat.not(),
+            Bt::throttle(30_000, ApplyShamanImbues),
+        ),
         world::pet::pet_subtree(),
         world::loot::loot_subtree(),
         world::gather::gather_subtree(),
@@ -154,5 +176,5 @@ fn maintenance_subtree(buffs: &'static [GroupBuff]) -> Bt {
         world::repair::repair_subtree(),
         // Follow as absolute fallback.
         Bt::throttle(2_000, Follow),
-    ])
+    )
 }

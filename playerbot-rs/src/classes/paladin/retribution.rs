@@ -4,9 +4,10 @@
 ///   Judgement (with seal) → maintain seal → Consecration
 use crate::{
     data::spells::vanilla::paladin::*,
-    engine::bt::Bt::{self, Sel, StickToTarget, Seq, HpBelow, CastOnSelf, InCombat, TargetHpBelow, CastOnTarget, SelfMissingAnyRank},
+    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
     ffi::SpellId,
 };
+use crate::{Seq, Sel};
 
 // Seal of Righteousness rank IDs for the has-any-rank check.
 const SEAL_RANKS: &[SpellId] = &[
@@ -24,37 +25,37 @@ const SEAL_RANKS: &[SpellId] = &[
 ];
 
 pub fn build_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         // Close gap.
         StickToTarget(5.0),
         // Emergency bubble.
-        Seq(vec![HpBelow(0.20), CastOnSelf(DIVINE_SHIELD)]),
+        Seq!(Cmp(SelfHealthPct, Below(20)), CastOnSelf(DIVINE_SHIELD)),
         // Self-heal on serious damage.
-        Seq(vec![HpBelow(0.40), CastOnSelf(FLASH_OF_LIGHT)]),
-        Seq(vec![
+        Seq!(Cmp(SelfHealthPct, Below(40)), CastOnSelf(FLASH_OF_LIGHT)),
+        Seq!(
             InCombat,
-            Sel(vec![
+            Sel!(
                 // Execute phase.
-                Seq(vec![TargetHpBelow(0.20), CastOnTarget(HAMMER_OF_WRATH)]),
+                Seq!(Cmp(TargetHealthPct, Below(20)), CastOnTarget(HAMMER_OF_WRATH)),
                 // Talented instants.
                 CastOnTarget(HOLY_SHOCK),
                 CastOnTarget(EXORCISM),
                 // Judgement — only with a seal up.
-                Seq(vec![
-                    SelfMissingAnyRank(SEAL_RANKS).not(),
+                Seq!(
+                    Bt::self_missing_any_rank(SEAL_RANKS).not(),
                     CastOnTarget(JUDGEMENT),
-                ]),
+                ),
                 // Re-seal.
-                Seq(vec![
-                    SelfMissingAnyRank(SEAL_RANKS),
-                    Sel(vec![
+                Seq!(
+                    Bt::self_missing_any_rank(SEAL_RANKS),
+                    Sel!(
                         CastOnSelf(SEAL_OF_COMMAND),
                         CastOnSelf(SEAL_OF_RIGHTEOUSNESS),
-                    ]),
-                ]),
+                    ),
+                ),
                 // AoE threat/damage.
                 CastOnSelf(CONSECRATION),
-            ]),
-        ]),
-    ])
+            ),
+        ),
+    )
 }

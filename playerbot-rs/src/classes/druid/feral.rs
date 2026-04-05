@@ -7,64 +7,65 @@ use crate::{
     data::spells::vanilla::druid::*,
     engine::{
         aura_helpers::{DEMO_ROAR_RANKS, FAERIE_FIRE_RANKS, RAKE_RANKS, RIP_RANKS},
-        bt::Bt::{self, Sel, StickToTarget, Seq, IsTank, SelfMissingAura, CastOnSelf, InCombat, HpBelow, CastOnTarget, TargetMissingAnyRank},
+        bt::{Bt::{self, *}, Op::*, Resource::*},
     },
     ffi::SpellId,
 };
+use crate::{Seq, Sel};
 
 const GROWL: SpellId = SpellId(6795);
 const FRENZIED_REGENERATION: SpellId = SpellId(22842);
 
 pub fn build_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         // Close gap.
         StickToTarget(5.0),
         // Tank path.
-        Seq(vec![IsTank, bear_tree()]),
+        Seq!(IsTank, bear_tree()),
         // DPS path.
-        Seq(vec![IsTank.not(), cat_tree()]),
-    ])
+        Seq!(IsTank.not(), cat_tree()),
+    )
 }
 
 fn bear_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         // Ensure Bear Form.
-        Seq(vec![SelfMissingAura(BEAR_FORM), CastOnSelf(BEAR_FORM)]),
-        Seq(vec![
+        Seq!(Bt::self_missing(BEAR_FORM), CastOnSelf(BEAR_FORM)),
+        Seq!(
             InCombat,
-            Sel(vec![
-                Seq(vec![HpBelow(0.30), CastOnSelf(FRENZIED_REGENERATION)]),
+            Sel!(
+                Seq!(Cmp(SelfHealthPct, Below(30)), CastOnSelf(FRENZIED_REGENERATION)),
                 CastOnTarget(GROWL),
-                Seq(vec![
-                    TargetMissingAnyRank(FAERIE_FIRE_RANKS),
+                Seq!(
+                    Bt::target_missing_any_rank(FAERIE_FIRE_RANKS),
                     CastOnTarget(FAERIE_FIRE_FERAL),
-                ]),
-                Seq(vec![
-                    TargetMissingAnyRank(DEMO_ROAR_RANKS),
+                ),
+                Seq!(
+                    Bt::target_missing_any_rank(DEMO_ROAR_RANKS),
                     CastOnSelf(DEMORALIZING_ROAR),
-                ]),
+                ),
                 CastOnTarget(MAUL),
                 CastOnTarget(SWIPE_BEAR),
-            ]),
-        ]),
-    ])
+            ),
+        ),
+    )
 }
 
 fn cat_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         // Ensure Cat Form.
-        Seq(vec![SelfMissingAura(CAT_FORM), CastOnSelf(CAT_FORM)]),
-        Seq(vec![
+        Seq!(Bt::self_missing(CAT_FORM), CastOnSelf(CAT_FORM)),
+        Seq!(
             InCombat,
-            Sel(vec![
+            Sel!(
                 // Finishers (server gates via can_cast on CPs).
                 CastOnTarget(FEROCIOUS_BITE),
-                Seq(vec![TargetMissingAnyRank(RIP_RANKS), CastOnTarget(RIP)]),
+                Seq!(Bt::target_missing_any_rank(RIP_RANKS), CastOnTarget(RIP)),
                 // Builders.
-                Seq(vec![TargetMissingAnyRank(RAKE_RANKS), CastOnTarget(RAKE)]),
+                Seq!(Bt::target_missing_any_rank(RAKE_RANKS), CastOnTarget(RAKE)),
                 CastOnTarget(SHRED),
                 CastOnTarget(CLAW),
-            ]),
-        ]),
-    ])
+            ),
+        ),
+    )
 }

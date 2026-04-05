@@ -21,7 +21,8 @@
 ///   - Ground: check for class call auras, react accordingly.
 ///   - Air/Final: normal rotation (no class calls during transition).
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, HasDebuff, HoldPosition, MoveAwayFromRaid, Sel, Seq};
+use crate::encounters::bt::Bt::{self, *};
+use crate::{Seq, Sel};
 use crate::ffi::SpellId;
 
 // ── Class Call spell IDs (auras applied to affected class) ───────────────
@@ -62,15 +63,15 @@ impl NefarianFsm {
         Self {
             phase: NefPhase::Idle,
             done: false,
-            ground_bt: Sel(vec![
+            ground_bt: Sel!(
                 // Priest Call: silenced — stop casting
-                Seq(vec![HasDebuff(PRIEST_CALL), HoldPosition]),
+                Seq!(Bt::self_has(PRIEST_CALL), HoldPosition),
                 // Mage Call: polymorphing each other — flee from group
-                Seq(vec![HasDebuff(MAGE_CALL), MoveAwayFromRaid(20.0)]),
+                Seq!(Bt::self_has(MAGE_CALL), MoveAwayFromRaid(20.0)),
                 // Warlock Call: shadow bolts heal boss — stop casting
-                Seq(vec![HasDebuff(WARLOCK_CALL), HoldPosition]),
+                Seq!(Bt::self_has(WARLOCK_CALL), HoldPosition),
                 // Other class calls: handled by server/aura system, not bot logic.
-            ]),
+            ),
         }
     }
 }

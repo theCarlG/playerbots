@@ -4,6 +4,10 @@
 /// queued on `BotState::pending_commands`, and applied here before each tick.
 pub mod parser;
 
+use crate::bot::class_prefs::{
+    HunterAspect, HunterTrap, PaladinAura, PaladinBlessing, PoisonKind, ShamanImbue, TotemRole,
+    TotemSlot, WarlockCurse, WarriorStance, WeaponHand,
+};
 use crate::bot::settings::{
     BehaviorMode, BotSettings, ChatChannel, CombatOrder, Reactivity, RtscAction, StrategyFlags,
 };
@@ -174,6 +178,64 @@ pub enum BotCommand {
     /// `leave` — leave the bot's current guild.
     GuildLeave,
 
+    // -- Class preferences --
+    /// `poison mh <kind>` / `poison oh <kind>` — set rogue weapon poison.
+    /// `kind = None` clears the slot (chat form: `poison mh none`).
+    /// Silently ignored if the bot is not a rogue.
+    SetPoison {
+        hand: WeaponHand,
+        kind: Option<PoisonKind>,
+    },
+    /// Reply with the current rogue poison loadout.
+    ShowPoisons,
+    /// `totem <slot> <role>` — set shaman totem role for a school slot.
+    /// `role = None` clears the slot. Silently ignored on non-shamans or
+    /// if the role doesn't match the slot's school.
+    SetTotem {
+        slot: TotemSlot,
+        role: Option<TotemRole>,
+    },
+    /// Reply with the current shaman totem loadout.
+    ShowTotems,
+
+    /// `imbue mh flametongue` / `imbue oh windfury` — set shaman weapon
+    /// imbue for a hand. `None` clears the slot. Silently ignored on
+    /// non-shamans.
+    SetShamanImbue {
+        hand: WeaponHand,
+        imbue: Option<ShamanImbue>,
+    },
+    /// Reply with the current shaman weapon-imbue loadout.
+    ShowShamanImbues,
+
+    /// `aura devotion` / `aura none` — set paladin self-aura. Silently
+    /// ignored on non-paladins.
+    SetPaladinAura(Option<PaladinAura>),
+    /// `blessing might` / `blessing none` — set paladin blessing target.
+    SetPaladinBlessing(Option<PaladinBlessing>),
+    /// `blessing greater on|off` — toggle Greater-blessing preference.
+    SetPaladinGreaterBlessing(bool),
+    /// Reply with the current paladin aura / blessing loadout.
+    ShowPaladinPrefs,
+
+    /// `aspect hawk` / `aspect none` — set hunter default aspect.
+    SetHunterAspect(Option<HunterAspect>),
+    /// `trap freezing` / `trap none` — set hunter default trap.
+    SetHunterTrap(Option<HunterTrap>),
+    /// Reply with the current hunter aspect / trap loadout.
+    ShowHunterPrefs,
+
+    /// `curse agony` / `curse none` — set warlock default curse.
+    SetWarlockCurse(Option<WarlockCurse>),
+    /// Reply with the current warlock curse.
+    ShowWarlockPrefs,
+
+    /// `forcestance berserker` / `forcestance none` — lock warrior into
+    /// a stance regardless of rotation.
+    SetWarriorForcedStance(Option<WarriorStance>),
+    /// Reply with the current warrior forced-stance setting.
+    ShowWarriorPrefs,
+
     // -- Unknown --
     Unknown(String),
 }
@@ -253,7 +315,24 @@ impl BotCommand {
             | UseHearth
             | QuestAccept
             | QuestDrop(_)
-            | MailTakeAll => SecurityLevel::Invite,
+            | MailTakeAll
+            | SetPoison { .. }
+            | ShowPoisons
+            | SetTotem { .. }
+            | ShowTotems
+            | SetShamanImbue { .. }
+            | ShowShamanImbues
+            | SetPaladinAura(_)
+            | SetPaladinBlessing(_)
+            | SetPaladinGreaterBlessing(_)
+            | ShowPaladinPrefs
+            | SetHunterAspect(_)
+            | SetHunterTrap(_)
+            | ShowHunterPrefs
+            | SetWarlockCurse(_)
+            | ShowWarlockPrefs
+            | SetWarriorForcedStance(_)
+            | ShowWarriorPrefs => SecurityLevel::Invite,
         }
     }
 }
@@ -796,6 +875,218 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             }
         }
 
+        BotCommand::SetPoison { hand, kind } => {
+            if let Some(r) = s.class_prefs.as_rogue_mut() {
+                match hand {
+                    WeaponHand::MainHand => r.mh = *kind,
+                    WeaponHand::OffHand => r.oh = *kind,
+                }
+                if bot.settings.verbose {
+                    let label = kind.map_or("cleared", |k| k.as_str());
+                    reply(bot, pc, &format!("poison {}: {label}", hand.as_str()));
+                }
+            } else if bot.settings.verbose {
+                reply(bot, pc, "poison: not a rogue");
+            }
+        }
+        BotCommand::ShowPoisons => {
+            let msg = match s.class_prefs.as_rogue() {
+                Some(r) => format!(
+                    "poisons: mh={} oh={}",
+                    r.mh.map_or("none", |k| k.as_str()),
+                    r.oh.map_or("none", |k| k.as_str()),
+                ),
+                None => "poisons: not a rogue".into(),
+            };
+            reply(bot, pc, &msg);
+        }
+        BotCommand::SetTotem { slot, role } => {
+            // Validate slot/role match up front — the parser already enforces
+            // this, but belt-and-suspenders against future internal callers.
+            if let Some(r) = role
+                && r.slot() != *slot
+            {
+                if bot.settings.verbose {
+                    reply(
+                        bot,
+                        pc,
+                        &format!("totem: {} is not a {} totem", r.as_str(), slot.as_str()),
+                    );
+                }
+            } else if let Some(sh) = s.class_prefs.as_shaman_mut() {
+                sh.set(*slot, *role);
+                if bot.settings.verbose {
+                    let label = role.map_or("cleared", |r| r.as_str());
+                    reply(bot, pc, &format!("totem {}: {label}", slot.as_str()));
+                }
+            } else if bot.settings.verbose {
+                reply(bot, pc, "totem: not a shaman");
+            }
+        }
+        BotCommand::ShowTotems => {
+            let msg = match s.class_prefs.as_shaman() {
+                Some(sh) => format!(
+                    "totems: earth={} fire={} water={} air={}",
+                    sh.earth.map_or("none", |r| r.as_str()),
+                    sh.fire.map_or("none", |r| r.as_str()),
+                    sh.water.map_or("none", |r| r.as_str()),
+                    sh.air.map_or("none", |r| r.as_str()),
+                ),
+                None => "totems: not a shaman".into(),
+            };
+            reply(bot, pc, &msg);
+        }
+
+        BotCommand::SetShamanImbue { hand, imbue } => {
+            if let Some(sh) = s.class_prefs.as_shaman_mut() {
+                match hand {
+                    WeaponHand::MainHand => sh.mh_imbue = *imbue,
+                    WeaponHand::OffHand => sh.oh_imbue = *imbue,
+                }
+                if bot.settings.verbose {
+                    let label = imbue.map_or("cleared", |i| i.as_str());
+                    reply(bot, pc, &format!("imbue {}: {label}", hand.as_str()));
+                }
+            } else if bot.settings.verbose {
+                reply(bot, pc, "imbue: not a shaman");
+            }
+        }
+        BotCommand::ShowShamanImbues => {
+            let msg = match s.class_prefs.as_shaman() {
+                Some(sh) => format!(
+                    "imbues: mh={} oh={}",
+                    sh.mh_imbue.map_or("none", |i| i.as_str()),
+                    sh.oh_imbue.map_or("none", |i| i.as_str()),
+                ),
+                None => "imbues: not a shaman".into(),
+            };
+            reply(bot, pc, &msg);
+        }
+
+        BotCommand::SetPaladinAura(aura) => {
+            if let Some(p) = s.class_prefs.as_paladin_mut() {
+                p.aura = *aura;
+                if bot.settings.verbose {
+                    let label = aura.map_or("cleared", |a| a.as_str());
+                    reply(bot, pc, &format!("aura: {label}"));
+                }
+            } else if bot.settings.verbose {
+                reply(bot, pc, "aura: not a paladin");
+            }
+        }
+        BotCommand::SetPaladinBlessing(blessing) => {
+            if let Some(p) = s.class_prefs.as_paladin_mut() {
+                p.blessing = *blessing;
+                if bot.settings.verbose {
+                    let label = blessing.map_or("cleared", |b| b.as_str());
+                    reply(bot, pc, &format!("blessing: {label}"));
+                }
+            } else if bot.settings.verbose {
+                reply(bot, pc, "blessing: not a paladin");
+            }
+        }
+        BotCommand::SetPaladinGreaterBlessing(flag) => {
+            if let Some(p) = s.class_prefs.as_paladin_mut() {
+                p.use_greater = *flag;
+                if bot.settings.verbose {
+                    reply(
+                        bot,
+                        pc,
+                        &format!("greater blessing: {}", if *flag { "on" } else { "off" }),
+                    );
+                }
+            } else if bot.settings.verbose {
+                reply(bot, pc, "blessing: not a paladin");
+            }
+        }
+        BotCommand::ShowPaladinPrefs => {
+            let msg = match s.class_prefs.as_paladin() {
+                Some(p) => format!(
+                    "paladin: aura={} blessing={} greater={}",
+                    p.aura.map_or("none", |a| a.as_str()),
+                    p.blessing.map_or("none", |b| b.as_str()),
+                    if p.use_greater { "on" } else { "off" },
+                ),
+                None => "paladin: not a paladin".into(),
+            };
+            reply(bot, pc, &msg);
+        }
+
+        BotCommand::SetHunterAspect(aspect) => {
+            if let Some(h) = s.class_prefs.as_hunter_mut() {
+                h.aspect = *aspect;
+                if bot.settings.verbose {
+                    let label = aspect.map_or("cleared", |a| a.as_str());
+                    reply(bot, pc, &format!("aspect: {label}"));
+                }
+            } else if bot.settings.verbose {
+                reply(bot, pc, "aspect: not a hunter");
+            }
+        }
+        BotCommand::SetHunterTrap(trap) => {
+            if let Some(h) = s.class_prefs.as_hunter_mut() {
+                h.trap = *trap;
+                if bot.settings.verbose {
+                    let label = trap.map_or("cleared", |t| t.as_str());
+                    reply(bot, pc, &format!("trap: {label}"));
+                }
+            } else if bot.settings.verbose {
+                reply(bot, pc, "trap: not a hunter");
+            }
+        }
+        BotCommand::ShowHunterPrefs => {
+            let msg = match s.class_prefs.as_hunter() {
+                Some(h) => format!(
+                    "hunter: aspect={} trap={}",
+                    h.aspect.map_or("none", |a| a.as_str()),
+                    h.trap.map_or("none", |t| t.as_str()),
+                ),
+                None => "hunter: not a hunter".into(),
+            };
+            reply(bot, pc, &msg);
+        }
+
+        BotCommand::SetWarlockCurse(curse) => {
+            if let Some(w) = s.class_prefs.as_warlock_mut() {
+                w.curse = *curse;
+                if bot.settings.verbose {
+                    let label = curse.map_or("cleared", |c| c.as_str());
+                    reply(bot, pc, &format!("curse: {label}"));
+                }
+            } else if bot.settings.verbose {
+                reply(bot, pc, "curse: not a warlock");
+            }
+        }
+        BotCommand::ShowWarlockPrefs => {
+            let msg = match s.class_prefs.as_warlock() {
+                Some(w) => format!("warlock: curse={}", w.curse.map_or("none", |c| c.as_str())),
+                None => "warlock: not a warlock".into(),
+            };
+            reply(bot, pc, &msg);
+        }
+
+        BotCommand::SetWarriorForcedStance(stance) => {
+            if let Some(w) = s.class_prefs.as_warrior_mut() {
+                w.forced_stance = *stance;
+                if bot.settings.verbose {
+                    let label = stance.map_or("cleared", |st| st.as_str());
+                    reply(bot, pc, &format!("forcestance: {label}"));
+                }
+            } else if bot.settings.verbose {
+                reply(bot, pc, "forcestance: not a warrior");
+            }
+        }
+        BotCommand::ShowWarriorPrefs => {
+            let msg = match s.class_prefs.as_warrior() {
+                Some(w) => format!(
+                    "warrior: forcestance={}",
+                    w.forced_stance.map_or("none", |st| st.as_str())
+                ),
+                None => "warrior: not a warrior".into(),
+            };
+            reply(bot, pc, &msg);
+        }
+
         BotCommand::Unknown(text) => {
             let msg = format!("Unknown command: {text}");
             reply(bot, pc, &msg);
@@ -808,7 +1099,7 @@ mod tests {
     use super::*;
     use crate::bot::state::BotState;
     use crate::bot::state::{PlayerClass, PlayerSpec};
-    use crate::engine::bt::Bt;
+    use crate::Sel;
     use crate::engine::context::tests::NullInterface;
     use crate::ffi::BotRole;
 
@@ -819,7 +1110,7 @@ mod tests {
             PlayerClass::Warrior,
             PlayerSpec::WarriorArms,
             BotRole::DPS,
-            Bt::Sel(vec![]), // dummy empty tree
+            Sel!(), // dummy empty tree
         )
     }
 

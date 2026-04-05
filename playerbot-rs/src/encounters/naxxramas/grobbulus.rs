@@ -11,7 +11,8 @@
 ///   - Mutating Injection on self → flee 20yd from raid.
 ///   - Otherwise: normal rotation.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, Seq, HasDebuff, MoveAwayFromRaid};
+use crate::encounters::bt::Bt::{self, *};
+use crate::{Seq, Sel};
 use crate::ffi::SpellId;
 
 pub const AURA_MUTATING_INJECTION: SpellId = SpellId(28169);
@@ -35,10 +36,10 @@ impl GrobbolusFsm {
         Self {
             active: false,
             done: false,
-            bt: Seq(vec![
-                HasDebuff(AURA_MUTATING_INJECTION),
+            bt: Seq!(
+                Bt::self_has(AURA_MUTATING_INJECTION),
                 MoveAwayFromRaid(20.0),
-            ]),
+            ),
         }
     }
 }

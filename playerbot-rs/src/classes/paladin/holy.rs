@@ -4,9 +4,10 @@
 ///   medium heals → light heals → maintain blessing.
 use crate::{
     data::spells::vanilla::paladin::*,
-    engine::bt::Bt::{self, Sel, HealLowest, Seq, HpBelow, CastOnSelf, HealInjuredParty, SelfMissingAnyRank},
+    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
     ffi::SpellId,
 };
+use crate::{Seq, Sel};
 
 // Any blessing ID we can detect on self; if none present, reapply Wisdom.
 const BLESSING_RANKS: &[SpellId] = &[
@@ -17,11 +18,11 @@ const BLESSING_RANKS: &[SpellId] = &[
 ];
 
 pub fn build_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         // Emergency: Lay on Hands on anyone dying.
         HealLowest(LAY_ON_HANDS, 0.10),
         // Bubble self when critical.
-        Seq(vec![HpBelow(0.15), CastOnSelf(DIVINE_SHIELD)]),
+        Seq!(Cmp(SelfHealthPct, Below(15)), CastOnSelf(DIVINE_SHIELD)),
         // Critical heals.
         HealLowest(HOLY_LIGHT, 0.30),
         HealInjuredParty(HOLY_LIGHT, 0.30),
@@ -34,9 +35,9 @@ pub fn build_tree() -> Bt {
         HealLowest(FLASH_OF_LIGHT, 0.85),
         HealInjuredParty(FLASH_OF_LIGHT, 0.85),
         // Maintain self blessing.
-        Seq(vec![
-            SelfMissingAnyRank(BLESSING_RANKS),
+        Seq!(
+            Bt::self_missing_any_rank(BLESSING_RANKS),
             CastOnSelf(BLESSING_OF_WISDOM),
-        ]),
-    ])
+        ),
+    )
 }

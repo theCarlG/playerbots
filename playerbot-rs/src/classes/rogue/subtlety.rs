@@ -4,31 +4,39 @@
 ///   Ambush (stealth opener) → Hemorrhage → Eviscerate → Sinister Strike
 use crate::{
     data::spells::vanilla::rogue::*,
-    engine::bt::Bt::{self, Sel, StickToTarget, Seq, HpBelow, CastOnSelf, InCombat, TargetIsCasting, CastOnTarget, SelfMissingAura},
+    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
 };
+use crate::{Seq, Sel};
 
 pub fn build_tree() -> Bt {
-    Sel(vec![
+    Sel!(
+        // Out-of-combat: keep weapon poisons applied.
+        Seq!(
+            InCombat.not(),
+            Bt::throttle(30_000, ApplyPoisons),
+        ),
         StickToTarget(5.0),
-        Seq(vec![HpBelow(0.15), CastOnSelf(VANISH)]),
-        Seq(vec![
+        Seq!(Cmp(SelfHealthPct, Below(15)), CastOnSelf(VANISH)),
+        Seq!(
             InCombat,
-            Sel(vec![
+            Sel!(
                 // Interrupt.
-                Seq(vec![TargetIsCasting, CastOnTarget(KICK)]),
+                Seq!(TargetIsCasting, CastOnTarget(KICK)),
                 // Panic stun.
-                Seq(vec![HpBelow(0.40), CastOnTarget(GOUGE)]),
+                Seq!(Cmp(SelfHealthPct, Below(40)), CastOnTarget(GOUGE)),
                 // Slice and Dice upkeep.
-                Seq(vec![
-                    SelfMissingAura(SLICE_AND_DICE),
+                Seq!(
+                    Bt::self_missing(SLICE_AND_DICE),
                     CastOnSelf(SLICE_AND_DICE),
-                ]),
+                ),
                 // Stealth opener (can_cast gates on stealth aura).
                 CastOnTarget(AMBUSH),
-                CastOnTarget(HEMORRHAGE),
+                // Hemorrhage: Subtlety talent — gate so low-level Sub bots
+                // that haven't talented yet fall through to Sinister Strike.
+                Seq!(KnowsSpell(HEMORRHAGE), CastOnTarget(HEMORRHAGE)),
                 CastOnTarget(EVISCERATE),
                 CastOnTarget(SINISTER_STRIKE),
-            ]),
-        ]),
-    ])
+            ),
+        ),
+    )
 }

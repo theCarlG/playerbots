@@ -6,37 +6,38 @@ use crate::{
     data::spells::vanilla::druid::*,
     engine::{
         aura_helpers::{FAERIE_FIRE_RANKS, INSECT_SWARM_RANKS, MOONFIRE_RANKS},
-        bt::Bt::{self, Sel, Seq, HpBelow, CastOnSelf, InCombat, TargetMissingAnyRank, CastOnTarget},
+        bt::{Bt::{self, *}, Op::*, Resource::*},
     },
 };
+use crate::{Seq, Sel};
 
 pub fn build_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         // Emergency self-heal + Barkskin.
-        Seq(vec![
-            HpBelow(0.35),
-            Sel(vec![CastOnSelf(REGROWTH), CastOnSelf(BARKSKIN)]),
-        ]),
-        Seq(vec![
+        Seq!(
+            Cmp(SelfHealthPct, Below(35)),
+            Sel!(CastOnSelf(REGROWTH), CastOnSelf(BARKSKIN)),
+        ),
+        Seq!(
             InCombat,
-            Sel(vec![
+            Sel!(
                 // Debuff upkeep.
-                Seq(vec![
-                    TargetMissingAnyRank(FAERIE_FIRE_RANKS),
+                Seq!(
+                    Bt::target_missing_any_rank(FAERIE_FIRE_RANKS),
                     CastOnTarget(FAERIE_FIRE_FERAL),
-                ]),
-                Seq(vec![
-                    TargetMissingAnyRank(INSECT_SWARM_RANKS),
+                ),
+                Seq!(
+                    Bt::target_missing_any_rank(INSECT_SWARM_RANKS),
                     CastOnTarget(INSECT_SWARM),
-                ]),
-                Seq(vec![
-                    TargetMissingAnyRank(MOONFIRE_RANKS),
+                ),
+                Seq!(
+                    Bt::target_missing_any_rank(MOONFIRE_RANKS),
                     CastOnTarget(MOONFIRE),
-                ]),
+                ),
                 // Nukes.
                 CastOnTarget(STARFIRE),
                 CastOnTarget(WRATH),
-            ]),
-        ]),
-    ])
+            ),
+        ),
+    )
 }

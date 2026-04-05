@@ -49,6 +49,13 @@ namespace BotBridge
     bool        CB_HasLos(BotHandle bot, UnitHandle target);
     UnitHandle* CB_GetNearbyUnits(BotHandle bot, float range, bool hostile, uint32_t* out_count);
     void        CB_FreeUnitList(UnitHandle* list);
+    bool        CB_BotIsBehind(BotHandle bot, UnitHandle target);
+    uint32_t    CB_BotEquippedWeaponSubclass(BotHandle bot, uint8_t slot);
+    uint32_t    CB_BotItemCount(BotHandle bot, uint32_t item_id);
+    uint8_t     CB_BotActiveTotemMask(BotHandle bot);
+    bool        CB_BotWeaponEnchanted(BotHandle bot, uint8_t slot);
+    uint8_t     CB_BotRunesReadyMask(BotHandle bot);
+    bool        CB_BotKnowsSpell(BotHandle bot, uint32_t spell_id);
 
     // ── Pathfinding / positioning ──────────────────────────────────────────
     BotPosition     CB_GetBehindPosition(BotHandle bot, UnitHandle target, float distance);

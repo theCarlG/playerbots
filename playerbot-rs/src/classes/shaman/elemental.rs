@@ -4,39 +4,33 @@
 ///   Chain Lightning `AoE` → Lightning Bolt → Frost Shock filler
 use crate::{
     data::spells::vanilla::shaman::*,
-    engine::bt::Bt::{self, Sel, MaintainRange, Seq, GroupSizeAtLeast, SelfMissingAura, CastOnSelf, InCombat, TargetIsCasting, CastOnTarget, TargetMissingAura, NearbyAtLeast},
+    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
 };
+use crate::{Seq, Sel};
 
 pub fn build_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         MaintainRange(20.0),
-        // Totem upkeep.
-        Seq(vec![
-            GroupSizeAtLeast(2),
-            SelfMissingAura(GRACE_OF_AIR_TOTEM),
-            CastOnSelf(GRACE_OF_AIR_TOTEM),
-        ]),
-        Seq(vec![
-            SelfMissingAura(MANA_SPRING_TOTEM),
-            CastOnSelf(MANA_SPRING_TOTEM),
-        ]),
-        Seq(vec![
+        // Totem upkeep driven by per-bot preferences
+        // (see `bot::class_prefs::ShamanPrefs`).
+        Bt::throttle(2_000, DropConfiguredTotems),
+        Seq!(
             InCombat,
-            Sel(vec![
+            Sel!(
                 // Interrupt.
-                Seq(vec![TargetIsCasting, CastOnTarget(EARTH_SHOCK)]),
+                Seq!(TargetIsCasting, CastOnTarget(EARTH_SHOCK)),
                 // Flame Shock DoT.
-                Seq(vec![
-                    TargetMissingAura(FLAME_SHOCK),
+                Seq!(
+                    Bt::target_missing(FLAME_SHOCK),
                     CastOnTarget(FLAME_SHOCK),
-                ]),
+                ),
                 // AoE.
-                Seq(vec![NearbyAtLeast(3), CastOnTarget(CHAIN_LIGHTNING)]),
+                Seq!(Cmp(NearbyCount, AtLeast(3)), CastOnTarget(CHAIN_LIGHTNING)),
                 // Main nuke.
                 CastOnTarget(LIGHTNING_BOLT),
                 // Filler/snare.
                 CastOnTarget(FROST_SHOCK),
-            ]),
-        ]),
-    ])
+            ),
+        ),
+    )
 }

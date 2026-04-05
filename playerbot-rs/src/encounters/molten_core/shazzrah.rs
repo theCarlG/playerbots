@@ -7,7 +7,8 @@
 ///   - **Gate of Shazzrah** (23138): teleports to random raid member.
 ///     Everyone MUST spread out so a teleport doesn't chain-kill stacked bots.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, IsMeleeDps, IsRanged, MaintainRange, Sel, Seq};
+use crate::encounters::bt::Bt::{self, *};
+use crate::{Seq, Sel};
 use crate::ffi::SpellId;
 
 pub const AURA_SHAZZRAH_CURSE: SpellId = SpellId(19714);
@@ -43,10 +44,10 @@ impl EncounterFsm for ShazzrahFsm {
     }
     fn phase_bt(&self) -> Option<Bt> {
         if self.active {
-            Some(Sel(vec![
-                Seq(vec![IsRanged, MaintainRange(30.0)]),
-                Seq(vec![IsMeleeDps, MaintainRange(5.0)]),
-            ]))
+            Some(Sel!(
+                Seq!(IsRanged, MaintainRange(30.0)),
+                Seq!(IsMeleeDps, MaintainRange(5.0)),
+            ))
         } else {
             None
         }

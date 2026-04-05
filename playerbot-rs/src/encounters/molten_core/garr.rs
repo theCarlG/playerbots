@@ -10,7 +10,8 @@
 /// Strategy: everyone stays spread (Eruption `AoE`). Melee pull out when a
 /// Firesworn crosses ~15% to avoid Eruption. Mages/shamans purge frenzy.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, IsRanged, MaintainRange, Sel, Seq};
+use crate::encounters::bt::Bt::{self, *};
+use crate::{Seq, Sel};
 use crate::ffi::SpellId;
 
 pub const AURA_ANTIMAGIC_PULSE: SpellId = SpellId(19492);
@@ -50,7 +51,7 @@ impl EncounterFsm for GarrFsm {
             Some(
                 // Ranged stay back at 20y from the boss (out of most Eruption chains).
                 // Melee rely on the reactive flee layer to dodge Eruption bursts.
-                Sel(vec![Seq(vec![IsRanged, MaintainRange(20.0)])]),
+                Sel!(Seq!(IsRanged, MaintainRange(20.0))),
             )
         } else {
             None

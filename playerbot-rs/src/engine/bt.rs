@@ -15,7 +15,7 @@
 /// use Bt::*;
 ///
 /// Sel(vec![
-///     Seq(vec![HasDebuff(LIVING_BOMB), MoveAwayFromRaid(40.0)]),
+///     Seq(vec![Bt::self_has(LIVING_BOMB), MoveAwayFromRaid(40.0)]),
 ///     Seq(vec![Not(Box::new(InCombat)), Follow]),
 /// ])
 /// ```
@@ -24,8 +24,152 @@ use crate::bot::state::PlayerClass;
 use crate::engine::bt_nodes::{BtNode, BtResult};
 use crate::engine::context::TickContext;
 use crate::engine::throttles::ThrottleKey;
-use crate::ffi::SpellId;
+use crate::ffi::{ItemId, SpellId};
 use crate::noncombat::buffing::GroupBuff;
+
+/// Terse constructor for [`Bt::Seq`]. Accepts a comma-separated list of
+/// child nodes (trailing comma allowed). PascalCase matches the variant
+/// name for readability — Rust allows this since macros live in their own
+/// namespace and there is no snake_case lint on macro identifiers.
+///
+/// ```ignore
+/// Seq!(Bt::self_missing(SLICE_AND_DICE), CastOnSelf(SLICE_AND_DICE))
+/// // expands to
+/// Bt::Seq(vec![Bt::self_missing(SLICE_AND_DICE), CastOnSelf(SLICE_AND_DICE)])
+/// ```
+#[macro_export]
+#[allow(non_snake_case)]
+macro_rules! Seq {
+    ($($x:expr),* $(,)?) => {
+        $crate::engine::bt::Bt::Seq(vec![$($x),*])
+    };
+}
+
+/// Terse constructor for [`Bt::Sel`]. See [`Seq!`] for rationale.
+#[macro_export]
+#[allow(non_snake_case)]
+macro_rules! Sel {
+    ($($x:expr),* $(,)?) => {
+        $crate::engine::bt::Bt::Sel(vec![$($x),*])
+    };
+}
+
+/// A numeric resource the BT can read for comparison. Covers self and target
+/// health, all primary power types (mana / rage / energy / runic power),
+/// and rogue/feral combo points. Used by [`Bt::Cmp`].
+///
+/// Values are always `u32`. Percentage variants are integer 0–100 (not
+/// 0.0–1.0) — this keeps the whole comparison pipeline on one type and is
+/// plenty precise for threshold gating.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resource {
+    /// Bot's current HP.
+    SelfHealth,
+    /// Bot's HP as integer percent (0..=100).
+    SelfHealthPct,
+    /// Bot's current mana (only meaningful when primary power is mana; reads
+    /// as 0 otherwise so comparisons still behave consistently).
+    SelfMana,
+    /// Bot's mana as integer percent (0..=100). Reads 0 when the bot does
+    /// not use mana as primary power.
+    SelfManaPct,
+    /// Bot's rage (0 unless primary power is rage).
+    SelfRage,
+    /// Bot's energy (0 unless primary power is energy).
+    SelfEnergy,
+    /// Bot's runic power (0 unless primary power is runic power, WotLK DK).
+    SelfRunicPower,
+    /// Rogue/feral combo points on the current target.
+    SelfComboPoints,
+    /// Current target's HP.
+    TargetHealth,
+    /// Current target's HP as integer percent (0..=100). Reads 0 when there
+    /// is no target.
+    TargetHealthPct,
+    /// Distance in yards from the bot to its current target (truncated to
+    /// `u32`). Reads `u32::MAX` when there is no target, so `Below(n)` safely
+    /// fails and `Above(n)` safely succeeds.
+    TargetDistance,
+    /// Number of hostile units currently in the bot's nearby scan.
+    NearbyCount,
+    /// Number of attackers currently targeting the bot.
+    AttackerCount,
+    /// Current group/raid size including self (0 when solo).
+    GroupSize,
+}
+
+/// Comparison operator for [`Bt::Cmp`].
+///
+/// `Above` / `Below` are strict `>` / `<`; `AtLeast` / `AtMost` are inclusive
+/// `>=` / `<=`; `Exactly` is `==`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Op {
+    Above(u32),
+    Below(u32),
+    Exactly(u32),
+    AtLeast(u32),
+    AtMost(u32),
+}
+
+/// Weapon categories matching CMaNGOS `ITEM_SUBCLASS_WEAPON_*`. Used by the
+/// `MainHandIs` / `OffHandIs` / `RangedIs` BT nodes to gate class abilities
+/// that require a specific weapon (e.g. rogue Backstab requires Dagger).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeaponType {
+    Axe1H = 0,
+    Axe2H = 1,
+    Bow = 2,
+    Gun = 3,
+    Mace1H = 4,
+    Mace2H = 5,
+    Polearm = 6,
+    Sword1H = 7,
+    Sword2H = 8,
+    Staff = 10,
+    Fist = 13,
+    Dagger = 15,
+    Thrown = 16,
+    Crossbow = 18,
+    Wand = 19,
+    FishingPole = 20,
+}
+
+impl WeaponType {
+    #[inline]
+    pub const fn subclass(self) -> u32 {
+        self as u32
+    }
+}
+
+/// Which unit an [`Bt::Aura`] check applies to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuraUnit {
+    /// The bot itself.
+    Self_,
+    /// The bot's current target.
+    Target,
+}
+
+/// How an [`Bt::Aura`] check identifies the aura to look for.
+#[derive(Debug, Clone, Copy)]
+pub enum AuraKey {
+    /// Single specific spell id.
+    Spell(SpellId),
+    /// Any rank from a static rank list — matches any entry in the slice.
+    /// Used for multi-rank DoTs/buffs (Rend, Renew, Moonfire, etc.).
+    AnyRank(&'static [SpellId]),
+}
+
+/// What to check about the aura's state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuraPred {
+    /// Aura is present on the unit.
+    Present,
+    /// Aura is missing from the unit.
+    Missing,
+    /// Aura has strictly fewer than `n` stacks (missing counts as 0 stacks).
+    StacksBelow(u8),
+}
 
 /// Boolean settings that can be checked by `SettingEnabled`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,22 +206,20 @@ pub enum Bt {
     },
 
     // ── Conditions — encounter ───────────────────────────────────────────
-    /// This bot has the specified aura/debuff on itself.
-    HasDebuff(SpellId),
-    /// The bot's current target has the specified aura.
-    TargetHasAura(SpellId),
-    /// This bot is missing the specified aura (inverse of `HasDebuff` on self).
-    SelfMissingAura(SpellId),
-    /// The current target is missing the specified aura.
-    TargetMissingAura(SpellId),
-    /// This bot is missing every rank in the list.
-    SelfMissingAnyRank(&'static [SpellId]),
-    /// The current target is missing every rank in the list.
-    TargetMissingAnyRank(&'static [SpellId]),
-    /// Target has fewer than `max` stacks of the specified aura (missing = 0 stacks).
-    TargetAuraStacksBelow(SpellId, u8),
-    /// Current target's HP is below this fraction (0.0–1.0).
-    TargetHpBelow(f32),
+    /// Unified aura state check. Use the `Bt::self_missing` / `self_has`
+    /// / `target_has` / `target_missing` / `self_missing_any_rank` /
+    /// `target_missing_any_rank` / `target_aura_stacks_below` helper
+    /// constructors on `Bt` for ergonomic call-site construction — this
+    /// struct variant is the underlying data model.
+    Aura {
+        unit: AuraUnit,
+        key: AuraKey,
+        pred: AuraPred,
+    },
+    /// Bot has learned `spell_id` (`Player::HasSpell`). Use to gate
+    /// talented or optional abilities like Hemorrhage, Stormstrike, or
+    /// Metamorphosis before attempting to cast them.
+    KnowsSpell(SpellId),
     /// Current target is casting any spell (not necessarily interruptible).
     TargetIsCasting,
     /// This bot is the specified class.
@@ -88,16 +230,6 @@ pub enum Bt {
     IsRanged,
     /// This bot is melee DPS (not tank, not ranged).
     IsMeleeDps,
-    /// The current target is closer than the specified distance.
-    TargetCloserThan(f32),
-    /// The current target is farther than the specified distance.
-    TargetFartherThan(f32),
-    /// Number of hostile nearby units is at least `n`.
-    NearbyAtLeast(usize),
-    /// Number of attackers on this bot is at least `n`.
-    AttackersAtLeast(usize),
-    /// Current group size is at least `n`.
-    GroupSizeAtLeast(u8),
     /// At least `count` group members (including self) are below `threshold` HP fraction.
     GroupMembersBelow(u8, f32),
 
@@ -121,12 +253,39 @@ pub enum Bt {
     StrategyEnabled(StrategyFlags),
     /// Bot's reactivity level matches.
     ReactivityIs(Reactivity),
-    /// Bot's HP is below this fraction (0.0–1.0).
-    HpBelow(f32),
-    /// Bot's mana is below this fraction (0.0–1.0).
-    ManaBelow(f32),
     /// Bot uses mana (not rage/energy/runic power).
     UsesMana,
+    /// Compare a numeric resource (HP / mana / rage / energy / combo points /
+    /// target HP) against a threshold. Unified replacement for the
+    /// proliferating per-resource variants. Reads cleanly as
+    /// `Cmp(SelfEnergy, Above(60))`.
+    Cmp(Resource, Op),
+    /// Bot is positioned in the current target's rear arc
+    /// (Backstab / Shred requirement).
+    IsBehindTarget,
+    /// Bot's main-hand weapon is of the given type.
+    MainHandIs(WeaponType),
+    /// Bot's off-hand weapon is of the given type.
+    OffHandIs(WeaponType),
+    /// Bot's ranged slot holds a weapon of the given type.
+    RangedIs(WeaponType),
+    /// Bot is in the given shapeshift form / warrior stance
+    /// (`ShapeshiftForm` enum id — 0=none, 1=cat, 5=bear, 17=battle stance,
+    /// 18=defensive stance, 19=berserker stance, 31=moonkin, …).
+    InShapeshift(u8),
+    /// Bot has at least `n` of `ITEM_ID_SOUL_SHARD` (6265) in inventory.
+    /// Warlock shard-cost gate (Summon Imp, Healthstone, Soulstone).
+    SoulShardsAtLeast(u8),
+    /// Shaman has an active totem in `slot` (0=fire, 1=earth, 2=water, 3=air).
+    HasTotem(u8),
+    /// Main-hand has a temporary enchant applied (shaman weapon buff,
+    /// rogue poison, warrior sharpening stone).
+    MainHandEnchanted,
+    /// Off-hand has a temporary enchant applied.
+    OffHandEnchanted,
+    /// At least `n` death-knight rune slots are ready to use (WotLK only).
+    /// Always fails on Classic/TBC.
+    RunesReady(u8),
     /// A boolean setting is enabled.
     SettingEnabled(Setting),
     /// Bot has a focus target set.
@@ -279,6 +438,34 @@ pub enum Bt {
     Buff(&'static [GroupBuff]),
     /// Bridge to encounter FSM — delegates to the active encounter's phase BT.
     EncounterOverride,
+
+    // ── Class preferences (data lives on BotSettings::class_prefs) ───────
+    /// Rogue: apply the configured weapon poisons (main and off hand) if
+    /// missing. Reads `ClassPrefs::Rogue`. No-op on non-rogues or when no
+    /// rank of the configured poison is known.
+    ApplyPoisons,
+    /// Shaman: drop the configured totem set — one per school, only for
+    /// slots the player has filled. Reads `ClassPrefs::Shaman`. No-op on
+    /// non-shamans or when no rank of the configured totem is known.
+    DropConfiguredTotems,
+    /// Shaman: apply the configured weapon imbues (Rockbiter / Flametongue
+    /// / Frostbrand / Windfury / Earthliving) to main- and off-hand.
+    ApplyShamanImbues,
+    /// Paladin: maintain the configured self-aura (Devotion / Retribution
+    /// / Concentration / …). Re-cast whenever the current aura differs.
+    MaintainPaladinAura,
+    /// Paladin: cast the configured Blessing on any party member missing
+    /// it. Prefers the Greater variant when the player opted in and the
+    /// bot knows it.
+    ApplyConfiguredBlessings,
+    /// Hunter: maintain the configured Aspect (Hawk / Viper / …). Re-cast
+    /// whenever the current Aspect differs from the configured one.
+    MaintainHunterAspect,
+    /// Warlock: keep the configured Curse on the current target.
+    MaintainConfiguredCurse,
+    /// Warrior: if `forced_stance` is set and not already active, swap
+    /// into it. No-op when no stance is forced.
+    EnforceWarriorStance,
 }
 
 impl Bt {
@@ -304,7 +491,7 @@ impl Bt {
 
     /// Run `self` only when `guard` succeeds. Equivalent to `Seq(vec![guard, self])`.
     ///
-    /// Reads top-down: `CastOnSelf(ICE_BLOCK).when(HpBelow(0.20))`.
+    /// Reads top-down: `CastOnSelf(ICE_BLOCK).when(Cmp(SelfHealthPct, Below(20)))`.
     pub fn when(self, guard: Bt) -> Bt {
         Bt::Seq(vec![guard, self])
     }
@@ -312,6 +499,76 @@ impl Bt {
     /// Try `self`; if it fails, fall back to `fallback`. Equivalent to `Sel(vec![self, fallback])`.
     pub fn or_else(self, fallback: Bt) -> Bt {
         Bt::Sel(vec![self, fallback])
+    }
+
+    // ── Aura helper constructors ────────────────────────────────────────
+    //
+    // The underlying data model is `Bt::Aura { unit, key, pred }`; these
+    // free functions keep call sites terse and readable. See the design
+    // note at the `Bt::Aura` variant definition.
+
+    /// Bot is missing `spell` on itself.
+    pub fn self_missing(spell: SpellId) -> Bt {
+        Bt::Aura {
+            unit: AuraUnit::Self_,
+            key: AuraKey::Spell(spell),
+            pred: AuraPred::Missing,
+        }
+    }
+
+    /// Bot has `spell` on itself.
+    pub fn self_has(spell: SpellId) -> Bt {
+        Bt::Aura {
+            unit: AuraUnit::Self_,
+            key: AuraKey::Spell(spell),
+            pred: AuraPred::Present,
+        }
+    }
+
+    /// Current target has `spell`.
+    pub fn target_has(spell: SpellId) -> Bt {
+        Bt::Aura {
+            unit: AuraUnit::Target,
+            key: AuraKey::Spell(spell),
+            pred: AuraPred::Present,
+        }
+    }
+
+    /// Current target is missing `spell`.
+    pub fn target_missing(spell: SpellId) -> Bt {
+        Bt::Aura {
+            unit: AuraUnit::Target,
+            key: AuraKey::Spell(spell),
+            pred: AuraPred::Missing,
+        }
+    }
+
+    /// Bot is missing every rank in `ranks` on itself.
+    pub fn self_missing_any_rank(ranks: &'static [SpellId]) -> Bt {
+        Bt::Aura {
+            unit: AuraUnit::Self_,
+            key: AuraKey::AnyRank(ranks),
+            pred: AuraPred::Missing,
+        }
+    }
+
+    /// Current target is missing every rank in `ranks`.
+    pub fn target_missing_any_rank(ranks: &'static [SpellId]) -> Bt {
+        Bt::Aura {
+            unit: AuraUnit::Target,
+            key: AuraKey::AnyRank(ranks),
+            pred: AuraPred::Missing,
+        }
+    }
+
+    /// Current target has fewer than `max` stacks of `spell`
+    /// (missing counts as 0).
+    pub fn target_aura_stacks_below(spell: SpellId, max: u8) -> Bt {
+        Bt::Aura {
+            unit: AuraUnit::Target,
+            key: AuraKey::Spell(spell),
+            pred: AuraPred::StacksBelow(max),
+        }
     }
 }
 
@@ -362,31 +619,32 @@ impl BtNode for Bt {
             }
 
             // ── Conditions — encounter ───────────────────────────────────
-            Bt::HasDebuff(spell) => ok(ctx.interface.has_aura(ctx.bot_handle, *spell)),
-            Bt::TargetHasAura(spell) => ok(ctx
-                .current_target()
-                .is_some_and(|t| ctx.interface.has_aura(t, *spell))),
-            Bt::SelfMissingAura(spell) => ok(!ctx.interface.has_aura(ctx.bot_handle, *spell)),
-            Bt::TargetMissingAura(spell) => ok(ctx
-                .current_target()
-                .is_some_and(|t| !ctx.interface.has_aura(t, *spell))),
-            Bt::SelfMissingAnyRank(ranks) => ok(!crate::engine::aura_helpers::has_any_rank(
-                ctx.interface,
-                ctx.bot_handle,
-                ranks,
-            )),
-            Bt::TargetMissingAnyRank(ranks) => ok(ctx.current_target().is_some_and(|t| {
-                !crate::engine::aura_helpers::has_any_rank(ctx.interface, t, ranks)
-            })),
-            Bt::TargetAuraStacksBelow(spell, max) => ok(ctx.current_target().is_some_and(|t| {
-                ctx.interface
-                    .get_aura(t, *spell)
-                    .is_none_or(|a| a.stacks < *max)
-            })),
-            Bt::TargetHpBelow(pct) => ok(ctx.current_target().is_some_and(|t| {
-                let s = ctx.interface.get_unit_snapshot(t);
-                s.max_health > 0 && (s.health as f32 / s.max_health as f32) < *pct
-            })),
+            Bt::Aura { unit, key, pred } => {
+                let target = match unit {
+                    AuraUnit::Self_ => Some(ctx.bot_handle),
+                    AuraUnit::Target => ctx.current_target(),
+                };
+                let Some(t) = target else {
+                    return BtResult::Failure;
+                };
+                let result = match (key, pred) {
+                    (AuraKey::Spell(id), AuraPred::Present) => ctx.interface.has_aura(t, *id),
+                    (AuraKey::Spell(id), AuraPred::Missing) => !ctx.interface.has_aura(t, *id),
+                    (AuraKey::Spell(id), AuraPred::StacksBelow(max)) => ctx
+                        .interface
+                        .get_aura(t, *id)
+                        .is_none_or(|a| a.stacks < *max),
+                    (AuraKey::AnyRank(ranks), AuraPred::Present) => {
+                        crate::engine::aura_helpers::has_any_rank(ctx.interface, t, ranks)
+                    }
+                    (AuraKey::AnyRank(ranks), AuraPred::Missing) => {
+                        !crate::engine::aura_helpers::has_any_rank(ctx.interface, t, ranks)
+                    }
+                    (AuraKey::AnyRank(_), AuraPred::StacksBelow(_)) => false,
+                };
+                ok(result)
+            }
+            Bt::KnowsSpell(spell) => ok(ctx.interface.knows_spell(*spell)),
             Bt::TargetIsCasting => ok(ctx
                 .current_target()
                 .is_some_and(|t| ctx.interface.get_unit_snapshot(t).is_casting)),
@@ -394,15 +652,6 @@ impl BtNode for Bt {
             Bt::IsTank => ok(ctx.is_tank()),
             Bt::IsRanged => ok(ctx.is_ranged_or_healer()),
             Bt::IsMeleeDps => ok(!ctx.is_ranged_or_healer() && !ctx.is_tank()),
-            Bt::TargetCloserThan(dist) => ok(ctx
-                .current_target()
-                .is_some_and(|t| ctx.interface.unit_distance(t) < *dist)),
-            Bt::TargetFartherThan(dist) => ok(ctx
-                .current_target()
-                .is_some_and(|t| ctx.interface.unit_distance(t) > *dist)),
-            Bt::NearbyAtLeast(n) => ok(ctx.nearby.len() >= *n),
-            Bt::AttackersAtLeast(n) => ok(ctx.attackers.len() >= *n),
-            Bt::GroupSizeAtLeast(n) => ok(ctx.snap.group_size >= *n),
             Bt::GroupMembersBelow(count, threshold) => {
                 ok(count_group_members_below(ctx, *threshold) >= *count)
             }
@@ -417,9 +666,33 @@ impl BtNode for Bt {
             Bt::CombatOrderHas(flags) => ok(ctx.settings.combat_order.contains(*flags)),
             Bt::StrategyEnabled(flags) => ok(ctx.settings.strategies.contains(*flags)),
             Bt::ReactivityIs(r) => ok(ctx.settings.reactivity == *r),
-            Bt::HpBelow(pct) => ok(ctx.self_hp_pct() < *pct),
-            Bt::ManaBelow(pct) => ok(ctx.self_mana_pct() < *pct),
             Bt::UsesMana => ok(ctx.snap.self_.power_type == 0),
+            Bt::Cmp(res, op) => ok(eval_cmp(ctx, *res, *op)),
+            Bt::IsBehindTarget => ok(ctx
+                .current_target()
+                .is_some_and(|t| ctx.interface.bot_is_behind(t))),
+            Bt::MainHandIs(wt) => {
+                ok(ctx.interface.bot_equipped_weapon_subclass(0) == wt.subclass())
+            }
+            Bt::OffHandIs(wt) => {
+                ok(ctx.interface.bot_equipped_weapon_subclass(1) == wt.subclass())
+            }
+            Bt::RangedIs(wt) => {
+                ok(ctx.interface.bot_equipped_weapon_subclass(2) == wt.subclass())
+            }
+            Bt::InShapeshift(form) => ok(ctx.snap.self_.shapeshift_form == *form),
+            // ITEM_ID_SOUL_SHARD = 6265 (classic through wotlk).
+            Bt::SoulShardsAtLeast(n) => {
+                ok(ctx.interface.bot_item_count(ItemId(6265)) >= u32::from(*n))
+            }
+            Bt::HasTotem(slot) => {
+                ok((ctx.interface.bot_active_totem_mask() & (1u8 << (*slot & 3))) != 0)
+            }
+            Bt::MainHandEnchanted => ok(ctx.interface.bot_weapon_enchanted(0)),
+            Bt::OffHandEnchanted => ok(ctx.interface.bot_weapon_enchanted(1)),
+            Bt::RunesReady(n) => {
+                ok(ctx.interface.bot_runes_ready_mask().count_ones() >= u32::from(*n))
+            }
             Bt::SettingEnabled(s) => ok(check_setting(ctx, *s)),
             Bt::HasFocusTarget => ok(ctx.settings.focus_target.is_some()),
             Bt::HasProtectTarget => ok(ctx.settings.protect_target.is_some()),
@@ -643,6 +916,30 @@ impl BtNode for Bt {
             }, // NOTE: `bt.tick(ctx)` above resolves to `Bt::tick` directly —
                // `ctx.encounter.phase_bt()` now returns `Option<&Bt>`, so there
                // is no vtable lookup at this call site.
+
+            // ── Class preferences ─────────────────────────────────────────
+            Bt::ApplyPoisons => crate::classes::rogue::poisons::tick_apply_poisons(ctx),
+            Bt::DropConfiguredTotems => {
+                crate::classes::shaman::totems::tick_drop_configured_totems(ctx)
+            }
+            Bt::ApplyShamanImbues => {
+                crate::classes::shaman::imbues::tick_apply_shaman_imbues(ctx)
+            }
+            Bt::MaintainPaladinAura => {
+                crate::classes::paladin::prefs::tick_maintain_paladin_aura(ctx)
+            }
+            Bt::ApplyConfiguredBlessings => {
+                crate::classes::paladin::prefs::tick_apply_paladin_blessings(ctx)
+            }
+            Bt::MaintainHunterAspect => {
+                crate::classes::hunter::prefs::tick_maintain_hunter_aspect(ctx)
+            }
+            Bt::MaintainConfiguredCurse => {
+                crate::classes::warlock::prefs::tick_maintain_warlock_curse(ctx)
+            }
+            Bt::EnforceWarriorStance => {
+                crate::classes::warrior::prefs::tick_enforce_warrior_stance(ctx)
+            }
         }
     }
 }
@@ -654,6 +951,87 @@ fn ok(b: bool) -> BtResult {
         BtResult::Success
     } else {
         BtResult::Failure
+    }
+}
+
+/// Read `res` from the tick context and compare against `op`. Used by
+/// [`Bt::Cmp`]. Power-type resources return 0 when the bot's primary power
+/// is something else, which makes `Above(n)` safely fall through for classes
+/// that don't use that resource (e.g. `Cmp(SelfEnergy, Above(60))` on a mage).
+fn eval_cmp(ctx: &TickContext<'_>, res: Resource, op: Op) -> bool {
+    let s = &ctx.snap.self_;
+    // Integer percent 0..=100 from two u32s. Returns 0 when `max` is 0 so
+    // comparisons behave predictably on dead / uninitialized units.
+    let pct = |cur: u32, max: u32| -> u32 {
+        if max == 0 {
+            0
+        } else {
+            ((u64::from(cur) * 100) / u64::from(max)) as u32
+        }
+    };
+    let val: u32 = match res {
+        Resource::SelfHealth => s.health,
+        Resource::SelfHealthPct => pct(s.health, s.max_health),
+        Resource::SelfMana => {
+            if s.power_type == 0 {
+                s.mana
+            } else {
+                0
+            }
+        }
+        Resource::SelfManaPct => {
+            if s.power_type == 0 {
+                pct(s.mana, s.max_mana)
+            } else {
+                0
+            }
+        }
+        Resource::SelfRage => {
+            if s.power_type == 1 {
+                s.mana
+            } else {
+                0
+            }
+        }
+        Resource::SelfEnergy => {
+            if s.power_type == 3 {
+                s.mana
+            } else {
+                0
+            }
+        }
+        Resource::SelfRunicPower => {
+            if s.power_type == 6 {
+                s.mana
+            } else {
+                0
+            }
+        }
+        Resource::SelfComboPoints => u32::from(s.combo_points),
+        Resource::TargetHealth | Resource::TargetHealthPct => {
+            let Some(t) = ctx.current_target() else {
+                return false;
+            };
+            let ts = ctx.interface.get_unit_snapshot(t);
+            match res {
+                Resource::TargetHealth => ts.health,
+                Resource::TargetHealthPct => pct(ts.health, ts.max_health),
+                _ => unreachable!(),
+            }
+        }
+        Resource::TargetDistance => ctx
+            .current_target()
+            .map_or(u32::MAX, |t| ctx.interface.unit_distance(t) as u32),
+        Resource::NearbyCount => ctx.nearby.len() as u32,
+        Resource::AttackerCount => ctx.attackers.len() as u32,
+        Resource::GroupSize => u32::from(ctx.snap.group_size),
+    };
+    match op {
+        Op::Above(n) => val > n,
+        Op::Below(n) => val < n,
+        Op::Exactly(n) => val == n,
+        Op::AtLeast(n) => val >= n,
+        Op::AtMost(n) => val <= n,
     }
 }
 
@@ -1336,9 +1714,8 @@ mod tests {
 
     #[test]
     fn has_debuff_checks_self() {
-        use Bt::*;
         let spell = SpellId(12345);
-        let tree = HasDebuff(spell);
+        let tree = Bt::self_has(spell);
         let enc = MockEncounter { active: true };
 
         let iface = TestInterface::new();

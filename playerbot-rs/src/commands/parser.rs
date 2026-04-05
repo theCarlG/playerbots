@@ -5,6 +5,10 @@
 ///
 /// Design: ~20 clean commands replace the old 70+ redundant C++ commands.
 /// Each command maps to exactly one `BotCommand` variant.
+use crate::bot::class_prefs::{
+    HunterAspect, HunterTrap, PaladinAura, PaladinBlessing, PoisonKind, ShamanImbue, TotemRole,
+    TotemSlot, WarlockCurse, WarriorStance, WeaponHand,
+};
 use crate::bot::settings::{
     BehaviorMode, ChatChannel, CombatOrder, FollowFormation, Reactivity, StrategyFlags,
 };
@@ -181,6 +185,16 @@ const COMMANDS: &[CommandSpec] = &[
         names: &["leave"],
         parse: |_, _| Some(BotCommand::GuildLeave),
     },
+    // -- Class preferences --
+    CommandSpec { names: &["poison", "poisons"], parse: |_, a| parse_poison(a) },
+    CommandSpec { names: &["totem", "totems"], parse: |_, a| parse_totem(a) },
+    CommandSpec { names: &["imbue", "imbues"], parse: |_, a| parse_imbue(a) },
+    CommandSpec { names: &["aura", "auras"], parse: |_, a| parse_aura(a) },
+    CommandSpec { names: &["blessing", "blessings"], parse: |_, a| parse_blessing(a) },
+    CommandSpec { names: &["aspect", "aspects"], parse: |_, a| parse_aspect(a) },
+    CommandSpec { names: &["trap", "traps"], parse: |_, a| parse_trap(a) },
+    CommandSpec { names: &["curse", "curses"], parse: |_, a| parse_curse(a) },
+    CommandSpec { names: &["forcestance", "stancelock"], parse: |_, a| parse_forcestance(a) },
 ];
 
 /// Parse a chat message into a `BotCommand`.
@@ -618,6 +632,198 @@ fn parse_heal_threshold(args: &[&str]) -> Option<BotCommand> {
         _ => Some(BotCommand::Unknown(
             "heal: need percentage (0-100 or 0.0-1.0)".into(),
         )),
+    }
+}
+
+/// `poison` → `ShowPoisons`
+/// `poison mh instant` / `poison oh deadly` → `SetPoison { hand, kind: Some(..) }`
+/// `poison mh none` → `SetPoison { hand, kind: None }`
+fn parse_poison(args: &[&str]) -> Option<BotCommand> {
+    if args.is_empty() {
+        return Some(BotCommand::ShowPoisons);
+    }
+    let Some(hand) = WeaponHand::from_token(args[0]) else {
+        return Some(BotCommand::Unknown(
+            "poison: expected mh|oh <kind|none>".into(),
+        ));
+    };
+    let kind_tok = args.get(1).copied().unwrap_or("none");
+    let kind = if kind_tok == "none" || kind_tok == "clear" || kind_tok == "off" {
+        None
+    } else {
+        let Some(k) = PoisonKind::from_token(kind_tok) else {
+            return Some(BotCommand::Unknown(format!(
+                "poison: unknown kind '{kind_tok}'"
+            )));
+        };
+        Some(k)
+    };
+    Some(BotCommand::SetPoison { hand, kind })
+}
+
+/// `totem` → `ShowTotems`
+/// `totem earth strengthofearth` → `SetTotem { slot, role: Some(..) }`
+/// `totem fire none` → `SetTotem { slot, role: None }`
+fn parse_totem(args: &[&str]) -> Option<BotCommand> {
+    if args.is_empty() {
+        return Some(BotCommand::ShowTotems);
+    }
+    let Some(slot) = TotemSlot::from_token(args[0]) else {
+        return Some(BotCommand::Unknown(
+            "totem: expected earth|fire|water|air <role|none>".into(),
+        ));
+    };
+    let role_tok = args.get(1).copied().unwrap_or("none");
+    let role = if role_tok == "none" || role_tok == "clear" || role_tok == "off" {
+        None
+    } else {
+        let Some(r) = TotemRole::from_token(role_tok) else {
+            return Some(BotCommand::Unknown(format!(
+                "totem: unknown role '{role_tok}'"
+            )));
+        };
+        if r.slot() != slot {
+            return Some(BotCommand::Unknown(format!(
+                "totem: {role_tok} is not a {} totem",
+                slot.as_str()
+            )));
+        }
+        Some(r)
+    };
+    Some(BotCommand::SetTotem { slot, role })
+}
+
+/// `imbue` → `ShowShamanImbues`
+/// `imbue mh flametongue` → `SetShamanImbue { hand, imbue: Some(..) }`
+/// `imbue oh none` → `SetShamanImbue { hand, imbue: None }`
+fn parse_imbue(args: &[&str]) -> Option<BotCommand> {
+    if args.is_empty() {
+        return Some(BotCommand::ShowShamanImbues);
+    }
+    let Some(hand) = WeaponHand::from_token(args[0]) else {
+        return Some(BotCommand::Unknown(
+            "imbue: expected mh|oh <kind|none>".into(),
+        ));
+    };
+    let tok = args.get(1).copied().unwrap_or("none");
+    let imbue = if tok == "none" || tok == "clear" || tok == "off" {
+        None
+    } else {
+        let Some(i) = ShamanImbue::from_token(tok) else {
+            return Some(BotCommand::Unknown(format!("imbue: unknown kind '{tok}'")));
+        };
+        Some(i)
+    };
+    Some(BotCommand::SetShamanImbue { hand, imbue })
+}
+
+/// `aura` → `ShowPaladinPrefs`
+/// `aura devotion` → `SetPaladinAura(Some(..))`
+/// `aura none` → `SetPaladinAura(None)`
+fn parse_aura(args: &[&str]) -> Option<BotCommand> {
+    let Some(&tok) = args.first() else {
+        return Some(BotCommand::ShowPaladinPrefs);
+    };
+    if tok == "none" || tok == "clear" || tok == "off" {
+        return Some(BotCommand::SetPaladinAura(None));
+    }
+    match PaladinAura::from_token(tok) {
+        Some(a) => Some(BotCommand::SetPaladinAura(Some(a))),
+        None => Some(BotCommand::Unknown(format!("aura: unknown '{tok}'"))),
+    }
+}
+
+/// `blessing` → `ShowPaladinPrefs`
+/// `blessing might` → `SetPaladinBlessing(Some(..))`
+/// `blessing none` → `SetPaladinBlessing(None)`
+/// `blessing greater on|off` → `SetPaladinGreaterBlessing(bool)`
+fn parse_blessing(args: &[&str]) -> Option<BotCommand> {
+    let Some(&tok) = args.first() else {
+        return Some(BotCommand::ShowPaladinPrefs);
+    };
+    if tok == "greater" || tok == "gb" {
+        let flag_tok = args.get(1).copied().unwrap_or("on");
+        let flag = match flag_tok {
+            "on" | "true" | "yes" | "1" => true,
+            "off" | "false" | "no" | "0" => false,
+            _ => {
+                return Some(BotCommand::Unknown(format!(
+                    "blessing greater: expected on|off, got '{flag_tok}'"
+                )));
+            }
+        };
+        return Some(BotCommand::SetPaladinGreaterBlessing(flag));
+    }
+    if tok == "none" || tok == "clear" || tok == "off" {
+        return Some(BotCommand::SetPaladinBlessing(None));
+    }
+    match PaladinBlessing::from_token(tok) {
+        Some(b) => Some(BotCommand::SetPaladinBlessing(Some(b))),
+        None => Some(BotCommand::Unknown(format!("blessing: unknown '{tok}'"))),
+    }
+}
+
+/// `aspect` → `ShowHunterPrefs`
+/// `aspect hawk` → `SetHunterAspect(Some(..))`
+/// `aspect none` → `SetHunterAspect(None)`
+fn parse_aspect(args: &[&str]) -> Option<BotCommand> {
+    let Some(&tok) = args.first() else {
+        return Some(BotCommand::ShowHunterPrefs);
+    };
+    if tok == "none" || tok == "clear" || tok == "off" {
+        return Some(BotCommand::SetHunterAspect(None));
+    }
+    match HunterAspect::from_token(tok) {
+        Some(a) => Some(BotCommand::SetHunterAspect(Some(a))),
+        None => Some(BotCommand::Unknown(format!("aspect: unknown '{tok}'"))),
+    }
+}
+
+/// `trap` → `ShowHunterPrefs`
+/// `trap freezing` → `SetHunterTrap(Some(..))`
+/// `trap none` → `SetHunterTrap(None)`
+fn parse_trap(args: &[&str]) -> Option<BotCommand> {
+    let Some(&tok) = args.first() else {
+        return Some(BotCommand::ShowHunterPrefs);
+    };
+    if tok == "none" || tok == "clear" || tok == "off" {
+        return Some(BotCommand::SetHunterTrap(None));
+    }
+    match HunterTrap::from_token(tok) {
+        Some(t) => Some(BotCommand::SetHunterTrap(Some(t))),
+        None => Some(BotCommand::Unknown(format!("trap: unknown '{tok}'"))),
+    }
+}
+
+/// `curse` → `ShowWarlockPrefs`
+/// `curse agony` → `SetWarlockCurse(Some(..))`
+/// `curse none` → `SetWarlockCurse(None)`
+fn parse_curse(args: &[&str]) -> Option<BotCommand> {
+    let Some(&tok) = args.first() else {
+        return Some(BotCommand::ShowWarlockPrefs);
+    };
+    if tok == "none" || tok == "clear" || tok == "off" {
+        return Some(BotCommand::SetWarlockCurse(None));
+    }
+    match WarlockCurse::from_token(tok) {
+        Some(c) => Some(BotCommand::SetWarlockCurse(Some(c))),
+        None => Some(BotCommand::Unknown(format!("curse: unknown '{tok}'"))),
+    }
+}
+
+/// `forcestance` → `ShowWarriorPrefs`
+/// `forcestance berserker` → `SetWarriorForcedStance(Some(..))`
+/// `forcestance none` → `SetWarriorForcedStance(None)`
+fn parse_forcestance(args: &[&str]) -> Option<BotCommand> {
+    let Some(&tok) = args.first() else {
+        return Some(BotCommand::ShowWarriorPrefs);
+    };
+    if tok == "none" || tok == "clear" || tok == "off" {
+        return Some(BotCommand::SetWarriorForcedStance(None));
+    }
+    match WarriorStance::from_token(tok) {
+        Some(st) => Some(BotCommand::SetWarriorForcedStance(Some(st))),
+        None => Some(BotCommand::Unknown(format!("forcestance: unknown '{tok}'"))),
     }
 }
 

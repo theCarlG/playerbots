@@ -8,77 +8,78 @@
 /// so the combat wrapper is built in `bot::init` as a `Box<dyn BtNode>`
 /// selector containing both `Bt` enum nodes and the class rotation.
 use crate::bot::state::PlayerClass;
-use crate::engine::bt::Bt::{self, Seq, HpBelow, FleeToSafe, TargetCastingInterruptible, Interrupt, Sel, IsClass, DispelParty, ResurrectParty, IsTank, InCombat, PullingAggro, ThreatDump, HasFocusTarget, FocusAttack, CombatOrderHas, TankPickupAdds, AssistLeader, ProtectAttacker, ReactivityIs, AttackNearest};
+use crate::engine::bt::{Bt::{self, *}, Op::*, Resource::*};
+use crate::{Seq, Sel};
 
 /// Flee at critically low HP.
 pub fn flee_subtree() -> Bt {
-    Seq(vec![
-        HpBelow(0.0), // flee_hp_pct checked via the dynamic threshold
+    Seq!(
+        Cmp(SelfHealthPct, Below(0)), // flee_hp_pct checked via the dynamic threshold
         FleeToSafe(20.0),
-    ])
+    )
 }
 
 /// Interrupt enemy casts (class-appropriate).
 pub fn interrupt_subtree() -> Bt {
-    Bt::throttle(500, Seq(vec![TargetCastingInterruptible, Interrupt]))
+    Bt::throttle(500, Seq!(TargetCastingInterruptible, Interrupt))
 }
 
 /// Dispel party debuffs (healer/dispel classes only).
 pub fn dispel_subtree() -> Bt {
-    Seq(vec![
-        Sel(vec![
+    Seq!(
+        Sel!(
             IsClass(PlayerClass::Priest),
             IsClass(PlayerClass::Paladin),
             IsClass(PlayerClass::Druid),
             IsClass(PlayerClass::Mage),
             IsClass(PlayerClass::Shaman),
-        ]),
+        ),
         Bt::throttle(1_000, DispelParty),
-    ])
+    )
 }
 
 /// Resurrect dead party members (class-appropriate).
 pub fn resurrect_subtree() -> Bt {
-    Seq(vec![
-        Sel(vec![
+    Seq!(
+        Sel!(
             IsClass(PlayerClass::Priest),
             IsClass(PlayerClass::Paladin),
             IsClass(PlayerClass::Druid),
             IsClass(PlayerClass::Shaman),
-        ]),
+        ),
         Bt::throttle(5_000, ResurrectParty),
-    ])
+    )
 }
 
 /// Threat dump when DPS is about to pull aggro.
 pub fn threat_subtree() -> Bt {
-    Seq(vec![IsTank.not(), InCombat, PullingAggro, ThreatDump])
+    Seq!(IsTank.not(), InCombat, PullingAggro, ThreatDump)
 }
 
 /// Target selection based on combat order and settings.
 pub fn targeting_subtree() -> Bt {
-    Sel(vec![
+    Sel!(
         // Focus target override.
-        Seq(vec![HasFocusTarget, FocusAttack]),
+        Seq!(HasFocusTarget, FocusAttack),
         // Tank: pick up loose adds.
-        Seq(vec![
+        Seq!(
             CombatOrderHas(crate::bot::settings::CombatOrder::TANK),
             Bt::throttle(1_000, TankPickupAdds),
-        ]),
+        ),
         // Assist: attack leader/tank's target.
-        Seq(vec![
+        Seq!(
             CombatOrderHas(crate::bot::settings::CombatOrder::ASSIST),
             AssistLeader,
-        ]),
+        ),
         // Protect: attack what attacks protect target.
-        Seq(vec![
+        Seq!(
             CombatOrderHas(crate::bot::settings::CombatOrder::PROTECT),
             ProtectAttacker,
-        ]),
+        ),
         // Aggressive: attack nearest hostile.
-        Seq(vec![
+        Seq!(
             ReactivityIs(crate::bot::settings::Reactivity::Aggressive),
             AttackNearest,
-        ]),
-    ])
+        ),
+    )
 }

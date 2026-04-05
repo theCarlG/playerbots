@@ -4,23 +4,21 @@
 ///   fast heals → Chain Heal when multiple hurt → sustained heals → Purge
 use crate::{
     data::spells::vanilla::shaman::*,
-    engine::bt::Bt::{self, Sel, Seq, GroupSizeAtLeast, SelfMissingAura, CastOnSelf, GroupMembersBelow, HealLowest, HealInjuredParty, InCombat, CastOnTarget},
+    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
 };
+use crate::{Seq, Sel};
 
 pub fn build_tree() -> Bt {
-    Sel(vec![
-        // Totem upkeep.
-        Seq(vec![
-            GroupSizeAtLeast(2),
-            SelfMissingAura(MANA_SPRING_TOTEM),
-            CastOnSelf(MANA_SPRING_TOTEM),
-        ]),
+    Sel!(
+        // Totem upkeep driven by per-bot preferences
+        // (see `bot::class_prefs::ShamanPrefs`).
+        Bt::throttle(2_000, DropConfiguredTotems),
         // Nature's Swiftness panic window for instant critical heal.
-        Seq(vec![
+        Seq!(
             GroupMembersBelow(1, 0.20),
-            SelfMissingAura(NATURE_SWIFTNESS),
+            Bt::self_missing(NATURE_SWIFTNESS),
             CastOnSelf(NATURE_SWIFTNESS),
-        ]),
+        ),
         // Critical heals.
         HealLowest(HEALING_WAVE, 0.30),
         HealInjuredParty(HEALING_WAVE, 0.30),
@@ -28,14 +26,14 @@ pub fn build_tree() -> Bt {
         HealLowest(LESSER_HEALING_WAVE, 0.55),
         HealInjuredParty(LESSER_HEALING_WAVE, 0.55),
         // Chain Heal when multiple hurt.
-        Seq(vec![
+        Seq!(
             GroupMembersBelow(2, 0.75),
             HealInjuredParty(CHAIN_HEAL, 0.75),
-        ]),
+        ),
         // Sustained.
         HealLowest(HEALING_WAVE, 0.80),
         HealInjuredParty(HEALING_WAVE, 0.80),
         // Purge enemy buffs.
-        Seq(vec![InCombat, CastOnTarget(PURGE)]),
-    ])
+        Seq!(InCombat, CastOnTarget(PURGE)),
+    )
 }

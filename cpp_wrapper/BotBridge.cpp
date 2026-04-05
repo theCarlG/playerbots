@@ -125,6 +125,15 @@ BotUnitSnapshot BotBridge::FillUnitSnapshot(Unit* unit)
     // Aura state mask
     s.aura_state_mask = unit->GetUInt32Value(UNIT_FIELD_AURASTATE);
 
+    // Combo points live on Unit but are only populated for rogue/feral
+    // players. Rust checks are always evaluated in the context of the bot's
+    // current target, so the raw stored count is accurate enough for
+    // finisher gating.
+    s.combo_points = unit->GetComboPoints();
+    // Shapeshift form doubles as warrior stance id in this fork — Rust
+    // treats it opaquely and matches on raw u8 values.
+    s.shapeshift_form = static_cast<uint8_t>(unit->GetShapeshiftForm());
+
     // Player-specific
     if (Player* p = unit->ToPlayer())
     {
@@ -163,6 +172,13 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.has_los             = CB_HasLos;
     cbs.get_nearby_units    = CB_GetNearbyUnits;
     cbs.free_unit_list      = CB_FreeUnitList;
+    cbs.bot_is_behind               = CB_BotIsBehind;
+    cbs.bot_equipped_weapon_subclass = CB_BotEquippedWeaponSubclass;
+    cbs.bot_item_count              = CB_BotItemCount;
+    cbs.bot_active_totem_mask       = CB_BotActiveTotemMask;
+    cbs.bot_weapon_enchanted        = CB_BotWeaponEnchanted;
+    cbs.bot_runes_ready_mask        = CB_BotRunesReadyMask;
+    cbs.bot_knows_spell             = CB_BotKnowsSpell;
 
     // Pathfinding / positioning
     cbs.get_behind_position = CB_GetBehindPosition;
@@ -2863,4 +2879,108 @@ bool BotBridge::CB_BotGuildLeave(BotHandle bot)
         return false;
 
     return g->DelMember(b->GetObjectGuid());
+}
+
+bool BotBridge::CB_BotIsBehind(BotHandle bot, UnitHandle target)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    Unit* t = FindUnit(bot, target);
+    if (!t || t == b)
+        return false;
+    // HasInArc(other, M_PI) tests the 180° front hemisphere. "bot is behind
+    // target" is equivalent to the bot not being in the target's front arc.
+    return !t->HasInArc(b, M_PI_F);
+}
+
+uint32_t BotBridge::CB_BotEquippedWeaponSubclass(BotHandle bot, uint8_t slot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return UINT32_MAX;
+    uint8 eq_slot;
+    switch (slot)
+    {
+        case 0: eq_slot = EQUIPMENT_SLOT_MAINHAND; break;
+        case 1: eq_slot = EQUIPMENT_SLOT_OFFHAND;  break;
+        case 2: eq_slot = EQUIPMENT_SLOT_RANGED;   break;
+        default: return UINT32_MAX;
+    }
+    Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, eq_slot);
+    if (!item)
+        return UINT32_MAX;
+    ItemPrototype const* proto = item->GetProto();
+    if (!proto || proto->Class != ITEM_CLASS_WEAPON)
+        return UINT32_MAX;
+    return proto->SubClass;
+}
+
+uint32_t BotBridge::CB_BotItemCount(BotHandle bot, uint32_t item_id)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+    return b->GetItemCount(item_id, false, nullptr);
+}
+
+uint8_t BotBridge::CB_BotActiveTotemMask(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+    uint8_t mask = 0;
+    for (int i = 0; i < MAX_TOTEM_SLOT; ++i)
+    {
+        if (b->GetTotemGuid(TotemSlot(i)))
+            mask |= (1u << i);
+    }
+    return mask;
+}
+
+bool BotBridge::CB_BotWeaponEnchanted(BotHandle bot, uint8_t slot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    uint8 eq_slot;
+    switch (slot)
+    {
+        case 0: eq_slot = EQUIPMENT_SLOT_MAINHAND; break;
+        case 1: eq_slot = EQUIPMENT_SLOT_OFFHAND;  break;
+        default: return false;
+    }
+    Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, eq_slot);
+    if (!item)
+        return false;
+    return item->GetEnchantmentId(TEMP_ENCHANTMENT_SLOT) != 0;
+}
+
+uint8_t BotBridge::CB_BotRunesReadyMask(BotHandle bot)
+{
+    // Death-knight runes are WotLK-only. Classic/TBC have no rune system
+    // at all, so the safe answer is always "no runes ready".
+#ifdef MANGOSBOT_TWO
+    Player* b = FindBot(bot);
+    if (!b || b->getClass() != CLASS_DEATH_KNIGHT)
+        return 0;
+    uint8_t mask = 0;
+    for (uint8 i = 0; i < MAX_RUNES; ++i)
+    {
+        if (b->GetRuneCooldown(i) == 0)
+            mask |= (1u << i);
+    }
+    return mask;
+#else
+    (void)bot;
+    return 0;
+#endif
+}
+
+bool BotBridge::CB_BotKnowsSpell(BotHandle bot, uint32_t spell_id)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    return b->HasSpell(spell_id);
 }

@@ -2,14 +2,17 @@
 ///
 /// Priority: Death Grip → Anti-Magic Shell vs casters → Howling Blast → Obliterate
 ///   → diseases → Frost Strike → Chains of Ice
-use crate::engine::bt::Bt::{self, Sel};
+#[allow(unused_imports)]
+use crate::engine::bt::{Bt::{self, *}, Op::*, Resource::*};
+#[allow(unused_imports)]
+use crate::{Seq, Sel};
 
 #[cfg(feature = "wotlk")]
 use crate::{data::spells::vanilla::deathknight::*, ffi::SpellId};
 
 #[cfg(not(feature = "wotlk"))]
 pub fn build_tree() -> Bt {
-    Sel(vec![])
+    Sel!()
 }
 
 #[cfg(feature = "wotlk")]
@@ -19,32 +22,32 @@ const BLOOD_PLAGUE: SpellId = SpellId(55078);
 
 #[cfg(feature = "wotlk")]
 pub fn build_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         StickToTarget(5.0),
-        Seq(vec![TargetFartherThan(15.0), CastOnTarget(DEATH_GRIP)]),
-        Seq(vec![
+        Seq!(Cmp(TargetDistance, Above(15)), CastOnTarget(DEATH_GRIP)),
+        Seq!(
             InCombat,
-            Sel(vec![
+            Sel!(
                 // Absorb vs casters.
-                Seq(vec![TargetIsCasting, CastOnSelf(ANTI_MAGIC_SHELL)]),
+                Seq!(TargetIsCasting, CastOnSelf(ANTI_MAGIC_SHELL)),
                 // Burst / AoE.
                 CastOnTarget(HOWLING_BLAST),
                 // Main melee.
                 CastOnTarget(OBLITERATE),
                 // Diseases.
-                Seq(vec![
-                    TargetMissingAura(FROST_FEVER),
+                Seq!(
+                    Bt::target_missing(FROST_FEVER),
                     CastOnTarget(ICY_TOUCH),
-                ]),
-                Seq(vec![
-                    TargetMissingAura(BLOOD_PLAGUE),
+                ),
+                Seq!(
+                    Bt::target_missing(BLOOD_PLAGUE),
                     CastOnTarget(PLAGUE_STRIKE),
-                ]),
+                ),
                 // RP dump.
                 CastOnTarget(FROST_STRIKE),
                 // Snare fleeing target.
-                Seq(vec![TargetFartherThan(8.0), CastOnTarget(CHAINS_OF_ICE)]),
-            ]),
-        ]),
-    ])
+                Seq!(Cmp(TargetDistance, Above(8)), CastOnTarget(CHAINS_OF_ICE)),
+            ),
+        ),
+    )
 }

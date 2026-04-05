@@ -39,6 +39,8 @@ typedef struct {
     uint8_t  level;
     uint8_t  team;              /* 0=Alliance, 1=Horde */
     uint8_t  role;              /* 0=none, 1=tank, 2=heal, 4=dps (bitmask) */
+    uint8_t  combo_points;      /* rogue/feral combo points on current combo target (0 otherwise) */
+    uint8_t  shapeshift_form;   /* Unit::GetShapeshiftForm() — druid forms, warrior stances, DK ghoul, etc. 0=none. */
     BotPosition pos;
     bool     is_alive;
     bool     in_combat;
@@ -197,6 +199,33 @@ typedef struct BotCallbacks {
     bool        (*has_los)(BotHandle bot, UnitHandle target);
     UnitHandle* (*get_nearby_units)(BotHandle bot, float range, bool hostile, uint32_t* out_count);
     void        (*free_unit_list)(UnitHandle* list);
+    /* True if the bot is currently positioned in the rear arc of `target`
+     * (gates abilities like Backstab that require being behind). */
+    bool        (*bot_is_behind)(BotHandle bot, UnitHandle target);
+    /* ItemPrototype.SubClass of the weapon in the given equipment slot
+     * (0 = main hand, 1 = off hand, 2 = ranged), or UINT32_MAX when empty
+     * or holding a non-weapon (e.g. shield). See ItemPrototype.h
+     * ITEM_SUBCLASS_WEAPON_*. */
+    uint32_t    (*bot_equipped_weapon_subclass)(BotHandle bot, uint8_t slot);
+    /* Total count of `item_id` in the bot's inventory (bags + bank is NOT
+     * included; mirrors Player::GetItemCount(id, false, nullptr)). Used for
+     * warlock shards, mage food, spellstones, etc. */
+    uint32_t    (*bot_item_count)(BotHandle bot, uint32_t item_id);
+    /* Bitmask of currently active totem slots (shaman). Bit 0 = fire,
+     * 1 = earth, 2 = water, 3 = air. 0 on non-shamans. */
+    uint8_t     (*bot_active_totem_mask)(BotHandle bot);
+    /* True if the weapon in `slot` (0=mainhand, 1=offhand) has a temporary
+     * enchant applied (Item::GetEnchantmentId(TEMP_ENCHANTMENT_SLOT) != 0).
+     * Shaman weapon buffs, rogue poisons, warrior sharpening stones. */
+    bool        (*bot_weapon_enchanted)(BotHandle bot, uint8_t slot);
+    /* Bitmask of ready death-knight runes (WotLK only; bits 0–5 for the
+     * six rune slots). Returns 0 on Classic/TBC. */
+    uint8_t     (*bot_runes_ready_mask)(BotHandle bot);
+    /* True if the bot has learned `spell_id` (Player::HasSpell). Used by
+     * BT KnowsSpell nodes to gate talented or optional abilities like
+     * Hemorrhage, Stormstrike, Metamorphosis, etc. Does NOT check cooldown
+     * or power cost — use `can_cast` for full castability. */
+    bool        (*bot_knows_spell)(BotHandle bot, uint32_t spell_id);
 
     /* ── Pathfinding / positioning ───────────────────────────────────── */
     BotPosition     (*get_behind_position)(BotHandle bot, UnitHandle target, float distance);

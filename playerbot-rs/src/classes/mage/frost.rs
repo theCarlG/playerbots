@@ -4,42 +4,43 @@
 ///   → Cone of Cold (on frozen target) → Fire Blast execute → Frostbolt
 use crate::{
     data::spells::vanilla::mage::*,
-    engine::bt::Bt::{self, Sel, MaintainRange, Seq, HpBelow, CastOnSelf, ManaBelow, InCombat, TargetIsCasting, CastOnTarget, TargetCloserThan, TargetHasAura, TargetHpBelow},
+    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
     ffi::SpellId,
 };
+use crate::{Seq, Sel};
 
 // Frozen auras applied by Frost Nova.
 const FROST_NOVA_AURA_A: SpellId = SpellId(122);
 const FROST_NOVA_AURA_B: SpellId = SpellId(42397);
 
 pub fn build_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         MaintainRange(10.0),
-        Seq(vec![HpBelow(0.20), CastOnSelf(ICE_BLOCK)]),
-        Seq(vec![ManaBelow(0.15), CastOnSelf(EVOCATION)]),
-        Seq(vec![
+        Seq!(Cmp(SelfHealthPct, Below(20)), CastOnSelf(ICE_BLOCK)),
+        Seq!(Cmp(SelfManaPct, Below(15)), CastOnSelf(EVOCATION)),
+        Seq!(
             InCombat,
-            Sel(vec![
+            Sel!(
                 // Interrupt.
-                Seq(vec![TargetIsCasting, CastOnTarget(COUNTERSPELL)]),
+                Seq!(TargetIsCasting, CastOnTarget(COUNTERSPELL)),
                 // Enemy in melee — Frost Nova then Blink away.
-                Seq(vec![
-                    TargetCloserThan(5.0),
-                    Sel(vec![CastOnTarget(FROST_NOVA), CastOnSelf(BLINK)]),
-                ]),
+                Seq!(
+                    Cmp(TargetDistance, Below(5)),
+                    Sel!(CastOnTarget(FROST_NOVA), CastOnSelf(BLINK)),
+                ),
                 // Cone of Cold shines while target is rooted by Nova.
-                Seq(vec![
-                    Sel(vec![
-                        TargetHasAura(FROST_NOVA_AURA_A),
-                        TargetHasAura(FROST_NOVA_AURA_B),
-                    ]),
+                Seq!(
+                    Sel!(
+                        Bt::target_has(FROST_NOVA_AURA_A),
+                        Bt::target_has(FROST_NOVA_AURA_B),
+                    ),
                     CastOnSelf(CONE_OF_COLD),
-                ]),
+                ),
                 // Instant execute.
-                Seq(vec![TargetHpBelow(0.20), CastOnTarget(FIRE_BLAST)]),
+                Seq!(Cmp(TargetHealthPct, Below(20)), CastOnTarget(FIRE_BLAST)),
                 // Main nuke.
                 CastOnTarget(FROSTBOLT),
-            ]),
-        ]),
-    ])
+            ),
+        ),
+    )
 }

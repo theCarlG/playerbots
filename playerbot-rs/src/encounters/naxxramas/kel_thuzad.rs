@@ -16,7 +16,8 @@
 ///   - KT active: dodge Shadow Fissure (flee if debuffed).
 ///   - Adds + portal: non-tanks switch to adds, tanks stay on KT.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, AttackNearest, Seq, HasDebuff, FleeToSafe, Sel, IsTank};
+use crate::encounters::bt::Bt::{self, *};
+use crate::{Seq, Sel};
 use crate::ffi::SpellId;
 
 pub const AURA_FROST_BLAST: SpellId = SpellId(27808);
@@ -63,12 +64,12 @@ impl KelThuzadFsm {
             // Phase 1: kill adds
             add_waves_bt: AttackNearest,
             // Phase 2: dodge Shadow Fissure
-            kt_active_bt: Seq(vec![HasDebuff(SPELL_SHADOW_FISSURE), FleeToSafe(15.0)]),
+            kt_active_bt: Seq!(Bt::self_has(SPELL_SHADOW_FISSURE), FleeToSafe(15.0)),
             // Phase 3: dodge fissure (priority), non-tanks switch to adds
-            adds_portal_bt: Sel(vec![
-                Seq(vec![HasDebuff(SPELL_SHADOW_FISSURE), FleeToSafe(15.0)]),
-                Seq(vec![IsTank.not(), AttackNearest]),
-            ]),
+            adds_portal_bt: Sel!(
+                Seq!(Bt::self_has(SPELL_SHADOW_FISSURE), FleeToSafe(15.0)),
+                Seq!(IsTank.not(), AttackNearest),
+            ),
         }
     }
 

@@ -1,6 +1,7 @@
 pub mod affliction;
 pub mod demonology;
 pub mod destruction;
+pub mod prefs;
 
 use crate::{
     bot::state::PlayerSpec, classes::ClassKit, data::spells::vanilla::warlock::DEMON_ARMOR,

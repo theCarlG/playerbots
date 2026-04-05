@@ -5,7 +5,8 @@
 ///   Phase 2 (65%→40%): Air. Melee hold, dodge Deep Breath, ranged normal.
 ///   Phase 3 (<40%): Ground again + whelp spawns.
 use super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, Sel, Seq, TargetHasAura, FleeToSafe, IsMeleeDps, HoldPosition, MoveBehind};
+use crate::encounters::bt::Bt::{self, *};
+use crate::{Seq, Sel};
 use crate::ffi::SpellId;
 
 pub const ENTRY_ONYXIA: u32 = 10184;
@@ -35,11 +36,11 @@ impl OnyxiaFsm {
         Self {
             phase: OnyxiaPhase::Idle,
             done: false,
-            air_bt: Sel(vec![
-                Seq(vec![TargetHasAura(SPELL_DEEP_BREATH), FleeToSafe(40.0)]),
-                Seq(vec![IsMeleeDps, HoldPosition]),
-            ]),
-            ground_bt: Seq(vec![IsMeleeDps, MoveBehind(5.0)]),
+            air_bt: Sel!(
+                Seq!(Bt::target_has(SPELL_DEEP_BREATH), FleeToSafe(40.0)),
+                Seq!(IsMeleeDps, HoldPosition),
+            ),
+            ground_bt: Seq!(IsMeleeDps, MoveBehind(5.0)),
         }
     }
 

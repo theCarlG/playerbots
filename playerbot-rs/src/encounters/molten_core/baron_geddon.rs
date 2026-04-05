@@ -13,9 +13,8 @@
 ///    - Others: flee 30 yards.
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::bot::state::PlayerClass;
-use crate::encounters::bt::Bt::{
-    self, CastOnSelf, FleeToSafe, HasDebuff, IsClass, MoveAwayFromRaid, Sel, Seq, TargetHasAura,
-};
+use crate::{Seq, Sel};
+use crate::encounters::bt::Bt::{self, *};
 use crate::ffi::SpellId;
 
 pub const AURA_LIVING_BOMB: SpellId = SpellId(20475);
@@ -33,33 +32,33 @@ pub struct BaronGeddonFsm {
 
 impl BaronGeddonFsm {
     fn build_bt() -> Bt {
-        Sel(vec![Self::living_bomb(), Self::inferno()])
+        Sel!(Self::living_bomb(), Self::inferno())
     }
 
     /// Living Bomb: only the affected bot reacts.
     fn living_bomb() -> Bt {
-        Seq(vec![
-            HasDebuff(AURA_LIVING_BOMB),
-            Sel(vec![
-                Seq(vec![IsClass(PlayerClass::Mage), CastOnSelf(ICE_BLOCK)]),
-                Seq(vec![
+        Seq!(
+            Bt::self_has(AURA_LIVING_BOMB),
+            Sel!(
+                Seq!(IsClass(PlayerClass::Mage), CastOnSelf(ICE_BLOCK)),
+                Seq!(
                     IsClass(PlayerClass::Paladin),
                     CastOnSelf(DIVINE_SHIELD),
-                ]),
+                ),
                 MoveAwayFromRaid(40.0),
-            ]),
-        ])
+            ),
+        )
     }
 
     /// Inferno: mages Fire Ward first, everyone flee.
     fn inferno() -> Bt {
-        Seq(vec![
-            TargetHasAura(AURA_INFERNO),
-            Sel(vec![
-                Seq(vec![IsClass(PlayerClass::Mage), CastOnSelf(FIRE_WARD)]),
+        Seq!(
+            Bt::target_has(AURA_INFERNO),
+            Sel!(
+                Seq!(IsClass(PlayerClass::Mage), CastOnSelf(FIRE_WARD)),
                 FleeToSafe(30.0),
-            ]),
-        ])
+            ),
+        )
     }
 }
 

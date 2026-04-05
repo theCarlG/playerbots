@@ -4,9 +4,10 @@
 ///   SW:Pain → Mind Blast → Devouring Plague → Mind Flay → Psychic Scream (`AoE` panic)
 use crate::{
     data::spells::vanilla::priest::*,
-    engine::bt::Bt::{self, Sel, Seq, SelfMissingAura, CastOnSelf, AttackersAtLeast, HpBelow, InCombat, TargetMissingAura, CastOnTarget, TargetMissingAnyRank},
+    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
     ffi::SpellId,
 };
+use crate::{Seq, Sel};
 
 // All SW:Pain / Devouring Plague ranks worth checking for re-application.
 const SW_PAIN_RANKS: &[SpellId] = &[
@@ -29,38 +30,38 @@ const DEVOURING_PLAGUE_RANKS: &[SpellId] = &[
 ];
 
 pub fn build_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         // Always maintain Shadowform.
-        Seq(vec![SelfMissingAura(SHADOWFORM), CastOnSelf(SHADOWFORM)]),
+        Seq!(Bt::self_missing(SHADOWFORM), CastOnSelf(SHADOWFORM)),
         // Fade on aggro.
-        Seq(vec![AttackersAtLeast(1), CastOnSelf(FADE)]),
+        Seq!(Cmp(AttackerCount, AtLeast(1)), CastOnSelf(FADE)),
         // Emergency self-heal (drops form).
-        Seq(vec![HpBelow(0.30), CastOnSelf(FLASH_HEAL)]),
-        Seq(vec![
+        Seq!(Cmp(SelfHealthPct, Below(30)), CastOnSelf(FLASH_HEAL)),
+        Seq!(
             InCombat,
-            Sel(vec![
+            Sel!(
                 // Keep Vampiric Embrace applied.
-                Seq(vec![
-                    TargetMissingAura(VAMPIRIC_EMBRACE),
+                Seq!(
+                    Bt::target_missing(VAMPIRIC_EMBRACE),
                     CastOnTarget(VAMPIRIC_EMBRACE),
-                ]),
+                ),
                 // Shadow Word: Pain DoT upkeep.
-                Seq(vec![
-                    TargetMissingAnyRank(SW_PAIN_RANKS),
+                Seq!(
+                    Bt::target_missing_any_rank(SW_PAIN_RANKS),
                     CastOnTarget(SHADOW_WORD_PAIN),
-                ]),
+                ),
                 // Instant nuke on CD.
                 CastOnTarget(MIND_BLAST),
                 // Devouring Plague (Undead racial).
-                Seq(vec![
-                    TargetMissingAnyRank(DEVOURING_PLAGUE_RANKS),
+                Seq!(
+                    Bt::target_missing_any_rank(DEVOURING_PLAGUE_RANKS),
                     CastOnTarget(DEVOURING_PLAGUE),
-                ]),
+                ),
                 // Channel filler.
                 CastOnTarget(MIND_FLAY),
                 // AoE panic if multiple melee attackers.
-                Seq(vec![AttackersAtLeast(2), CastOnSelf(PSYCHIC_SCREAM)]),
-            ]),
-        ]),
-    ])
+                Seq!(Cmp(AttackerCount, AtLeast(2)), CastOnSelf(PSYCHIC_SCREAM)),
+            ),
+        ),
+    )
 }

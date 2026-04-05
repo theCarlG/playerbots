@@ -13,7 +13,8 @@
 ///   - Polarity: check own charge, move to correct side of room.
 ///   - Normal (Thaddius, no shift): normal rotation.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, AttackNearest, Sel, Seq, HasDebuff, MoveToSafeZone};
+use crate::encounters::bt::Bt::{self, *};
+use crate::{Seq, Sel};
 use crate::ffi::SpellId;
 
 pub const SPELL_POLARITY_SHIFT: SpellId = SpellId(28089);
@@ -61,12 +62,12 @@ impl ThaddiusFsm {
             polarity_shift_ms: 0,
             done: false,
             adds_bt: AttackNearest,
-            polarity_bt: Sel(vec![
+            polarity_bt: Sel!(
                 // Positive charge → move to safe zone (left side)
-                Seq(vec![HasDebuff(AURA_POSITIVE_CHARGE), MoveToSafeZone]),
+                Seq!(Bt::self_has(AURA_POSITIVE_CHARGE), MoveToSafeZone),
                 // Negative charge → move to safe zone (right side)
-                Seq(vec![HasDebuff(AURA_NEGATIVE_CHARGE), MoveToSafeZone]),
-            ]),
+                Seq!(Bt::self_has(AURA_NEGATIVE_CHARGE), MoveToSafeZone),
+            ),
         }
     }
 

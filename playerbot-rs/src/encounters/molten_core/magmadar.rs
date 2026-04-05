@@ -5,7 +5,8 @@
 ///   - Tanks: taunt after Panic fear breaks.
 ///   - Melee DPS: normal rotation.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, IsRanged, IsTank, MaintainRange, Sel, Seq, Taunt};
+use crate::encounters::bt::Bt::{self, *};
+use crate::{Seq, Sel};
 use crate::ffi::SpellId;
 
 pub const SPELL_LAVA_BOMB: SpellId = SpellId(19411);
@@ -43,10 +44,10 @@ impl EncounterFsm for MagmadarFsm {
 
     fn phase_bt(&self) -> Option<Bt> {
         if self.active {
-            Some(Sel(vec![
-                Seq(vec![IsRanged, MaintainRange(30.0)]),
-                Seq(vec![IsTank, Taunt]),
-            ]))
+            Some(Sel!(
+                Seq!(IsRanged, MaintainRange(30.0)),
+                Seq!(IsTank, Taunt),
+            ))
         } else {
             None
         }

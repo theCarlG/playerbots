@@ -7,39 +7,40 @@ use crate::{
     data::spells::vanilla::hunter::*,
     engine::{
         aura_helpers::{HUNTERS_MARK_RANKS, SERPENT_STING_RANKS},
-        bt::Bt::{self, Sel, Seq, HpBelow, CastOnSelf, SelfMissingAura, MaintainRange, InCombat, TargetMissingAnyRank, CastOnTarget},
+        bt::{Bt::{self, *}, Op::*, Resource::*},
     },
 };
+use crate::{Seq, Sel};
 
 pub fn build_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         // Emergency FD.
-        Seq(vec![HpBelow(0.15), CastOnSelf(FEIGN_DEATH)]),
+        Seq!(Cmp(SelfHealthPct, Below(15)), CastOnSelf(FEIGN_DEATH)),
         // Maintain Aspect of the Hawk.
-        Seq(vec![
-            SelfMissingAura(ASPECT_OF_THE_HAWK),
+        Seq!(
+            Bt::self_missing(ASPECT_OF_THE_HAWK),
             CastOnSelf(ASPECT_OF_THE_HAWK),
-        ]),
+        ),
         // Kite melee attackers (MaintainRange only fires when too close).
         MaintainRange(8.0),
-        Seq(vec![
+        Seq!(
             InCombat,
-            Sel(vec![
-                Seq(vec![
-                    TargetMissingAnyRank(HUNTERS_MARK_RANKS),
+            Sel!(
+                Seq!(
+                    Bt::target_missing_any_rank(HUNTERS_MARK_RANKS),
                     CastOnTarget(HUNTERS_MARK),
-                ]),
+                ),
                 CastOnTarget(BESTIAL_WRATH),
                 CastOnTarget(AIMED_SHOT),
                 CastOnTarget(MULTI_SHOT),
                 CastOnTarget(ARCANE_SHOT),
-                Seq(vec![
-                    TargetMissingAnyRank(SERPENT_STING_RANKS),
+                Seq!(
+                    Bt::target_missing_any_rank(SERPENT_STING_RANKS),
                     CastOnTarget(SERPENT_STING),
-                ]),
+                ),
                 // Melee fallback.
                 CastOnTarget(RAPTOR_STRIKE),
-            ]),
-        ]),
-    ])
+            ),
+        ),
+    )
 }

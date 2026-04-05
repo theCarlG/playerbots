@@ -4,41 +4,42 @@
 ///   Drain Life (self sustain) → Shadow Bolt
 use crate::{
     data::spells::vanilla::warlock::*,
-    engine::bt::Bt::{self, Sel, MaintainRange, Seq, SelfMissingAura, CastOnSelf, ManaBelow, Not, HpBelow, InCombat, TargetMissingAura, CastOnTarget},
+    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
     ffi::SpellId,
 };
+use crate::{Seq, Sel};
 
 const CURSE_OF_AGONY: SpellId = SpellId(11722);
 
 pub fn build_tree() -> Bt {
-    Sel(vec![
+    Sel!(
         MaintainRange(25.0),
         // Self buff.
-        Seq(vec![SelfMissingAura(DEMON_ARMOR), CastOnSelf(DEMON_ARMOR)]),
+        Seq!(Bt::self_missing(DEMON_ARMOR), CastOnSelf(DEMON_ARMOR)),
         // Life tap for mana.
-        Seq(vec![
-            ManaBelow(0.20),
-            Not(Box::new(HpBelow(0.50))),
+        Seq!(
+            Cmp(SelfManaPct, Below(20)),
+            Not(Box::new(Cmp(SelfHealthPct, Below(50)))),
             CastOnSelf(LIFE_TAP),
-        ]),
-        Seq(vec![
+        ),
+        Seq!(
             InCombat,
-            Sel(vec![
+            Sel!(
                 // DoT upkeep.
-                Seq(vec![
-                    TargetMissingAura(CURSE_OF_AGONY),
+                Seq!(
+                    Bt::target_missing(CURSE_OF_AGONY),
                     CastOnTarget(CURSE_OF_AGONY),
-                ]),
-                Seq(vec![
-                    TargetMissingAura(CORRUPTION),
+                ),
+                Seq!(
+                    Bt::target_missing(CORRUPTION),
                     CastOnTarget(CORRUPTION),
-                ]),
-                Seq(vec![TargetMissingAura(IMMOLATE), CastOnTarget(IMMOLATE)]),
+                ),
+                Seq!(Bt::target_missing(IMMOLATE), CastOnTarget(IMMOLATE)),
                 // Self sustain.
-                Seq(vec![HpBelow(0.60), CastOnTarget(DRAIN_LIFE)]),
+                Seq!(Cmp(SelfHealthPct, Below(60)), CastOnTarget(DRAIN_LIFE)),
                 // Filler nuke.
                 CastOnTarget(SHADOW_BOLT),
-            ]),
-        ]),
-    ])
+            ),
+        ),
+    )
 }

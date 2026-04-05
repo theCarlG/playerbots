@@ -4,6 +4,7 @@
 /// Commands mutate settings between ticks (never during BT execution).
 use std::collections::{HashMap, HashSet};
 
+use crate::bot::class_prefs::ClassPrefs;
 use crate::ffi::{ItemId, SpellId, UnitHandle};
 
 /// What the bot does when not given a specific order.
@@ -324,6 +325,12 @@ pub struct BotSettings {
     /// Persistent raid-target-icon preference set by `rti <icon>`. When set,
     /// world/combat modules may use it as the bot's default focus icon.
     pub preferred_rti_icon: Option<u8>,
+
+    /// Class-specific preferences (rogue weapon poisons, shaman totem
+    /// loadout, etc). Only the variant matching the bot's class is ever
+    /// populated — seeded at `BotState::new` time via
+    /// `ClassPrefs::default_for`, mutated by chat commands.
+    pub class_prefs: ClassPrefs,
 }
 
 /// Chat channel bitfield for `BotSettings::chat_channels`. Mirrors the PB2
@@ -395,6 +402,7 @@ impl Default for BotSettings {
             keep_items: HashSet::new(),
             chat_channels: 0,
             preferred_rti_icon: None,
+            class_prefs: ClassPrefs::None,
         }
     }
 }
