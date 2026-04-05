@@ -320,6 +320,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.bot_remove_all_auras                = CB_BotRemoveAllAuras;
     cbs.bot_has_skill                       = CB_BotHasSkill;
     cbs.bot_learn_spell                     = CB_BotLearnSpell;
+    cbs.bot_remove_spell                    = CB_BotRemoveSpell;
     cbs.bot_learn_default_spells            = CB_BotLearnDefaultSpells;
     cbs.bot_learn_class_level_spells        = CB_BotLearnClassLevelSpells;
 
@@ -2812,6 +2813,15 @@ void BotBridge::CB_BotLearnSpell(BotHandle bot, uint32_t spell_id)
     if (!b || spell_id == 0)
         return;
     b->learnSpell(spell_id, false);
+}
+
+void BotBridge::CB_BotRemoveSpell(BotHandle bot, uint32_t spell_id)
+{
+    Player* b = FindBot(bot);
+    if (!b || spell_id == 0)
+        return;
+    if (b->HasSpell(spell_id))
+        b->removeSpell(spell_id);
 }
 
 void BotBridge::CB_BotLearnDefaultSpells(BotHandle bot)

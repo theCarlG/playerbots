@@ -182,6 +182,7 @@ namespace BotBridge
     void CB_BotRemoveAllAuras(BotHandle bot);
     bool CB_BotHasSkill(BotHandle bot, uint32_t skill_id);
     void CB_BotLearnSpell(BotHandle bot, uint32_t spell_id);
+    void CB_BotRemoveSpell(BotHandle bot, uint32_t spell_id);
     void CB_BotLearnDefaultSpells(BotHandle bot);
     void CB_BotLearnClassLevelSpells(BotHandle bot, bool include_quest_rewards);
 

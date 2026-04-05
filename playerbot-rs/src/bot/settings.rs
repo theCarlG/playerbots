@@ -411,6 +411,15 @@ impl StrategyFlags {
     pub const FROST_AOE: Self = Self::bit(73);
     pub const UNHOLY_AOE: Self = Self::bit(74);
 
+    /// PB2 `rtsc jump` sub-strategy — set by the `rtsc jump` command
+    /// and stripped by `rtsc jump reset` / auto-cancel on stale state.
+    /// Referenced by PB2 `RtscAction.cpp:329` and `:349`. The BT
+    /// consumer that actually fires the two-stage jump rotation lands
+    /// with the RTSC module; this bit exists so `@nc=rtsc jump`
+    /// filters and `nc ?` queries reflect the current state byte-
+    /// accurately.
+    pub const RTSC_JUMP: Self = Self::bit(75);
+
     pub const fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
     }
@@ -437,6 +446,7 @@ impl StrategyFlags {
         (Self::RPG_QUEST, "rpg quest"),
         (Self::RPG_VENDOR, "rpg vendor"),
         (Self::RTSC, "rtsc"),
+        (Self::RTSC_JUMP, "rtsc jump"),
         (Self::WBUFF, "wbuff"),
         (Self::GRIND, "grind"),
         (Self::FLEE, "flee"),
@@ -867,8 +877,16 @@ pub struct BotSettings {
     pub rtsc_selected: bool,
     /// Pending action for the next spell-target position.
     pub rtsc_pending_action: Option<RtscAction>,
-    /// Named waypoints saved via RTSC.
+    /// Named waypoints saved via RTSC. PB2 stores these as per-bot
+    /// `"RTSC saved location::<name>"` blackboard entries
+    /// (`RtscAction.cpp:83`). The reserved names `"jump"` and
+    /// `"jump point"` are used by the two-stage jump recorder — see
+    /// [`crate::rtsc`].
     pub rtsc_waypoints: HashMap<String, (f32, f32, f32)>,
+    /// Last observed Aedm (spell 30758) cast position, consumed by
+    /// `rtsc last`. PB2 stores this as the `"see spell location"`
+    /// AI value (`RtscAction.cpp:310`).
+    pub rtsc_last_seen: Option<(f32, f32, f32)>,
 
     // -- Misc tunables driven by chat commands --
     /// Warrior stance (0=none, 1=battle, 2=defensive, 3=berserker).
@@ -945,6 +963,10 @@ pub enum RtscAction {
     Move { exact: bool },
     /// Save the position as a named waypoint.
     Save { name: String },
+    /// Two-stage jump recording. The spell-land consumer writes into
+    /// `rtsc_waypoints["jump"]` first, then `rtsc_waypoints["jump point"]`
+    /// on the second Aedm cast. PB2 reference: `RtscAction.cpp:315-344`.
+    Jump,
 }
 
 impl Default for BotSettings {
@@ -975,6 +997,7 @@ impl Default for BotSettings {
             rtsc_selected: false,
             rtsc_pending_action: None,
             rtsc_waypoints: HashMap::new(),
+            rtsc_last_seen: None,
             stance: 0,
             save_mana: false,
             loot_policy: LootPolicy::defaults(),

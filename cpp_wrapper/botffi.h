@@ -456,6 +456,9 @@ typedef struct BotCallbacks {
     /* Teach the bot a spell (Player::learnSpell with dependent=false).
      * Used by the factory mount / spell initialization steps. */
     void (*bot_learn_spell)(BotHandle bot, uint32_t spell_id);
+    /* Remove a learned spell (Player::removeSpell). Used by RTSC `rtsc reset`
+     * to unlearn Aedm (spell 30758). Mirrors PB2 RtscAction.cpp:33. */
+    void (*bot_remove_spell)(BotHandle bot, uint32_t spell_id);
     /* Wraps `Player::learnDefaultSpells()` — teaches the race/class starter
      * spell set from `playercreateinfo_spell_custom`. Used by the factory
      * InitAvailableSpells step. */

@@ -446,6 +446,11 @@ pub trait BotInterface: Send {
     /// Used by the factory mount / spell initialization steps.
     fn bot_learn_spell(&self, _spell_id: u32) {}
 
+    /// Remove a learned spell (`Player::removeSpell`). Used by RTSC
+    /// `rtsc reset` to unlearn Aedm (spell 30758); mirrors PB2
+    /// `RtscAction.cpp:33`.
+    fn bot_remove_spell(&self, _spell_id: u32) {}
+
     /// Teach the bot its race/class starter spells — wraps
     /// `Player::learnDefaultSpells()`.
     fn bot_learn_default_spells(&self) {}
@@ -1277,6 +1282,10 @@ impl BotInterface for RealInterface {
 
     fn bot_learn_spell(&self, spell_id: u32) {
         unsafe { (self.cbs.bot_learn_spell.unwrap())(self.handle, spell_id) }
+    }
+
+    fn bot_remove_spell(&self, spell_id: u32) {
+        unsafe { (self.cbs.bot_remove_spell.unwrap())(self.handle, spell_id) }
     }
 
     fn bot_learn_default_spells(&self) {

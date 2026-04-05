@@ -744,111 +744,118 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             s.mode = BehaviorMode::Follow;
         }
 
-        // -- RTSC commands --
+        // -- RTSC commands -- (see `crate::rtsc` for the backing module.)
         BotCommand::RtscSelect => {
-            s.rtsc_selected = true;
-            s.rtsc_pending_action = None;
+            crate::rtsc::select(bot);
         }
         BotCommand::RtscCancel => {
-            s.rtsc_selected = false;
-            s.rtsc_pending_action = None;
+            crate::rtsc::cancel(bot);
         }
         BotCommand::RtscToggle => {
-            s.rtsc_selected = !s.rtsc_selected;
-            if !s.rtsc_selected {
-                s.rtsc_pending_action = None;
-            }
+            crate::rtsc::toggle(bot);
         }
         BotCommand::RtscMove => {
-            s.rtsc_pending_action = Some(RtscAction::Move { exact: false });
+            crate::rtsc::ensure_spell_learned(bot);
+            bot.settings.rtsc_pending_action = Some(RtscAction::Move { exact: false });
         }
         BotCommand::RtscMoveExact => {
-            s.rtsc_pending_action = Some(RtscAction::Move { exact: true });
+            crate::rtsc::ensure_spell_learned(bot);
+            bot.settings.rtsc_pending_action = Some(RtscAction::Move { exact: true });
         }
         BotCommand::RtscSaveHere(name) => {
-            let pos = bot.snap.self_.pos;
-            s.rtsc_waypoints.insert(name.clone(), (pos.x, pos.y, pos.z));
+            crate::rtsc::save_here(bot, name.clone());
         }
         BotCommand::RtscSave(name) => {
-            s.rtsc_pending_action = Some(RtscAction::Save { name: name.clone() });
+            crate::rtsc::ensure_spell_learned(bot);
+            bot.settings.rtsc_pending_action = Some(RtscAction::Save { name: name.clone() });
         }
         BotCommand::RtscUnsave(name) => {
-            s.rtsc_waypoints.remove(name);
+            bot.settings.rtsc_waypoints.remove(name);
         }
         BotCommand::RtscGo(name) => {
-            if let Some(&(x, y, z)) = s.rtsc_waypoints.get(name) {
+            crate::rtsc::ensure_spell_learned(bot);
+            if let Some(&(x, y, z)) = bot.settings.rtsc_waypoints.get(name) {
                 bot.interface.move_to(x, y, z);
-                s.guard_position = Some((x, y, z));
-                s.mode = BehaviorMode::Guard;
+                bot.settings.guard_position = Some((x, y, z));
+                bot.settings.mode = BehaviorMode::Guard;
             }
         }
         BotCommand::RtscShow => {
-            let msg = if s.rtsc_waypoints.is_empty() {
+            crate::rtsc::ensure_spell_learned(bot);
+            let names: Vec<&str> = bot
+                .settings
+                .rtsc_waypoints
+                .keys()
+                .filter(|n| {
+                    n.as_str() != crate::rtsc::JUMP_SLOT
+                        && n.as_str() != crate::rtsc::JUMP_POINT_SLOT
+                })
+                .map(|s| s.as_str())
+                .collect();
+            let msg = if names.is_empty() {
                 "No saved waypoints.".to_string()
             } else {
-                let names: Vec<&str> = s.rtsc_waypoints.keys().map(|s| s.as_str()).collect();
                 format!("Waypoints: {}", names.join(", "))
             };
             reply(bot, pc, &msg);
         }
         BotCommand::RtscSpellPosition(x, y, z) => {
-            // This is triggered when spell 30758 lands on a position.
-            // What happens depends on the pending RTSC action.
-            match s.rtsc_pending_action.take() {
-                Some(RtscAction::Move { exact: _ }) => {
-                    bot.interface.move_to(*x, *y, *z);
-                    s.guard_position = Some((*x, *y, *z));
-                    s.mode = BehaviorMode::Guard;
-                }
-                Some(RtscAction::Save { name }) => {
-                    s.rtsc_waypoints.insert(name, (*x, *y, *z));
-                }
-                None => {
-                    // No pending action — if selected, default to move.
-                    if s.rtsc_selected {
-                        bot.interface.move_to(*x, *y, *z);
-                        s.guard_position = Some((*x, *y, *z));
-                        s.mode = BehaviorMode::Guard;
-                    }
-                }
-            }
+            crate::rtsc::on_spell_land(bot, *x, *y, *z);
         }
-        // The behavior for the commands below lands in Part 5 Step 10
-        // (`playerbot-rs/src/rtsc.rs`). Step 9 only wires the parser and
-        // dispatch entries so downstream matching stays exhaustive.
         BotCommand::RtscReset => {
-            s.rtsc_selected = false;
-            s.rtsc_pending_action = None;
-            s.rtsc_waypoints.clear();
-            // TODO(step10): call `bot.interface.unlearn_spell(30758)` and
-            // reset the `RTSC saved location::*` blackboard slots once the
-            // rtsc module owns that state.
+            crate::rtsc::reset(bot);
         }
         BotCommand::RtscLast => {
-            // TODO(step10): move to last observed Aedm cast position.
-            // Needs the `see spell location` blackboard slot that the
-            // spell-land consumer writes.
+            crate::rtsc::ensure_spell_learned(bot);
+            if !crate::rtsc::last(bot) {
+                reply(bot, pc, "No RTSC cast recorded yet.");
+            }
         }
-        BotCommand::RtscJump => {
-            // TODO(step10): two-stage jump recorder. First call queues
-            // the pending action as `jump`; the spell-land consumer
-            // writes the `jump` slot, then the strategy engine prompts
-            // for the second cast which writes `jump point`.
-        }
+        BotCommand::RtscJump => match crate::rtsc::jump_command(bot) {
+            crate::rtsc::JumpCommandResult::StageOneQueued => {}
+            crate::rtsc::JumpCommandResult::StaleCancelled => {
+                reply(bot, pc, "Can't finish previous jump! Cancelling...");
+            }
+            crate::rtsc::JumpCommandResult::AlreadyInProgress => {
+                reply(
+                    bot,
+                    pc,
+                    "Another jump is in process! Use 'rtsc jump reset' to stop it",
+                );
+            }
+        },
         BotCommand::RtscJumpReset => {
-            s.rtsc_waypoints.remove("jump");
-            s.rtsc_waypoints.remove("jump point");
-            // TODO(step10): also strip the `rtsc jump` strategy flag
-            // from the non-combat slot once that flag exists.
+            crate::rtsc::jump_reset(bot);
         }
-        BotCommand::RtscFileSave { .. } => {
-            // TODO(step10): serialize matching saved locations via the
-            // new `bot_write_log_file` FFI (already exists on the C++
-            // side; wired in Part 5 Step 2).
+        BotCommand::RtscFileSave {
+            file,
+            name_glob,
+            bot_glob: _,
+        } => {
+            crate::rtsc::ensure_spell_learned(bot);
+            let (body, n) = crate::rtsc::serialize_waypoints(bot, name_glob);
+            let ok = bot.interface.bot_write_log_file(file, &body);
+            let msg = if ok {
+                format!("Saved {n} waypoint(s) to {file}.")
+            } else {
+                format!("Failed to write {file}.")
+            };
+            reply(bot, pc, &msg);
         }
-        BotCommand::RtscFileLoad { .. } => {
-            // TODO(step10): reload saved locations via
-            // `bot_read_log_file`.
+        BotCommand::RtscFileLoad {
+            file,
+            name_glob,
+            bot_glob: _,
+        } => {
+            crate::rtsc::ensure_spell_learned(bot);
+            let msg = match bot.interface.bot_read_log_file(file) {
+                Some(body) => {
+                    let n = crate::rtsc::deserialize_waypoints(bot, &body, name_glob);
+                    format!("Loaded {n} waypoint(s) from {file}.")
+                }
+                None => format!("Failed to read {file}."),
+            };
+            reply(bot, pc, &msg);
         }
         BotCommand::Repair => {
             bot.interface.repair_all();

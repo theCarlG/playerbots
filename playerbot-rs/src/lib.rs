@@ -16,6 +16,7 @@ pub mod factory;
 pub mod ffi;
 pub mod logging;
 pub mod noncombat;
+pub mod rtsc;
 pub mod world;
 
 use bot::state::BotState;
