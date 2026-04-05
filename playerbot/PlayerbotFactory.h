@@ -60,7 +60,6 @@ public:
 
 private:
     void Prepare();
-    void InitSecondEquipmentSet();
     void Shuffle(std::vector<uint32>& items);
     void InitEquipment(bool incremental, bool syncWithMaster, bool progressive = sPlayerbotAIConfig.randomGearProgression, bool partialUpgrade = false);
     void InitEquipmentNew(bool incremental);
@@ -70,7 +69,6 @@ private:
     void UpdateTradeSkills();
     void SetRandomSkill(uint16 id);
     void InitReputations();
-    void InitSpells();
     void ClearSpells();
     void ClearSkills();
     bool InitLevelOne();
@@ -104,7 +102,6 @@ private:
     Item* StoreItem(uint32 itemId, uint32 count, bool ignoreCount = false);
     void InitGuild();
     void InitArenaTeam();
-    void InitImmersive();
     void AddConsumables();
     static void AddPrevQuests(uint32 questId, std::list<uint32>& questIds);
     void LoadEnchantContainer();

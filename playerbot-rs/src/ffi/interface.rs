@@ -480,6 +480,12 @@ pub trait BotInterface: Send {
     /// Wraps `Player::UpdateFreeTalentPoints(false)`. Recomputes the free
     /// talent point count after a talent spell has been learned.
     fn bot_update_free_talent_points(&self) {}
+
+    /// Pick (or recall) the bot's talent spec tab (0..=2). See the matching
+    /// doc comment on `bot_pick_spec_no` in `botffi.h` for the full policy.
+    fn bot_pick_spec_no(&self, _incremental: bool) -> u32 {
+        0
+    }
 }
 
 /// Quest info returned from the FFI.
@@ -1153,5 +1159,9 @@ impl BotInterface for RealInterface {
 
     fn bot_update_free_talent_points(&self) {
         unsafe { (self.cbs.bot_update_free_talent_points.unwrap())(self.handle) };
+    }
+
+    fn bot_pick_spec_no(&self, incremental: bool) -> u32 {
+        unsafe { (self.cbs.bot_pick_spec_no.unwrap())(self.handle, incremental) }
     }
 }

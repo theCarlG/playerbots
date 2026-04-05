@@ -19,12 +19,11 @@
 ///     Seq(vec![Not(Box::new(InCombat)), Follow]),
 /// ])
 /// ```
-use std::cell::Cell;
-
 use crate::bot::settings::{BehaviorMode, CombatOrder, Reactivity, StrategyFlags};
 use crate::bot::state::PlayerClass;
 use crate::engine::bt_nodes::{BtNode, BtResult};
 use crate::engine::context::TickContext;
+use crate::engine::throttles::ThrottleKey;
 use crate::ffi::SpellId;
 use crate::noncombat::buffing::GroupBuff;
 
@@ -50,7 +49,17 @@ pub enum Bt {
     /// Inverts Success ↔ Failure (Running unchanged).
     Not(Box<Bt>),
     /// Run child at most once per `interval_ms`. Returns Failure when throttled.
-    Throttle(u64, Cell<u64>, Box<Bt>),
+    ///
+    /// The tree itself is stateless — last-fire timestamps live on the bot in
+    /// [`crate::engine::throttles::Throttles`], keyed by the construction
+    /// site's `(file, line)` via [`Bt::throttle`]'s `#[track_caller]` capture.
+    /// This lets the same `Bt` be safely shared between bots or returned as
+    /// `&'static Bt` from encounter `phase_bt()`.
+    Throttle {
+        key: ThrottleKey,
+        interval_ms: u64,
+        child: Box<Bt>,
+    },
 
     // ── Conditions — encounter ───────────────────────────────────────────
     /// This bot has the specified aura/debuff on itself.
@@ -277,8 +286,20 @@ impl Bt {
         Bt::Not(Box::new(self))
     }
 
+    /// Build a throttle node. The caller's source location is captured via
+    /// `#[track_caller]` and used as the state key on the bot — each unique
+    /// `throttle()` call site becomes an independent throttle slot.
+    #[track_caller]
     pub fn throttle(interval_ms: u64, child: Self) -> Self {
-        Bt::Throttle(interval_ms, Cell::new(0), Box::new(child))
+        let loc = std::panic::Location::caller();
+        Bt::Throttle {
+            key: ThrottleKey {
+                file: loc.file(),
+                line: loc.line(),
+            },
+            interval_ms,
+            child: Box::new(child),
+        }
     }
 
     /// Run `self` only when `guard` succeeds. Equivalent to `Seq(vec![guard, self])`.
@@ -323,14 +344,19 @@ impl BtNode for Bt {
                 BtResult::Failure => BtResult::Success,
                 other @ BtResult::Running => other,
             },
-            Bt::Throttle(interval_ms, last_ms, child) => {
+            Bt::Throttle {
+                key,
+                interval_ms,
+                child,
+            } => {
                 let now = ctx.server_time_ms;
-                if now.saturating_sub(last_ms.get()) < *interval_ms {
+                let last = ctx.throttles.last_fire(*key);
+                if now.saturating_sub(last) < *interval_ms {
                     return BtResult::Failure;
                 }
                 let result = child.tick(ctx);
                 if result != BtResult::Failure {
-                    last_ms.set(now);
+                    ctx.throttles.mark_fired(*key, now);
                 }
                 result
             }
@@ -695,9 +721,10 @@ fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
     // Prefer following the designated tank.
     if let Some(tank) = ctx.interface.group_get_tank()
         && ctx.interface.unit_distance(tank) > REFOLLOW_THRESHOLD
-            && ctx.interface.follow(tank, FOLLOW_DIST, 0.0) {
-                return BtResult::Success;
-            }
+        && ctx.interface.follow(tank, FOLLOW_DIST, 0.0)
+    {
+        return BtResult::Success;
+    }
     // Fall back to any group member far enough away.
     let member = ctx.snap.group_members[..ctx.snap.group_size as usize]
         .iter()
@@ -706,9 +733,10 @@ fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
             h != 0 && h != ctx.bot_handle && ctx.interface.unit_distance(h) > REFOLLOW_THRESHOLD
         });
     if let Some(target) = member
-        && ctx.interface.follow(target, FOLLOW_DIST, 0.0) {
-            return BtResult::Success;
-        }
+        && ctx.interface.follow(target, FOLLOW_DIST, 0.0)
+    {
+        return BtResult::Success;
+    }
     BtResult::Failure
 }
 
@@ -722,10 +750,9 @@ fn tick_guard_return(ctx: &mut TickContext<'_>) -> BtResult {
         let dx = pos.x - gx;
         let dy = pos.y - gy;
         let dist = dx.hypot(dy);
-        if dist > GUARD_LEASH_DIST
-            && ctx.interface.move_to(gx, gy, gz) {
-                return BtResult::Running;
-            }
+        if dist > GUARD_LEASH_DIST && ctx.interface.move_to(gx, gy, gz) {
+            return BtResult::Running;
+        }
     }
     BtResult::Failure
 }
@@ -762,10 +789,11 @@ fn tick_consumables(ctx: &mut TickContext<'_>) -> BtResult {
 fn tick_buff(ctx: &mut TickContext<'_>, buffs: &[GroupBuff]) -> BtResult {
     for buff in buffs {
         if let Some(target_handle) = find_buff_target(ctx, buff)
-            && ctx.interface.cast_spell(buff.spell_id, target_handle) {
-                ctx.timers.on_spell_cast(buff.spell_id, ctx.server_time_ms);
-                return BtResult::Success;
-            }
+            && ctx.interface.cast_spell(buff.spell_id, target_handle)
+        {
+            ctx.timers.on_spell_cast(buff.spell_id, ctx.server_time_ms);
+            return BtResult::Success;
+        }
     }
     BtResult::Failure
 }
@@ -922,19 +950,20 @@ fn tick_threat_dump(ctx: &mut TickContext<'_>) -> BtResult {
 
 fn tick_focus_attack(ctx: &mut TickContext<'_>) -> BtResult {
     if let Some(focus) = ctx.settings.focus_target
-        && ctx.current_target() != Some(focus) && ctx.interface.attack(focus) {
-            return BtResult::Success;
-        }
+        && ctx.current_target() != Some(focus)
+        && ctx.interface.attack(focus)
+    {
+        return BtResult::Success;
+    }
     BtResult::Failure
 }
 
 fn tick_tank_pickup(ctx: &mut TickContext<'_>) -> BtResult {
     for &attacker in ctx.attackers {
         let snap = ctx.interface.get_unit_snapshot(attacker);
-        if snap.current_target != ctx.bot_handle
-            && ctx.interface.taunt(attacker) {
-                return BtResult::Success;
-            }
+        if snap.current_target != ctx.bot_handle && ctx.interface.taunt(attacker) {
+            return BtResult::Success;
+        }
     }
     BtResult::Failure
 }
@@ -959,9 +988,11 @@ fn tick_assist_leader(ctx: &mut TickContext<'_>) -> BtResult {
         });
 
     if let Some(target) = leader_target
-        && ctx.current_target() != Some(target) && ctx.interface.attack(target) {
-            return BtResult::Success;
-        }
+        && ctx.current_target() != Some(target)
+        && ctx.interface.attack(target)
+    {
+        return BtResult::Success;
+    }
     BtResult::Failure
 }
 
@@ -969,10 +1000,9 @@ fn tick_protect(ctx: &mut TickContext<'_>) -> BtResult {
     if let Some(protect) = ctx.settings.protect_target {
         for &attacker in ctx.attackers {
             let snap = ctx.interface.get_unit_snapshot(attacker);
-            if snap.current_target == protect
-                && ctx.interface.attack(attacker) {
-                    return BtResult::Success;
-                }
+            if snap.current_target == protect && ctx.interface.attack(attacker) {
+                return BtResult::Success;
+            }
         }
     }
     BtResult::Failure
@@ -1064,9 +1094,10 @@ fn tick_attack_quest_mob(ctx: &mut TickContext<'_>) -> BtResult {
     let has_active = quests.iter().any(|q| !q.complete);
     if has_active
         && let Some(&target) = ctx.nearby.iter().find(|&&u| ctx.interface.is_attackable(u))
-            && ctx.interface.attack(target) {
-                return BtResult::Success;
-            }
+        && ctx.interface.attack(target)
+    {
+        return BtResult::Success;
+    }
     BtResult::Failure
 }
 
@@ -1097,9 +1128,11 @@ fn tick_travel(ctx: &mut TickContext<'_>) -> BtResult {
 fn tick_grind(ctx: &mut TickContext<'_>) -> BtResult {
     // Re-engage existing target.
     if let Some(t) = ctx.current_target()
-        && ctx.interface.is_attackable(t) && ctx.interface.attack(t) {
-            return BtResult::Success;
-        }
+        && ctx.interface.is_attackable(t)
+        && ctx.interface.attack(t)
+    {
+        return BtResult::Success;
+    }
     // Find a level-appropriate attackable mob.
     let my_level = ctx.snap.self_.level;
     let target = ctx.nearby.iter().copied().find(|&unit| {
@@ -1111,9 +1144,10 @@ fn tick_grind(ctx: &mut TickContext<'_>) -> BtResult {
         diff <= 3 && ctx.interface.unit_distance(unit) < ctx.settings.max_combat_range
     });
     if let Some(t) = target
-        && ctx.interface.attack(t) {
-            return BtResult::Success;
-        }
+        && ctx.interface.attack(t)
+    {
+        return BtResult::Success;
+    }
     BtResult::Failure
 }
 
@@ -1155,9 +1189,10 @@ fn tick_bg_capture(ctx: &mut TickContext<'_>) -> BtResult {
 fn tick_bg_attack(ctx: &mut TickContext<'_>) -> BtResult {
     let enemies = ctx.interface.get_nearby_enemies(30.0);
     if let Some(&enemy) = enemies.first()
-        && ctx.interface.attack(enemy) {
-            return BtResult::Success;
-        }
+        && ctx.interface.attack(enemy)
+    {
+        return BtResult::Success;
+    }
     BtResult::Failure
 }
 
@@ -1165,9 +1200,10 @@ fn tick_bg_attack(ctx: &mut TickContext<'_>) -> BtResult {
 
 fn tick_rpg_wander(ctx: &mut TickContext<'_>) -> BtResult {
     if let Some(pos) = ctx.interface.get_random_point_nearby(20.0)
-        && ctx.interface.move_to(pos.x, pos.y, pos.z) {
-            return BtResult::Running;
-        }
+        && ctx.interface.move_to(pos.x, pos.y, pos.z)
+    {
+        return BtResult::Running;
+    }
     BtResult::Failure
 }
 

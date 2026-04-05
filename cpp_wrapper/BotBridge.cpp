@@ -27,6 +27,7 @@
 #include "Entities/ItemPrototype.h"
 #include "playerbot/PlayerbotAIConfig.h"
 #include "playerbot/RandomItemMgr.h"
+#include "playerbot/RandomPlayerbotMgr.h"
 #include "Util/Util.h"
 #include "Globals/ObjectAccessor.h"
 #include "Spells/SpellMgr.h"
@@ -304,6 +305,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.free_class_talents                  = CB_FreeClassTalents;
     cbs.bot_free_talent_points              = CB_BotFreeTalentPoints;
     cbs.bot_update_free_talent_points       = CB_BotUpdateFreeTalentPoints;
+    cbs.bot_pick_spec_no                    = CB_BotPickSpecNo;
 
     return cbs;
 }
@@ -2518,6 +2520,28 @@ void BotBridge::CB_BotUpdateFreeTalentPoints(BotHandle bot)
     if (!b)
         return;
     b->UpdateFreeTalentPoints(false);
+}
+
+uint32_t BotBridge::CB_BotPickSpecNo(BotHandle bot, bool incremental)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+
+    uint32 specNo = sRandomPlayerbotMgr.GetValue(b->GetGUIDLow(), "specNo");
+    if (incremental && specNo)
+    {
+        return specNo - 1;
+    }
+
+    uint32 point = urand(0, 100);
+    uint8 cls = b->getClass();
+    uint32 p1 = sPlayerbotAIConfig.specProbability[cls][0];
+    uint32 p2 = p1 + sPlayerbotAIConfig.specProbability[cls][1];
+
+    uint32 picked = (point < p1 ? 0u : (point < p2 ? 1u : 2u));
+    sRandomPlayerbotMgr.SetValue(b, "specNo", picked + 1);
+    return picked;
 }
 
 // ── Factory: config list queries ──────────────────────────────────────────

@@ -3205,7 +3205,7 @@ void RandomPlayerbotMgr::HandleCommand(uint32 type, const std::string& text, Pla
             }
         }
 
-        // HandleCommand is no longer available on PlayerbotRust — chat handling is done in Rust
+        bot->GetPlayerbotAI()->HandleCommand(type, text, fromPlayer, lang);
     });
 }
 

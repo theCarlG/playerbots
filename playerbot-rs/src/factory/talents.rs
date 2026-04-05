@@ -74,6 +74,24 @@ pub fn init_talents(iface: &dyn BotInterface, spec_no: u32) {
     }
 }
 
+/// Mirror of `PlayerbotFactory::InitTalentsTree`: pick (or recall) the spec
+/// the bot should invest into, spend its points there, and if any points
+/// remain, dump them into the complementary tab. The spec-picking state
+/// management (sRandomPlayerbotMgr get/set + config roll) is bundled into
+/// the single `bot_pick_spec_no` FFI call.
+pub fn init_talents_tree(iface: &dyn BotInterface, incremental: bool) {
+    let spec_no = iface.bot_pick_spec_no(incremental);
+    init_talents(iface, spec_no);
+
+    if iface.bot_free_talent_points() > 0 {
+        // Dump any leftover points into the complementary tab. The C++
+        // source computes `2 - specNo`; `saturating_sub` keeps us safe if
+        // the picker ever returns a value > 2.
+        let other = 2u32.saturating_sub(spec_no);
+        init_talents(iface, other);
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -91,6 +109,9 @@ mod tests {
         talent_spell_ids: std::collections::HashSet<u32>,
         learned: RefCell<Vec<u32>>,
         rand_fixed: u32,
+        // Spec the picker should return; `None` leaves the trait default (0).
+        picked_spec: Option<u32>,
+        pick_calls: RefCell<Vec<bool>>,
     }
 
     unsafe impl Send for MockIface {}
@@ -210,6 +231,10 @@ mod tests {
         fn bot_free_talent_points(&self) -> u32 {
             *self.free_points.borrow()
         }
+        fn bot_pick_spec_no(&self, incremental: bool) -> u32 {
+            self.pick_calls.borrow_mut().push(incremental);
+            self.picked_spec.unwrap_or(0)
+        }
         fn bot_update_free_talent_points(&self) {
             // A learned talent rank consumes one point.
             let last = self.learned.borrow().last().copied();
@@ -234,6 +259,8 @@ mod tests {
             talent_spell_ids: Default::default(),
             learned: RefCell::new(Vec::new()),
             rand_fixed: 0,
+            picked_spec: None,
+            pick_calls: RefCell::new(Vec::new()),
         };
         init_talents(&m, 0);
         assert!(m.learned.borrow().is_empty());
@@ -250,6 +277,8 @@ mod tests {
             talent_spell_ids: ranks.iter().copied().collect(),
             learned: RefCell::new(Vec::new()),
             rand_fixed: 0,
+            picked_spec: None,
+            pick_calls: RefCell::new(Vec::new()),
         };
         init_talents(&m, 0);
         assert_eq!(m.learned.borrow().as_slice(), &ranks);
@@ -269,6 +298,8 @@ mod tests {
             talent_spell_ids: ids,
             learned: RefCell::new(Vec::new()),
             rand_fixed: 0,
+            picked_spec: None,
+            pick_calls: RefCell::new(Vec::new()),
         };
         init_talents(&m, 0);
         let learned = m.learned.borrow();
@@ -291,6 +322,8 @@ mod tests {
             talent_spell_ids: [400u32, 401].into_iter().collect(),
             learned: RefCell::new(Vec::new()),
             rand_fixed: 0,
+            picked_spec: None,
+            pick_calls: RefCell::new(Vec::new()),
         };
         init_talents(&m, 0);
         assert_eq!(m.learned.borrow().as_slice(), &[400u32, 401]);
@@ -310,6 +343,8 @@ mod tests {
             talent_spell_ids: ids,
             learned: RefCell::new(Vec::new()),
             rand_fixed: 0,
+            picked_spec: None,
+            pick_calls: RefCell::new(Vec::new()),
         };
         init_talents(&m, 0);
         let learned = m.learned.borrow();
@@ -317,5 +352,40 @@ mod tests {
         assert!(learned.iter().any(|id| row0.contains(id)));
         assert!(learned.iter().any(|id| row1.contains(id)));
         assert_eq!(*m.free_points.borrow(), 0);
+    }
+
+    #[test]
+    fn tree_spends_in_picked_spec_only_when_budget_fits() {
+        // Picker returns spec 1. Budget = 5, row in picked spec soaks it all,
+        // so no fallback into the complementary tab happens.
+        let row0 = [700u32, 701, 702, 703, 704];
+        let m = MockIface {
+            talents: vec![talent(0, row0)],
+            free_points: RefCell::new(5),
+            talent_spell_ids: row0.iter().copied().collect(),
+            learned: RefCell::new(Vec::new()),
+            rand_fixed: 0,
+            picked_spec: Some(1),
+            pick_calls: RefCell::new(Vec::new()),
+        };
+        init_talents_tree(&m, false);
+        assert_eq!(m.learned.borrow().len(), 5);
+        assert_eq!(m.pick_calls.borrow().as_slice(), &[false]);
+        assert_eq!(*m.free_points.borrow(), 0);
+    }
+
+    #[test]
+    fn tree_propagates_incremental_flag() {
+        let m = MockIface {
+            talents: vec![],
+            free_points: RefCell::new(0),
+            talent_spell_ids: Default::default(),
+            learned: RefCell::new(Vec::new()),
+            rand_fixed: 0,
+            picked_spec: Some(2),
+            pick_calls: RefCell::new(Vec::new()),
+        };
+        init_talents_tree(&m, true);
+        assert_eq!(m.pick_calls.borrow().as_slice(), &[true]);
     }
 }

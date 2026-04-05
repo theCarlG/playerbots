@@ -13,7 +13,9 @@
 ///    - Others: flee 30 yards.
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::bot::state::PlayerClass;
-use crate::encounters::bt::Bt::{self, Sel, Seq, HasDebuff, IsClass, CastOnSelf, MoveAwayFromRaid, TargetHasAura, FleeToSafe};
+use crate::encounters::bt::Bt::{
+    self, CastOnSelf, FleeToSafe, HasDebuff, IsClass, MoveAwayFromRaid, Sel, Seq, TargetHasAura,
+};
 use crate::ffi::SpellId;
 
 pub const AURA_LIVING_BOMB: SpellId = SpellId(20475);

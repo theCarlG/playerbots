@@ -398,6 +398,18 @@ typedef struct BotCallbacks {
     /* Recompute free talent points after learning a talent spell
      * (wraps Player::UpdateFreeTalentPoints(false)). */
     void            (*bot_update_free_talent_points)(BotHandle bot);
+
+    /* Pick (or recall) which talent tab the bot should spend into.
+     * Consolidates the C++ state dance into a single callback:
+     *   - Reads cached `specNo` from sRandomPlayerbotMgr.
+     *   - If `incremental` is true and a cached value exists, returns the
+     *     cached spec (minus 1 to undo the storage offset).
+     *   - Otherwise rolls `urand(0,100)` against
+     *     sPlayerbotAIConfig.specProbability[class][0..1] to pick a tab
+     *     in 0..=2, stores `spec+1` back into sRandomPlayerbotMgr, and
+     *     returns the chosen tab.
+     * Used by factory InitTalentsTree. */
+    uint32_t        (*bot_pick_spec_no)(BotHandle bot, bool incremental);
 } BotCallbacks;
 
 /* ── Rust exports (entry points CMaNGOS calls into Rust) ─────────────────── */
@@ -491,17 +503,32 @@ void playerbot_damage_taken(void* state, uint32_t damage, uint32_t spell_id,
 /* ── Chat command injection ──────────────────────────────────────────────── */
 
 /**
+ * Chat-command security tiers. Mirrors PB2's PlayerbotSecurityLevel with
+ * GUILD collapsed into TALK. Each BotCommand in Rust declares the minimum
+ * level required to execute it; the dispatcher drops commands below that.
+ *
+ *   DENY_ALL (0)  — opposite faction / blocked; nothing runs.
+ *   TALK     (1)  — strangers / same guild; info queries only.
+ *   INVITE   (2)  — group members; behaviour/targeting/movement commands.
+ *   ALLOW_ALL (3) — master, same account, or GM; destructive commands.
+ */
+#define PLAYERBOT_SEC_DENY_ALL  0
+#define PLAYERBOT_SEC_TALK      1
+#define PLAYERBOT_SEC_INVITE    2
+#define PLAYERBOT_SEC_ALLOW_ALL 3
+
+/**
  * Inject a chat command into a bot's pending command queue.
  * Called when a player whispers a command to the bot.
  *
  *   sender_guid  — ObjectGuid raw value of the player issuing the command.
  *                  0 means "internal/system/console" and bypasses gating.
- *   privileged   — non-zero if the sender is the bot's owner, party leader,
- *                  or a GM (mirrors the old PlayerbotSecurity check).
+ *   security     — PLAYERBOT_SEC_* tier the sender was granted by the
+ *                  C++-side security check.
  *   text         — null-terminated command text.
  */
 void playerbot_chat_command(void* state, uint64_t sender_guid,
-                            uint8_t privileged, const char* text);
+                            uint8_t security, const char* text);
 
 /* ── RTSC (Real-Time Strategy Control) ───────────────────────────────────── */
 
@@ -567,6 +594,15 @@ void playerbot_factory_misc(void* state, uint8_t kind);
  * old `PlayerbotFactory::InitTalents`.
  */
 void playerbot_factory_init_talents(void* state, uint32_t spec_no);
+
+/**
+ * Pick (or recall) a talent spec and spend the bot's talent points across
+ * it, matching the policy of the old `PlayerbotFactory::InitTalentsTree`.
+ * `incremental` mirrors the original flag: when true, the bot keeps its
+ * previously-rolled spec if one was stored; when false, a fresh spec is
+ * chosen against the config probability table.
+ */
+void playerbot_factory_init_talents_tree(void* state, bool incremental);
 
 #ifdef __cplusplus
 } /* extern "C" */

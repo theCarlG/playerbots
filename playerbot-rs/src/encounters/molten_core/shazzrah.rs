@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 /// Shazzrah encounter — Molten Core.
 ///
 /// Single-phase caster fight. Key mechanics:
@@ -7,18 +9,19 @@
 ///   - **Gate of Shazzrah** (23138): teleports to random raid member.
 ///     Everyone MUST spread out so a teleport doesn't chain-kill stacked bots.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, Sel, Seq, IsRanged, MaintainRange, IsMeleeDps};
+use crate::encounters::bt::Bt::{self, IsMeleeDps, IsRanged, MaintainRange, Sel, Seq};
 use crate::ffi::SpellId;
 
 pub const AURA_SHAZZRAH_CURSE: SpellId = SpellId(19714);
 pub const SPELL_ARCANE_EXPLOSION: SpellId = SpellId(19712);
 pub const SPELL_GATE_OF_SHAZZRAH: SpellId = SpellId(23138);
 
-#[derive(Clone, Debug)]
+static BT: OnceLock<Bt> = OnceLock::new();
+
+#[derive(Clone, Copy, Debug)]
 pub struct ShazzrahFsm {
     active: bool,
     done: bool,
-    bt: Bt,
 }
 
 impl PartialEq for ShazzrahFsm {
@@ -32,18 +35,16 @@ impl ShazzrahFsm {
         Self {
             active: false,
             done: false,
-            bt: Self::build_bt(),
         }
     }
 
-    fn build_bt() -> Bt {
-        // Ranged at max range — Shazzrah's arcane explosion is ~10y PBAOE
-        // but Gate of Shazzrah teleports him, so stacking is the real risk.
-        // Everyone maintains distance from the boss when possible.
-        Sel(vec![
-            Seq(vec![IsRanged, MaintainRange(30.0)]),
-            Seq(vec![IsMeleeDps, MaintainRange(5.0)]),
-        ])
+    fn static_bt() -> &'static Bt {
+        BT.get_or_init(|| {
+            Sel(vec![
+                Seq(vec![IsRanged, MaintainRange(30.0)]),
+                Seq(vec![IsMeleeDps, MaintainRange(5.0)]),
+            ])
+        })
     }
 }
 
@@ -75,6 +76,10 @@ impl EncounterFsm for ShazzrahFsm {
         super::ENTRY_SHAZZRAH
     }
     fn phase_bt(&self) -> Option<&Bt> {
-        if self.active { Some(&self.bt) } else { None }
+        if self.active {
+            Some(Self::static_bt())
+        } else {
+            None
+        }
     }
 }

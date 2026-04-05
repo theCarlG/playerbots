@@ -5,13 +5,151 @@
 ///
 /// Design: ~20 clean commands replace the old 70+ redundant C++ commands.
 /// Each command maps to exactly one `BotCommand` variant.
-use crate::bot::settings::{BehaviorMode, CombatOrder, FollowFormation, Reactivity, StrategyFlags};
+use crate::bot::settings::{
+    BehaviorMode, ChatChannel, CombatOrder, FollowFormation, Reactivity, StrategyFlags,
+};
 use crate::commands::BotCommand;
 use crate::data::spells::lookup_spell_by_name;
-use crate::ffi::SpellId;
+use crate::ffi::{ItemId, SpellId};
+
+/// One entry in the command table. `names` lists the keyword plus any aliases
+/// (all lowercase, single-word). `parse` is given the matched keyword and the
+/// remaining argument tokens.
+struct CommandSpec {
+    names: &'static [&'static str],
+    parse: fn(cmd: &str, args: &[&str]) -> Option<BotCommand>,
+}
+
+/// Command vocabulary. Matching is first-hit; ordering within the table has
+/// no functional impact but is grouped by theme for readability.
+///
+/// Simple no-arg commands use an inline closure that discards `cmd`/`args`.
+/// Commands with shared parsers (`SetMode`) dispatch on the matched keyword.
+/// Complex commands forward to a dedicated helper function below.
+const COMMANDS: &[CommandSpec] = &[
+    // -- Behavior modes --
+    CommandSpec {
+        names: &[
+            "follow", "stay", "grind", "quest", "passive", "rpg", "wander", "bg",
+        ],
+        parse: |cmd, _| BehaviorMode::from_str(cmd).map(BotCommand::SetMode),
+    },
+    // -- Combat orders / strategies / reactivity --
+    CommandSpec { names: &["co"], parse: |_, a| parse_combat_order(a) },
+    CommandSpec { names: &["nc"], parse: |_, a| parse_strategies(a) },
+    CommandSpec { names: &["react"], parse: |_, a| parse_reactivity(a) },
+    // -- Targeting --
+    CommandSpec { names: &["focus"], parse: |_, _| Some(BotCommand::Focus(None)) },
+    CommandSpec { names: &["attack"], parse: |_, a| parse_attack(a) },
+    CommandSpec { names: &["pull"], parse: |_, a| parse_pull(a) },
+    CommandSpec { names: &["cc"], parse: |_, a| parse_cc(a) },
+    // -- Movement --
+    CommandSpec { names: &["come", "c"], parse: |_, _| Some(BotCommand::ComeToMe) },
+    CommandSpec { names: &["guard"], parse: |_, _| Some(BotCommand::Guard) },
+    CommandSpec { names: &["go"], parse: |_, a| parse_go(a) },
+    // -- RTSC (Real-Time Strategy Control) --
+    CommandSpec { names: &["rtsc"], parse: |_, a| parse_rtsc(a) },
+    // -- Spell control --
+    CommandSpec {
+        names: &["blacklist"],
+        parse: |_, a| parse_spell_id(a).map(BotCommand::BlacklistSpell),
+    },
+    CommandSpec {
+        names: &["unblacklist"],
+        parse: |_, a| parse_spell_id(a).map(BotCommand::UnblacklistSpell),
+    },
+    // -- Economy --
+    CommandSpec { names: &["repair"], parse: |_, _| Some(BotCommand::Repair) },
+    CommandSpec { names: &["vendor", "sell"], parse: |_, _| Some(BotCommand::Vendor) },
+    // -- Healing --
+    CommandSpec { names: &["heal"], parse: |_, a| parse_heal_threshold(a) },
+    // -- Information --
+    CommandSpec {
+        names: &["status", "stats", "who"],
+        parse: |_, _| Some(BotCommand::Status),
+    },
+    CommandSpec { names: &["settings"], parse: |_, _| Some(BotCommand::ListSettings) },
+    CommandSpec {
+        names: &["where", "position", "pos"],
+        parse: |_, _| Some(BotCommand::Where),
+    },
+    CommandSpec { names: &["help", "commands"], parse: |_, _| Some(BotCommand::Help) },
+    CommandSpec { names: &["ready"], parse: |_, _| Some(BotCommand::Ready) },
+    // -- Utility --
+    CommandSpec {
+        names: &["reset"],
+        parse: |_, a| {
+            if a.first().copied() == Some("ai") {
+                Some(BotCommand::ResetStrategies)
+            } else {
+                Some(BotCommand::Reset)
+            }
+        },
+    },
+    CommandSpec { names: &["mount", "dismount"], parse: |_, _| Some(BotCommand::Mount) },
+    CommandSpec {
+        names: &["rez", "resurrect"],
+        parse: |_, _| Some(BotCommand::Resurrect),
+    },
+    // -- Panic / aliases --
+    CommandSpec {
+        names: &["flee", "runaway", "panic"],
+        parse: |_, _| Some(BotCommand::Flee),
+    },
+    CommandSpec { names: &["free"], parse: |_, _| Some(BotCommand::Free) },
+    CommandSpec { names: &["summon"], parse: |_, _| Some(BotCommand::Summon) },
+    // -- Cast a named spell once (addon sends `cast Taunt`). --
+    CommandSpec { names: &["cast"], parse: |_, a| parse_cast(a) },
+    // -- Formation --
+    CommandSpec { names: &["formation"], parse: |_, a| parse_formation(a) },
+    // -- Named-location travel --
+    CommandSpec { names: &["travel", "goto"], parse: |_, a| parse_travel(a) },
+    // -- Tunables / PB2 Wave 1 --
+    CommandSpec { names: &["range"], parse: |_, a| parse_range(a) },
+    CommandSpec { names: &["stance"], parse: |_, a| parse_stance(a) },
+    CommandSpec {
+        names: &["max-dps", "maxdps"],
+        parse: |_, _| Some(BotCommand::MaxDps),
+    },
+    CommandSpec {
+        names: &["save-mana", "savemana"],
+        parse: |_, _| Some(BotCommand::ToggleSaveMana),
+    },
+    CommandSpec {
+        names: &["self-res", "selfres"],
+        parse: |_, _| Some(BotCommand::ToggleSelfRes),
+    },
+    CommandSpec { names: &["cheat"], parse: |_, a| parse_cheat(a) },
+    CommandSpec { names: &["keep"], parse: |_, a| parse_keep(a, true) },
+    CommandSpec { names: &["unkeep"], parse: |_, a| parse_keep(a, false) },
+    CommandSpec { names: &["chat"], parse: |_, a| parse_chat(a) },
+    CommandSpec { names: &["rti"], parse: |_, a| parse_rti_cmd(a) },
+    CommandSpec { names: &["emote"], parse: |_, a| parse_emote(a) },
+    CommandSpec {
+        names: &["debug", "cdebug"],
+        parse: |_, _| Some(BotCommand::Debug),
+    },
+    // -- Wave 2 info queries (reuse existing FFI) --
+    CommandSpec { names: &["los"], parse: |_, _| Some(BotCommand::CheckLos) },
+    CommandSpec {
+        names: &["quests", "q"],
+        parse: |_, _| Some(BotCommand::ListQuests),
+    },
+    CommandSpec { names: &["talents"], parse: |_, _| Some(BotCommand::ListTalents) },
+    CommandSpec { names: &["spells"], parse: |_, _| Some(BotCommand::ListSpells) },
+    CommandSpec {
+        names: &["release"],
+        parse: |_, _| Some(BotCommand::ReleaseSpirit),
+    },
+    CommandSpec {
+        names: &["revive"],
+        parse: |_, _| Some(BotCommand::AcceptRevive),
+    },
+];
 
 /// Parse a chat message into a `BotCommand`.
-/// Returns `None` if the message is not a recognized command.
+/// Returns `None` if the message is empty. Unrecognised keywords yield
+/// `Some(BotCommand::Unknown(..))` so the dispatcher can reply.
 pub fn parse(text: &str) -> Option<BotCommand> {
     let text = text.trim();
     if text.is_empty() {
@@ -23,83 +161,12 @@ pub fn parse(text: &str) -> Option<BotCommand> {
     let cmd = parts[0];
     let args = &parts[1..];
 
-    match cmd {
-        // -- Behavior modes --
-        "follow" | "stay" | "grind" | "quest" | "passive" | "rpg" | "bg" => {
-            BehaviorMode::from_str(cmd).map(BotCommand::SetMode)
+    for spec in COMMANDS {
+        if spec.names.contains(&cmd) {
+            return (spec.parse)(cmd, args);
         }
-
-        // -- Combat orders --
-        "co" => parse_combat_order(args),
-
-        // -- Non-combat strategy toggles --
-        "nc" => parse_strategies(args),
-
-        // -- Reactivity --
-        "react" => parse_reactivity(args),
-
-        // -- Targeting --
-        "focus" => {
-            if args.first().is_some_and(|a| *a == "clear") {
-                Some(BotCommand::Focus(None))
-            } else {
-                Some(BotCommand::Focus(None)) // target from current target
-            }
-        }
-        "attack" => parse_attack(args),
-        "pull" => parse_pull(args),
-        "cc" => parse_cc(args),
-
-        // -- Movement --
-        "come" | "c" => Some(BotCommand::ComeToMe),
-        "guard" => Some(BotCommand::Guard),
-        "go" => parse_go(args),
-
-        // -- RTSC (Real-Time Strategy Control) --
-        "rtsc" => parse_rtsc(args),
-
-        // -- Spell control --
-        "blacklist" => parse_spell_id(args).map(BotCommand::BlacklistSpell),
-        "unblacklist" => parse_spell_id(args).map(BotCommand::UnblacklistSpell),
-
-        // -- Economy --
-        "repair" => Some(BotCommand::Repair),
-        "vendor" | "sell" => Some(BotCommand::Vendor),
-
-        // -- Healing --
-        "heal" => parse_heal_threshold(args),
-
-        // -- Information --
-        "status" | "stats" => Some(BotCommand::Status),
-        "settings" => Some(BotCommand::ListSettings),
-
-        // -- Utility --
-        "reset" => {
-            if args.first().copied() == Some("ai") {
-                Some(BotCommand::ResetStrategies)
-            } else {
-                Some(BotCommand::Reset)
-            }
-        }
-        "mount" | "dismount" => Some(BotCommand::Mount),
-        "rez" | "resurrect" => Some(BotCommand::Resurrect),
-
-        // -- Panic / aliases --
-        "flee" | "runaway" | "panic" => Some(BotCommand::Flee),
-        "free" => Some(BotCommand::Free),
-        "summon" => Some(BotCommand::Summon),
-
-        // -- Cast a named spell once (addon sends `cast Taunt`). --
-        "cast" => parse_cast(args),
-
-        // -- Formation --
-        "formation" => parse_formation(args),
-
-        // -- Named-location travel (`travel stormwind`, `travel orgrimmar`). --
-        "travel" | "goto" => parse_travel(args),
-
-        _ => Some(BotCommand::Unknown(text.to_string())),
     }
+    Some(BotCommand::Unknown(text.to_string()))
 }
 
 /// Parse `co` arguments.
@@ -409,6 +476,103 @@ fn parse_spell_id(args: &[&str]) -> Option<SpellId> {
         .map(SpellId)
 }
 
+fn parse_range(args: &[&str]) -> Option<BotCommand> {
+    match args.first().and_then(|s| s.parse::<f32>().ok()) {
+        Some(d) if (0.5..=40.0).contains(&d) => Some(BotCommand::SetRange(d)),
+        _ => Some(BotCommand::Unknown("range: need yards (0.5-40)".into())),
+    }
+}
+
+fn parse_stance(args: &[&str]) -> Option<BotCommand> {
+    // Accept numeric 0..=3 or named battle/defensive/berserker.
+    let Some(first) = args.first().copied() else {
+        return Some(BotCommand::Unknown(
+            "stance: need 1/2/3 or battle/defensive/berserker".into(),
+        ));
+    };
+    let st: u8 = match first {
+        "none" | "0" => 0,
+        "battle" | "1" => 1,
+        "defensive" | "def" | "2" => 2,
+        "berserker" | "zerk" | "3" => 3,
+        _ => {
+            return Some(BotCommand::Unknown(format!(
+                "stance: unknown `{first}`"
+            )));
+        }
+    };
+    Some(BotCommand::SetStance(st))
+}
+
+fn parse_cheat(args: &[&str]) -> Option<BotCommand> {
+    // `cheat <flags>` — accept decimal or 0x-prefixed hex. `cheat off`/`0`
+    // clears the flags.
+    let Some(first) = args.first().copied() else {
+        return Some(BotCommand::Unknown("cheat: need flags or `off`".into()));
+    };
+    if first == "off" || first == "none" {
+        return Some(BotCommand::SetCheatFlags(0));
+    }
+    let parsed = if let Some(hex) = first.strip_prefix("0x") {
+        u32::from_str_radix(hex, 16).ok()
+    } else {
+        first.parse::<u32>().ok()
+    };
+    match parsed {
+        Some(flags) => Some(BotCommand::SetCheatFlags(flags)),
+        None => Some(BotCommand::Unknown(format!("cheat: bad flags `{first}`"))),
+    }
+}
+
+fn parse_keep(args: &[&str], keep: bool) -> Option<BotCommand> {
+    match args.first().and_then(|s| s.parse::<u32>().ok()) {
+        Some(id) => Some(if keep {
+            BotCommand::KeepItem(ItemId(id))
+        } else {
+            BotCommand::UnkeepItem(ItemId(id))
+        }),
+        None => Some(BotCommand::Unknown(
+            "keep/unkeep: need numeric item id".into(),
+        )),
+    }
+}
+
+fn parse_chat(args: &[&str]) -> Option<BotCommand> {
+    // `chat <channel> [on|off]` — omitting state defaults to `on`.
+    let Some(channel_name) = args.first().copied() else {
+        return Some(BotCommand::Unknown(
+            "chat: need channel (say/party/raid/guild/whisper)".into(),
+        ));
+    };
+    let Some(channel) = ChatChannel::from_name(channel_name) else {
+        return Some(BotCommand::Unknown(format!(
+            "chat: unknown channel `{channel_name}`"
+        )));
+    };
+    let on = match args.get(1).copied() {
+        Some("off") | Some("no") | Some("0") => false,
+        _ => true,
+    };
+    Some(BotCommand::SetChatChannel { channel, on })
+}
+
+fn parse_rti_cmd(args: &[&str]) -> Option<BotCommand> {
+    match args.first().copied() {
+        None | Some("clear") | Some("none") => Some(BotCommand::SetPreferredRti(None)),
+        Some(tok) => match parse_rti(tok) {
+            Some(icon) => Some(BotCommand::SetPreferredRti(Some(icon))),
+            None => Some(BotCommand::Unknown(format!("rti: unknown `{tok}`"))),
+        },
+    }
+}
+
+fn parse_emote(args: &[&str]) -> Option<BotCommand> {
+    match args.first().and_then(|s| s.parse::<u32>().ok()) {
+        Some(id) => Some(BotCommand::Emote(id)),
+        None => Some(BotCommand::Unknown("emote: need numeric emote id".into())),
+    }
+}
+
 fn parse_heal_threshold(args: &[&str]) -> Option<BotCommand> {
     match args.first().and_then(|s| s.parse::<f32>().ok()) {
         Some(pct) if (0.0..=1.0).contains(&pct) => Some(BotCommand::SetHealThreshold(pct)),
@@ -678,6 +842,82 @@ mod tests {
             parse("formation bogus"),
             Some(BotCommand::Unknown(_))
         ));
+    }
+
+    #[test]
+    fn info_command_aliases() {
+        // `who` maps onto status; `where`/`position`/`pos` onto Where;
+        // `help`/`commands` onto Help; `ready` onto Ready.
+        assert_eq!(parse("who"), Some(BotCommand::Status));
+        assert_eq!(parse("where"), Some(BotCommand::Where));
+        assert_eq!(parse("position"), Some(BotCommand::Where));
+        assert_eq!(parse("pos"), Some(BotCommand::Where));
+        assert_eq!(parse("help"), Some(BotCommand::Help));
+        assert_eq!(parse("commands"), Some(BotCommand::Help));
+        assert_eq!(parse("ready"), Some(BotCommand::Ready));
+    }
+
+    #[test]
+    fn wander_is_rpg_mode() {
+        assert_eq!(
+            parse("wander"),
+            Some(BotCommand::SetMode(BehaviorMode::Rpg))
+        );
+    }
+
+    #[test]
+    fn tunable_commands() {
+        assert_eq!(parse("range 5"), Some(BotCommand::SetRange(5.0)));
+        assert!(matches!(parse("range 999"), Some(BotCommand::Unknown(_))));
+
+        assert_eq!(parse("stance battle"), Some(BotCommand::SetStance(1)));
+        assert_eq!(parse("stance 3"), Some(BotCommand::SetStance(3)));
+        assert_eq!(parse("stance def"), Some(BotCommand::SetStance(2)));
+        assert!(matches!(parse("stance bogus"), Some(BotCommand::Unknown(_))));
+
+        assert_eq!(parse("max-dps"), Some(BotCommand::MaxDps));
+        assert_eq!(parse("maxdps"), Some(BotCommand::MaxDps));
+        assert_eq!(parse("save-mana"), Some(BotCommand::ToggleSaveMana));
+        assert_eq!(parse("self-res"), Some(BotCommand::ToggleSelfRes));
+
+        assert_eq!(parse("cheat 0x3"), Some(BotCommand::SetCheatFlags(3)));
+        assert_eq!(parse("cheat 7"), Some(BotCommand::SetCheatFlags(7)));
+        assert_eq!(parse("cheat off"), Some(BotCommand::SetCheatFlags(0)));
+
+        assert_eq!(parse("keep 12345"), Some(BotCommand::KeepItem(ItemId(12345))));
+        assert_eq!(
+            parse("unkeep 12345"),
+            Some(BotCommand::UnkeepItem(ItemId(12345))),
+        );
+
+        assert_eq!(
+            parse("chat party"),
+            Some(BotCommand::SetChatChannel { channel: ChatChannel::Party, on: true }),
+        );
+        assert_eq!(
+            parse("chat guild off"),
+            Some(BotCommand::SetChatChannel { channel: ChatChannel::Guild, on: false }),
+        );
+
+        assert_eq!(parse("rti skull"), Some(BotCommand::SetPreferredRti(Some(8))));
+        assert_eq!(parse("rti 3"), Some(BotCommand::SetPreferredRti(Some(3))));
+        assert_eq!(parse("rti clear"), Some(BotCommand::SetPreferredRti(None)));
+        assert_eq!(parse("rti"), Some(BotCommand::SetPreferredRti(None)));
+
+        assert_eq!(parse("emote 4"), Some(BotCommand::Emote(4)));
+        assert_eq!(parse("debug"), Some(BotCommand::Debug));
+        assert_eq!(parse("cdebug"), Some(BotCommand::Debug));
+    }
+
+    #[test]
+    fn info_query_commands() {
+        assert_eq!(parse("los"), Some(BotCommand::CheckLos));
+        assert_eq!(parse("quests"), Some(BotCommand::ListQuests));
+        assert_eq!(parse("q"), Some(BotCommand::ListQuests));
+        assert_eq!(parse("talents"), Some(BotCommand::ListTalents));
+        assert_eq!(parse("spells"), Some(BotCommand::ListSpells));
+        assert_eq!(parse("release"), Some(BotCommand::ReleaseSpirit));
+        assert_eq!(parse("revive"), Some(BotCommand::AcceptRevive));
     }
 
     #[test]

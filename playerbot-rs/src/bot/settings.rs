@@ -4,7 +4,7 @@
 /// Commands mutate settings between ticks (never during BT execution).
 use std::collections::{HashMap, HashSet};
 
-use crate::ffi::{SpellId, UnitHandle};
+use crate::ffi::{ItemId, SpellId, UnitHandle};
 
 /// What the bot does when not given a specific order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -301,6 +301,54 @@ pub struct BotSettings {
     pub rtsc_pending_action: Option<RtscAction>,
     /// Named waypoints saved via RTSC.
     pub rtsc_waypoints: HashMap<String, (f32, f32, f32)>,
+
+    // -- Misc tunables driven by chat commands --
+    /// Warrior stance (0=none, 1=battle, 2=defensive, 3=berserker).
+    /// Ignored by non-warrior classes.
+    pub stance: u8,
+    /// `save mana` toggle — when true, the bot prefers cheap casts and avoids
+    /// full-cost rotation spells until mana is topped up.
+    pub save_mana: bool,
+    /// `self res` toggle — when true, the bot will use a soulstone / ankh /
+    /// reincarnation when it dies, instead of running back from graveyard.
+    pub self_res: bool,
+    /// `cheat <flags>` — dev-only bitfield. Specific flags are interpreted by
+    /// the BT/world modules; zero means no cheats active.
+    pub cheat_flags: u32,
+    /// Items the bot should never sell, destroy, or disenchant. Populated by
+    /// the `keep <itemid>` command.
+    pub keep_items: HashSet<ItemId>,
+    /// Which chat channels the bot should send verbose replies on. Bitfield
+    /// matching [`ChatChannel`]. Default is none (silent).
+    pub chat_channels: u32,
+    /// Persistent raid-target-icon preference set by `rti <icon>`. When set,
+    /// world/combat modules may use it as the bot's default focus icon.
+    pub preferred_rti_icon: Option<u8>,
+}
+
+/// Chat channel bitfield for `BotSettings::chat_channels`. Mirrors the PB2
+/// `chat` command verbosity toggles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ChatChannel {
+    Say = 1 << 0,
+    Party = 1 << 1,
+    Raid = 1 << 2,
+    Guild = 1 << 3,
+    Whisper = 1 << 4,
+}
+
+impl ChatChannel {
+    pub fn from_name(s: &str) -> Option<Self> {
+        Some(match s {
+            "say" | "s" => Self::Say,
+            "party" | "p" => Self::Party,
+            "raid" | "r" => Self::Raid,
+            "guild" | "g" => Self::Guild,
+            "whisper" | "w" => Self::Whisper,
+            _ => return None,
+        })
+    }
 }
 
 /// What to do with the next RTSC spell-target position.
@@ -340,6 +388,13 @@ impl Default for BotSettings {
             rtsc_selected: false,
             rtsc_pending_action: None,
             rtsc_waypoints: HashMap::new(),
+            stance: 0,
+            save_mana: false,
+            self_res: false,
+            cheat_flags: 0,
+            keep_items: HashSet::new(),
+            chat_channels: 0,
+            preferred_rti_icon: None,
         }
     }
 }
@@ -353,7 +408,7 @@ impl BehaviorMode {
             "quest" => Some(Self::Quest),
             "passive" => Some(Self::Passive),
             "guard" => Some(Self::Guard),
-            "rpg" => Some(Self::Rpg),
+            "rpg" | "wander" => Some(Self::Rpg),
             "bg" => Some(Self::Bg),
             _ => None,
         }

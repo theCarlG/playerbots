@@ -14,9 +14,12 @@ pub mod blackwing_lair;
 pub mod bt;
 pub mod bt_overrides;
 pub mod coordinator;
+pub mod macros;
+
+// Raids
 pub mod molten_core;
-pub mod naxxramas;
-pub mod onyxias_lair;
+// pub mod naxxramas;
+// pub mod onyxias_lair;
 
 // TBC content
 #[cfg(any(feature = "tbc", feature = "wotlk"))]
@@ -81,6 +84,11 @@ pub trait EncounterFsm: Send {
     /// phase states inside each FSM's phase enum; there is no separate edge
     /// hook. The FSM's `update()` flips into the transition phase and
     /// `phase_bt()` returns the matching tree.
+    /// The BT itself must be stateless — per-bot state (e.g. throttle
+    /// timestamps) lives on `BotState`, not in the tree. Beyond that, an
+    /// encounter FSM may either own a BT as a struct field (per-instance) or
+    /// return a shared `&'static Bt` built once via `OnceLock` — both are
+    /// valid under the elided lifetime below.
     fn phase_bt(&self) -> Option<&Bt> {
         None
     }
@@ -113,6 +121,7 @@ pub enum EncounterEvent {
 
 /// A trivial single-phase FSM for bosses with no phase transitions.
 /// Used as the default for mechanically simple encounters.
+#[derive(PartialEq, Clone)]
 pub struct SimpleFsm {
     entry: u32,
     active: bool,
@@ -155,5 +164,66 @@ impl EncounterFsm for SimpleFsm {
     }
     fn boss_entry(&self) -> u32 {
         self.entry
+    }
+}
+
+pub struct BasicInstanceFsm<T>
+where
+    T: EncounterFsm + TryFrom<u32>,
+{
+    active_boss: Option<T>,
+}
+
+impl<T> BasicInstanceFsm<T>
+where
+    T: EncounterFsm + TryFrom<u32>,
+{
+    pub fn new() -> Self {
+        Self { active_boss: None }
+    }
+
+    pub fn set_active_boss_by_entry(&mut self, entry: u32) {
+        self.active_boss = T::try_from(entry).ok();
+    }
+}
+
+impl<T> Default for BasicInstanceFsm<T>
+where
+    T: EncounterFsm + TryFrom<u32>,
+{
+    fn default() -> Self {
+        Self { active_boss: None }
+    }
+}
+
+impl<T> EncounterFsm for BasicInstanceFsm<T>
+where
+    T: EncounterFsm + TryFrom<u32>,
+{
+    fn update(&mut self, event: &EncounterEvent, boss_hp_pct: f32, time_ms: u64) {
+        if let Some(boss) = &mut self.active_boss {
+            boss.update(event, boss_hp_pct, time_ms);
+        }
+    }
+
+    fn phase_id(&self) -> u32 {
+        self.active_boss.as_ref().map_or(0, |b| b.phase_id())
+    }
+
+    fn is_active(&self) -> bool {
+        self.active_boss.is_some()
+    }
+
+    fn is_done(&self) -> bool {
+        self.active_boss.as_ref().map_or(false, |b| b.is_done())
+    }
+
+    fn boss_entry(&self) -> u32 {
+        // Custom logic to get entry since it's hardcoded per struct now
+        self.active_boss.as_ref().map_or(0, |b| b.boss_entry())
+    }
+
+    fn phase_bt(&self) -> Option<&Bt> {
+        self.active_boss.as_ref().and_then(|b| b.phase_bt())
     }
 }

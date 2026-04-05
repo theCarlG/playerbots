@@ -8,7 +8,6 @@ name = "playerbot_rs"
 crate-type = ["staticlib"]
 
 [dependencies]
-# No async runtime. No game engine. No ECS framework. Just Rust.
 
 [build-dependencies]
 bindgen = "0.72"

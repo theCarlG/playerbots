@@ -1,3 +1,5 @@
+use crate::encounters::BasicInstanceFsm;
+
 /// Encounter coordinator — maps zone/area IDs to encounter FSMs.
 ///
 /// When the bot enters a known instanced zone, the coordinator creates the
@@ -24,17 +26,19 @@ pub fn encounter_for_zone(zone_id: u32) -> Option<Box<dyn EncounterFsm>> {
     use crate::encounters::aq20::Aq20Fsm;
     use crate::encounters::aq40::Aq40Fsm;
     use crate::encounters::blackwing_lair::BlackwingLairFsm;
-    use crate::encounters::molten_core::MoltenCoreFsm;
-    use crate::encounters::naxxramas::NaxxramasFsm;
-    use crate::encounters::onyxias_lair::OnyxiaFsm;
+    use crate::encounters::molten_core::MoltenCoreBoss;
+    // naxxramas / onyxias_lair are being rewritten on the enum_dispatch refactor
+    // branch — their modules are temporarily disabled in encounters/mod.rs.
+    // use crate::encounters::naxxramas::NaxxramasFsm;
+    // use crate::encounters::onyxias_lair::OnyxiaFsm;
 
     match zone_id {
-        ZONE_MOLTEN_CORE => Some(Box::new(MoltenCoreFsm::new())),
-        ZONE_ONYXIAS_LAIR => Some(Box::new(OnyxiaFsm::new())),
+        ZONE_MOLTEN_CORE => Some(Box::new(BasicInstanceFsm::<MoltenCoreBoss>::default())),
+        // ZONE_ONYXIAS_LAIR => Some(Box::new(OnyxiaFsm::new())),
         ZONE_BLACKWING_LAIR => Some(Box::new(BlackwingLairFsm::new())),
         ZONE_AQ20 => Some(Box::new(Aq20Fsm::new())),
         ZONE_AQ40 => Some(Box::new(Aq40Fsm::new())),
-        ZONE_NAXXRAMAS => Some(Box::new(NaxxramasFsm::new())),
+        // ZONE_NAXXRAMAS => Some(Box::new(NaxxramasFsm::new())),
         #[cfg(any(feature = "tbc", feature = "wotlk"))]
         ZONE_KARAZHAN => Some(Box::new(crate::encounters::karazhan::KarazhanFsm::new())),
         _ => None,

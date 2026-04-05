@@ -212,6 +212,7 @@ namespace BotBridge
     void            CB_FreeClassTalents(BotTalentEntry* list);
     uint32_t        CB_BotFreeTalentPoints(BotHandle bot);
     void            CB_BotUpdateFreeTalentPoints(BotHandle bot);
+    uint32_t        CB_BotPickSpecNo(BotHandle bot, bool incremental);
 
     // ── Internal helpers ────────────────────────────────────────────────────
     Player* FindBot(BotHandle bot);

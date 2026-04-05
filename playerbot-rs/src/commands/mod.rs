@@ -5,10 +5,10 @@
 pub mod parser;
 
 use crate::bot::settings::{
-    BehaviorMode, BotSettings, CombatOrder, Reactivity, RtscAction, StrategyFlags,
+    BehaviorMode, BotSettings, ChatChannel, CombatOrder, Reactivity, RtscAction, StrategyFlags,
 };
 use crate::bot::state::BotState;
-use crate::ffi::{SpellId, UnitHandle};
+use crate::ffi::{ItemId, SpellId, UnitHandle};
 
 /// All bot commands, parsed from chat text.
 #[derive(Debug, Clone, PartialEq)]
@@ -84,6 +84,12 @@ pub enum BotCommand {
     // -- Information --
     Status,
     ListSettings,
+    /// Reply with current position (map, x, y, z) and zone area.
+    Where,
+    /// Reply with a short list of supported top-level commands.
+    Help,
+    /// Simple acknowledgement reply ("ready").
+    Ready,
 
     // -- Utility --
     Reset,
@@ -110,21 +116,162 @@ pub enum BotCommand {
     /// Writes the destination to the blackboard; the travel subtree consumes it.
     TravelTo(&'static crate::data::named_locations::NamedLocation),
 
+    // -- Tunables --
+    /// `range <N>` — override follow distance.
+    SetRange(f32),
+    /// `stance <N>` — warrior stance (1/2/3, warrior-only).
+    SetStance(u8),
+    /// `max dps` — DPS combat order + aggressive reactivity shortcut.
+    MaxDps,
+    /// `save mana` toggle.
+    ToggleSaveMana,
+    /// `self res` toggle.
+    ToggleSelfRes,
+    /// `cheat <flags>` — dev bitfield.
+    SetCheatFlags(u32),
+    /// `keep <itemid>` — add to do-not-sell list.
+    KeepItem(ItemId),
+    /// `unkeep <itemid>` — remove from do-not-sell list.
+    UnkeepItem(ItemId),
+    /// `chat <channel> on|off` — verbose reply toggle per channel.
+    SetChatChannel { channel: ChatChannel, on: bool },
+    /// `rti <icon>` — set the bot's preferred raid-target-icon focus.
+    /// `rti clear` sends `None`.
+    SetPreferredRti(Option<u8>),
+    /// `emote <id>` — play an emote.
+    Emote(u32),
+    /// `debug` / `cdebug` — diagnostic dump reply.
+    Debug,
+    /// `los` — whisper whether the bot has line of sight to current target.
+    CheckLos,
+    /// `quests` / `q` — whisper quest log summary.
+    ListQuests,
+    /// `talents` — whisper free talent points / spec info.
+    ListTalents,
+    /// `spells` — whisper known spell count.
+    ListSpells,
+    /// `release` — release spirit / use spirit healer if dead.
+    ReleaseSpirit,
+    /// `revive` — accept a pending resurrection.
+    AcceptRevive,
+
     // -- Unknown --
     Unknown(String),
 }
 
+impl BotCommand {
+    /// Minimum [`SecurityLevel`] a sender must have for this command to
+    /// execute. Mirrors PB2's tiered access in
+    /// `PB2/playerbot/PlayerbotAI.cpp::HandleCommand`.
+    ///
+    /// Tiers (low → high):
+    /// - `Talk`: information queries (status, stats, settings) — anyone
+    ///   who can message the bot.
+    /// - `Invite`: behaviour, targeting, movement, buffs — group members.
+    /// - `AllowAll`: destructive or account-level ops (reset, blacklist,
+    ///   resurrect, economy) — master / same-account / GM only.
+    pub fn required_security(&self) -> SecurityLevel {
+        use BotCommand::*;
+        match self {
+            // Information queries — anyone who can talk to the bot.
+            Status | ListSettings | Where | Help | Ready | Unknown(_) | Debug | CheckLos
+            | ListQuests | ListTalents | ListSpells => SecurityLevel::Talk,
+
+            // Destructive / account-level — master only.
+            Reset | ResetStrategies | BlacklistSpell(_) | UnblacklistSpell(_)
+            | SetCheatFlags(_) => SecurityLevel::AllowAll,
+
+            // Everything else — group members.
+            SetMode(_)
+            | SetCombatOrder(_)
+            | ApplyCombatOrder { .. }
+            | ApplyStrategies { .. }
+            | SetReactivity(_)
+            | Focus(_)
+            | Attack(_)
+            | AttackRti(_)
+            | PullRti(_)
+            | CcRti(_)
+            | GoTo(_, _, _)
+            | Guard
+            | ComeToMe
+            | RtscSelect
+            | RtscCancel
+            | RtscToggle
+            | RtscMove
+            | RtscMoveExact
+            | RtscSaveHere(_)
+            | RtscSave(_)
+            | RtscUnsave(_)
+            | RtscGo(_)
+            | RtscShow
+            | RtscSpellPosition(_, _, _)
+            | Repair
+            | Vendor
+            | SetHealThreshold(_)
+            | Mount
+            | Resurrect
+            | Flee
+            | Free
+            | Summon
+            | CastOne { .. }
+            | SetFormation(_)
+            | TravelTo(_)
+            | SetRange(_)
+            | SetStance(_)
+            | MaxDps
+            | ToggleSaveMana
+            | ToggleSelfRes
+            | KeepItem(_)
+            | UnkeepItem(_)
+            | SetChatChannel { .. }
+            | SetPreferredRti(_)
+            | Emote(_)
+            | ReleaseSpirit
+            | AcceptRevive => SecurityLevel::Invite,
+        }
+    }
+}
+
+/// Chat-command security tier. Mirrors PB2's `PlayerbotSecurityLevel` with
+/// GUILD collapsed into `Talk`. The byte value is what crosses the FFI in
+/// `playerbot_chat_command`'s `security` parameter.
+///
+/// Each [`BotCommand`] declares a minimum [`SecurityLevel`] (see
+/// [`BotCommand::required_security`]); the dispatcher drops commands whose
+/// sender tier is below that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum SecurityLevel {
+    DenyAll = 0,
+    Talk = 1,
+    Invite = 2,
+    AllowAll = 3,
+}
+
+impl SecurityLevel {
+    pub fn from_raw(v: u8) -> Self {
+        match v {
+            0 => Self::DenyAll,
+            1 => Self::Talk,
+            2 => Self::Invite,
+            _ => Self::AllowAll,
+        }
+    }
+}
+
 /// A command queued for execution, tagged with its sender and trust level.
 ///
-/// `sender` is the `ObjectGuid` of the player who issued the whisper, or
+/// `sender` is the `ObjectGuid` of the player who issued the chat, or
 /// `None` for internal/system-injected commands (RTSC spell positions,
-/// tests). `privileged` is true if the sender is the bot's owner, party
-/// leader, or a GM (decided C++-side in `PlayerbotRust::HandleCommand`).
-/// Non-privileged senders are silently ignored.
+/// tests). `security` is the tier that C++-side `PlayerbotRust::
+/// ComputeSenderSecurity` granted the sender. The dispatcher compares it
+/// to each command's `required_security` and drops commands that don't
+/// meet the bar.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingCommand {
     pub sender: Option<u64>,
-    pub privileged: bool,
+    pub security: SecurityLevel,
     pub command: BotCommand,
 }
 
@@ -133,16 +280,16 @@ impl PendingCommand {
     pub fn internal(command: BotCommand) -> Self {
         Self {
             sender: None,
-            privileged: true,
+            security: SecurityLevel::AllowAll,
             command,
         }
     }
 
-    /// Command from a specific player with a trust level.
-    pub fn external(sender: u64, privileged: bool, command: BotCommand) -> Self {
+    /// Command from a specific player with a trust tier.
+    pub fn external(sender: u64, security: SecurityLevel, command: BotCommand) -> Self {
         Self {
             sender: Some(sender),
-            privileged,
+            security,
             command,
         }
     }
@@ -152,9 +299,10 @@ impl PendingCommand {
 /// Called once per tick before the BT runs.
 pub fn process_commands(bot: &mut BotState) {
     while let Some(pc) = bot.pending_commands.pop_front() {
-        if !pc.privileged {
-            // Silently drop non-owner commands. A verbose reply would
-            // create a whisper-spam vector from non-owners.
+        let required = pc.command.required_security();
+        if pc.security < required {
+            // Silently drop under-privileged commands. A verbose reply
+            // would create a whisper-spam vector from strangers.
             continue;
         }
         apply_command(bot, &pc);
@@ -344,9 +492,11 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 }
             }
         }
-        BotCommand::Repair | BotCommand::Vendor => {
-            // These set a one-shot action flag. World behavior modules
-            // will check for it. For now, just acknowledge.
+        BotCommand::Repair => {
+            bot.interface.repair_all();
+        }
+        BotCommand::Vendor => {
+            bot.interface.sell_grey_items();
         }
         BotCommand::SetHealThreshold(pct) => {
             s.heal_party_threshold = *pct;
@@ -361,6 +511,24 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 bot.snap.self_.mana as f32 / bot.snap.self_.max_mana.max(1) as f32 * 100.0,
             );
             reply(bot, pc, &msg);
+        }
+        BotCommand::Where => {
+            let p = &bot.snap.self_.pos;
+            let msg = format!("Map {} @ {:.1}, {:.1}, {:.1}", p.map_id, p.x, p.y, p.z);
+            reply(bot, pc, &msg);
+        }
+        BotCommand::Help => {
+            // Short one-liner; addons parse this. Keep under whisper length.
+            let msg = "Commands: follow stay grind quest passive guard wander bg \
+                       co nc react attack pull cc focus come go rtsc \
+                       blacklist unblacklist repair vendor heal status where help ready \
+                       reset mount rez flee free summon cast formation travel \
+                       range stance rti emote debug max-dps save-mana self-res \
+                       keep unkeep chat quests talents spells los release revive";
+            reply(bot, pc, msg);
+        }
+        BotCommand::Ready => {
+            reply(bot, pc, "ready");
         }
         BotCommand::ListSettings => {
             let msg = format!(
@@ -430,6 +598,102 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 );
             }
         }
+
+        // -- Tunables --
+        BotCommand::SetRange(dist) => {
+            s.follow_distance = *dist;
+        }
+        BotCommand::SetStance(st) => {
+            s.stance = *st;
+        }
+        BotCommand::MaxDps => {
+            s.combat_order = CombatOrder::DPS;
+            s.reactivity = Reactivity::Aggressive;
+        }
+        BotCommand::ToggleSaveMana => {
+            s.save_mana = !s.save_mana;
+            let verbose = s.verbose;
+            let now = s.save_mana;
+            if verbose {
+                reply(bot, pc, if now { "save mana: on" } else { "save mana: off" });
+            }
+        }
+        BotCommand::ToggleSelfRes => {
+            s.self_res = !s.self_res;
+            let verbose = s.verbose;
+            let now = s.self_res;
+            if verbose {
+                reply(bot, pc, if now { "self res: on" } else { "self res: off" });
+            }
+        }
+        BotCommand::SetCheatFlags(flags) => {
+            s.cheat_flags = *flags;
+        }
+        BotCommand::KeepItem(item) => {
+            s.keep_items.insert(*item);
+        }
+        BotCommand::UnkeepItem(item) => {
+            s.keep_items.remove(item);
+        }
+        BotCommand::SetChatChannel { channel, on } => {
+            let bit = *channel as u32;
+            if *on {
+                s.chat_channels |= bit;
+            } else {
+                s.chat_channels &= !bit;
+            }
+        }
+        BotCommand::SetPreferredRti(icon) => {
+            s.preferred_rti_icon = *icon;
+        }
+        BotCommand::Emote(id) => {
+            bot.interface.emote(*id);
+        }
+        BotCommand::Debug => {
+            let msg = format!(
+                "DBG mode={} co={:#x} react={:?} strats={:#x} cheat={:#x}",
+                s.mode.as_str(),
+                s.combat_order.0,
+                s.reactivity,
+                s.strategies.0,
+                s.cheat_flags,
+            );
+            reply(bot, pc, &msg);
+        }
+        BotCommand::CheckLos => {
+            let target = bot.snap.self_.current_target;
+            let msg = if target == 0 {
+                "los: no target".to_string()
+            } else if bot.interface.has_los(target) {
+                "los: yes".to_string()
+            } else {
+                "los: no".to_string()
+            };
+            reply(bot, pc, &msg);
+        }
+        BotCommand::ListQuests => {
+            let quests = bot.interface.get_quest_log();
+            let done = quests.iter().filter(|q| q.complete).count();
+            let msg = format!("Quests: {} total, {} complete", quests.len(), done);
+            reply(bot, pc, &msg);
+        }
+        BotCommand::ListTalents => {
+            let free = bot.interface.bot_free_talent_points();
+            let msg = format!("Talents: {free} unspent");
+            reply(bot, pc, &msg);
+        }
+        BotCommand::ListSpells => {
+            let n = bot.interface.get_bot_spells().len();
+            let msg = format!("Spells known: {n}");
+            reply(bot, pc, &msg);
+        }
+        BotCommand::ReleaseSpirit => {
+            bot.interface.use_spirit_healer();
+        }
+        BotCommand::AcceptRevive => {
+            bot.interface.accept_resurrect();
+        }
+
         BotCommand::Unknown(text) => {
             let msg = format!("Unknown command: {text}");
             reply(bot, pc, &msg);
@@ -508,6 +772,52 @@ mod tests {
         process_commands(&mut bot);
         assert_eq!(bot.settings.mode, BehaviorMode::Follow);
         assert_eq!(bot.settings.flee_hp_pct, 0.0);
+    }
+
+    #[test]
+    fn tunable_commands_mutate_settings() {
+        let mut bot = test_bot();
+        for cmd in [
+            BotCommand::SetRange(7.5),
+            BotCommand::SetStance(2),
+            BotCommand::MaxDps,
+            BotCommand::ToggleSaveMana,
+            BotCommand::ToggleSelfRes,
+            BotCommand::SetCheatFlags(0xF),
+            BotCommand::KeepItem(ItemId(42)),
+            BotCommand::SetChatChannel { channel: ChatChannel::Party, on: true },
+            BotCommand::SetPreferredRti(Some(8)),
+        ] {
+            bot.pending_commands
+                .push_back(PendingCommand::internal(cmd));
+        }
+        process_commands(&mut bot);
+
+        assert!((bot.settings.follow_distance - 7.5).abs() < f32::EPSILON);
+        assert_eq!(bot.settings.stance, 2);
+        assert_eq!(bot.settings.combat_order, CombatOrder::DPS);
+        assert_eq!(bot.settings.reactivity, Reactivity::Aggressive);
+        assert!(bot.settings.save_mana);
+        assert!(bot.settings.self_res);
+        assert_eq!(bot.settings.cheat_flags, 0xF);
+        assert!(bot.settings.keep_items.contains(&ItemId(42)));
+        assert_eq!(bot.settings.chat_channels, ChatChannel::Party as u32);
+        assert_eq!(bot.settings.preferred_rti_icon, Some(8));
+
+        // Unkeep should remove from keep_items.
+        bot.pending_commands
+            .push_back(PendingCommand::internal(BotCommand::UnkeepItem(ItemId(42))));
+        process_commands(&mut bot);
+        assert!(!bot.settings.keep_items.contains(&ItemId(42)));
+
+        // Toggling chat channel off clears the bit.
+        bot.pending_commands
+            .push_back(PendingCommand::internal(BotCommand::SetChatChannel {
+                channel: ChatChannel::Party,
+                on: false,
+            }));
+        process_commands(&mut bot);
+        assert_eq!(bot.settings.chat_channels, 0);
     }
 
     #[test]

@@ -8,10 +8,8 @@ use crate::{
     bot::state::PlayerClass,
     encounters::EncounterFsm,
     engine::{
-        blackboard::Blackboard,
-        group_state::GroupState,
-        snapshot::WorldSnapshotExt,
-        timers::BotTimers,
+        blackboard::Blackboard, group_state::GroupState, snapshot::WorldSnapshotExt,
+        throttles::Throttles, timers::BotTimers,
     },
     ffi::{BotRole, BotWorldSnapshot, UnitHandle, interface::BotInterface},
 };
@@ -27,6 +25,8 @@ pub struct TickContext<'a> {
     pub interface: &'a dyn BotInterface,
     pub blackboard: &'a mut Blackboard,
     pub timers: &'a mut BotTimers,
+    /// Per-bot throttle state for `Bt::Throttle` nodes.
+    pub throttles: &'a mut Throttles,
 
     // ── Tick metadata ───────────────────────────────────────────────────
     pub server_time_ms: u64,
@@ -119,7 +119,7 @@ pub mod tests {
     use super::*;
     use crate::bot::settings::BotSettings;
     use crate::bot::state::PlayerClass;
-    use crate::engine::{blackboard::Blackboard, timers::BotTimers};
+    use crate::engine::{blackboard::Blackboard, throttles::Throttles, timers::BotTimers};
     use crate::ffi::{BotRole, BotUnitSnapshot, BotWorldSnapshot, ItemId, SpellId};
 
     /// Minimal mock interface for unit tests of BT node logic.
@@ -236,6 +236,7 @@ pub mod tests {
         interface: &'a dyn BotInterface,
         blackboard: &'a mut Blackboard,
         timers: &'a mut BotTimers,
+        throttles: &'a mut Throttles,
     ) -> TickContext<'a> {
         TickContext {
             snap,
@@ -245,6 +246,7 @@ pub mod tests {
             interface,
             blackboard,
             timers,
+            throttles,
             server_time_ms: 10_000,
             elapsed_ms: 100,
             minimal: false,
@@ -269,6 +271,7 @@ pub mod tests {
         pub interface: NullInterface,
         pub blackboard: Blackboard,
         pub timers: BotTimers,
+        pub throttles: Throttles,
         pub time_ms: u64,
         pub settings: BotSettings,
     }
@@ -282,6 +285,7 @@ pub mod tests {
                 interface: NullInterface,
                 blackboard: Blackboard::default(),
                 timers: BotTimers::new(),
+                throttles: Throttles::new(),
                 time_ms: 10_000,
                 settings: BotSettings::default(),
             }
@@ -296,6 +300,7 @@ pub mod tests {
                 interface: &self.interface,
                 blackboard: &mut self.blackboard,
                 timers: &mut self.timers,
+                throttles: &mut self.throttles,
                 server_time_ms: self.time_ms,
                 elapsed_ms: 100,
                 minimal: false,
@@ -476,6 +481,7 @@ pub mod tests {
             iface,
             &mut owned.blackboard,
             &mut owned.timers,
+            &mut owned.throttles,
         );
         ctx.encounter = Some(encounter);
         ctx.class = class;

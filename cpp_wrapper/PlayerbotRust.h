@@ -13,12 +13,23 @@
 
 #include "playerbot/PlayerbotAIBase.h"
 #include "playerbot/PlayerbotAIConfig.h"
+#include "Entities/ObjectGuid.h"
 #include "botffi.h"
 #include "BotBridge.h"
 
 class Player;
 class Unit;
 class Item;
+
+// Chat-command security tiers. Mirrors PB2's PlayerbotSecurityLevel but
+// collapses GUILD into TALK. The byte value is what the Rust FFI receives
+// via playerbot_chat_command's `security` parameter.
+enum BotSecurityLevel : uint8_t {
+    BOT_SECURITY_DENY_ALL  = 0,
+    BOT_SECURITY_TALK      = 1,
+    BOT_SECURITY_INVITE    = 2,
+    BOT_SECURITY_ALLOW_ALL = 3,
+};
 
 // ── Legacy helpers kept only so the stripped management code compiles ──
 // These replace types that lived on the deleted PlayerbotAI / strategy
@@ -82,7 +93,8 @@ public:
 
     // ── Accessors ─────────────────────────────────────────────────────────
     Player* GetBot() const { return m_bot; }
-    Player* GetMaster() const { return nullptr; }  // no master concept yet
+    Player* GetMaster() const;
+    ObjectGuid GetMasterGuid() const { return m_masterGuid; }
 
     // ── Management stubs (called by PlayerbotMgr/RandomPlayerbotMgr) ──
     bool HasRealPlayerMaster() const { return false; }
@@ -101,7 +113,7 @@ public:
     bool HasCheat(BotCheatMask /*mask*/) const { return false; }
     void ResetStrategies(bool /*incremental*/ = false) {}
     void AllowActivity(uint32_t /*activity*/, bool /*allow*/) {}
-    void SetMaster(Player* /*master*/) {}
+    void SetMaster(Player* master);
     float GetLevelFloat() const { return 0.0f; }
     Unit* GetUnit(ObjectGuid /*guid*/) const { return nullptr; }
 
@@ -134,6 +146,10 @@ public:
 
     /// Learn talents for one spec tab (0..2) via the Rust factory module.
     void FactoryInitTalentsViaRust(uint32_t spec_no);
+
+    /// Pick a spec and spend all talent points across it (plus any leftover
+    /// into the complementary tab) via the Rust factory module.
+    void FactoryInitTalentsTreeViaRust(bool incremental);
     void TellPlayerNoFacing(Player* /*target*/, const std::string& /*msg*/) {}
     void CastSpell(uint32_t /*spellId*/, Unit* /*target*/) {}
     void EnchantItemT(uint32_t /*spellId*/, uint8_t /*slot*/, Item* /*item*/) {}
@@ -145,6 +161,11 @@ public:
 
 private:
     Player*      m_bot;           // the CMaNGOS Player this AI drives
+    ObjectGuid   m_masterGuid;    // the player that commands this bot (if any)
     BotCallbacks m_callbacks;     // the vtable passed to playerbot_create
     void*        m_rustState;     // opaque BotState* from playerbot_create
+
+    /// Compute the chat-command security tier for `sender`. Mirrors PB2's
+    /// PlayerbotSecurity::LevelFor with GUILD collapsed into TALK.
+    BotSecurityLevel ComputeSenderSecurity(Player& sender) const;
 };

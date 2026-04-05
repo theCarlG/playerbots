@@ -1508,35 +1508,9 @@ void PlayerbotFactory::ResetQuests() { ai->ResetProgressionViaRust(2); }
 
 void PlayerbotFactory::InitReputations() { ai->FactoryMiscViaRust(4); }
 
-void PlayerbotFactory::InitSpells()
-{
-    for (int i = 0; i < 15; i++)
-        InitAvailableSpells();
-}
-
 void PlayerbotFactory::InitTalentsTree(bool incremental)
 {
-    uint32 specNo = sRandomPlayerbotMgr.GetValue(bot->GetGUIDLow(), "specNo");
-    if (incremental && specNo)
-	{
-        specNo -= 1;
-	}
-    else
-    {
-        uint32 point = urand(0, 100);
-        uint8 cls = bot->getClass();
-        uint32 p1 = sPlayerbotAIConfig.specProbability[cls][0];
-        uint32 p2 = p1 + sPlayerbotAIConfig.specProbability[cls][1];
-
-        specNo = (point < p1 ? 0 : (point < p2 ? 1 : 2));
-        sRandomPlayerbotMgr.SetValue(bot, "specNo", specNo + 1);
-    }
-
-    InitTalents(specNo);
-
-    if (bot->GetFreeTalentPoints()) {
-        InitTalents(2 - specNo);
-    }
+    ai->FactoryInitTalentsTreeViaRust(incremental);
 }
 
 class DestroyItemsVisitor : public IterateItemsVisitor
@@ -2634,128 +2608,6 @@ bool PlayerbotFactory::IsDesiredReplacement(uint32 itemId)
     return (int)bot->GetLevel() - (int)requiredLevel > delta;
 }
 
-void PlayerbotFactory::InitSecondEquipmentSet()
-{
-    if (bot->getClass() == CLASS_MAGE || bot->getClass() == CLASS_WARLOCK || bot->getClass() == CLASS_PRIEST)
-        return;
-
-    std::map<uint32, std::vector<uint32> > items;
-
-    uint32 desiredQuality = ITEM_QUALITY_NORMAL;
-    if (level < 10)
-        desiredQuality = urand(ITEM_QUALITY_POOR, ITEM_QUALITY_UNCOMMON);
-    if (level < 20)
-        desiredQuality = urand(ITEM_QUALITY_NORMAL, ITEM_QUALITY_UNCOMMON);
-    else if (level < 40)
-        desiredQuality = urand(ITEM_QUALITY_UNCOMMON, ITEM_QUALITY_RARE);
-    else if (level < 60)
-#ifdef MANGOSBOT_ZERO
-        desiredQuality = urand(ITEM_QUALITY_UNCOMMON, ITEM_QUALITY_RARE);
-    else if (level < 70)
-        desiredQuality = urand(ITEM_QUALITY_RARE, ITEM_QUALITY_EPIC);
-#else
-        desiredQuality = urand(ITEM_QUALITY_UNCOMMON, ITEM_QUALITY_RARE);
-    else if (level < 70)
-        desiredQuality = urand(ITEM_QUALITY_RARE, ITEM_QUALITY_EPIC);
-#endif
-    else if (level < 80)
-        desiredQuality = urand(ITEM_QUALITY_UNCOMMON, ITEM_QUALITY_RARE);
-    else
-        desiredQuality = urand(ITEM_QUALITY_RARE, ITEM_QUALITY_EPIC);
-
-    while (urand(0, 100) < 100 * sPlayerbotAIConfig.randomGearLoweringChance && desiredQuality > ITEM_QUALITY_NORMAL) {
-        desiredQuality--;
-    }
-
-    do
-    {
-        for (uint32 itemId = 0; itemId < sItemStorage.GetMaxEntry(); ++itemId)
-        {
-            ItemPrototype const* proto = sObjectMgr.GetItemPrototype(itemId);
-            if (!proto)
-                continue;
-
-            // filter item level
-            if (proto->ItemLevel > sPlayerbotAIConfig.randomGearMaxLevel)
-                continue;
-
-            // do not use items that required level is too low compared to bot's level
-            uint32 reqLevel = sRandomItemMgr.GetMinLevelFromCache(itemId);
-            if (reqLevel && proto->Quality < ITEM_QUALITY_LEGENDARY && abs((int)bot->GetLevel() - (int)reqLevel) > (int)sPlayerbotAIConfig.randomGearMaxDiff)
-                continue;
-
-            if (!CanEquipItem(proto, desiredQuality))
-                continue;
-
-            if (proto->Class == ITEM_CLASS_WEAPON)
-            {
-                if (!CanEquipWeapon(proto))
-                    continue;
-
-                Item* existingItem = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND);
-                if (existingItem)
-                {
-                    switch (existingItem->GetProto()->SubClass)
-                    {
-                    case ITEM_SUBCLASS_WEAPON_AXE:
-                    case ITEM_SUBCLASS_WEAPON_DAGGER:
-                    case ITEM_SUBCLASS_WEAPON_FIST:
-                    case ITEM_SUBCLASS_WEAPON_MACE:
-                    case ITEM_SUBCLASS_WEAPON_SWORD:
-                        if (proto->SubClass == ITEM_SUBCLASS_WEAPON_AXE || proto->SubClass == ITEM_SUBCLASS_WEAPON_DAGGER ||
-                            proto->SubClass == ITEM_SUBCLASS_WEAPON_FIST || proto->SubClass == ITEM_SUBCLASS_WEAPON_MACE ||
-                            proto->SubClass == ITEM_SUBCLASS_WEAPON_SWORD)
-                            continue;
-                        break;
-                    default:
-                        if (proto->SubClass != ITEM_SUBCLASS_WEAPON_AXE && proto->SubClass != ITEM_SUBCLASS_WEAPON_DAGGER &&
-                            proto->SubClass != ITEM_SUBCLASS_WEAPON_FIST && proto->SubClass != ITEM_SUBCLASS_WEAPON_MACE &&
-                            proto->SubClass != ITEM_SUBCLASS_WEAPON_SWORD)
-                            continue;
-                        break;
-                    }
-                }
-            }
-            else if (proto->Class == ITEM_CLASS_ARMOR && proto->SubClass == ITEM_SUBCLASS_ARMOR_SHIELD)
-            {
-                Item* existingItem = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_OFFHAND);
-                if (existingItem && existingItem->GetProto()->SubClass == ITEM_SUBCLASS_ARMOR_SHIELD)
-                    continue;
-            }
-            else
-                continue;
-
-            items[proto->Class].push_back(itemId);
-        }
-    } while (items[ITEM_CLASS_ARMOR].empty() && items[ITEM_CLASS_WEAPON].empty() && desiredQuality++ != ITEM_QUALITY_ARTIFACT);
-
-    int maxCount = urand(0, 5);
-    int count = 0;
-    for (std::map<uint32, std::vector<uint32> >::iterator i = items.begin(); i != items.end(); ++i)
-    {
-        if (count++ >= maxCount)
-            break;
-
-        std::vector<uint32>& ids = i->second;
-        if (ids.empty())
-        {
-            sLog.outDebug(  "%s: no items to make second equipment set for slot %d", bot->GetName(), i->first);
-            continue;
-        }
-        for (int attempts = 0; attempts < 15; attempts++)
-        {
-            uint32 index = urand(0, ids.size() - 1);
-            uint32 newItemId = ids[index];
-            Item* newItem = StoreItem(newItemId, 1);
-            if (newItem)
-            {
-                count++;
-                break;
-            }
-        }
-    }
-}
-
 void PlayerbotFactory::InitBags() { ai->FactoryMiscViaRust(3); }
 
 void PlayerbotFactory::EnchantItem(Item* item)
@@ -3244,6 +3096,8 @@ void PlayerbotFactory::InitSkills_removed()
     }
 }
 
+#endif // Ported to Rust (InitSkills)
+
 void PlayerbotFactory::SetRandomSkill(uint16 id)
 {
     uint32 maxValue = level * 5; // vanilla 60*5 = 300
@@ -3265,7 +3119,6 @@ void PlayerbotFactory::SetRandomSkill(uint16 id)
     if (!bot->HasSkill(id) || value > curValue)
         bot->SetSkill(id, value, maxValue);
 }
-#endif // Ported to Rust (InitSkills)
 
 void PlayerbotFactory::InitAvailableSpells() { ai->FactoryMiscViaRust(10); }
 
@@ -3524,93 +3377,6 @@ void PlayerbotFactory::InitGuild()
     // add guild tabard
     if (bot->GetGuildId() && bot->GetLevel() > 9 && urand(0, 4) && !bot->HasItemCount(5976, 1))
         StoreItem(5976, 1);
-}
-
-void PlayerbotFactory::InitImmersive()
-{
-    uint32 owner = bot->GetObjectGuid().GetCounter();
-    std::map<Stats, int32> percentMap;
-
-    bool initialized = false;
-    for (int i = STAT_STRENGTH; i < MAX_STATS; ++i)
-    {
-        Stats type = (Stats)i;
-        std::ostringstream name; name << "immersive_stat_" << i;
-        uint32 value = sRandomPlayerbotMgr.GetValue(owner, name.str());
-        if (value) initialized = true;
-        percentMap[type] = value;
-    }
-
-    if (!initialized)
-    {
-        switch (bot->getClass())
-        {
-        case CLASS_DRUID:
-        case CLASS_SHAMAN:
-            percentMap[STAT_STRENGTH] = 15;
-            percentMap[STAT_INTELLECT] = 10;
-            percentMap[STAT_SPIRIT] = 5;
-            percentMap[STAT_AGILITY] = 35;
-            percentMap[STAT_STAMINA] = 35;
-            break;
-        case CLASS_PALADIN:
-            percentMap[STAT_STRENGTH] = 35;
-            percentMap[STAT_INTELLECT] = 10;
-            percentMap[STAT_SPIRIT] = 5;
-            percentMap[STAT_AGILITY] = 15;
-            percentMap[STAT_STAMINA] = 35;
-            break;
-        case CLASS_WARRIOR:
-            percentMap[STAT_STRENGTH] = 30;
-            percentMap[STAT_SPIRIT] = 10;
-            percentMap[STAT_AGILITY] = 20;
-            percentMap[STAT_STAMINA] = 40;
-            break;
-        case CLASS_ROGUE:
-        case CLASS_HUNTER:
-            percentMap[STAT_STRENGTH] = 15;
-            percentMap[STAT_SPIRIT] = 5;
-            percentMap[STAT_AGILITY] = 40;
-            percentMap[STAT_STAMINA] = 40;
-            break;
-        case CLASS_MAGE:
-            percentMap[STAT_INTELLECT] = 65;
-            percentMap[STAT_SPIRIT] = 5;
-            percentMap[STAT_STAMINA] = 30;
-            break;
-        case CLASS_PRIEST:
-            percentMap[STAT_INTELLECT] = 15;
-            percentMap[STAT_SPIRIT] = 55;
-            percentMap[STAT_STAMINA] = 30;
-            break;
-        case CLASS_WARLOCK:
-            percentMap[STAT_INTELLECT] = 30;
-            percentMap[STAT_SPIRIT] = 15;
-            percentMap[STAT_STAMINA] = 55;
-            break;
-        }
-
-        for (int i = 0; i < 5; i++)
-        {
-            Stats from = (Stats)urand(STAT_STRENGTH, MAX_STATS - 1);
-            Stats to = (Stats)urand(STAT_STRENGTH, MAX_STATS - 1);
-            int32 delta = urand(0, 5 + bot->GetLevel() / 3);
-            if (from != to && percentMap[to] + delta <= 100 && percentMap[from] - delta >= 0)
-            {
-                percentMap[to] += delta;
-                percentMap[from] -= delta;
-            }
-        }
-
-        for (int i = STAT_STRENGTH; i < MAX_STATS; ++i)
-        {
-            Stats type = (Stats)i;
-            std::ostringstream name; name << "immersive_stat_" << i;
-            sRandomPlayerbotMgr.SetValue(owner, name.str(), percentMap[type]);
-        }
-    }
-    bot->InitStatsForLevel(true);
-    bot->UpdateAllStats();
 }
 
 #ifndef MANGOSBOT_ZERO

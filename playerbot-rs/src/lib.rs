@@ -239,10 +239,12 @@ pub unsafe extern "C" fn playerbot_damage_taken(
 
 /// Inject a chat command into a bot's pending command queue.
 ///
-/// Called from C++ when a player whispers a command to the bot.
-/// `sender_guid` is the `ObjectGuid` raw value of the commanding player
-/// (0 = internal/system). `privileged` is non-zero if the sender is
-/// owner/party-leader/GM — unprivileged commands are silently dropped.
+/// Called from C++ when a player sends chat to the bot (whisper, party,
+/// say, etc.). `sender_guid` is the `ObjectGuid` raw value of the
+/// commanding player (0 = internal/system, bypasses gating). `security`
+/// is a `commands::SecurityLevel` byte computed by `PlayerbotRust::
+/// ComputeSenderSecurity` (DENY_ALL/TALK/INVITE/ALLOW_ALL); each
+/// `BotCommand` declares the minimum level it requires.
 ///
 /// # Safety
 /// `state` must be a valid pointer from `playerbot_create`.
@@ -251,17 +253,18 @@ pub unsafe extern "C" fn playerbot_damage_taken(
 pub unsafe extern "C" fn playerbot_chat_command(
     state: *mut (),
     sender_guid: u64,
-    privileged: u8,
+    security: u8,
     text: *const std::os::raw::c_char,
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
     let c_str = unsafe { std::ffi::CStr::from_ptr(text) };
     if let Ok(text) = c_str.to_str()
         && let Some(cmd) = commands::parser::parse(text) {
+            let sec = commands::SecurityLevel::from_raw(security);
             let pc = if sender_guid == 0 {
                 commands::PendingCommand::internal(cmd)
             } else {
-                commands::PendingCommand::external(sender_guid, privileged != 0, cmd)
+                commands::PendingCommand::external(sender_guid, sec, cmd)
             };
             bot.pending_commands.push_back(pc);
         }
@@ -360,6 +363,20 @@ pub unsafe extern "C" fn playerbot_factory_init_talents(state: *mut (), spec_no:
     }
     let bot = unsafe { &*state.cast::<BotState>() };
     factory::talents::init_talents(bot.interface.as_ref(), spec_no);
+}
+
+/// Pick (or recall) a talent spec for the bot and spend all of its talent
+/// points, matching the old `PlayerbotFactory::InitTalentsTree` policy.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_init_talents_tree(state: *mut (), incremental: bool) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &*state.cast::<BotState>() };
+    factory::talents::init_talents_tree(bot.interface.as_ref(), incremental);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────

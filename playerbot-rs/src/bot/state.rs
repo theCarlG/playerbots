@@ -10,7 +10,10 @@ use crate::{
     bot::settings::BotSettings,
     commands::PendingCommand,
     encounters::EncounterFsm,
-    engine::{blackboard::Blackboard, bt::Bt, group_state::GroupState, timers::BotTimers},
+    engine::{
+        blackboard::Blackboard, bt::Bt, group_state::GroupState, throttles::Throttles,
+        timers::BotTimers,
+    },
     ffi::{BotRole, BotWorldSnapshot, UnitHandle, interface::BotInterface},
 };
 
@@ -95,6 +98,11 @@ pub struct BotState {
     /// Per-spell cooldown tracking and GCD.
     pub timers: BotTimers,
 
+    /// Per-call-site last-fire timestamps for `Bt::Throttle` nodes.
+    /// Lives on the bot so the behavior tree itself stays stateless and
+    /// shareable (see `engine::throttles`).
+    pub throttles: Throttles,
+
     /// Push events from C++ (spell casts, aura changes, deaths, damage).
     /// Processed before the BT runs each tick.
     pub events: VecDeque<BotEvent>,
@@ -145,6 +153,7 @@ impl BotState {
             attackers: Vec::new(),
             nearby_units: Vec::new(),
             timers: BotTimers::new(),
+            throttles: Throttles::new(),
             events: VecDeque::new(),
             blackboard: Blackboard::default(),
             group_state: None,
