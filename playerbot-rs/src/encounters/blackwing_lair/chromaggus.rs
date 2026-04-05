@@ -12,7 +12,7 @@
 /// Strategy: everyone stays behind the boss; ranged maintain max range to
 /// stay out of breath cones entirely in case of tank position slips.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, Sel, Seq, IsRanged, MaintainRange};
+use crate::encounters::bt::Bt::{self, IsRanged, MaintainRange, Sel, Seq};
 use crate::ffi::SpellId;
 
 pub const AURA_BROOD_AFFLICTION_BLUE: SpellId = SpellId(23170);
@@ -26,7 +26,6 @@ pub const AURA_FRENZY: SpellId = SpellId(28371);
 pub struct ChromaggusFsm {
     active: bool,
     done: bool,
-    bt: Bt,
 }
 
 impl PartialEq for ChromaggusFsm {
@@ -40,7 +39,6 @@ impl ChromaggusFsm {
         Self {
             active: false,
             done: false,
-            bt: Self::build_bt(),
         }
     }
 
@@ -78,7 +76,11 @@ impl EncounterFsm for ChromaggusFsm {
     fn boss_entry(&self) -> u32 {
         super::ENTRY_CHROMAGGUS
     }
-    fn phase_bt(&self) -> Option<&Bt> {
-        if self.active { Some(&self.bt) } else { None }
+    fn phase_bt(&self) -> Option<Bt> {
+        if self.active {
+            Some(Self::build_bt())
+        } else {
+            None
+        }
     }
 }

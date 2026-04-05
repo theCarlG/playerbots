@@ -25,28 +25,13 @@ const ICE_BLOCK: SpellId = SpellId(11958);
 const DIVINE_SHIELD: SpellId = SpellId(642);
 const FIRE_WARD: SpellId = SpellId(543);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct BaronGeddonFsm {
     active: bool,
     done: bool,
-    bt: Bt,
-}
-
-impl PartialEq for BaronGeddonFsm {
-    fn eq(&self, other: &Self) -> bool {
-        self.active == other.active && self.done == other.done
-    }
 }
 
 impl BaronGeddonFsm {
-    pub fn new() -> Self {
-        Self {
-            active: false,
-            done: false,
-            bt: Self::build_bt(),
-        }
-    }
-
     fn build_bt() -> Bt {
         Sel(vec![Self::living_bomb(), Self::inferno()])
     }
@@ -78,12 +63,6 @@ impl BaronGeddonFsm {
     }
 }
 
-impl Default for BaronGeddonFsm {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl EncounterFsm for BaronGeddonFsm {
     fn update(&mut self, event: &EncounterEvent, _boss_hp: f32, _time: u64) {
         match event {
@@ -107,8 +86,12 @@ impl EncounterFsm for BaronGeddonFsm {
         super::ENTRY_BARON_GEDDON
     }
 
-    fn phase_bt(&self) -> Option<&Bt> {
-        if self.active { Some(&self.bt) } else { None }
+    fn phase_bt(&self) -> Option<Bt> {
+        if self.active {
+            Some(Self::build_bt())
+        } else {
+            None
+        }
     }
 }
 
@@ -121,7 +104,7 @@ mod tests {
 
     #[test]
     fn living_bomb_mage_ice_blocks() {
-        let mut fsm = BaronGeddonFsm::new();
+        let mut fsm = BaronGeddonFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
         let bt = fsm.phase_bt().unwrap();
         let iface = TestInterface::new().with_aura(AURA_LIVING_BOMB);
@@ -132,7 +115,7 @@ mod tests {
 
     #[test]
     fn living_bomb_warrior_flees() {
-        let mut fsm = BaronGeddonFsm::new();
+        let mut fsm = BaronGeddonFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
         let bt = fsm.phase_bt().unwrap();
         let iface = TestInterface::new()
@@ -146,7 +129,7 @@ mod tests {
 
     #[test]
     fn no_mechanic_returns_failure() {
-        let mut fsm = BaronGeddonFsm::new();
+        let mut fsm = BaronGeddonFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
         let bt = fsm.phase_bt().unwrap();
         let iface = TestInterface::new();
@@ -158,6 +141,6 @@ mod tests {
 
     #[test]
     fn no_bt_when_idle() {
-        assert!(BaronGeddonFsm::new().phase_bt().is_none());
+        assert!(BaronGeddonFsm::default().phase_bt().is_none());
     }
 }

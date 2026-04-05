@@ -154,6 +154,18 @@ pub enum BotCommand {
     ReleaseSpirit,
     /// `revive` — accept a pending resurrection.
     AcceptRevive,
+    /// `jump` — make the bot jump in place.
+    Jump,
+    /// `hearth` / `home` — use a hearthstone.
+    UseHearth,
+    /// `rep` / `reputation` — whisper reputation standings.
+    ListReputation,
+    /// `skill` / `skills` — whisper learned skills.
+    ListSkills,
+    /// `accept` — accept all quests from the bot's currently targeted NPC.
+    QuestAccept,
+    /// `drop <quest_id>` — abandon an in-progress quest.
+    QuestDrop(u32),
 
     // -- Unknown --
     Unknown(String),
@@ -175,7 +187,9 @@ impl BotCommand {
         match self {
             // Information queries — anyone who can talk to the bot.
             Status | ListSettings | Where | Help | Ready | Unknown(_) | Debug | CheckLos
-            | ListQuests | ListTalents | ListSpells => SecurityLevel::Talk,
+            | ListQuests | ListTalents | ListSpells | ListReputation | ListSkills => {
+                SecurityLevel::Talk
+            }
 
             // Destructive / account-level — master only.
             Reset | ResetStrategies | BlacklistSpell(_) | UnblacklistSpell(_)
@@ -228,7 +242,11 @@ impl BotCommand {
             | SetPreferredRti(_)
             | Emote(_)
             | ReleaseSpirit
-            | AcceptRevive => SecurityLevel::Invite,
+            | AcceptRevive
+            | Jump
+            | UseHearth
+            | QuestAccept
+            | QuestDrop(_) => SecurityLevel::Invite,
         }
     }
 }
@@ -692,6 +710,31 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         }
         BotCommand::AcceptRevive => {
             bot.interface.accept_resurrect();
+        }
+        BotCommand::Jump => {
+            bot.interface.bot_jump();
+        }
+        BotCommand::UseHearth => {
+            bot.interface.bot_use_hearthstone();
+        }
+        BotCommand::ListReputation => {
+            let list = bot.interface.bot_get_reputation_list();
+            let msg = format!("Reputations tracked: {}", list.len());
+            reply(bot, pc, &msg);
+        }
+        BotCommand::ListSkills => {
+            let list = bot.interface.bot_get_learned_skills();
+            let msg = format!("Skills learned: {}", list.len());
+            reply(bot, pc, &msg);
+        }
+        BotCommand::QuestAccept => {
+            let npc = bot.snap.self_.current_target;
+            if npc != 0 {
+                bot.interface.bot_quest_accept_from(npc);
+            }
+        }
+        BotCommand::QuestDrop(quest_id) => {
+            bot.interface.bot_quest_abandon(*quest_id);
         }
 
         BotCommand::Unknown(text) => {

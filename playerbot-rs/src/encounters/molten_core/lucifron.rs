@@ -6,50 +6,17 @@
 ///   - **Shadow Shock** (20603): 5y PBAOE — melee spread only if stacking.
 /// Dispellers (priest/mage/druid) hammer dispels on the raid.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, Sel, Seq, IsRanged, MaintainRange};
+use crate::encounters::bt::Bt::{self, IsRanged, MaintainRange, Sel, Seq};
 use crate::ffi::SpellId;
 
 pub const AURA_IMPENDING_DOOM: SpellId = SpellId(18093);
 pub const AURA_LUCIFRONS_CURSE: SpellId = SpellId(19703);
 pub const AURA_SHADOW_SHOCK: SpellId = SpellId(20603);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct LucifronFsm {
     active: bool,
     done: bool,
-    bt: Bt,
-}
-
-impl PartialEq for LucifronFsm {
-    fn eq(&self, other: &Self) -> bool {
-        self.active == other.active && self.done == other.done
-    }
-}
-
-impl LucifronFsm {
-    pub fn new() -> Self {
-        Self {
-            active: false,
-            done: false,
-            bt: Self::build_bt(),
-        }
-    }
-
-    fn build_bt() -> Bt {
-        // Dispellers run the default reactive dispel path — the encounter
-        // override does not need to re-issue dispels. Ranged stay back to
-        // avoid Shadow Shock; tanks hold threat normally.
-        Sel(vec![
-            // Ranged keep 15y from the boss to avoid Shadow Shock splash.
-            Seq(vec![IsRanged, MaintainRange(15.0)]),
-        ])
-    }
-}
-
-impl Default for LucifronFsm {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl EncounterFsm for LucifronFsm {
@@ -73,7 +40,19 @@ impl EncounterFsm for LucifronFsm {
     fn boss_entry(&self) -> u32 {
         super::ENTRY_LUCIFRON
     }
-    fn phase_bt(&self) -> Option<&Bt> {
-        if self.active { Some(&self.bt) } else { None }
+    fn phase_bt(&self) -> Option<Bt> {
+        if self.active {
+            Some(
+                // Dispellers run the default reactive dispel path — the encounter
+                // override does not need to re-issue dispels. Ranged stay back to
+                // avoid Shadow Shock; tanks hold threat normally.
+                Sel(vec![
+                    // Ranged keep 15y from the boss to avoid Shadow Shock splash.
+                    Seq(vec![IsRanged, MaintainRange(15.0)]),
+                ]),
+            )
+        } else {
+            None
+        }
     }
 }

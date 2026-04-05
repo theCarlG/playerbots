@@ -103,6 +103,23 @@ typedef struct {
     uint32_t rank_ids[5];      /* MAX_TALENT_RANK spell IDs */
 } BotTalentEntry;
 
+/* One reputation entry — the bot's standing with a single faction. Returned
+ * in batches by `bot_get_reputation_list`. `standing` is the enum-style tier
+ * (0 = hated .. 7 = exalted). `value` is the raw standing points. */
+typedef struct {
+    uint32_t faction_id;
+    int32_t  value;
+    uint8_t  standing;
+} BotReputationEntry;
+
+/* One learned skill — id, current value, max value. Returned in batches by
+ * `bot_get_learned_skills`. */
+typedef struct {
+    uint32_t skill_id;
+    uint32_t value;
+    uint32_t max;
+} BotSkillEntry;
+
 typedef struct {
     UnitHandle unit;
     uint32_t   spell_id;        /* debuff spell ID */
@@ -410,6 +427,27 @@ typedef struct BotCallbacks {
      *     returns the chosen tab.
      * Used by factory InitTalentsTree. */
     uint32_t        (*bot_pick_spec_no)(BotHandle bot, bool incremental);
+
+    /* ── Chat-command helpers (Wave 2) ───────────────────────────────── */
+    /* Trigger a jump action on the bot (vertical movement, no target). */
+    bool            (*bot_jump)(BotHandle bot);
+    /* Use a hearthstone from the bot's bags, if one is present. Returns
+     * false if no hearthstone is owned or the item is on cooldown. */
+    bool            (*bot_use_hearthstone)(BotHandle bot);
+    /* All factions the bot has a reputation value for. Freshly-allocated
+     * array; caller must call `bot_free_reputation_list`. */
+    BotReputationEntry* (*bot_get_reputation_list)(BotHandle bot, uint32_t* out_count);
+    void                (*bot_free_reputation_list)(BotReputationEntry* list);
+    /* All skills the bot has learned (non-zero value). Freshly-allocated
+     * array; caller must call `bot_free_skill_list`. */
+    BotSkillEntry*  (*bot_get_learned_skills)(BotHandle bot, uint32_t* out_count);
+    void            (*bot_free_skill_list)(BotSkillEntry* list);
+    /* Accept every quest offered by `npc` (GUID of the nearby quest giver
+     * the bot currently has selected). Returns true on success. */
+    bool            (*bot_quest_accept_from)(BotHandle bot, UnitHandle npc);
+    /* Abandon the quest with id `quest_id` from the bot's log. Returns
+     * true if the quest was found and removed. */
+    bool            (*bot_quest_abandon)(BotHandle bot, uint32_t quest_id);
 } BotCallbacks;
 
 /* ── Rust exports (entry points CMaNGOS calls into Rust) ─────────────────── */

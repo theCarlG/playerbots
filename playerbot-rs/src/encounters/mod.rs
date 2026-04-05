@@ -89,7 +89,7 @@ pub trait EncounterFsm: Send {
     /// encounter FSM may either own a BT as a struct field (per-instance) or
     /// return a shared `&'static Bt` built once via `OnceLock` — both are
     /// valid under the elided lifetime below.
-    fn phase_bt(&self) -> Option<&Bt> {
+    fn phase_bt(&self) -> Option<Bt> {
         None
     }
 }
@@ -223,7 +223,7 @@ where
         self.active_boss.as_ref().map_or(0, |b| b.boss_entry())
     }
 
-    fn phase_bt(&self) -> Option<&Bt> {
+    fn phase_bt(&self) -> Option<Bt> {
         self.active_boss.as_ref().and_then(|b| b.phase_bt())
     }
 }

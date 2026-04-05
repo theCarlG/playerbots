@@ -36,17 +36,17 @@ pub const SPELL_FIRE_PROTECTION_POTION: crate::ffi::SpellId = crate::ffi::SpellI
 encounter_dispatch! {
     #[derive(Clone, PartialEq)]
     pub enum MoltenCoreBoss {
-    Generic(SimpleFsm),
-    Lucifron(LucifronFsm),
-    Magmadar(MagmadarFsm),
-    Garr(GarrFsm),
-    BaronGeddon(BaronGeddonFsm),
-    Shazzrah(ShazzrahFsm),
-    Ragnaros(RagnarosFsm),
-    // Gehennas(SimpleFsm),
-    // Sulfuron(SimpleFsm),
-    // Golemagg(SimpleFsm),
-    // Majordomo(SimpleFsm),
+        Generic(SimpleFsm),
+        Lucifron(LucifronFsm),
+        Magmadar(MagmadarFsm),
+        Garr(GarrFsm),
+        BaronGeddon(BaronGeddonFsm),
+        Shazzrah(ShazzrahFsm),
+        Ragnaros(RagnarosFsm),
+        // Gehennas(SimpleFsm),
+        // Sulfuron(SimpleFsm),
+        // Golemagg(SimpleFsm),
+        // Majordomo(SimpleFsm),
     }
 }
 
@@ -54,12 +54,12 @@ impl TryFrom<u32> for MoltenCoreBoss {
     type Error = ();
     fn try_from(entry: u32) -> Result<Self, Self::Error> {
         match entry {
-            ENTRY_RAGNAROS => Ok(Self::Ragnaros(RagnarosFsm::new())),
-            ENTRY_BARON_GEDDON => Ok(Self::BaronGeddon(BaronGeddonFsm::new())),
-            ENTRY_MAGMADAR => Ok(Self::Magmadar(MagmadarFsm::new())),
-            ENTRY_LUCIFRON => Ok(Self::Lucifron(LucifronFsm::new())),
-            ENTRY_GARR => Ok(Self::Garr(GarrFsm::new())),
-            ENTRY_SHAZZRAH => Ok(Self::Shazzrah(ShazzrahFsm::new())),
+            ENTRY_RAGNAROS => Ok(Self::Ragnaros(RagnarosFsm::default())),
+            ENTRY_BARON_GEDDON => Ok(Self::BaronGeddon(BaronGeddonFsm::default())),
+            ENTRY_MAGMADAR => Ok(Self::Magmadar(MagmadarFsm::default())),
+            ENTRY_LUCIFRON => Ok(Self::Lucifron(LucifronFsm::default())),
+            ENTRY_GARR => Ok(Self::Garr(GarrFsm::default())),
+            ENTRY_SHAZZRAH => Ok(Self::Shazzrah(ShazzrahFsm::default())),
             ENTRY_GEHENNAS | ENTRY_SULFURON | ENTRY_GOLEMAGG | ENTRY_MAJORDOMO => {
                 Ok(Self::Generic(SimpleFsm::new(entry)))
             }

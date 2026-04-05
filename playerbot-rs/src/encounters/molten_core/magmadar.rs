@@ -12,36 +12,10 @@ pub const SPELL_LAVA_BOMB: SpellId = SpellId(19411);
 pub const AURA_PANIC: SpellId = SpellId(19408);
 pub const AURA_FLAME_BUFFET: SpellId = SpellId(19634);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct MagmadarFsm {
     active: bool,
     done: bool,
-    bt: Bt,
-}
-
-impl PartialEq for MagmadarFsm {
-    fn eq(&self, other: &Self) -> bool {
-        self.active == other.active && self.done == other.done
-    }
-}
-
-impl MagmadarFsm {
-    pub fn new() -> Self {
-        Self {
-            active: false,
-            done: false,
-            bt: Sel(vec![
-                Seq(vec![IsRanged, MaintainRange(30.0)]),
-                Seq(vec![IsTank, Taunt]),
-            ]),
-        }
-    }
-}
-
-impl Default for MagmadarFsm {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl EncounterFsm for MagmadarFsm {
@@ -67,7 +41,14 @@ impl EncounterFsm for MagmadarFsm {
         super::ENTRY_MAGMADAR
     }
 
-    fn phase_bt(&self) -> Option<&Bt> {
-        if self.active { Some(&self.bt) } else { None }
+    fn phase_bt(&self) -> Option<Bt> {
+        if self.active {
+            Some(Sel(vec![
+                Seq(vec![IsRanged, MaintainRange(30.0)]),
+                Seq(vec![IsTank, Taunt]),
+            ]))
+        } else {
+            None
+        }
     }
 }

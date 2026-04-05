@@ -10,7 +10,7 @@
 /// Strategy: everyone stays spread (Eruption `AoE`). Melee pull out when a
 /// Firesworn crosses ~15% to avoid Eruption. Mages/shamans purge frenzy.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, Sel, Seq, IsRanged, MaintainRange};
+use crate::encounters::bt::Bt::{self, IsRanged, MaintainRange, Sel, Seq};
 use crate::ffi::SpellId;
 
 pub const AURA_ANTIMAGIC_PULSE: SpellId = SpellId(19492);
@@ -18,39 +18,10 @@ pub const AURA_MAGMA_SHACKLES: SpellId = SpellId(19496);
 pub const SPELL_ERUPTION: SpellId = SpellId(19497);
 pub const AURA_FIRESWORN_FRENZY: SpellId = SpellId(19516);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct GarrFsm {
     active: bool,
     done: bool,
-    bt: Bt,
-}
-
-impl PartialEq for GarrFsm {
-    fn eq(&self, other: &Self) -> bool {
-        self.active == other.active && self.done == other.done
-    }
-}
-
-impl GarrFsm {
-    pub fn new() -> Self {
-        Self {
-            active: false,
-            done: false,
-            bt: Self::build_bt(),
-        }
-    }
-
-    fn build_bt() -> Bt {
-        // Ranged stay back at 20y from the boss (out of most Eruption chains).
-        // Melee rely on the reactive flee layer to dodge Eruption bursts.
-        Sel(vec![Seq(vec![IsRanged, MaintainRange(20.0)])])
-    }
-}
-
-impl Default for GarrFsm {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl EncounterFsm for GarrFsm {
@@ -74,7 +45,15 @@ impl EncounterFsm for GarrFsm {
     fn boss_entry(&self) -> u32 {
         super::ENTRY_GARR
     }
-    fn phase_bt(&self) -> Option<&Bt> {
-        if self.active { Some(&self.bt) } else { None }
+    fn phase_bt(&self) -> Option<Bt> {
+        if self.active {
+            Some(
+                // Ranged stay back at 20y from the boss (out of most Eruption chains).
+                // Melee rely on the reactive flee layer to dodge Eruption bursts.
+                Sel(vec![Seq(vec![IsRanged, MaintainRange(20.0)])]),
+            )
+        } else {
+            None
+        }
     }
 }

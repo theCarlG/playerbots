@@ -145,6 +145,31 @@ const COMMANDS: &[CommandSpec] = &[
         names: &["revive"],
         parse: |_, _| Some(BotCommand::AcceptRevive),
     },
+    CommandSpec { names: &["jump"], parse: |_, _| Some(BotCommand::Jump) },
+    CommandSpec {
+        names: &["hearth", "home"],
+        parse: |_, _| Some(BotCommand::UseHearth),
+    },
+    CommandSpec {
+        names: &["rep", "reputation"],
+        parse: |_, _| Some(BotCommand::ListReputation),
+    },
+    CommandSpec {
+        names: &["skill", "skills"],
+        parse: |_, _| Some(BotCommand::ListSkills),
+    },
+    CommandSpec {
+        names: &["accept"],
+        parse: |_, _| Some(BotCommand::QuestAccept),
+    },
+    CommandSpec {
+        names: &["drop"],
+        parse: |_, a| {
+            a.first()
+                .and_then(|s| s.parse::<u32>().ok())
+                .map(BotCommand::QuestDrop)
+        },
+    },
 ];
 
 /// Parse a chat message into a `BotCommand`.
@@ -918,6 +943,19 @@ mod tests {
         assert_eq!(parse("spells"), Some(BotCommand::ListSpells));
         assert_eq!(parse("release"), Some(BotCommand::ReleaseSpirit));
         assert_eq!(parse("revive"), Some(BotCommand::AcceptRevive));
+    }
+
+    #[test]
+    fn wave2_ffi_commands() {
+        assert_eq!(parse("jump"), Some(BotCommand::Jump));
+        assert_eq!(parse("hearth"), Some(BotCommand::UseHearth));
+        assert_eq!(parse("home"), Some(BotCommand::UseHearth));
+        assert_eq!(parse("rep"), Some(BotCommand::ListReputation));
+        assert_eq!(parse("reputation"), Some(BotCommand::ListReputation));
+        assert_eq!(parse("skill"), Some(BotCommand::ListSkills));
+        assert_eq!(parse("skills"), Some(BotCommand::ListSkills));
+        assert_eq!(parse("accept"), Some(BotCommand::QuestAccept));
+        assert_eq!(parse("drop 1234"), Some(BotCommand::QuestDrop(1234)));
     }
 
     #[test]

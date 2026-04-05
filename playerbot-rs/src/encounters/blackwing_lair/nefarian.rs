@@ -21,7 +21,7 @@
 ///   - Ground: check for class call auras, react accordingly.
 ///   - Air/Final: normal rotation (no class calls during transition).
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, Sel, Seq, HasDebuff, HoldPosition, MoveAwayFromRaid};
+use crate::encounters::bt::Bt::{self, HasDebuff, HoldPosition, MoveAwayFromRaid, Sel, Seq};
 use crate::ffi::SpellId;
 
 // ── Class Call spell IDs (auras applied to affected class) ───────────────
@@ -127,9 +127,9 @@ impl EncounterFsm for NefarianFsm {
         super::ENTRY_NEFARIAN
     }
 
-    fn phase_bt(&self) -> Option<&Bt> {
+    fn phase_bt(&self) -> Option<Bt> {
         match self.phase {
-            NefPhase::Ground | NefPhase::FinalGround => Some(&self.ground_bt),
+            NefPhase::Ground | NefPhase::FinalGround => Some(self.ground_bt.clone()),
             _ => None,
         }
     }

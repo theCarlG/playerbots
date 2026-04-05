@@ -307,6 +307,16 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.bot_update_free_talent_points       = CB_BotUpdateFreeTalentPoints;
     cbs.bot_pick_spec_no                    = CB_BotPickSpecNo;
 
+    // Chat-command helpers (Wave 2)
+    cbs.bot_jump                            = CB_BotJump;
+    cbs.bot_use_hearthstone                 = CB_BotUseHearthstone;
+    cbs.bot_get_reputation_list             = CB_BotGetReputationList;
+    cbs.bot_free_reputation_list            = CB_BotFreeReputationList;
+    cbs.bot_get_learned_skills              = CB_BotGetLearnedSkills;
+    cbs.bot_free_skill_list                 = CB_BotFreeSkillList;
+    cbs.bot_quest_accept_from               = CB_BotQuestAcceptFrom;
+    cbs.bot_quest_abandon                   = CB_BotQuestAbandon;
+
     return cbs;
 }
 
@@ -2567,4 +2577,145 @@ uint32_t* BotBridge::CB_GetRandomBotSpellIds(BotHandle /*bot*/, uint32_t* out_co
         arr[i++] = *it;
     *out_count = count;
     return arr;
+}
+
+// ── Chat-command helpers (Wave 2) ─────────────────────────────────────────
+
+bool BotBridge::CB_BotJump(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    // KnockBackFrom(self, horizontal, vertical) — jumping in place.
+    b->KnockBackFrom(b, 0.0f, 8.0f);
+    return true;
+}
+
+bool BotBridge::CB_BotUseHearthstone(BotHandle bot)
+{
+    // Reuse the CB_UseItem path — hearthstone has a single OnUse spell and no
+    // unit target. 6948 = "Hearthstone" item id.
+    return CB_UseItem(bot, 6948, 0);
+}
+
+BotReputationEntry* BotBridge::CB_BotGetReputationList(BotHandle bot, uint32_t* out_count)
+{
+    if (out_count)
+        *out_count = 0;
+    if (!out_count)
+        return nullptr;
+
+    Player* b = FindBot(bot);
+    if (!b)
+        return nullptr;
+
+    FactionStateList const& states = b->GetReputationMgr().GetStateList();
+    if (states.empty())
+        return nullptr;
+
+    uint32_t count = static_cast<uint32_t>(states.size());
+    BotReputationEntry* arr = static_cast<BotReputationEntry*>(
+        std::malloc(count * sizeof(BotReputationEntry)));
+    if (!arr)
+        return nullptr;
+
+    uint32_t j = 0;
+    for (FactionStateList::const_iterator it = states.begin(); it != states.end(); ++it)
+    {
+        FactionState const& st = it->second;
+        arr[j].faction_id = st.ID;
+        arr[j].value      = st.Standing;
+        arr[j].standing   = static_cast<uint8_t>(ReputationMgr::ReputationToRank(st.Standing));
+        ++j;
+    }
+    *out_count = count;
+    return arr;
+}
+
+void BotBridge::CB_BotFreeReputationList(BotReputationEntry* list)
+{
+    std::free(list);
+}
+
+BotSkillEntry* BotBridge::CB_BotGetLearnedSkills(BotHandle bot, uint32_t* out_count)
+{
+    if (out_count)
+        *out_count = 0;
+    if (!out_count)
+        return nullptr;
+
+    Player* b = FindBot(bot);
+    if (!b)
+        return nullptr;
+
+    // Player::mSkillStatus is private — iterate the SkillLine DBC and pick
+    // the ones this bot actually has.
+    uint32_t count = 0;
+    for (uint32 id = 1; id < sSkillLineStore.GetNumRows(); ++id)
+    {
+        if (!sSkillLineStore.LookupEntry(id))
+            continue;
+        if (!b->HasSkill(static_cast<uint16>(id)))
+            continue;
+        ++count;
+    }
+    if (count == 0)
+        return nullptr;
+
+    BotSkillEntry* arr = static_cast<BotSkillEntry*>(
+        std::malloc(count * sizeof(BotSkillEntry)));
+    if (!arr)
+        return nullptr;
+
+    uint32_t j = 0;
+    for (uint32 id = 1; id < sSkillLineStore.GetNumRows(); ++id)
+    {
+        if (!sSkillLineStore.LookupEntry(id))
+            continue;
+        if (!b->HasSkill(static_cast<uint16>(id)))
+            continue;
+        arr[j].skill_id = id;
+        arr[j].value    = b->GetSkillValue(static_cast<uint16>(id));
+        arr[j].max      = b->GetMaxSkillValue(static_cast<uint16>(id));
+        ++j;
+    }
+    *out_count = count;
+    return arr;
+}
+
+void BotBridge::CB_BotFreeSkillList(BotSkillEntry* list)
+{
+    std::free(list);
+}
+
+bool BotBridge::CB_BotQuestAcceptFrom(BotHandle bot, UnitHandle npc)
+{
+    // Same as CB_AcceptAllQuests — the NPC hands the bot every quest it can
+    // take. The distinction between "accept all" and "accept from" lives in
+    // the command dispatcher; the FFI side is identical.
+    return CB_AcceptAllQuests(bot, npc);
+}
+
+bool BotBridge::CB_BotQuestAbandon(BotHandle bot, uint32_t quest_id)
+{
+    Player* b = FindBot(bot);
+    if (!b || quest_id == 0)
+        return false;
+
+    // Remove all quest log slots matching this entry (mirrors Level3.cpp
+    // HandleQuestRemoveCommand in the Karatefylla fork).
+    bool removed = false;
+    for (uint8 slot = 0; slot < MAX_QUEST_LOG_SIZE; ++slot)
+    {
+        if (b->GetQuestSlotQuestId(slot) == quest_id)
+        {
+            b->SetQuestSlot(slot, 0);
+            b->TakeQuestSourceItem(quest_id, false);
+            removed = true;
+        }
+    }
+
+    b->SetQuestStatus(quest_id, QUEST_STATUS_NONE);
+    b->getQuestStatusMap()[quest_id].m_rewarded = false;
+    return removed;
 }

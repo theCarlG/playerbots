@@ -5,7 +5,7 @@
 ///   Submerged (75%/50%/25%): kill 8 Sons of Flame.
 ///   Phase 2 (< 25%): same as Ground, adds spawn continuously.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, AttackNearest, Seq, IsRanged, MaintainRange};
+use crate::encounters::bt::Bt::{self, AttackNearest, IsRanged, MaintainRange, Seq};
 use crate::ffi::SpellId;
 
 pub const ENTRY_SON_OF_FLAME: u32 = 12143;
@@ -14,56 +14,28 @@ pub const SPELL_WRATH_OF_RAGNAROS: SpellId = SpellId(20566);
 pub const SPELL_HAND_OF_RAGNAROS: SpellId = SpellId(19780);
 pub const SPELL_ELEMENTAL_FIRE: SpellId = SpellId(20563);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RagnarosPhase {
+    #[default]
     Idle,
     Ground,
     Submerged,
     Phase2,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct RagnarosFsm {
     pub phase: RagnarosPhase,
     pub submerge_count: u8,
     pub sons_killed: u8,
     done: bool,
-
-    submerge_bt: Bt,
-    ground_bt: Bt,
-}
-
-impl PartialEq for RagnarosFsm {
-    fn eq(&self, other: &Self) -> bool {
-        self.phase == other.phase
-            && self.done == other.done
-            && self.submerge_count == other.submerge_count
-            && self.sons_killed == other.sons_killed
-    }
 }
 
 impl RagnarosFsm {
-    pub fn new() -> Self {
-        Self {
-            phase: RagnarosPhase::Idle,
-            submerge_count: 0,
-            sons_killed: 0,
-            done: false,
-            submerge_bt: AttackNearest,
-            ground_bt: Seq(vec![IsRanged, MaintainRange(30.0)]),
-        }
-    }
-
     pub const PHASE_IDLE: u32 = 0;
     pub const PHASE_GROUND: u32 = 1;
     pub const PHASE_SUBMERGED: u32 = 2;
     pub const PHASE_2: u32 = 3;
-}
-
-impl Default for RagnarosFsm {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl EncounterFsm for RagnarosFsm {
@@ -133,11 +105,13 @@ impl EncounterFsm for RagnarosFsm {
         super::ENTRY_RAGNAROS
     }
 
-    fn phase_bt(&self) -> Option<&Bt> {
+    fn phase_bt(&self) -> Option<Bt> {
         match self.phase {
             RagnarosPhase::Idle => None,
-            RagnarosPhase::Submerged => Some(&self.submerge_bt),
-            RagnarosPhase::Ground | RagnarosPhase::Phase2 => Some(&self.ground_bt),
+            RagnarosPhase::Submerged => Some(AttackNearest),
+            RagnarosPhase::Ground | RagnarosPhase::Phase2 => {
+                Some(Seq(vec![IsRanged, MaintainRange(30.0)]))
+            }
         }
     }
 }
@@ -153,7 +127,7 @@ mod tests {
 
     #[test]
     fn submerges_at_75pct() {
-        let mut fsm = RagnarosFsm::new();
+        let mut fsm = RagnarosFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
         fsm.update(&EncounterEvent::None, 0.74, 1000);
         assert_eq!(fsm.phase, RagnarosPhase::Submerged);
@@ -161,7 +135,7 @@ mod tests {
 
     #[test]
     fn reemerges_after_8_sons() {
-        let mut fsm = RagnarosFsm::new();
+        let mut fsm = RagnarosFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
         fsm.update(&EncounterEvent::None, 0.74, 0);
         for _ in 0..8 {
@@ -172,7 +146,7 @@ mod tests {
 
     #[test]
     fn enters_phase2_after_3rd_submerge() {
-        let mut fsm = RagnarosFsm::new();
+        let mut fsm = RagnarosFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
         for hp in &[0.74_f32, 0.49, 0.24] {
             fsm.update(&EncounterEvent::None, *hp, 0);
@@ -186,7 +160,7 @@ mod tests {
 
     #[test]
     fn submerge_bt_attacks_adds() {
-        let mut fsm = RagnarosFsm::new();
+        let mut fsm = RagnarosFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
         fsm.update(&EncounterEvent::None, 0.74, 0);
         let bt = fsm.phase_bt().unwrap();
@@ -200,6 +174,6 @@ mod tests {
 
     #[test]
     fn no_bt_when_idle() {
-        assert!(RagnarosFsm::new().phase_bt().is_none());
+        assert!(RagnarosFsm::default().phase_bt().is_none());
     }
 }

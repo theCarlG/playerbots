@@ -1,5 +1,3 @@
-use std::sync::OnceLock;
-
 /// Shazzrah encounter — Molten Core.
 ///
 /// Single-phase caster fight. Key mechanics:
@@ -16,42 +14,10 @@ pub const AURA_SHAZZRAH_CURSE: SpellId = SpellId(19714);
 pub const SPELL_ARCANE_EXPLOSION: SpellId = SpellId(19712);
 pub const SPELL_GATE_OF_SHAZZRAH: SpellId = SpellId(23138);
 
-static BT: OnceLock<Bt> = OnceLock::new();
-
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct ShazzrahFsm {
     active: bool,
     done: bool,
-}
-
-impl PartialEq for ShazzrahFsm {
-    fn eq(&self, other: &Self) -> bool {
-        self.active == other.active && self.done == other.done
-    }
-}
-
-impl ShazzrahFsm {
-    pub fn new() -> Self {
-        Self {
-            active: false,
-            done: false,
-        }
-    }
-
-    fn static_bt() -> &'static Bt {
-        BT.get_or_init(|| {
-            Sel(vec![
-                Seq(vec![IsRanged, MaintainRange(30.0)]),
-                Seq(vec![IsMeleeDps, MaintainRange(5.0)]),
-            ])
-        })
-    }
-}
-
-impl Default for ShazzrahFsm {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl EncounterFsm for ShazzrahFsm {
@@ -75,9 +41,12 @@ impl EncounterFsm for ShazzrahFsm {
     fn boss_entry(&self) -> u32 {
         super::ENTRY_SHAZZRAH
     }
-    fn phase_bt(&self) -> Option<&Bt> {
+    fn phase_bt(&self) -> Option<Bt> {
         if self.active {
-            Some(Self::static_bt())
+            Some(Sel(vec![
+                Seq(vec![IsRanged, MaintainRange(30.0)]),
+                Seq(vec![IsMeleeDps, MaintainRange(5.0)]),
+            ]))
         } else {
             None
         }

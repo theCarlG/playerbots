@@ -214,6 +214,16 @@ namespace BotBridge
     void            CB_BotUpdateFreeTalentPoints(BotHandle bot);
     uint32_t        CB_BotPickSpecNo(BotHandle bot, bool incremental);
 
+    // ── Chat-command helpers (Wave 2) ──────────────────────────────────────
+    bool                CB_BotJump(BotHandle bot);
+    bool                CB_BotUseHearthstone(BotHandle bot);
+    BotReputationEntry* CB_BotGetReputationList(BotHandle bot, uint32_t* out_count);
+    void                CB_BotFreeReputationList(BotReputationEntry* list);
+    BotSkillEntry*      CB_BotGetLearnedSkills(BotHandle bot, uint32_t* out_count);
+    void                CB_BotFreeSkillList(BotSkillEntry* list);
+    bool                CB_BotQuestAcceptFrom(BotHandle bot, UnitHandle npc);
+    bool                CB_BotQuestAbandon(BotHandle bot, uint32_t quest_id);
+
     // ── Internal helpers ────────────────────────────────────────────────────
     Player* FindBot(BotHandle bot);
     Unit*   FindUnit(BotHandle bot, UnitHandle handle);

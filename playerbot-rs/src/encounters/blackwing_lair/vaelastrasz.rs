@@ -13,7 +13,7 @@
 /// run to the corner. Burning Adrenaline on the tank = tank swap (handled
 /// by reactive layer picking up a new MT target).
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, Sel, Seq, HasDebuff, MoveAwayFromRaid};
+use crate::encounters::bt::Bt::{self, HasDebuff, MoveAwayFromRaid, Sel, Seq};
 use crate::ffi::SpellId;
 
 pub const AURA_BURNING_ADRENALINE: SpellId = SpellId(18173);
@@ -24,7 +24,6 @@ pub const SPELL_FLAME_BREATH: SpellId = SpellId(23461);
 pub struct VaelastraszFsm {
     active: bool,
     done: bool,
-    bt: Bt,
 }
 
 impl PartialEq for VaelastraszFsm {
@@ -38,7 +37,6 @@ impl VaelastraszFsm {
         Self {
             active: false,
             done: false,
-            bt: Self::build_bt(),
         }
     }
 
@@ -79,7 +77,11 @@ impl EncounterFsm for VaelastraszFsm {
     fn boss_entry(&self) -> u32 {
         super::ENTRY_VAELASTRASZ
     }
-    fn phase_bt(&self) -> Option<&Bt> {
-        if self.active { Some(&self.bt) } else { None }
+    fn phase_bt(&self) -> Option<Bt> {
+        if self.active {
+            Some(Self::build_bt())
+        } else {
+            None
+        }
     }
 }

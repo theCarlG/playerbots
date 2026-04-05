@@ -50,7 +50,7 @@ macro_rules! encounter_dispatch {
             fn boss_entry(&self) -> u32 {
                 match self { $( Self::$variant(fsm) => fsm.boss_entry(), )+ }
             }
-            fn phase_bt(&self) -> Option<&$crate::engine::bt::Bt> {
+            fn phase_bt(&self) -> Option<$crate::engine::bt::Bt> {
                 match self { $( Self::$variant(fsm) => fsm.phase_bt(), )+ }
             }
         }

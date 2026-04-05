@@ -6,8 +6,9 @@
 /// `BtNode` and `TickContext` use `&dyn BotInterface` so they work in both contexts
 /// without any conditional compilation.
 use super::{
-    BotAuraInfo, BotCallbacks, BotHandle, BotPosition, BotSpellInfo, BotTalentEntry, BotTaxiNode,
-    BotThreatEntry, BotUnitSnapshot, BotWorldSnapshot, UnitHandle,
+    BotAuraInfo, BotCallbacks, BotHandle, BotPosition, BotReputationEntry, BotSkillEntry,
+    BotSpellInfo, BotTalentEntry, BotTaxiNode, BotThreatEntry, BotUnitSnapshot, BotWorldSnapshot,
+    UnitHandle,
     types::{BotRole, ItemId, SpellId},
 };
 
@@ -485,6 +486,38 @@ pub trait BotInterface: Send {
     /// doc comment on `bot_pick_spec_no` in `botffi.h` for the full policy.
     fn bot_pick_spec_no(&self, _incremental: bool) -> u32 {
         0
+    }
+
+    /* ── Chat-command helpers (Wave 2) ───────────────────────────────── */
+
+    /// Make the bot jump in place (vertical knockback).
+    fn bot_jump(&self) -> bool {
+        false
+    }
+
+    /// Use a hearthstone if the bot has one in its bags.
+    fn bot_use_hearthstone(&self) -> bool {
+        false
+    }
+
+    /// Snapshot every faction the bot has an entry for.
+    fn bot_get_reputation_list(&self) -> Vec<BotReputationEntry> {
+        Vec::new()
+    }
+
+    /// Snapshot every skill the bot has learned (skill id + current/max).
+    fn bot_get_learned_skills(&self) -> Vec<BotSkillEntry> {
+        Vec::new()
+    }
+
+    /// Accept every quest the given NPC offers.
+    fn bot_quest_accept_from(&self, _npc: UnitHandle) -> bool {
+        false
+    }
+
+    /// Abandon an in-progress quest (removes it from the log).
+    fn bot_quest_abandon(&self, _quest_id: u32) -> bool {
+        false
     }
 }
 
@@ -1163,5 +1196,47 @@ impl BotInterface for RealInterface {
 
     fn bot_pick_spec_no(&self, incremental: bool) -> u32 {
         unsafe { (self.cbs.bot_pick_spec_no.unwrap())(self.handle, incremental) }
+    }
+
+    /* ── Chat-command helpers (Wave 2) ───────────────────────────────── */
+
+    fn bot_jump(&self) -> bool {
+        unsafe { (self.cbs.bot_jump.unwrap())(self.handle) }
+    }
+
+    fn bot_use_hearthstone(&self) -> bool {
+        unsafe { (self.cbs.bot_use_hearthstone.unwrap())(self.handle) }
+    }
+
+    fn bot_get_reputation_list(&self) -> Vec<BotReputationEntry> {
+        let mut count: u32 = 0;
+        let ptr = unsafe { (self.cbs.bot_get_reputation_list.unwrap())(self.handle, &mut count) };
+        if ptr.is_null() || count == 0 {
+            return Vec::new();
+        }
+        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
+        let out = slice.to_vec();
+        unsafe { (self.cbs.bot_free_reputation_list.unwrap())(ptr) };
+        out
+    }
+
+    fn bot_get_learned_skills(&self) -> Vec<BotSkillEntry> {
+        let mut count: u32 = 0;
+        let ptr = unsafe { (self.cbs.bot_get_learned_skills.unwrap())(self.handle, &mut count) };
+        if ptr.is_null() || count == 0 {
+            return Vec::new();
+        }
+        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
+        let out = slice.to_vec();
+        unsafe { (self.cbs.bot_free_skill_list.unwrap())(ptr) };
+        out
+    }
+
+    fn bot_quest_accept_from(&self, npc: UnitHandle) -> bool {
+        unsafe { (self.cbs.bot_quest_accept_from.unwrap())(self.handle, npc) }
+    }
+
+    fn bot_quest_abandon(&self, quest_id: u32) -> bool {
+        unsafe { (self.cbs.bot_quest_abandon.unwrap())(self.handle, quest_id) }
     }
 }

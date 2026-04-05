@@ -67,7 +67,7 @@ impl Boss {
         }
     }
 
-    fn phase_bt(&self) -> Option<&Bt> {
+    fn phase_bt(&self) -> Option<Bt> {
         match self {
             Self::Nefarian(fsm) => fsm.phase_bt(),
             Self::Vaelastrasz(fsm) => fsm.phase_bt(),
@@ -93,14 +93,14 @@ impl Boss {
 
     fn from_entry(entry: u32) -> Self {
         match entry {
-            ENTRY_NEFARIAN => Self::Nefarian(NefarianFsm::new()),
+            ENTRY_NEFARIAN => Self::Nefarian(NefarianFsm::default()),
             ENTRY_RAZORGORE => Self::Razorgore,
-            ENTRY_VAELASTRASZ => Self::Vaelastrasz(VaelastraszFsm::new()),
-            ENTRY_BROODLORD => Self::Broodlord(BroodlordFsm::new()),
+            ENTRY_VAELASTRASZ => Self::Vaelastrasz(VaelastraszFsm::default()),
+            ENTRY_BROODLORD => Self::Broodlord(BroodlordFsm::default()),
             ENTRY_FIREMAW => Self::Firemaw,
             ENTRY_EBONROC => Self::Ebonroc,
             ENTRY_FLAMEGOR => Self::Flamegor,
-            ENTRY_CHROMAGGUS => Self::Chromaggus(ChromaggusFsm::new()),
+            ENTRY_CHROMAGGUS => Self::Chromaggus(ChromaggusFsm::default()),
             _ => Self::None,
         }
     }
@@ -153,7 +153,7 @@ impl EncounterFsm for BlackwingLairFsm {
         self.active_boss.boss_entry()
     }
 
-    fn phase_bt(&self) -> Option<&Bt> {
+    fn phase_bt(&self) -> Option<Bt> {
         self.active_boss.phase_bt()
     }
 }
