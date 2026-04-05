@@ -44,6 +44,7 @@
 //!
 //! Reference: `/home/cg/Code/gitea/Karatefylla/mangos/classic/source/src/modules/PB2/playerbot/ChatFilter.cpp`.
 
+use crate::bot::settings::{BotStateKind, StrategyFlags, StrategySet};
 use crate::bot::state::{BotState, PlayerClass, PlayerSpec};
 use crate::commands::{ChatOrigin, PendingCommand, SecurityLevel, parser};
 use crate::ffi::{BotRole, BotWorldSnapshot};
@@ -114,13 +115,20 @@ fn run_chat_filters(bot: &BotState, msg: String) -> Option<String> {
         return Some(current);
     }
 
-    // FILTER_COUNT = number of distinct filters below. 10 filters, we
+    // FILTER_COUNT = number of distinct filters below. 11 filters, we
     // iterate up to that many times (matches PB2's O(N) stability loop).
-    const FILTER_COUNT: usize = 10;
+    const FILTER_COUNT: usize = 11;
 
     for _ in 0..FILTER_COUNT {
         let before = current.clone();
 
+        // PB2 registers `StrategyChatFilter` first (ChatFilter.cpp:1183).
+        // This filter never drops — on predicate-fail PB2 returns the
+        // message unchanged (see `strategy_filter` header comment).
+        current = strategy_filter(&bot.settings.strategies, &current);
+        if current.is_empty() {
+            return Some(current);
+        }
         current = role_filter(bot.role, &current)?;
         if current.is_empty() {
             return Some(current);
@@ -170,6 +178,86 @@ fn head_token(msg: &str) -> &str {
         Some(i) => &msg[..i],
         None => msg,
     }
+}
+
+// ── Strategy filter ───────────────────────────────────────────────────────
+//
+// Ports PB2 `StrategyChatFilter` (`ChatFilter.cpp:22–148`). Tags:
+//
+//   @nc=<name>      pass if non-combat state has <name> enabled
+//   @nonc=<name>    pass if non-combat state does NOT have <name> enabled
+//   @co=<name>      pass if combat state has <name> enabled
+//   @noco=<name>    pass if combat state does NOT have <name> enabled
+//   @react=<name>   pass if reaction state has <name> enabled
+//   @noreact=<name> pass if reaction state does NOT have <name> enabled
+//   @dead=<name>    pass if dead state has <name> enabled
+//   @nodead=<name>  pass if dead state does NOT have <name> enabled
+//
+// PB2 does not drop on mismatch — it returns the message unchanged so
+// other filters get a crack at it. That behavior must be preserved:
+// returning `Some(msg.to_string())` on no-match is intentional, not a
+// silent drop. Only an affirmative "tag matched, bot fails predicate"
+// drops (returns `None`).
+//
+// Strategy-name resolution: unknown names (ones not in
+// `StrategyFlags::parse_name`) currently report "not enabled". PB2 would
+// call `HasStrategy(name, state)` on the engine's registered strategy
+// list; for strategies we haven't ported yet (`return`, `delayed roll`,
+// `travel`, …) PB2 also reports not-enabled since they're absent from
+// the engine. Matches PB2 behavior byte-for-byte.
+//
+// Crucially, PB2's `StrategyChatFilter` is one of the few filters that
+// does NOT drop on predicate-fail — it returns the message unchanged
+// (see the `return message` at the end of each branch in ChatFilter.cpp
+// lines 59, 71, 83, 95, 107, 119, 131, 143). Downstream the unparsed
+// `@nc=foo ...` token trips the parser which drops silently. This
+// matters because the composite loop must not short-circuit via
+// `None` — other filters must still see the message on the same tick.
+// We therefore always return `Some(_)` from this filter.
+
+fn strategy_filter(strategies: &StrategySet, msg: &str) -> String {
+    // Each entry: (tag including `=`, state slot, negated).
+    const TAGS: &[(&str, BotStateKind, bool)] = &[
+        ("@nc=", BotStateKind::NonCombat, false),
+        ("@nonc=", BotStateKind::NonCombat, true),
+        ("@co=", BotStateKind::Combat, false),
+        ("@noco=", BotStateKind::Combat, true),
+        ("@react=", BotStateKind::Reaction, false),
+        ("@noreact=", BotStateKind::Reaction, true),
+        ("@dead=", BotStateKind::Dead, false),
+        ("@nodead=", BotStateKind::Dead, true),
+    ];
+
+    for (tag, kind, negated) in TAGS {
+        let Some(rest) = msg.strip_prefix(tag) else {
+            continue;
+        };
+        // Strategy name runs from after `=` to the next space (or EOL).
+        // PB2 matches `msg.find(" ") - (msg.find("=") + 1)`.
+        let name = match rest.find(' ') {
+            Some(i) => &rest[..i],
+            None => rest,
+        };
+        if name.is_empty() {
+            // PB2: falls through and returns message unchanged.
+            return msg.to_string();
+        }
+        let has = match StrategyFlags::parse_name(name) {
+            Some(flag) => strategies.has(*kind, flag),
+            // Unknown strategy name: treat as "not enabled" (see header).
+            None => false,
+        };
+        let predicate = if *negated { !has } else { has };
+        if predicate {
+            // Strip `@<tag><name> ` so the remainder is re-processed.
+            return strip_selector(msg);
+        }
+        // Tag matched but predicate failed: PB2 returns message unchanged.
+        // Drop happens downstream when the parser cannot interpret the
+        // leftover `@nc=foo ...` prefix.
+        return msg.to_string();
+    }
+    msg.to_string()
 }
 
 // ── Role filter ────────────────────────────────────────────────────────────
@@ -795,6 +883,61 @@ mod tests {
     fn random_filter_threshold_100_always_passes() {
         // @random=100 → roll always < 100 → always pass.
         assert_eq!(random_filter("@random=100 wave"), "wave");
+    }
+
+    #[test]
+    fn strategy_filter_nc_match_and_miss() {
+        // `flee` is in the NonCombat default set (pb2_defaults).
+        let mut set = StrategySet::pb2_defaults();
+        assert!(set.has(BotStateKind::NonCombat, StrategyFlags::FLEE));
+        assert_eq!(strategy_filter(&set, "@nc=flee wander"), "wander");
+
+        // Remove flee → predicate fails → PB2 returns message unchanged.
+        set.get_mut(BotStateKind::NonCombat).remove(StrategyFlags::FLEE);
+        assert_eq!(
+            strategy_filter(&set, "@nc=flee wander"),
+            "@nc=flee wander"
+        );
+    }
+
+    #[test]
+    fn strategy_filter_negated_forms() {
+        let set = StrategySet::pb2_defaults();
+        // `grind` is NOT in the NonCombat default set.
+        assert!(!set.has(BotStateKind::NonCombat, StrategyFlags::GRIND));
+        assert_eq!(strategy_filter(&set, "@nonc=grind idle"), "idle");
+        // `flee` IS in the NonCombat set → @nonc=flee must NOT strip.
+        assert_eq!(
+            strategy_filter(&set, "@nonc=flee idle"),
+            "@nonc=flee idle"
+        );
+    }
+
+    #[test]
+    fn strategy_filter_combat_state_slot() {
+        let mut set = StrategySet::default();
+        set.get_mut(BotStateKind::Combat).insert(StrategyFlags::CC);
+        // `@co=cc` keys on Combat slot, not NonCombat.
+        assert_eq!(strategy_filter(&set, "@co=cc focus"), "focus");
+        assert_eq!(strategy_filter(&set, "@nc=cc focus"), "@nc=cc focus");
+        assert_eq!(strategy_filter(&set, "@noco=cc focus"), "@noco=cc focus");
+    }
+
+    #[test]
+    fn strategy_filter_unknown_name_reports_absent() {
+        // Unknown strategy name: `parse_name` returns None → treat as
+        // not-enabled. `@co=unknown` → predicate false → no-op.
+        // `@noco=unknown` → predicate true → strip.
+        let set = StrategySet::default();
+        assert_eq!(strategy_filter(&set, "@co=travel move"), "@co=travel move");
+        assert_eq!(strategy_filter(&set, "@noco=travel move"), "move");
+    }
+
+    #[test]
+    fn strategy_filter_no_tag_passthrough() {
+        let set = StrategySet::default();
+        assert_eq!(strategy_filter(&set, "attack"), "attack");
+        assert_eq!(strategy_filter(&set, "@dps attack"), "@dps attack");
     }
 
     #[test]
