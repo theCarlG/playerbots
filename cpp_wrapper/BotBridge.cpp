@@ -373,6 +373,9 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.bot_read_log_file                   = CB_BotReadLogFile;
     cbs.bot_free_string                     = CB_BotFreeString;
 
+    // Addon-channel reply routing
+    cbs.bot_tell_addon                      = CB_TellAddon;
+
     return cbs;
 }
 
@@ -517,6 +520,89 @@ BotWorldSnapshot BotBridge::CB_GetSnapshot(BotHandle bot)
     {
         uint32_t mapId = b->GetMapId();
         snap.is_overworld = (mapId == 0 || mapId == 1 || mapId == 530 || mapId == 571);
+    }
+
+    // ── Rti chat filter state (3b) ─────────────────────────────────
+    // Copy raid target icons from the group. PB2's RtiChatFilter calls
+    // `group->GetTargetIcon(RtiTargetValue::GetRtiIndex(name))` per
+    // lookup (ChatFilter.cpp:457); here we just snapshot all 8 slots.
+    // TARGETICONCOUNT is 8 in core (see Group.h:292 usage).
+    if (group)
+    {
+        for (int i = 0; i < 8; ++i)
+            snap.group_raid_target_icons[i] = group->GetTargetIcon(i).GetRawValue();
+    }
+    // else: zero-initialized by {} at the top.
+
+    // ── Location chat filter state (3d) ────────────────────────────
+    // Lowercase the map name and the bot's zone-level area name. PB2's
+    // `WorldPosition::getAreaName(true, true)` walks up the area parent
+    // chain and returns the top-level name; `Player::GetZoneId()` does
+    // the same walk inside the core and is cheaper. Truncated into
+    // fixed buffers with a NUL terminator.
+    auto ToLowerCopy = [](const char* src, char* dst, size_t dst_cap) {
+        if (!src || dst_cap == 0)
+        {
+            if (dst_cap > 0) dst[0] = '\0';
+            return;
+        }
+        size_t i = 0;
+        for (; src[i] != '\0' && i + 1 < dst_cap; ++i)
+        {
+            unsigned char c = static_cast<unsigned char>(src[i]);
+            dst[i] = static_cast<char>(
+                (c >= 'A' && c <= 'Z') ? (c + ('a' - 'A')) : c);
+        }
+        dst[i] = '\0';
+    };
+    if (Map* map = b->GetMap())
+        ToLowerCopy(map->GetMapName(), snap.map_name_lower, sizeof(snap.map_name_lower));
+    if (uint32 zoneId = b->GetZoneId())
+    {
+        if (AreaTableEntry const* zone = GetAreaEntryByAreaID(zoneId))
+            ToLowerCopy(zone->area_name[0], snap.area_name_lower, sizeof(snap.area_name_lower));
+    }
+
+    // ── Guild chat filter state (3f) ───────────────────────────────
+    // Raw (not lowercased) guild name and the bot's rank name. PB2
+    // compares with `std::string::find` on raw strings
+    // (ChatFilter.cpp:679, 731). Empty strings when not in a guild.
+    if (snap.guild_id)
+    {
+        if (Guild* guild = sGuildMgr.GetGuildById(snap.guild_id))
+        {
+            std::string const& gname = guild->GetName();
+            size_t n = std::min(gname.size(), sizeof(snap.guild_name) - 1);
+            std::memcpy(snap.guild_name, gname.data(), n);
+            snap.guild_name[n] = '\0';
+
+            int32 rankId = guild->GetRank(b->GetObjectGuid());
+            if (rankId >= 0)
+            {
+                std::string rname = guild->GetRankName(static_cast<uint32>(rankId));
+                size_t m = std::min(rname.size(), sizeof(snap.guild_rank_name) - 1);
+                std::memcpy(snap.guild_rank_name, rname.data(), m);
+                snap.guild_rank_name[m] = '\0';
+            }
+        }
+    }
+
+    // ── Quest chat filter state (3e) ───────────────────────────────
+    // Snapshot active quest log IDs. Mirrors PB2's
+    // `PlayerbotAI::GetAllCurrentQuestIds` loop, capped at the
+    // snapshot buffer size (MAX_QUEST_LOG_SIZE = 25).
+    {
+        uint8_t n = 0;
+        const uint16 cap = static_cast<uint16>(
+            sizeof(snap.current_quest_ids) / sizeof(snap.current_quest_ids[0]));
+        for (uint16 slot = 0; slot < MAX_QUEST_LOG_SIZE && n < cap; ++slot)
+        {
+            uint32 questId = b->GetQuestSlotQuestId(slot);
+            if (!questId)
+                continue;
+            snap.current_quest_ids[n++] = questId;
+        }
+        snap.current_quest_count = n;
     }
 
     return snap;
@@ -978,6 +1064,34 @@ bool BotBridge::CB_TellPlayer(BotHandle bot, uint64_t target_guid, const char* m
         return true;
     }
     return false;
+}
+
+// Addon-channel reply: commands that arrived via `#a` / SendAddonMessage("BOT",…)
+// must have their replies routed back over the addon wire rather than whisper,
+// so the Mangosbot UI's CHAT_MSG_ADDON handler consumes them. Mirrors PB2
+// `PlayerbotAI.cpp:3475-3485`: prepend `BOT\t`, wrap as CHAT_MSG_PARTY +
+// LANG_ADDON (1.12 wire form for addon messages), and deliver directly to the
+// sender's session so only they receive it.
+bool BotBridge::CB_TellAddon(BotHandle bot, uint64_t target_guid, const char* msg)
+{
+    Player* b = FindBot(bot);
+    if (!b || !msg || !target_guid)
+        return false;
+
+    Player* target = sObjectAccessor.FindPlayer(ObjectGuid(target_guid));
+    if (!target)
+        return false;
+
+    std::string payload;
+    payload.reserve(4 + strlen(msg));
+    payload.append("BOT\t");
+    payload.append(msg);
+
+    WorldPacket data;
+    ChatHandler::BuildChatPacket(data, CHAT_MSG_PARTY, payload.c_str(), LANG_ADDON,
+                                 CHAT_TAG_NONE, b->GetObjectGuid(), b->GetName());
+    target->GetSession()->SendPacket(data);
+    return true;
 }
 
 bool BotBridge::CB_UseItem(BotHandle bot, uint32_t item_id, UnitHandle target)

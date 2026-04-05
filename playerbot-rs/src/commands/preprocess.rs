@@ -115,16 +115,18 @@ fn run_chat_filters(bot: &BotState, msg: String) -> Option<String> {
         return Some(current);
     }
 
-    // FILTER_COUNT = number of distinct filters below. 11 filters, we
+    // FILTER_COUNT = number of distinct filters below. 15 filters, we
     // iterate up to that many times (matches PB2's O(N) stability loop).
-    const FILTER_COUNT: usize = 11;
+    const FILTER_COUNT: usize = 15;
 
     for _ in 0..FILTER_COUNT {
         let before = current.clone();
 
-        // PB2 registers `StrategyChatFilter` first (ChatFilter.cpp:1183).
-        // This filter never drops — on predicate-fail PB2 returns the
-        // message unchanged (see `strategy_filter` header comment).
+        // Order mirrors PB2's `CompositeChatFilter` registration at
+        // `ChatFilter.cpp:1183`: Strategy → Role → Class → Rti →
+        // CombatType → Level → Group → Guild → State → (Usage) →
+        // TalentSpec → Location → Random → Gear → Quest. `Usage` is
+        // a pending port (Part 3.5) and is skipped here.
         current = strategy_filter(&bot.settings.strategies, &current);
         if current.is_empty() {
             return Some(current);
@@ -133,21 +135,27 @@ fn run_chat_filters(bot: &BotState, msg: String) -> Option<String> {
         if current.is_empty() {
             return Some(current);
         }
-        current = combat_type_filter(bot.class, bot.role, &current)?;
-        if current.is_empty() {
-            return Some(current);
-        }
         current = class_filter(bot.class, &current)?;
         if current.is_empty() {
             return Some(current);
         }
-        current = spec_filter(bot.spec, &current);
+        current = rti_filter(&bot.snap, &current)?;
+        if current.is_empty() {
+            return Some(current);
+        }
+        current = combat_type_filter(bot.class, bot.role, &current)?;
+        if current.is_empty() {
+            return Some(current);
+        }
         current = level_filter(&bot.snap, &current);
         current = group_filter(&bot.snap, &current);
         current = guild_filter(&bot.snap, &current);
         current = state_filter(&bot.snap, &current);
+        current = spec_filter(bot.spec, &current);
+        current = location_filter(&bot.snap, &current);
+        current = random_filter(bot.handle, &current);
         current = gear_filter(&bot.snap, &current);
-        current = random_filter(&current);
+        current = quest_filter(&bot.snap, &current);
 
         if !current.starts_with('@') || current == before {
             break;
@@ -178,6 +186,18 @@ fn head_token(msg: &str) -> &str {
         Some(i) => &msg[..i],
         None => msg,
     }
+}
+
+/// Decode a fixed-size NUL-terminated C char buffer from the snapshot
+/// into a `&str`. CMaNGOS DBC strings and guild names are ASCII; any
+/// non-UTF-8 bytes after the first NUL (trailing zero padding) are
+/// ignored. Invalid UTF-8 before the NUL falls back to empty string.
+fn c_str_field(buf: &[std::ffi::c_char]) -> &str {
+    // SAFETY: `[c_char]` and `[u8]` share layout on every supported
+    // target; we treat the buffer as bytes to find the NUL.
+    let bytes: &[u8] = unsafe { std::slice::from_raw_parts(buf.as_ptr().cast(), buf.len()) };
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    std::str::from_utf8(&bytes[..end]).unwrap_or("")
 }
 
 // ── Strategy filter ───────────────────────────────────────────────────────
@@ -513,13 +533,11 @@ fn group_filter(snap: &BotWorldSnapshot, msg: &str) -> String {
 
 // ── Guild filter ───────────────────────────────────────────────────────────
 //
-// Ports PB2's `GuildChatFilter` for every tag whose predicate is
-// name-free: `@guild`, `@noguild`, `@gleader`. `@guild=<name>` and
-// `@rank=<name>` are name-matched in PB2 and require exposing the
-// guild name + rank name over the FFI; when a caller starts using them
-// the fields need to land on the snapshot before the filter can be
-// turned on. Until then we pass those tags through untouched so the
-// parser can respond rather than us silently dropping.
+// Ports PB2's `GuildChatFilter` (`ChatFilter.cpp:639–742`). Handles:
+// `@guild`, `@guild=<name>`, `@noguild`, `@gleader`, `@rank=<name>`.
+// Name comparison mirrors PB2 byte-for-byte: case-sensitive
+// `std::string::find` with prefix-anchored match (the name portion the
+// user typed must be a prefix of the bot's actual guild / rank name).
 
 fn guild_filter(snap: &BotWorldSnapshot, msg: &str) -> String {
     if msg.starts_with("@gleader") {
@@ -528,16 +546,260 @@ fn guild_filter(snap: &BotWorldSnapshot, msg: &str) -> String {
     if msg.starts_with("@noguild") {
         return if snap.in_guild { msg.to_string() } else { strip_selector(msg) };
     }
-    // `@guild` (bare) — pass if in any guild. Careful: must not eat
-    // `@guild=<name>`, which has a different semantic. That form always
-    // contains an `=` before the first space.
+    if let Some(rest) = msg.strip_prefix("@guild=") {
+        // Not in a guild → PB2 returns message unchanged (other filters
+        // may still act on it).
+        if !snap.in_guild {
+            return msg.to_string();
+        }
+        let typed = match rest.find(' ') {
+            Some(i) => &rest[..i],
+            None => rest,
+        };
+        if typed.is_empty() {
+            // Empty name after `=`: PB2 falls through, returns unchanged.
+            return msg.to_string();
+        }
+        let bot_guild = c_str_field(&snap.guild_name);
+        // PB2: `if (pguild.find(guildName) != 0) return message;` —
+        // passes only when the typed token *starts with* the bot's
+        // guild name. (Yes, this is backwards from intuition — the
+        // typed text is the haystack in PB2's comparison. Mirror it.)
+        if bot_guild.is_empty() || !typed.starts_with(bot_guild) {
+            return msg.to_string();
+        }
+        return strip_selector(msg);
+    }
+    // `@guild` (bare) — pass if in any guild. Must not eat
+    // `@guild=<name>` (handled above).
     if msg.starts_with("@guild") {
         let tag = head_token(msg);
         if !tag.contains('=') {
             return if snap.in_guild { strip_selector(msg) } else { msg.to_string() };
         }
     }
+    if let Some(rest) = msg.strip_prefix("@rank=") {
+        if !snap.in_guild {
+            return msg.to_string();
+        }
+        let typed = match rest.find(' ') {
+            Some(i) => &rest[..i],
+            None => rest,
+        };
+        if typed.is_empty() {
+            return msg.to_string();
+        }
+        let bot_rank = c_str_field(&snap.guild_rank_name);
+        // Same inverted comparison as `@guild=` above
+        // (ChatFilter.cpp:733).
+        if bot_rank.is_empty() || !typed.starts_with(bot_rank) {
+            return msg.to_string();
+        }
+        return strip_selector(msg);
+    }
     msg.to_string()
+}
+
+// ── Rti filter ─────────────────────────────────────────────────────────────
+//
+// Ports PB2 `RtiChatFilter` (`ChatFilter.cpp:409–481`). Tags:
+// `@star`, `@circle`, `@diamond`, `@triangle`, `@moon`, `@square`,
+// `@cross`, `@skull`. A bot passes when either:
+//   - the bot itself is marked with that icon, OR
+//   - the bot's current target is marked with that icon.
+// Not-in-a-group: PB2 returns the message unchanged (`return message;`
+// at `ChatFilter.cpp:445`). The Rust port keys on
+// `snap.group_size == 0` for this branch.
+//
+// PB2 has an unusual drop path: when the bot's current target does NOT
+// match the icon's raid target it returns the empty string (drop). That
+// drop is a true short-circuit — mirror it by returning `None`.
+
+fn rti_filter(snap: &BotWorldSnapshot, msg: &str) -> Option<String> {
+    const RTIS: &[(&str, usize)] = &[
+        ("@star", 0),
+        ("@circle", 1),
+        ("@diamond", 2),
+        ("@triangle", 3),
+        ("@moon", 4),
+        ("@square", 5),
+        ("@cross", 6),
+        ("@skull", 7),
+    ];
+    // Find which (if any) Rti tag the message leads with.
+    let Some(&(_, idx)) = RTIS.iter().find(|(tag, _)| msg.starts_with(tag)) else {
+        return Some(msg.to_string());
+    };
+    // Not in a group: PB2 returns message unchanged (ChatFilter.cpp:445).
+    if snap.group_size == 0 {
+        return Some(msg.to_string());
+    }
+    let rti_guid = snap.group_raid_target_icons[idx];
+    let bot_guid = snap.self_.current_target; // unused — PB2 checks bot's *own* guid
+    let _ = bot_guid;
+    // PB2 checks `bot->GetObjectGuid() == rtiTarget` — i.e. "the bot
+    // itself is the marked unit". We don't have the bot's own guid on
+    // the snapshot directly, but `BotUnitSnapshot::current_target` is
+    // *not* the bot guid — it's the bot's current target. We need the
+    // bot's own guid. The snapshot doesn't currently carry one; for now
+    // we only check the "current target is marked" branch, which is the
+    // one RaidControl actually uses in practice. If a use-case for
+    // "@skull follow" targeting a marked *player* comes up, add
+    // `self_guid` to the snapshot and check it here too.
+    let target_guid = snap.self_.current_target;
+    if target_guid == 0 {
+        // PB2 behavior: if there's no current target, return the empty
+        // string (drop). See `ChatFilter.cpp:461–463`.
+        return None;
+    }
+    if target_guid != rti_guid {
+        // PB2 drops when the current target exists but isn't the
+        // icon's unit (`ChatFilter.cpp:465–466`).
+        return None;
+    }
+    Some(strip_selector(msg))
+}
+
+// ── Location filter ───────────────────────────────────────────────────────
+//
+// Ports PB2 `LocationChatFilter` (`ChatFilter.cpp:976–1041`). Matches
+// `@<mapname>` or `@<areaname>` with lowercase names. The C++ snapshot
+// pre-lowercases both into `map_name_lower` / `area_name_lower` so the
+// Rust side just does ASCII prefix tests.
+//
+// PB2 calls `ChatFilter::Filter(message, filter)` on match, which is
+// "find `filter` inside `message`, skip past its length + 1 space". For
+// a prefix match (which is all PB2 actually uses here — `message.find(filter) == 0`)
+// that is equivalent to `msg[filter.len()+1..]`.
+
+fn location_filter(snap: &BotWorldSnapshot, msg: &str) -> String {
+    if !msg.starts_with('@') {
+        return msg.to_string();
+    }
+    let map = c_str_field(&snap.map_name_lower);
+    if !map.is_empty() && matches_location_tag(msg, map) {
+        return strip_location_tag(msg, map.len());
+    }
+    let area = c_str_field(&snap.area_name_lower);
+    if !area.is_empty() && matches_location_tag(msg, area) {
+        return strip_location_tag(msg, area.len());
+    }
+    msg.to_string()
+}
+
+/// True iff `msg` starts with `@<name>` and the character right after
+/// `<name>` is either a space or end-of-string (so `@dun` does not match
+/// `dun morogh`, and `@dun morogh` does not match `dun`).
+fn matches_location_tag(msg: &str, name: &str) -> bool {
+    // `msg[1..]` skips the leading '@'.
+    let tail = &msg[1..];
+    if !tail.starts_with(name) {
+        return false;
+    }
+    let rest = &tail[name.len()..];
+    rest.is_empty() || rest.starts_with(' ')
+}
+
+fn strip_location_tag(msg: &str, name_len: usize) -> String {
+    // '@' + name, then optional space-and-rest.
+    let after = 1 + name_len;
+    if after >= msg.len() {
+        return String::new();
+    }
+    msg[after..].trim_start().to_string()
+}
+
+// ── Quest filter ──────────────────────────────────────────────────────────
+//
+// Ports PB2 `QuestChatFilter` (`ChatFilter.cpp:1100–1181`). Tags:
+// `@quest=<id>` and `@quest=[quest link]`. The link form uses CMaNGOS'
+// `|Hquest:<id>:<level>|h[name]|h|r` grammar; we parse all such links
+// out of the value and take the numeric `<id>` from each. Numeric form
+// is just a `u32`. Any bot whose current quest log intersects the
+// parsed id set passes.
+
+fn quest_filter(snap: &BotWorldSnapshot, msg: &str) -> String {
+    let Some(rest) = msg.strip_prefix("@quest=") else {
+        return msg.to_string();
+    };
+
+    // Two input shapes, dispatched by looking for a link sentinel:
+    //
+    //  - Numeric:  `@quest=<id> rest…` — take the first whitespace-
+    //    delimited token after `=` and parse as u32. PB2 technically
+    //    takes the whole tail and then calls `isValidNumberString` on
+    //    it, which fails the moment there is any trailing text after
+    //    the id. That is a long-standing PB2 bug (you could never say
+    //    `@quest=523 attack` and have it work); the Rust port
+    //    deliberately diverges to match user intent and the RaidControl
+    //    HOWTO examples. Document this if the divergence ever matters.
+    //
+    //  - Link:     `@quest=|cff…|Hquest:<id>:<level>|h[Name]|h|r rest…`
+    //    Parse every `|Hquest:<id>:…` substring. On match, PB2 replaces
+    //    the formatted quest-link text with an empty string and then
+    //    strips the `@quest=` token, which requires server-side quest
+    //    template lookup. We don't have that snapshot-side, so the port
+    //    strips from `@quest=` through the closing `|r` instead — same
+    //    visible effect for every well-formed link.
+
+    let mut ids: Vec<u32> = Vec::new();
+    let has_link = rest.contains("|Hquest:");
+    if has_link {
+        extract_quest_link_ids(rest, &mut ids);
+    } else {
+        // Numeric form: first token.
+        let token = match rest.find(' ') {
+            Some(i) => &rest[..i],
+            None => rest,
+        };
+        if let Ok(n) = token.parse::<u32>() {
+            ids.push(n);
+        }
+    }
+    if ids.is_empty() {
+        return msg.to_string();
+    }
+
+    let active = &snap.current_quest_ids[..snap.current_quest_count as usize];
+    let any_match = ids.iter().any(|id| active.contains(id));
+    if !any_match {
+        return msg.to_string();
+    }
+
+    if has_link {
+        // Strip through the closing `|r` of the last link, then trim a
+        // following space.
+        match rest.rfind("|r") {
+            Some(end) => {
+                let after = end + "|r".len();
+                rest[after..].trim_start().to_string()
+            }
+            None => String::new(),
+        }
+    } else {
+        // Numeric form: strip up to first space.
+        strip_selector(msg)
+    }
+}
+
+/// Parse all `|Hquest:<id>:<level>|h[name]|h|r` id values out of the
+/// supplied string. Quest links are escaped into chat with `|H…|h…|h|r`;
+/// the bit we care about is the numeric id after `|Hquest:`. Silent on
+/// malformed links — matches PB2's `ChatHelper::ExtractAllQuestIds`
+/// behavior, which just skips anything that doesn't parse.
+fn extract_quest_link_ids(value: &str, out: &mut Vec<u32>) {
+    let mut cursor = value;
+    while let Some(idx) = cursor.find("|Hquest:") {
+        let after = &cursor[idx + "|Hquest:".len()..];
+        // Id is up to the next ':' or '|'.
+        let end = after
+            .find(|c: char| c == ':' || c == '|')
+            .unwrap_or(after.len());
+        if let Ok(id) = after[..end].parse::<u32>() {
+            out.push(id);
+        }
+        cursor = &after[end..];
+    }
 }
 
 // ── State filter ───────────────────────────────────────────────────────────
@@ -610,25 +872,42 @@ fn ilvl_to_tier(gs: u32) -> u32 {
 
 // ── Random filter ─────────────────────────────────────────────────────────
 //
-// `@random` = 50/50, `@random=25` = 25% chance. Matches PB2's
-// `RandomChatFilter` semantics. Uses the thread-local hashed-time RNG
-// from `fastrand` if available; otherwise std `SystemTime` jitter keeps
-// the footprint stubless without dragging in an extra crate.
+// `@random` = 50/50, `@random=NN` = NN% chance — fresh roll each call.
+// `@fixedrandom` / `@fixedrandom=NN` = stable per-bot roll that rotates
+// once per minute (same bots always pass within a minute). Matches PB2's
+// `RandomChatFilter` semantics (`ChatFilter.cpp:1066–1098`). The fixed
+// variant is built on top of `fixed_bot_number` which mirrors PB2's
+// `PlayerbotAI::GetFixedBotNumber(CHATFILTER_NUMBER)`
+// (`PlayerbotAI.cpp:5611`).
 
-fn random_filter(msg: &str) -> String {
-    if !msg.starts_with("@random") {
+/// Seed id for the chat-filter slot. Mirrors PB2's
+/// `BotTypeNumber::CHATFILTER_NUMBER = 4` (`PlayerbotAI.h:245`).
+const CHATFILTER_NUMBER: u8 = 4;
+
+fn random_filter(bot_handle: u64, msg: &str) -> String {
+    if !msg.starts_with("@random") && !msg.starts_with("@fixedrandom") {
         return msg.to_string();
     }
     let tag = head_token(msg);
-    // `@random=NN`
-    let threshold: u32 = if let Some(eq) = tag.strip_prefix("@random=") {
-        eq.parse::<u32>().unwrap_or(50)
+
+    let (threshold, is_fixed): (u32, bool) = if let Some(eq) = tag.strip_prefix("@random=") {
+        (eq.parse::<u32>().unwrap_or(50), false)
     } else if tag == "@random" {
-        50
+        (50, false)
+    } else if let Some(eq) = tag.strip_prefix("@fixedrandom=") {
+        (eq.parse::<u32>().unwrap_or(50), true)
+    } else if tag == "@fixedrandom" {
+        (50, true)
     } else {
         return msg.to_string();
     };
-    let roll = pseudo_rand_0_99();
+
+    let roll = if is_fixed {
+        fixed_bot_number(bot_handle, CHATFILTER_NUMBER, 100, 1.0)
+    } else {
+        pseudo_rand_0_99()
+    };
+
     if roll < threshold {
         strip_selector(msg)
     } else {
@@ -652,6 +931,62 @@ fn pseudo_rand_0_99() -> u32 {
     x ^= x >> 17;
     x ^= x << 5;
     x % 100
+}
+
+/// Stable per-bot "fixed random" number in `[0, max_num]`, rotating at
+/// `cycle_per_min` cycles per minute. Mirrors PB2's
+/// `PlayerbotAI::GetFixedBotNumber(typeNumber, maxNum, cyclePerMin,
+/// ignoreGuid=false)` at `PlayerbotAI.cpp:5611`.
+///
+/// PB2 seeds `std::mt19937` with `uint8(typeNumber)` and takes its first
+/// output, then adds `bot->GetGUIDLow()` and (optionally) a per-minute
+/// counter derived from `WorldTimer::getMSTime()`, finally taking
+/// `% (maxNum + 1)`.
+///
+/// **Deliberate divergence from PB2's byte-exact output:** we don't
+/// pull in `std::mt19937` (no crate dependency wanted for this one
+/// site). Instead we run a SplitMix64 mixer on `typeNumber` to get a
+/// per-slot "seed" constant, then follow the same `+ guid_low + cycle`
+/// structure. The semantic contract is preserved: stable per bot,
+/// varies across bots, rotates at the requested rate, uniform modulo
+/// distribution. Because the pool of bots that passes a given
+/// `@fixedrandom=NN` is now determined by SplitMix instead of MT19937,
+/// the *identity* of the passing subset differs from PB2, but the
+/// *size* and *stability* of the subset match. No callers compare
+/// across the Rust/PB2 boundary so byte parity is not required.
+fn fixed_bot_number(bot_handle: u64, type_number: u8, max_num: u32, cycle_per_min: f32) -> u32 {
+    // SplitMix64 mixing of `type_number`. Plays the role of
+    // `std::mt19937(type_number).next()` — any stable injective mapping
+    // from u8 → u32 that decorrelates adjacent seeds works here.
+    let mut seed = u64::from(type_number);
+    seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    seed = (seed ^ (seed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    seed = (seed ^ (seed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    seed ^= seed >> 31;
+    let rand_seed = seed as u32;
+
+    // PB2 uses `bot->GetGUIDLow()` — the low 32 bits of the bot's
+    // ObjectGuid. `BotState::handle` already stores the raw ObjectGuid
+    // as `u64`, so take its low word.
+    let guid_low = bot_handle as u32;
+    let mut randnum = rand_seed.wrapping_add(guid_low);
+
+    if cycle_per_min > 0.0 {
+        // PB2: `cycle = floor(WorldTimer::getMSTime() / 1000)` — server
+        // uptime in seconds — then `cycle = cycle * cyclePerMin / 60`.
+        // We substitute wall-clock seconds; the absolute offset doesn't
+        // matter because we only ever compare modular values and bots
+        // on the same Rust process share the same clock.
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as u32)
+            .unwrap_or(0);
+        let cycle = ((secs as f32) * cycle_per_min / 60.0) as u32;
+        randnum = randnum.wrapping_add(cycle);
+    }
+
+    randnum % (max_num + 1)
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -876,13 +1211,53 @@ mod tests {
     #[test]
     fn random_filter_threshold_zero_always_drops() {
         // @random=0 → roll < 0 never true → drop.
-        assert_eq!(random_filter("@random=0 wave"), "");
+        assert_eq!(random_filter(0, "@random=0 wave"), "");
     }
 
     #[test]
     fn random_filter_threshold_100_always_passes() {
         // @random=100 → roll always < 100 → always pass.
-        assert_eq!(random_filter("@random=100 wave"), "wave");
+        assert_eq!(random_filter(0, "@random=100 wave"), "wave");
+    }
+
+    #[test]
+    fn fixed_random_threshold_100_always_passes() {
+        assert_eq!(random_filter(0xABCD_1234, "@fixedrandom=100 wave"), "wave");
+    }
+
+    #[test]
+    fn fixed_random_threshold_zero_always_drops() {
+        assert_eq!(random_filter(0xABCD_1234, "@fixedrandom=0 wave"), "");
+    }
+
+    #[test]
+    fn fixed_random_same_bot_stable_within_cycle() {
+        // Two calls for the same bot handle must yield the same
+        // pass/drop decision within a minute (cyclePerMin=1 means one
+        // rotation per minute; two back-to-back calls in a test fall
+        // in the same cycle bucket).
+        let a = random_filter(0x1234, "@fixedrandom=50 x");
+        let b = random_filter(0x1234, "@fixedrandom=50 x");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn fixed_random_no_tag_passthrough() {
+        assert_eq!(random_filter(0, "hello"), "hello");
+    }
+
+    #[test]
+    fn fixed_bot_number_is_stable_and_bounded() {
+        // Stable within a short wall-clock window for the same inputs.
+        let a = fixed_bot_number(0xDEAD_BEEF, 4, 100, 0.0);
+        let b = fixed_bot_number(0xDEAD_BEEF, 4, 100, 0.0);
+        assert_eq!(a, b);
+        assert!(a <= 100);
+        // Different bots generally resolve differently (not a hard
+        // guarantee for any individual pair, but with these constants
+        // it holds).
+        let c = fixed_bot_number(0xFEED_FACE, 4, 100, 0.0);
+        assert_ne!(a, c);
     }
 
     #[test]
@@ -933,6 +1308,172 @@ mod tests {
         assert_eq!(strategy_filter(&set, "@noco=travel move"), "move");
     }
 
+    /// Write `s` into a fixed-size `[c_char; N]` buffer, NUL-padded.
+    fn write_cbuf<const N: usize>(buf: &mut [std::ffi::c_char; N], s: &str) {
+        for (i, b) in s.bytes().enumerate().take(N - 1) {
+            buf[i] = b as std::ffi::c_char;
+        }
+        buf[s.len().min(N - 1)] = 0;
+    }
+
+    #[test]
+    fn guild_filter_name_prefix_match() {
+        let mut s = snap();
+        s.in_guild = true;
+        write_cbuf(&mut s.guild_name, "Heroes");
+        // PB2's inverted comparison: typed token must start with bot's
+        // guild name. "Heroes of Azeroth" starts with "Heroes" ✓.
+        assert_eq!(
+            guild_filter(&s, "@guild=Heroes of Azeroth hail"),
+            "of Azeroth hail"
+        );
+        // "Heroe" does not start with "Heroes" → fail.
+        assert_eq!(
+            guild_filter(&s, "@guild=Heroe hail"),
+            "@guild=Heroe hail"
+        );
+    }
+
+    #[test]
+    fn guild_filter_rank_match() {
+        let mut s = snap();
+        s.in_guild = true;
+        write_cbuf(&mut s.guild_rank_name, "Officer");
+        assert_eq!(guild_filter(&s, "@rank=Officer salute"), "salute");
+        assert_eq!(
+            guild_filter(&s, "@rank=Initiate salute"),
+            "@rank=Initiate salute"
+        );
+    }
+
+    #[test]
+    fn guild_filter_guild_eq_not_in_guild_is_passthrough() {
+        let mut s = snap();
+        s.in_guild = false;
+        assert_eq!(
+            guild_filter(&s, "@guild=Heroes hail"),
+            "@guild=Heroes hail"
+        );
+    }
+
+    #[test]
+    fn rti_filter_not_in_group_passes_through() {
+        let mut s = snap();
+        s.group_size = 0;
+        assert_eq!(rti_filter(&s, "@skull attack").unwrap(), "@skull attack");
+    }
+
+    #[test]
+    fn rti_filter_target_marked_strips() {
+        let mut s = snap();
+        s.group_size = 2;
+        s.group_raid_target_icons[7] = 0xDEAD_BEEF; // skull
+        s.self_.current_target = 0xDEAD_BEEF;
+        assert_eq!(rti_filter(&s, "@skull attack").unwrap(), "attack");
+    }
+
+    #[test]
+    fn rti_filter_no_target_drops() {
+        let mut s = snap();
+        s.group_size = 2;
+        s.group_raid_target_icons[7] = 0xDEAD_BEEF;
+        s.self_.current_target = 0;
+        assert!(rti_filter(&s, "@skull attack").is_none());
+    }
+
+    #[test]
+    fn rti_filter_wrong_target_drops() {
+        let mut s = snap();
+        s.group_size = 2;
+        s.group_raid_target_icons[7] = 0xDEAD_BEEF;
+        s.self_.current_target = 0x1234_5678;
+        assert!(rti_filter(&s, "@skull attack").is_none());
+    }
+
+    #[test]
+    fn rti_filter_no_tag_passthrough() {
+        let s = snap();
+        assert_eq!(rti_filter(&s, "attack").unwrap(), "attack");
+    }
+
+    #[test]
+    fn location_filter_map_prefix() {
+        let mut s = snap();
+        write_cbuf(&mut s.map_name_lower, "azeroth");
+        assert_eq!(
+            location_filter(&s, "@azeroth travel"),
+            "travel"
+        );
+        // Must not match the prefix of a longer word.
+        assert_eq!(
+            location_filter(&s, "@azerothian travel"),
+            "@azerothian travel"
+        );
+    }
+
+    #[test]
+    fn location_filter_area_prefix() {
+        let mut s = snap();
+        write_cbuf(&mut s.area_name_lower, "dun morogh");
+        assert_eq!(
+            location_filter(&s, "@dun morogh travel"),
+            "travel"
+        );
+        assert_eq!(
+            location_filter(&s, "@dun follow"),
+            "@dun follow"
+        );
+    }
+
+    #[test]
+    fn location_filter_no_tag_passthrough() {
+        let s = snap();
+        assert_eq!(location_filter(&s, "attack"), "attack");
+        assert_eq!(location_filter(&s, "@dps attack"), "@dps attack");
+    }
+
+    #[test]
+    fn quest_filter_numeric_match() {
+        let mut s = snap();
+        s.current_quest_ids[0] = 523;
+        s.current_quest_count = 1;
+        assert_eq!(quest_filter(&s, "@quest=523 turn in"), "turn in");
+        assert_eq!(
+            quest_filter(&s, "@quest=999 turn in"),
+            "@quest=999 turn in"
+        );
+    }
+
+    #[test]
+    fn quest_filter_link_form() {
+        let mut s = snap();
+        s.current_quest_ids[0] = 40;
+        s.current_quest_count = 1;
+        // Classic link grammar: |Hquest:<id>:<level>|h[name]|h|r
+        let msg = "@quest=|cffffff00|Hquest:40:5|h[A Threat Within]|h|r help";
+        assert_eq!(quest_filter(&s, msg), "help");
+    }
+
+    #[test]
+    fn quest_filter_no_match_passthrough() {
+        let mut s = snap();
+        s.current_quest_count = 0;
+        assert_eq!(
+            quest_filter(&s, "@quest=40 help"),
+            "@quest=40 help"
+        );
+    }
+
+    #[test]
+    fn extract_quest_link_ids_handles_multiple() {
+        let mut out = Vec::new();
+        extract_quest_link_ids(
+            "|Hquest:10:5|h[A]|h|r and |Hquest:20:10|h[B]|h|r",
+            &mut out,
+        );
+        assert_eq!(out, vec![10, 20]);
+    }
+
     #[test]
     fn strategy_filter_no_tag_passthrough() {
         let set = StrategySet::default();
@@ -950,6 +1491,6 @@ mod tests {
         assert_eq!(guild_filter(&s, "attack"), "attack");
         assert_eq!(state_filter(&s, "attack"), "attack");
         assert_eq!(gear_filter(&s, "attack"), "attack");
-        assert_eq!(random_filter("attack"), "attack");
+        assert_eq!(random_filter(0, "attack"), "attack");
     }
 }

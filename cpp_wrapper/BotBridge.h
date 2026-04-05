@@ -75,6 +75,7 @@ namespace BotBridge
     bool CB_Say(BotHandle bot, const char* msg, uint32_t lang);
     bool CB_Whisper(BotHandle bot, uint64_t target_guid, const char* msg);
     bool CB_TellPlayer(BotHandle bot, uint64_t target_guid, const char* msg);
+    bool CB_TellAddon(BotHandle bot, uint64_t target_guid, const char* msg);
     bool CB_UseItem(BotHandle bot, uint32_t item_id, UnitHandle target);
     bool CB_Taunt(BotHandle bot, UnitHandle target);
     bool CB_TeleportTo(BotHandle bot, uint32_t map_id, float x, float y, float z, float o);

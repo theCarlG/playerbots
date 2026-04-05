@@ -561,10 +561,20 @@ fn class_cc_spell(class: crate::bot::state::PlayerClass) -> Option<SpellId> {
     })
 }
 
-/// Reply to the sender of `pc`, matching PB2's `TellPlayerNoFacing`
-/// routing: if the bot is in a group, broadcast to PARTY/RAID so every
-/// group member sees the response; otherwise whisper the sender. The
-/// C++ bridge's `tell_player` callback encapsulates that rule.
+/// Reply to the sender of `pc`, routing on the channel the command
+/// arrived on.
+///
+/// * When the origin is an addon channel (`origin.is_addon()` → true for
+///   `#a …` prefixed commands and any LANG_ADDON-tagged chat), reply via
+///   `tell_addon` so the packet comes back as CHAT_MSG_ADDON / LANG_ADDON
+///   with the `BOT\t` prefix. Mangosbot's event handler fires both
+///   CHAT_MSG_WHISPER and CHAT_MSG_ADDON through the same `OnWhisper`
+///   parser (`Mangosbot.lua:3129-3138`), so the UI-critical state-change
+///   confirmation strings ("Following...", "Formation set to …", …) are
+///   still recognised regardless of which wire they come back on.
+/// * Otherwise (direct whisper / party / raid / guild / say), fall back
+///   to PB2's `TellPlayerNoFacing` routing via `tell_player`: broadcast
+///   to the bot's group when it has one, else whisper the sender.
 ///
 /// Internal/system-injected commands (`pc.sender == None`) fall back to
 /// `say` so anything the bot utters without a requester still goes out
@@ -572,7 +582,11 @@ fn class_cc_spell(class: crate::bot::state::PlayerClass) -> Option<SpellId> {
 fn reply(bot: &BotState, pc: &PendingCommand, msg: &str) {
     match pc.sender {
         Some(guid) => {
-            bot.interface.tell_player(guid, msg);
+            if pc.origin.is_addon() {
+                bot.interface.tell_addon(guid, msg);
+            } else {
+                bot.interface.tell_player(guid, msg);
+            }
         }
         None => {
             bot.interface.say(msg, 0);
@@ -1450,6 +1464,8 @@ mod tests {
     use crate::Sel;
     use crate::engine::context::tests::NullInterface;
     use crate::ffi::BotRole;
+    use crate::ffi::interface::BotInterface;
+    use std::sync::Mutex;
 
     fn test_bot() -> BotState {
         BotState::new(
@@ -1459,6 +1475,144 @@ mod tests {
             PlayerSpec::WarriorArms,
             BotRole::DPS,
             Sel!(), // dummy empty tree
+        )
+    }
+
+    /// Records each `tell_player` / `tell_addon` call so the reply-routing
+    /// unit tests can assert which wire was used without a live FFI bridge.
+    /// The recorder appends to two static `Mutex<Vec<…>>` sinks so tests can
+    /// read them back after the boxed interface has been moved into
+    /// `BotState`. Tests call `clear_reply_sinks()` at the start to isolate
+    /// state (cargo-test runs cases on multiple threads, but each test
+    /// scrubs+asserts the sinks under the mutex, which is sufficient for
+    /// our single-assertion cases).
+    struct ReplyRecorder {
+        inner: NullInterface,
+    }
+
+    static WHISPERED: Mutex<Vec<(u64, String)>> = Mutex::new(Vec::new());
+    static ADDONED: Mutex<Vec<(u64, String)>> = Mutex::new(Vec::new());
+
+    fn clear_reply_sinks() {
+        WHISPERED.lock().unwrap().clear();
+        ADDONED.lock().unwrap().clear();
+    }
+
+    // Forward the full trait surface to NullInterface and only override the
+    // two reply paths we want to observe.
+    impl BotInterface for ReplyRecorder {
+        fn get_snapshot(&self) -> crate::ffi::BotWorldSnapshot {
+            self.inner.get_snapshot()
+        }
+        fn get_unit_snapshot(&self, u: crate::ffi::UnitHandle) -> crate::ffi::BotUnitSnapshot {
+            self.inner.get_unit_snapshot(u)
+        }
+        fn cast_spell(&self, s: SpellId, t: crate::ffi::UnitHandle) -> bool {
+            self.inner.cast_spell(s, t)
+        }
+        fn cast_spell_pos(&self, s: SpellId, x: f32, y: f32, z: f32) -> bool {
+            self.inner.cast_spell_pos(s, x, y, z)
+        }
+        fn move_to(&self, x: f32, y: f32, z: f32) -> bool {
+            self.inner.move_to(x, y, z)
+        }
+        fn follow(&self, t: crate::ffi::UnitHandle, d: f32, a: f32) -> bool {
+            self.inner.follow(t, d, a)
+        }
+        fn stop_moving(&self) -> bool {
+            self.inner.stop_moving()
+        }
+        fn attack(&self, t: crate::ffi::UnitHandle) -> bool {
+            self.inner.attack(t)
+        }
+        fn auto_attack(&self, e: bool) -> bool {
+            self.inner.auto_attack(e)
+        }
+        fn say(&self, m: &str, l: u32) -> bool {
+            self.inner.say(m, l)
+        }
+        fn use_item(&self, i: ItemId, t: crate::ffi::UnitHandle) -> bool {
+            self.inner.use_item(i, t)
+        }
+        fn taunt(&self, t: crate::ffi::UnitHandle) -> bool {
+            self.inner.taunt(t)
+        }
+        fn group_get_tank(&self) -> Option<crate::ffi::UnitHandle> {
+            self.inner.group_get_tank()
+        }
+        fn group_get_healer(&self) -> Option<crate::ffi::UnitHandle> {
+            self.inner.group_get_healer()
+        }
+        fn group_get_role(&self, m: crate::ffi::UnitHandle) -> BotRole {
+            self.inner.group_get_role(m)
+        }
+        fn has_aura(&self, u: crate::ffi::UnitHandle, s: SpellId) -> bool {
+            self.inner.has_aura(u, s)
+        }
+        fn get_aura(&self, u: crate::ffi::UnitHandle, s: SpellId) -> Option<crate::ffi::BotAuraInfo> {
+            self.inner.get_aura(u, s)
+        }
+        fn get_auras(&self, u: crate::ffi::UnitHandle) -> Vec<crate::ffi::BotAuraInfo> {
+            self.inner.get_auras(u)
+        }
+        fn get_threat_list(&self, u: crate::ffi::UnitHandle) -> Vec<crate::ffi::BotThreatEntry> {
+            self.inner.get_threat_list(u)
+        }
+        fn get_unit_threat(&self, a: crate::ffi::UnitHandle, b: crate::ffi::UnitHandle) -> f32 {
+            self.inner.get_unit_threat(a, b)
+        }
+        fn unit_distance(&self, u: crate::ffi::UnitHandle) -> f32 {
+            self.inner.unit_distance(u)
+        }
+        fn can_cast(&self, s: SpellId, u: crate::ffi::UnitHandle) -> bool {
+            self.inner.can_cast(s, u)
+        }
+        fn spell_cooldown_ms(&self, s: SpellId) -> u32 {
+            self.inner.spell_cooldown_ms(s)
+        }
+        fn has_los(&self, u: crate::ffi::UnitHandle) -> bool {
+            self.inner.has_los(u)
+        }
+        fn get_nearby_units(&self, r: f32, h: bool) -> Vec<crate::ffi::UnitHandle> {
+            self.inner.get_nearby_units(r, h)
+        }
+        fn get_behind_position(&self, u: crate::ffi::UnitHandle, d: f32) -> crate::ffi::BotPosition {
+            self.inner.get_behind_position(u, d)
+        }
+        fn get_safe_position(&self, r: f32) -> Option<crate::ffi::BotPosition> {
+            self.inner.get_safe_position(r)
+        }
+        fn get_spread_position(
+            &self,
+            c: crate::ffi::UnitHandle,
+            r: f32,
+            i: u8,
+            t: u8,
+        ) -> crate::ffi::BotPosition {
+            self.inner.get_spread_position(c, r, i, t)
+        }
+        fn can_reach(&self, x: f32, y: f32, z: f32) -> bool {
+            self.inner.can_reach(x, y, z)
+        }
+
+        fn tell_player(&self, guid: u64, msg: &str) -> bool {
+            WHISPERED.lock().unwrap().push((guid, msg.to_string()));
+            true
+        }
+        fn tell_addon(&self, guid: u64, msg: &str) -> bool {
+            ADDONED.lock().unwrap().push((guid, msg.to_string()));
+            true
+        }
+    }
+
+    fn test_bot_with_recorder() -> BotState {
+        BotState::new(
+            1,
+            Box::new(ReplyRecorder { inner: NullInterface }),
+            PlayerClass::Warrior,
+            PlayerSpec::WarriorArms,
+            BotRole::DPS,
+            Sel!(),
         )
     }
 
@@ -1559,6 +1713,60 @@ mod tests {
             }));
         process_commands(&mut bot);
         assert_eq!(bot.settings.chat_channels, 0);
+    }
+
+    /// Part 5 Step 4 — reply routing. A command whose `ChatOrigin::lang`
+    /// is `LANG_ADDON` must reply via `tell_addon`; a regular whisper must
+    /// reply via `tell_player`. Locks in the behavior that Mangosbot's UI
+    /// round-trips depend on (addon queries must not leak as whispers into
+    /// the player's chat frame).
+    #[test]
+    fn reply_routes_by_origin() {
+        clear_reply_sinks();
+        let mut bot = test_bot_with_recorder();
+
+        // Addon-origin query (`#a co ?`) — should land on the addon sink.
+        bot.pending_commands.push_back(PendingCommand::external(
+            0xABCD,
+            SecurityLevel::AllowAll,
+            ChatOrigin::new(2 /* CHAT_MSG_PARTY */, LANG_ADDON),
+            BotCommand::ApplyStrategies {
+                state: BotStateKind::Combat,
+                add: StrategyFlags::NONE,
+                remove: StrategyFlags::NONE,
+                query: true,
+            },
+        ));
+
+        // Whisper-origin query — should land on the whisper sink.
+        bot.pending_commands.push_back(PendingCommand::external(
+            0x1234,
+            SecurityLevel::AllowAll,
+            ChatOrigin::new(6 /* CHAT_MSG_WHISPER */, 0 /* LANG_UNIVERSAL */),
+            BotCommand::ApplyStrategies {
+                state: BotStateKind::Combat,
+                add: StrategyFlags::NONE,
+                remove: StrategyFlags::NONE,
+                query: true,
+            },
+        ));
+
+        process_commands(&mut bot);
+
+        let addon = ADDONED.lock().unwrap().clone();
+        let whispers = WHISPERED.lock().unwrap().clone();
+
+        assert_eq!(addon.len(), 1, "addon-origin query should reply on addon wire");
+        assert_eq!(addon[0].0, 0xABCD);
+        assert!(
+            addon[0].1.starts_with("Combat Strategies:"),
+            "payload should carry the Mangosbot query prefix verbatim, got {:?}",
+            addon[0].1
+        );
+
+        assert_eq!(whispers.len(), 1, "whisper-origin query should whisper");
+        assert_eq!(whispers[0].0, 0x1234);
+        assert!(whispers[0].1.starts_with("Combat Strategies:"));
     }
 
     #[test]

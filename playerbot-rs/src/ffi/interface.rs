@@ -118,6 +118,14 @@ pub trait BotInterface: Send {
     fn tell_player(&self, _target_guid: u64, _msg: &str) -> bool {
         false
     }
+    /// Addon-channel reply: send a message back over CHAT_MSG_ADDON /
+    /// LANG_ADDON to the requester so the Mangosbot / RaidControl UI's
+    /// addon-message listener consumes it. Used when the incoming command
+    /// arrived via the addon wire (`#a` prefix, `SendAddonMessage("BOT",…)`,
+    /// or the `debug …` shortcut). Mirrors PB2 `PlayerbotAI.cpp:3475-3485`.
+    fn tell_addon(&self, _target_guid: u64, _msg: &str) -> bool {
+        false
+    }
     fn use_item(&self, item_id: ItemId, target: UnitHandle) -> bool;
     fn taunt(&self, target: UnitHandle) -> bool;
 
@@ -861,6 +869,11 @@ impl BotInterface for RealInterface {
     fn tell_player(&self, target_guid: u64, msg: &str) -> bool {
         let c_str = std::ffi::CString::new(msg).unwrap_or_default();
         unsafe { (self.cbs.tell_player.unwrap())(self.handle, target_guid, c_str.as_ptr()) }
+    }
+
+    fn tell_addon(&self, target_guid: u64, msg: &str) -> bool {
+        let c_str = std::ffi::CString::new(msg).unwrap_or_default();
+        unsafe { (self.cbs.bot_tell_addon.unwrap())(self.handle, target_guid, c_str.as_ptr()) }
     }
 
     fn use_item(&self, item_id: ItemId, target: UnitHandle) -> bool {

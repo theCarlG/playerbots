@@ -78,6 +78,43 @@ typedef struct {
     uint8_t  bag_space_pct;             /* 0..100, percent of inventory slots *used* */
     uint32_t equip_gear_score;          /* average ilvl of equipped gear */
     bool     is_overworld;              /* true for maps 0/1/530/571, false inside instances */
+
+    /* ── Rti chat filter state (3b) ─────────────────────────────────
+     * ObjectGuid per raid target icon, indexed [0..7] matching PB2's
+     * `RtiTargetValue::GetRtiIndex`: 0=star, 1=circle, 2=diamond,
+     * 3=triangle, 4=moon, 5=square, 6=cross, 7=skull. Zero when the
+     * slot is unset or the bot is not in a group.
+     * Populated from `Group::GetTargetIcon(i)` (Groups/Group.h:292). */
+    uint64_t group_raid_target_icons[8];
+
+    /* ── Location chat filter state (3d) ────────────────────────────
+     * Map name and top-level zone/area name, lowercased in C++ so the
+     * Rust filter does byte-exact prefix matches without a per-tick
+     * case fold. Buffers fit every known CMaNGOS map/area name with
+     * room to spare; truncated with a trailing '\0' if ever too long.
+     * Not escaped / not normalized — PB2 calls `std::tolower` and
+     * `std::string::find` so the snapshot mirrors that byte-for-byte. */
+    char map_name_lower[32];
+    char area_name_lower[64];
+
+    /* ── Guild chat filter state (3f) ───────────────────────────────
+     * Full guild name and the bot's current rank name, NUL-terminated.
+     * CMaNGOS limits are 24 chars (guild) and 16 chars (rank); buffers
+     * are oversized for the NUL. Empty string when not in a guild. Not
+     * lowercased — PB2 compares raw guild/rank names with
+     * `std::string::find`. */
+    char guild_name[32];
+    char guild_rank_name[24];
+
+    /* ── Quest chat filter state (3e) ───────────────────────────────
+     * Active quest IDs in the bot's quest log. `current_quest_count`
+     * is the populated prefix length; trailing slots are zero.
+     * MAX_QUEST_LOG_SIZE is 25 in CMaNGOS (see Player.h); the buffer
+     * is sized to that. Populated from
+     * `Player::GetQuestSlotQuestId(slot)` — same loop PB2 uses in
+     * `PlayerbotAI::GetAllCurrentQuestIds`. */
+    uint32_t current_quest_ids[25];
+    uint8_t  current_quest_count;
 } BotWorldSnapshot;
 
 typedef struct {
@@ -579,6 +616,19 @@ typedef struct BotCallbacks {
                                          char** out_body);
     /* Free a string previously returned by bot_read_log_file. */
     void            (*bot_free_string)(char* s);
+
+    /* ── Addon-channel reply routing ─────────────────────────────────────
+     * PB2 `PlayerbotAI.cpp:3475-3485`: when a command arrived on the addon
+     * channel (`#a ` prefix / `SendAddonMessage("BOT", …)` / `debug …`),
+     * the bot's reply must go back via CHAT_MSG_ADDON / LANG_ADDON so the
+     * Mangosbot UI's addon-message listener receives it and refreshes
+     * instead of a whisper leaking into the player's chat frame.
+     * The C++ side prepends the `BOT\t` prefix and wraps the packet as
+     * CHAT_MSG_PARTY with `lang = LANG_ADDON` (the 1.12 wire form for
+     * addon messages — the client splits prefix from body on the tab).
+     * `target_guid` is the sender (master) ObjectGuid; the packet is
+     * delivered directly to that player so only they receive it. */
+    bool            (*bot_tell_addon)(BotHandle bot, uint64_t target_guid, const char* msg);
 } BotCallbacks;
 
 /* ── Rust exports (entry points CMaNGOS calls into Rust) ─────────────────── */
