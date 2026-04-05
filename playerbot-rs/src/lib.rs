@@ -14,6 +14,7 @@ pub mod encounters;
 pub mod engine;
 pub mod factory;
 pub mod ffi;
+pub mod logging;
 pub mod noncombat;
 pub mod world;
 
@@ -27,6 +28,17 @@ use ffi::{
 
 #[unsafe(no_mangle)]
 pub extern "C" fn playerbot_init() {}
+
+/// Install (or clear, with null) the global log sink that bridges Rust log
+/// calls into CMaNGOS `sLog`. Safe to call before `playerbot_init`.
+///
+/// # Safety
+/// `sink` must either be null or a valid `extern "C" fn(u8, *const c_char)`
+/// that remains callable for the lifetime of the process.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_set_log_sink(sink: Option<logging::LogSinkFn>) {
+    logging::set_sink(sink);
+}
 
 /// Set bot configuration from C++. Must be called before any bots are created.
 /// Values that are 0 / 0.0 / false use defaults.

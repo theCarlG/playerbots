@@ -14,6 +14,8 @@
 #include "botpch.h"
 #include "BotBridge.h"
 
+#include <cstdlib>
+
 #include "Entities/Player.h"
 #include "Entities/Unit.h"
 #include "Entities/Creature.h"
@@ -268,6 +270,11 @@ BotCallbacks BotBridge::MakeCallbacks()
     // Factory: misc pre/post init
     cbs.bot_remove_all_auras                = CB_BotRemoveAllAuras;
     cbs.bot_has_skill                       = CB_BotHasSkill;
+    cbs.bot_learn_spell                     = CB_BotLearnSpell;
+
+    cbs.get_spell_info                      = CB_GetSpellInfo;
+    cbs.get_bot_spells                      = CB_GetBotSpells;
+    cbs.free_bot_spells                     = CB_FreeBotSpells;
 
     return cbs;
 }
@@ -2130,4 +2137,95 @@ bool BotBridge::CB_BotHasSkill(BotHandle bot, uint32_t skill_id)
     if (!b || skill_id == 0)
         return false;
     return b->HasSkill(static_cast<uint16>(skill_id));
+}
+
+void BotBridge::CB_BotLearnSpell(BotHandle bot, uint32_t spell_id)
+{
+    Player* b = FindBot(bot);
+    if (!b || spell_id == 0)
+        return;
+    b->learnSpell(spell_id, false);
+}
+
+BotSpellInfo BotBridge::CB_GetSpellInfo(BotHandle /*bot*/, uint32_t spell_id)
+{
+    BotSpellInfo out = {};
+    if (spell_id == 0)
+        return out;
+
+    SpellEntry const* s = sSpellTemplate.LookupEntry<SpellEntry>(spell_id);
+    if (!s)
+        return out;
+
+    out.id                 = s->Id;
+    out.is_valid           = true;
+    out.is_passive         = IsPassiveSpell(s);
+    out.attributes         = s->Attributes;
+    out.attributes_ex      = s->AttributesEx;
+    out.spell_level        = s->spellLevel;
+    out.base_level         = s->baseLevel;
+    out.max_level          = s->maxLevel;
+    out.spell_family_name  = s->SpellFamilyName;
+
+    for (int i = 0; i < 3; ++i)
+    {
+        out.effect[i]                 = s->Effect[i];
+        out.effect_item_type[i]       = s->EffectItemType[i];
+        out.effect_misc_value[i]      = s->EffectMiscValue[i];
+        out.effect_apply_aura_name[i] = s->EffectApplyAuraName[i];
+    }
+
+    for (int i = 0; i < 2; ++i)
+        out.totem[i] = s->Totem[i];
+
+    for (int i = 0; i < 8; ++i)
+    {
+        out.reagent[i]       = s->Reagent[i];
+        out.reagent_count[i] = s->ReagentCount[i];
+    }
+
+    out.equipped_item_class               = s->EquippedItemClass;
+    out.equipped_item_subclass_mask       = s->EquippedItemSubClassMask;
+    out.equipped_item_inventory_type_mask = s->EquippedItemInventoryTypeMask;
+
+    return out;
+}
+
+uint32_t* BotBridge::CB_GetBotSpells(BotHandle bot, uint32_t* out_count)
+{
+    if (out_count)
+        *out_count = 0;
+    Player* b = FindBot(bot);
+    if (!b || !out_count)
+        return nullptr;
+
+    PlayerSpellMap const& spells = b->GetSpellMap();
+    uint32_t count = 0;
+    for (PlayerSpellMap::const_iterator it = spells.begin(); it != spells.end(); ++it)
+    {
+        if (it->second.state == PLAYERSPELL_REMOVED || it->second.disabled)
+            continue;
+        ++count;
+    }
+    if (count == 0)
+        return nullptr;
+
+    uint32_t* arr = static_cast<uint32_t*>(std::malloc(count * sizeof(uint32_t)));
+    if (!arr)
+        return nullptr;
+
+    uint32_t i = 0;
+    for (PlayerSpellMap::const_iterator it = spells.begin(); it != spells.end(); ++it)
+    {
+        if (it->second.state == PLAYERSPELL_REMOVED || it->second.disabled)
+            continue;
+        arr[i++] = it->first;
+    }
+    *out_count = count;
+    return arr;
+}
+
+void BotBridge::CB_FreeBotSpells(uint32_t* list)
+{
+    std::free(list);
 }

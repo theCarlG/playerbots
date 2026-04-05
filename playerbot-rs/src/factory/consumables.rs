@@ -37,6 +37,7 @@ const CLASS_DRUID: u8 = 11;
 // Spell effect IDs (subset — only what the factory queries).
 const SPELL_EFFECT_HEAL: u32 = 10;
 const SPELL_EFFECT_ENERGIZE: u32 = 30;
+const SPELL_EFFECT_LEARN_SPELL: u32 = 36;
 
 // Food categories used by RandomItemMgr::GetFood.
 const FOOD_CATEGORY_FOOD: u32 = 11;
@@ -64,8 +65,10 @@ pub fn init_food(iface: &dyn BotInterface, level: u32, has_mana: bool) {
 }
 
 /// Give the bot class-specific reagents appropriate for its level (mage runes,
-/// druid catalysts, warlock soul shards, etc.).
+/// druid catalysts, warlock soul shards, etc.) *and* add any totem items
+/// required by spells in the bot's spellbook (shaman totems, etc.).
 pub fn init_reagents(iface: &dyn BotInterface, class: u8, level: u32) {
+    // Static class/level reagent plan.
     let plan = reagent_plan_for(class, level);
     for item_id in plan.items {
         let max_stack = iface.item_max_stack_size(item_id).max(1);
@@ -83,6 +86,33 @@ pub fn init_reagents(iface: &dyn BotInterface, class: u8, level: u32) {
             continue;
         }
         let _added = iface.inventory_add_item(item_id, count);
+    }
+
+    // Spell-derived totems: iterate the bot's spellbook, pull SpellEntry for
+    // each known spell, and give the bot any `Totem[]` items it doesn't
+    // already carry. Mirrors the old C++ loop in `PlayerbotFactory::InitReagents`.
+    for spell_id in iface.get_bot_spells() {
+        let Some(info) = iface.get_spell_info(spell_id) else {
+            continue;
+        };
+        if info.is_passive {
+            continue;
+        }
+        // SPELL_EFFECT_LEARN_SPELL = 36 — skip "teach this spell" helpers
+        // that carry unrelated totem slots.
+        if info.effect[0] == SPELL_EFFECT_LEARN_SPELL {
+            continue;
+        }
+        for &totem in &info.totem {
+            if totem == 0 {
+                continue;
+            }
+            let item = ItemId(totem);
+            if iface.item_count_in_bags(item) > 0 {
+                continue;
+            }
+            iface.inventory_add_item(item, 1);
+        }
     }
 }
 
@@ -247,6 +277,10 @@ mod tests {
         // Canned selections for pick_*.
         potion_pick: RefCell<std::collections::HashMap<(u32, u32), u32>>,
         food_pick: RefCell<std::collections::HashMap<(u32, u32), u32>>,
+        // Known bot spells (returned by get_bot_spells).
+        spells: RefCell<Vec<u32>>,
+        // Per-spell SpellEntry subset (returned by get_spell_info).
+        spell_info: RefCell<std::collections::HashMap<u32, crate::ffi::BotSpellInfo>>,
         // RNG returns the midpoint of [lo, hi] for determinism.
     }
 
@@ -258,8 +292,26 @@ mod tests {
                 stack_sizes: RefCell::default(),
                 potion_pick: RefCell::default(),
                 food_pick: RefCell::default(),
+                spells: RefCell::default(),
+                spell_info: RefCell::default(),
             }
         }
+
+        /// Register a spell id the bot knows, with a minimally-populated
+        /// `BotSpellInfo` that the test can override via `spell_info` mutation.
+        fn add_spell(&self, spell_id: u32, info: crate::ffi::BotSpellInfo) {
+            self.spells.borrow_mut().push(spell_id);
+            self.spell_info.borrow_mut().insert(spell_id, info);
+        }
+    }
+
+    /// Build a valid zero-initialized `BotSpellInfo` for a spell id. Test
+    /// helpers then mutate the fields they care about.
+    fn make_spell(id: u32) -> crate::ffi::BotSpellInfo {
+        let mut info: crate::ffi::BotSpellInfo = unsafe { std::mem::zeroed() };
+        info.id = id;
+        info.is_valid = true;
+        info
     }
 
     unsafe impl Send for MockIface {}
@@ -402,6 +454,12 @@ mod tests {
             // Deterministic midpoint.
             min + (max - min) / 2
         }
+        fn get_bot_spells(&self) -> Vec<u32> {
+            self.spells.borrow().clone()
+        }
+        fn get_spell_info(&self, spell_id: u32) -> Option<crate::ffi::BotSpellInfo> {
+            self.spell_info.borrow().get(&spell_id).copied()
+        }
     }
 
     // ── Potions ─────────────────────────────────────────────────────────
@@ -535,6 +593,82 @@ mod tests {
 
     #[test]
     fn init_reagents_noop_for_warrior() {
+        let m = MockIface::new();
+        init_reagents(&m, CLASS_WARRIOR, 80);
+        assert!(m.added.borrow().is_empty());
+    }
+
+    // ── Spell-derived totem scan ────────────────────────────────────────
+
+    // Shaman Searing Totem (rank 1): spell id 3599 — has no class/level
+    // reagent plan, so only the totem scan contributes adds. We use a
+    // fabricated totem item id (5176, "Fire Totem") to keep the test
+    // independent of real DBCs.
+    #[test]
+    fn totem_scan_adds_required_totem_item() {
+        let m = MockIface::new();
+        let mut info = make_spell(3599);
+        info.totem[0] = 5176; // fire totem item
+        m.add_spell(3599, info);
+
+        init_reagents(&m, CLASS_SHAMAN, 10); // below shaman reagent plan level
+        let ids: Vec<_> = m.added.borrow().iter().map(|a| a.id).collect();
+        assert_eq!(ids, vec![ItemId(5176)]);
+    }
+
+    #[test]
+    fn totem_scan_skips_item_already_in_bags() {
+        let m = MockIface::new();
+        m.carried.borrow_mut().insert(5176, 1);
+        let mut info = make_spell(3599);
+        info.totem[0] = 5176;
+        m.add_spell(3599, info);
+
+        init_reagents(&m, CLASS_SHAMAN, 10);
+        assert!(m.added.borrow().is_empty());
+    }
+
+    #[test]
+    fn totem_scan_skips_passive_spell() {
+        let m = MockIface::new();
+        let mut info = make_spell(1234);
+        info.is_passive = true;
+        info.totem[0] = 5176;
+        m.add_spell(1234, info);
+
+        init_reagents(&m, CLASS_SHAMAN, 10);
+        assert!(m.added.borrow().is_empty());
+    }
+
+    #[test]
+    fn totem_scan_skips_learn_spell_effect() {
+        // Training-spell wrappers carry unrelated Totem[] slots that should
+        // not be treated as real reagents.
+        let m = MockIface::new();
+        let mut info = make_spell(9999);
+        info.effect[0] = SPELL_EFFECT_LEARN_SPELL;
+        info.totem[0] = 5176;
+        m.add_spell(9999, info);
+
+        init_reagents(&m, CLASS_SHAMAN, 10);
+        assert!(m.added.borrow().is_empty());
+    }
+
+    #[test]
+    fn totem_scan_handles_both_totem_slots() {
+        let m = MockIface::new();
+        let mut info = make_spell(3599);
+        info.totem[0] = 5176;
+        info.totem[1] = 5175;
+        m.add_spell(3599, info);
+
+        init_reagents(&m, CLASS_SHAMAN, 10);
+        let ids: Vec<_> = m.added.borrow().iter().map(|a| a.id).collect();
+        assert_eq!(ids, vec![ItemId(5176), ItemId(5175)]);
+    }
+
+    #[test]
+    fn totem_scan_is_noop_when_bot_has_no_spells() {
         let m = MockIface::new();
         init_reagents(&m, CLASS_WARRIOR, 80);
         assert!(m.added.borrow().is_empty());

@@ -6,11 +6,30 @@
 #include "PlayerbotRust.h"
 
 #include "Entities/Player.h"
+#include "Log/Log.h"
+
+// ── Log sink bridge ──────────────────────────────────────────────────────
+//
+// Rust calls this via a function pointer installed by playerbot_set_log_sink.
+// Level values mirror PLAYERBOT_LOG_{ERROR,WARN,INFO,DEBUG} in botffi.h.
+static void PlayerbotRustLogSink(uint8_t level, const char* msg)
+{
+    if (!msg) return;
+    switch (level)
+    {
+        case PLAYERBOT_LOG_ERROR: sLog.outError("%s", msg);  break;
+        case PLAYERBOT_LOG_WARN:  sLog.outBasic("%s", msg);  break;
+        case PLAYERBOT_LOG_INFO:  sLog.outDetail("%s", msg); break;
+        case PLAYERBOT_LOG_DEBUG: sLog.outDebug("%s", msg);  break;
+        default:                  sLog.outBasic("%s", msg);  break;
+    }
+}
 
 // ── Global init / shutdown ───────────────────────────────────────────────
 
 void PlayerbotRust::InitRustModule()
 {
+    playerbot_set_log_sink(&PlayerbotRustLogSink);
     playerbot_init();
     // TODO: read config values from PlayerbotAIConfig and pass them
     // playerbot_set_config(react_delay, max_wait, eat_hp, drink_mana, debug);

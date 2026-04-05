@@ -166,6 +166,12 @@ namespace BotBridge
     // ── Factory: misc pre/post init ────────────────────────────────────────
     void CB_BotRemoveAllAuras(BotHandle bot);
     bool CB_BotHasSkill(BotHandle bot, uint32_t skill_id);
+    void CB_BotLearnSpell(BotHandle bot, uint32_t spell_id);
+
+    // ── Spell store queries ────────────────────────────────────────────────
+    BotSpellInfo CB_GetSpellInfo(BotHandle bot, uint32_t spell_id);
+    uint32_t*    CB_GetBotSpells(BotHandle bot, uint32_t* out_count);
+    void         CB_FreeBotSpells(uint32_t* list);
 
     // ── Internal helpers ────────────────────────────────────────────────────
     Player* FindBot(BotHandle bot);

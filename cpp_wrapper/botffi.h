@@ -95,6 +95,41 @@ typedef struct {
     bool       found;           /* false = no dispellable target */
 } BotDispelTarget;
 
+/* Subset of CMaNGOS SpellEntry — just the fields the bot factory / AI needs.
+ * Array sizes match the DBC constants: MAX_EFFECT_INDEX=3, MAX_SPELL_TOTEMS=2,
+ * MAX_SPELL_REAGENTS=8. Fields are 0 when not applicable; `is_valid` is false
+ * if the spell id is not in the spell store. */
+typedef struct {
+    uint32_t id;
+    bool     is_valid;
+    bool     is_passive;
+
+    uint32_t attributes;
+    uint32_t attributes_ex;
+    uint32_t spell_level;
+    uint32_t base_level;
+    uint32_t max_level;
+    uint32_t spell_family_name;
+
+    /* Per-effect slots (3 entries). Effect=0 means "unused slot". */
+    uint32_t effect[3];
+    uint32_t effect_item_type[3];
+    int32_t  effect_misc_value[3];
+    uint32_t effect_apply_aura_name[3];
+
+    /* Shaman totem item requirements (2 slots, 0 = none). */
+    uint32_t totem[2];
+
+    /* Spell reagents (8 slots, reagent[i] <= 0 means "unused"). */
+    int32_t  reagent[8];
+    uint32_t reagent_count[8];
+
+    /* Equipment gating. equipped_item_class == -1 means "no requirement". */
+    int32_t  equipped_item_class;
+    int32_t  equipped_item_subclass_mask;
+    int32_t  equipped_item_inventory_type_mask;
+} BotSpellInfo;
+
 /* ── Callback table (C++ → Rust query/command interface) ─────────────────── */
 
 typedef struct BotCallbacks {
@@ -256,9 +291,48 @@ typedef struct BotCallbacks {
     void (*bot_remove_all_auras)(BotHandle bot);
     /* True if the bot has `skill_id` learned at any rank. */
     bool (*bot_has_skill)(BotHandle bot, uint32_t skill_id);
+    /* Teach the bot a spell (Player::learnSpell with dependent=false).
+     * Used by the factory mount / spell initialization steps. */
+    void (*bot_learn_spell)(BotHandle bot, uint32_t spell_id);
+
+    /* ── Spell store queries (wraps sSpellTemplate) ──────────────────── */
+    /* Look up a subset of SpellEntry fields for `spell_id`. The returned
+     * struct has `is_valid=false` when the id is not in the spell store. */
+    BotSpellInfo (*get_spell_info)(BotHandle bot, uint32_t spell_id);
+    /* List the bot's currently-known (non-removed, non-disabled) spell IDs.
+     * Returns a freshly-allocated array; caller must call `free_bot_spells`.
+     * `*out_count` receives the number of entries (0 on empty). */
+    uint32_t* (*get_bot_spells)(BotHandle bot, uint32_t* out_count);
+    void      (*free_bot_spells)(uint32_t* list);
 } BotCallbacks;
 
 /* ── Rust exports (entry points CMaNGOS calls into Rust) ─────────────────── */
+
+/* ── Logging sink ────────────────────────────────────────────────────────── */
+
+/**
+ * Log level values passed to the sink. Mirror a four-level scheme that the
+ * CMaNGOS `sLog` front-end (outError / outBasic / outString / outDetail) can
+ * map directly onto.
+ */
+#define PLAYERBOT_LOG_ERROR 0
+#define PLAYERBOT_LOG_WARN  1
+#define PLAYERBOT_LOG_INFO  2
+#define PLAYERBOT_LOG_DEBUG 3
+
+/**
+ * Function pointer type for the log sink. `msg` is a null-terminated UTF-8
+ * C string, valid only for the duration of the call (the Rust side formats
+ * into a temporary buffer). The sink must not retain the pointer.
+ */
+typedef void (*PlayerbotLogSink)(uint8_t level, const char* msg);
+
+/**
+ * Install a log sink. Call once from C++ before `playerbot_init` (or at any
+ * point after — any Rust log emitted before install is silently dropped).
+ * Passing `NULL` detaches the sink.
+ */
+void playerbot_set_log_sink(PlayerbotLogSink sink);
 
 /**
  * Called once at server startup (before any bots are created).
@@ -379,7 +453,8 @@ void playerbot_factory_reset_progression(void* state, uint8_t kind);
 /**
  * Miscellaneous factory step via the Rust factory module.
  *
- *   kind — 0 = cancel auras, 1 = init skill-tool starter kit
+ *   kind — 0 = cancel auras, 1 = init skill-tool starter kit,
+ *          2 = init mounts (learn race- and level-appropriate mount spells)
  */
 void playerbot_factory_misc(void* state, uint8_t kind);
 

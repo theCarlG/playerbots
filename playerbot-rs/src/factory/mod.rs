@@ -16,6 +16,7 @@
 pub mod consumables;
 pub mod inventory;
 pub mod misc;
+pub mod mounts;
 pub mod progression;
 
 use crate::ffi::interface::BotInterface;
@@ -128,6 +129,8 @@ pub enum MiscKind {
     CancelAuras,
     /// Give the bot the mandatory tool for each trade skill it knows.
     InitSkillToolKit,
+    /// Teach the bot its race- and level-appropriate mount spells.
+    InitMounts,
 }
 
 impl MiscKind {
@@ -136,6 +139,7 @@ impl MiscKind {
         match kind {
             0 => Some(Self::CancelAuras),
             1 => Some(Self::InitSkillToolKit),
+            2 => Some(Self::InitMounts),
             _ => None,
         }
     }
@@ -146,5 +150,14 @@ pub fn run_misc(iface: &dyn BotInterface, kind: MiscKind) {
     match kind {
         MiscKind::CancelAuras => misc::cancel_auras(iface),
         MiscKind::InitSkillToolKit => misc::init_skill_tool_kit(iface),
+        MiscKind::InitMounts => {
+            let snap = iface.get_snapshot();
+            mounts::init_mounts(
+                iface,
+                u32::from(snap.self_.level),
+                snap.self_.race_id,
+                snap.self_.team,
+            );
+        }
     }
 }

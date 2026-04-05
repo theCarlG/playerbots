@@ -6,7 +6,7 @@
 /// `BtNode` and `TickContext` use `&dyn BotInterface` so they work in both contexts
 /// without any conditional compilation.
 use super::{
-    BotAuraInfo, BotCallbacks, BotHandle, BotPosition, BotThreatEntry,
+    BotAuraInfo, BotCallbacks, BotHandle, BotPosition, BotSpellInfo, BotThreatEntry,
     BotUnitSnapshot, BotWorldSnapshot, UnitHandle,
     types::{BotRole, ItemId, SpellId},
 };
@@ -343,6 +343,24 @@ pub trait BotInterface: Send {
     /// Whether the bot has the given skill learned (at any rank).
     fn bot_has_skill(&self, _skill_id: u32) -> bool {
         false
+    }
+
+    /// Teach the bot a spell (`Player::learnSpell` with `dependent=false`).
+    /// Used by the factory mount / spell initialization steps.
+    fn bot_learn_spell(&self, _spell_id: u32) {}
+
+    /* ── Spell store queries ─────────────────────────────────────────── */
+
+    /// Look up a subset of `SpellEntry` fields for `spell_id`. Returns
+    /// `None` when the id is not in the server's spell store.
+    fn get_spell_info(&self, _spell_id: u32) -> Option<BotSpellInfo> {
+        None
+    }
+
+    /// List the bot's currently-known (non-removed, non-disabled) spell IDs.
+    /// Returns an empty vec when the bot has no spells.
+    fn get_bot_spells(&self) -> Vec<u32> {
+        Vec::new()
     }
 }
 
@@ -886,5 +904,26 @@ impl BotInterface for RealInterface {
 
     fn bot_has_skill(&self, skill_id: u32) -> bool {
         unsafe { (self.cbs.bot_has_skill.unwrap())(self.handle, skill_id) }
+    }
+
+    fn bot_learn_spell(&self, spell_id: u32) {
+        unsafe { (self.cbs.bot_learn_spell.unwrap())(self.handle, spell_id) }
+    }
+
+    fn get_spell_info(&self, spell_id: u32) -> Option<BotSpellInfo> {
+        let info = unsafe { (self.cbs.get_spell_info.unwrap())(self.handle, spell_id) };
+        if info.is_valid { Some(info) } else { None }
+    }
+
+    fn get_bot_spells(&self) -> Vec<u32> {
+        let mut count: u32 = 0;
+        let ptr = unsafe { (self.cbs.get_bot_spells.unwrap())(self.handle, &mut count) };
+        if ptr.is_null() || count == 0 {
+            return Vec::new();
+        }
+        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
+        let out = slice.to_vec();
+        unsafe { (self.cbs.free_bot_spells.unwrap())(ptr) };
+        out
     }
 }
