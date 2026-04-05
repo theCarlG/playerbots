@@ -271,6 +271,8 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.gather_node             = CB_GatherNode;
     cbs.gameobject_distance     = CB_GameobjectDistance;
     cbs.gameobject_position     = CB_GameobjectPosition;
+    cbs.nearby_gameobject_by_entry = CB_NearbyGameObjectByEntry;
+    cbs.use_gameobject             = CB_UseGameObject;
 
     // Factory: inventory mutation
     cbs.inventory_destroy_equipped_and_bags = CB_InventoryDestroyEquippedAndBags;
@@ -2027,6 +2029,50 @@ BotPosition BotBridge::CB_GameobjectPosition(BotHandle bot, uint64_t handle)
         pos.map_id = unit->GetMapId();
     }
     return pos;
+}
+
+uint64_t BotBridge::CB_NearbyGameObjectByEntry(BotHandle bot, uint32_t entry, float range)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+
+    GameObjectList gameObjects;
+    MaNGOS::GameObjectInPosRangeCheck check(*b,
+        b->GetPositionX(), b->GetPositionY(), b->GetPositionZ(), range);
+    MaNGOS::GameObjectListSearcher<MaNGOS::GameObjectInPosRangeCheck> searcher(gameObjects, check);
+    Cell::VisitAllObjects(b, searcher, range);
+
+    GameObject* best = nullptr;
+    float bestDist = range + 1.0f;
+    for (GameObject* go : gameObjects)
+    {
+        if (!go || !go->IsSpawned())
+            continue;
+        if (go->GetEntry() != entry)
+            continue;
+        float d = b->GetDistance(go);
+        if (d < bestDist)
+        {
+            bestDist = d;
+            best = go;
+        }
+    }
+    if (!best)
+        return 0;
+    return best->GetObjectGuid().GetRawValue();
+}
+
+bool BotBridge::CB_UseGameObject(BotHandle bot, uint64_t handle)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    GameObject* go = b->GetMap()->GetGameObject(MakeGuid(handle));
+    if (!go)
+        return false;
+    go->Use(b);
+    return true;
 }
 
 // ── Factory: inventory mutation ───────────────────────────────────────────

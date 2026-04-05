@@ -236,6 +236,15 @@ pub enum BotCommand {
     /// Reply with the current warrior forced-stance setting.
     ShowWarriorPrefs,
 
+    /// `suppression auto|forbid|force` — BWL suppression-room disarm
+    /// duty (rogue-only in `Auto`).
+    SetSuppressionDuty(crate::bot::encounter_prefs::DutyMode),
+    /// `douse auto|forbid|force` — MC rune-dousing duty (quintessence
+    /// carrier in `Auto`).
+    SetDouseDuty(crate::bot::encounter_prefs::DutyMode),
+    /// Reply with the current `encounter_prefs`.
+    ShowEncounterPrefs,
+
     // -- Unknown --
     Unknown(String),
 }
@@ -332,7 +341,10 @@ impl BotCommand {
             | SetWarlockCurse(_)
             | ShowWarlockPrefs
             | SetWarriorForcedStance(_)
-            | ShowWarriorPrefs => SecurityLevel::Invite,
+            | ShowWarriorPrefs
+            | SetSuppressionDuty(_)
+            | SetDouseDuty(_)
+            | ShowEncounterPrefs => SecurityLevel::Invite,
         }
     }
 }
@@ -1084,6 +1096,28 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 ),
                 None => "warrior: not a warrior".into(),
             };
+            reply(bot, pc, &msg);
+        }
+
+        BotCommand::SetSuppressionDuty(mode) => {
+            bot.settings.encounter_prefs.suppression_duty = *mode;
+            if bot.settings.verbose {
+                reply(bot, pc, &format!("suppression: {}", mode.as_word()));
+            }
+        }
+        BotCommand::SetDouseDuty(mode) => {
+            bot.settings.encounter_prefs.douse_duty = *mode;
+            if bot.settings.verbose {
+                reply(bot, pc, &format!("douse: {}", mode.as_word()));
+            }
+        }
+        BotCommand::ShowEncounterPrefs => {
+            let p = &bot.settings.encounter_prefs;
+            let msg = format!(
+                "encounter: suppression={} douse={}",
+                p.suppression_duty.as_word(),
+                p.douse_duty.as_word()
+            );
             reply(bot, pc, &msg);
         }
 

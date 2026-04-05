@@ -150,6 +150,8 @@ namespace BotBridge
     bool        CB_GatherNode(BotHandle bot, uint64_t handle);
     float       CB_GameobjectDistance(BotHandle bot, uint64_t handle);
     BotPosition CB_GameobjectPosition(BotHandle bot, uint64_t handle);
+    uint64_t    CB_NearbyGameObjectByEntry(BotHandle bot, uint32_t entry, float range);
+    bool        CB_UseGameObject(BotHandle bot, uint64_t handle);
 
     // ── Factory: inventory mutation ────────────────────────────────────────
     void     CB_InventoryDestroyEquippedAndBags(BotHandle bot);

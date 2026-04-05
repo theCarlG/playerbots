@@ -323,6 +323,15 @@ typedef struct BotCallbacks {
     float       (*gameobject_distance)(BotHandle bot, uint64_t handle);
     BotPosition (*gameobject_position)(BotHandle bot, uint64_t handle);
 
+    /* ── Generic game-object interaction (encounter/instance scripting) ───
+     * Find the nearest spawned GameObject with entry `entry` within `range`
+     * yards. Returns the packed GUID, or 0 if none. Used by instance FSMs
+     * for mechanics like BWL suppression devices and MC rune dousing. */
+    uint64_t    (*nearby_gameobject_by_entry)(BotHandle bot, uint32_t entry, float range);
+    /* Invoke `GameObject::Use(Player*)` on the GO identified by `handle`.
+     * Returns false if the handle no longer resolves. */
+    bool        (*use_gameobject)(BotHandle bot, uint64_t handle);
+
     /* ── Factory: inventory mutation ─────────────────────────────────── */
     /* Destroy every equipped item plus every item in backpack and carried bags.
      * Leaves bank contents intact. */

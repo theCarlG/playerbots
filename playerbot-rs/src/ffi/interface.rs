@@ -306,6 +306,25 @@ pub trait BotInterface: Send {
     fn gameobject_position(&self, _handle: u64) -> BotPosition {
         BotPosition::default()
     }
+    /// Find the nearest spawned GameObject with `entry` within `range` yards.
+    /// Returns the packed GUID, or `None` if no matching GO is in range.
+    /// Used by instance FSMs for mechanics like BWL Suppression Devices and
+    /// MC pre-Majordomo rune dousing.
+    fn nearby_gameobject_by_entry(&self, _entry: u32, _range: f32) -> Option<u64> {
+        None
+    }
+    /// Invoke `GameObject::Use(Player*)` on `handle`. Returns `false` if the
+    /// handle no longer resolves to a spawned GO.
+    fn use_gameobject(&self, _handle: u64) -> bool {
+        false
+    }
+    /// Convenience wrapper: true if the bot holds at least one `item_id` in
+    /// backpack or carried bags (excludes bank). Default impl calls
+    /// [`Self::item_count_in_bags`] so FFI mocks only need to stub the
+    /// underlying count method.
+    fn has_item(&self, item_id: ItemId) -> bool {
+        self.item_count_in_bags(item_id) > 0
+    }
 
     /* ── Factory: inventory mutation ─────────────────────────────────── */
 
@@ -1084,6 +1103,15 @@ impl BotInterface for RealInterface {
 
     fn gameobject_position(&self, handle: u64) -> BotPosition {
         unsafe { (self.cbs.gameobject_position.unwrap())(self.handle, handle) }
+    }
+
+    fn nearby_gameobject_by_entry(&self, entry: u32, range: f32) -> Option<u64> {
+        let h = unsafe { (self.cbs.nearby_gameobject_by_entry.unwrap())(self.handle, entry, range) };
+        if h == 0 { None } else { Some(h) }
+    }
+
+    fn use_gameobject(&self, handle: u64) -> bool {
+        unsafe { (self.cbs.use_gameobject.unwrap())(self.handle, handle) }
     }
 
     /* ── Factory: inventory mutation ─────────────────────────────────── */

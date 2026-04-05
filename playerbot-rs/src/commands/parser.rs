@@ -195,6 +195,8 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec { names: &["trap", "traps"], parse: |_, a| parse_trap(a) },
     CommandSpec { names: &["curse", "curses"], parse: |_, a| parse_curse(a) },
     CommandSpec { names: &["forcestance", "stancelock"], parse: |_, a| parse_forcestance(a) },
+    CommandSpec { names: &["suppression"], parse: |_, a| parse_duty(a, DutyKind::Suppression) },
+    CommandSpec { names: &["douse"], parse: |_, a| parse_duty(a, DutyKind::Douse) },
 ];
 
 /// Parse a chat message into a `BotCommand`.
@@ -808,6 +810,35 @@ fn parse_curse(args: &[&str]) -> Option<BotCommand> {
     match WarlockCurse::from_token(tok) {
         Some(c) => Some(BotCommand::SetWarlockCurse(Some(c))),
         None => Some(BotCommand::Unknown(format!("curse: unknown '{tok}'"))),
+    }
+}
+
+/// Which encounter duty a `parse_duty` call is parsing for.
+enum DutyKind {
+    Suppression,
+    Douse,
+}
+
+/// `suppression` / `douse` (no args)      → `ShowEncounterPrefs`
+/// `suppression auto|forbid|force`        → `SetSuppressionDuty(..)`
+/// `douse auto|forbid|force`              → `SetDouseDuty(..)`
+fn parse_duty(args: &[&str], kind: DutyKind) -> Option<BotCommand> {
+    use crate::bot::encounter_prefs::DutyMode;
+    let Some(&tok) = args.first() else {
+        return Some(BotCommand::ShowEncounterPrefs);
+    };
+    match DutyMode::from_word(tok) {
+        Some(mode) => Some(match kind {
+            DutyKind::Suppression => BotCommand::SetSuppressionDuty(mode),
+            DutyKind::Douse => BotCommand::SetDouseDuty(mode),
+        }),
+        None => {
+            let label = match kind {
+                DutyKind::Suppression => "suppression",
+                DutyKind::Douse => "douse",
+            };
+            Some(BotCommand::Unknown(format!("{label}: unknown '{tok}'")))
+        }
     }
 }
 

@@ -5,6 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::bot::class_prefs::ClassPrefs;
+use crate::bot::encounter_prefs::EncounterPrefs;
 use crate::ffi::{ItemId, SpellId, UnitHandle};
 
 /// What the bot does when not given a specific order.
@@ -331,6 +332,13 @@ pub struct BotSettings {
     /// populated — seeded at `BotState::new` time via
     /// `ClassPrefs::default_for`, mutated by chat commands.
     pub class_prefs: ClassPrefs,
+
+    /// Cross-boss / instance-wide duty preferences (BWL suppression
+    /// disarm, MC rune dousing). Class-agnostic — a raid leader
+    /// whispers bots individually to designate carriers or opt bots
+    /// out. Default: every field is [`DutyMode::Auto`], so any
+    /// eligible bot participates.
+    pub encounter_prefs: EncounterPrefs,
 }
 
 /// Chat channel bitfield for `BotSettings::chat_channels`. Mirrors the PB2
@@ -403,6 +411,7 @@ impl Default for BotSettings {
             chat_channels: 0,
             preferred_rti_icon: None,
             class_prefs: ClassPrefs::None,
+            encounter_prefs: EncounterPrefs::default(),
         }
     }
 }

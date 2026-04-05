@@ -89,6 +89,20 @@ pub trait EncounterFsm: Send {
     /// encounter FSM may either own a BT as a struct field (per-instance) or
     /// return a shared `&'static Bt` built once via `OnceLock` — both are
     /// valid under the elided lifetime below.
+    ///
+    /// # Instance-wide (cross-boss) behaviors
+    ///
+    /// Instance wrappers (e.g. `BlackwingLairFsm`, `MoltenCoreFsm`) are
+    /// free to return a composed
+    /// `Sel!(active_boss_bt, zone_wide_bt())` so cross-boss behaviors
+    /// (class-gated trash maintenance, sub-area rituals like BWL's
+    /// Suppression Device disarm duty or MC's rune dousing) can fire
+    /// when no boss is active, without hijacking boss-BT priority when
+    /// one is pulled. The `zone_wide_bt()` helper is a free-standing
+    /// `fn` defined inline in the instance's `mod.rs`; instance
+    /// specific gameplay logic lives in that module rather than in
+    /// `engine/bt.rs`, and is reached from the tree via
+    /// [`Bt::Custom`](crate::engine::bt::Bt::Custom) leaves.
     fn phase_bt(&self) -> Option<Bt> {
         None
     }
@@ -167,6 +181,16 @@ impl EncounterFsm for SimpleFsm {
     }
 }
 
+/// Generic instance wrapper for raids/dungeons whose bosses are driven
+/// by a dispatch enum (`T: EncounterFsm + TryFrom<u32>`) and which have
+/// no zone-wide, cross-boss behaviors to layer on top.
+///
+/// Bespoke instance FSMs (`BlackwingLairFsm`, `MoltenCoreFsm`) are used
+/// where `phase_bt()` needs to compose the active boss tree with an
+/// instance-wide branch (suppression disarm, rune dousing, …). For
+/// simpler instances — regular 5-mans where at most one boss has a
+/// scripted FSM and the rest are `SimpleFsm` — this wrapper is the
+/// lightest-weight home.
 pub struct BasicInstanceFsm<T>
 where
     T: EncounterFsm + TryFrom<u32>,
@@ -215,11 +239,10 @@ where
     }
 
     fn is_done(&self) -> bool {
-        self.active_boss.as_ref().map_or(false, |b| b.is_done())
+        self.active_boss.as_ref().is_some_and(|b| b.is_done())
     }
 
     fn boss_entry(&self) -> u32 {
-        // Custom logic to get entry since it's hardcoded per struct now
         self.active_boss.as_ref().map_or(0, |b| b.boss_entry())
     }
 

@@ -466,6 +466,51 @@ pub enum Bt {
     /// Warrior: if `forced_stance` is set and not already active, swap
     /// into it. No-op when no stance is forced.
     EnforceWarriorStance,
+
+    // ── Instance / sub-area gating ───────────────────────────────────────
+    /// Succeeds iff the bot's current `area_id` (from `BotWorldSnapshot`)
+    /// matches. Used by instance FSMs to scope zone-wide behaviors to a
+    /// specific sub-area (e.g. BWL suppression corridor).
+    InArea(u32),
+    /// Succeeds iff the bot's current `area_id` is contained in the slice.
+    /// Use for behaviors that span several adjacent sub-areas (e.g. the
+    /// MC rune rooms before Majordomo).
+    InAnyArea(&'static [u32]),
+
+    // ── Generic escape hatch ─────────────────────────────────────────────
+    /// Invokes a [`BehaviorLeaf`] as a BT leaf. This is the plugin point
+    /// that lets instance-specific gameplay logic (BWL suppression
+    /// disarm, MC rune dousing, Karazhan Chess moves, …) live inside
+    /// its own instance module without adding a new `Bt` variant for
+    /// every case. `BehaviorLeaf` is `Copy`, so this variant preserves
+    /// the enum's derives.
+    Custom(BehaviorLeaf),
+}
+
+/// Plugin leaf for instance-specific behavior.
+///
+/// Holds a handler fn plus lightweight metadata. Declared as a
+/// top-level `const` in the instance module that owns the behavior,
+/// then referenced from that module's `zone_wide_bt()` or per-phase
+/// tree via [`Bt::Custom`]. Keeping this as a struct (rather than a
+/// bare fn pointer tuple) lets new per-leaf metadata — display text,
+/// priority hints, cooldown tags — be added without touching every
+/// call site.
+///
+/// # Fields
+/// - `label`: internal debug / trace identifier (e.g.
+///   `"bwl_disarm_device"`). Never shown to players.
+/// - `handler`: the tick function. Receives the current
+///   [`TickContext`] and returns a [`BtResult`].
+/// - `display_text`: optional user-facing status string (e.g.
+///   `"Disarming Suppression Device"`). Currently stored only;
+///   consumers (chat status, debug overlay) can read it via the
+///   public field.
+#[derive(Debug, Clone, Copy)]
+pub struct BehaviorLeaf {
+    pub label: &'static str,
+    pub handler: fn(&mut TickContext<'_>) -> BtResult,
+    pub display_text: Option<&'static str>,
 }
 
 impl Bt {
@@ -940,6 +985,23 @@ impl BtNode for Bt {
             Bt::EnforceWarriorStance => {
                 crate::classes::warrior::prefs::tick_enforce_warrior_stance(ctx)
             }
+
+            // ── Instance / sub-area gating ───────────────────────────────
+            Bt::InArea(id) => {
+                if ctx.snap.area_id == *id {
+                    BtResult::Success
+                } else {
+                    BtResult::Failure
+                }
+            }
+            Bt::InAnyArea(ids) => {
+                if ids.contains(&ctx.snap.area_id) {
+                    BtResult::Success
+                } else {
+                    BtResult::Failure
+                }
+            }
+            Bt::Custom(leaf) => (leaf.handler)(ctx),
         }
     }
 }
