@@ -89,6 +89,20 @@ typedef struct {
     bool     complete;
 } BotQuestInfo;
 
+/* One overworld taxi node entry — a subset of `TaxiNodesEntry`. Returned in
+ * batches by `get_overworld_taxi_nodes`. */
+typedef struct {
+    uint32_t index;    /* row index in `sTaxiNodesStore` */
+    uint32_t map_id;   /* continent id: 0=EK, 1=Kalimdor, 530=Outland, 571=Northrend */
+} BotTaxiNode;
+
+/* One talent row entry — a subset of `TalentEntry`. `rank_ids[i]` is the
+ * spell id the bot learns for rank `i`, or 0 if that rank is unused. */
+typedef struct {
+    uint32_t row;              /* talent row within its tab */
+    uint32_t rank_ids[5];      /* MAX_TALENT_RANK spell IDs */
+} BotTalentEntry;
+
 typedef struct {
     UnitHandle unit;
     uint32_t   spell_id;        /* debuff spell ID */
@@ -294,6 +308,14 @@ typedef struct BotCallbacks {
     /* Teach the bot a spell (Player::learnSpell with dependent=false).
      * Used by the factory mount / spell initialization steps. */
     void (*bot_learn_spell)(BotHandle bot, uint32_t spell_id);
+    /* Wraps `Player::learnDefaultSpells()` — teaches the race/class starter
+     * spell set from `playercreateinfo_spell_custom`. Used by the factory
+     * InitAvailableSpells step. */
+    void (*bot_learn_default_spells)(BotHandle bot);
+    /* Wraps `Player::learnClassLevelSpells(include_high_level_quest_rewards)`
+     * — teaches every class spell the bot qualifies for at its current
+     * level. Used by the factory InitAvailableSpells step. */
+    void (*bot_learn_class_level_spells)(BotHandle bot, bool include_quest_rewards);
 
     /* ── Spell store queries (wraps sSpellTemplate) ──────────────────── */
     /* Look up a subset of SpellEntry fields for `spell_id`. The returned
@@ -304,6 +326,78 @@ typedef struct BotCallbacks {
      * `*out_count` receives the number of entries (0 on empty). */
     uint32_t* (*get_bot_spells)(BotHandle bot, uint32_t* out_count);
     void      (*free_bot_spells)(uint32_t* list);
+
+    /* ── Factory: bag slot management ────────────────────────────────── */
+    /* Return the number of empty equipped bag slots
+     * (INVENTORY_SLOT_BAG_START .. INVENTORY_SLOT_BAG_END). Range 0..=4. */
+    uint32_t (*bot_empty_bag_slot_count)(BotHandle bot);
+    /* Store `count` of `item_id` using Player::StoreNewItemInBestSlots,
+     * which will auto-equip bags into empty bag slots. Returns true on
+     * success. Used by factory InitBags. */
+    bool     (*bot_store_new_in_best_slots)(BotHandle bot, uint32_t item_id, uint32_t count);
+
+    /* Set the bot's reputation with `faction_id` to `value` standing points.
+     * Internally looks up the FactionEntry, checks HasReputation(), and calls
+     * ReputationMgr::SetReputation. Returns true when the faction exists and
+     * carries reputation, false otherwise. Used by factory InitReputations. */
+    bool     (*bot_set_reputation)(BotHandle bot, uint32_t faction_id, int32_t value);
+
+    /* ── Factory: ammo management ────────────────────────────────────── */
+    /* Weapon SubClass of the item in EQUIPMENT_SLOT_RANGED, or UINT32_MAX
+     * when no ranged item is equipped. See ItemPrototype.h subclass enums. */
+    uint32_t (*bot_equipped_ranged_subclass)(BotHandle bot);
+    /* Current PLAYER_AMMO_ID field (item entry of the ammo being used), or 0. */
+    uint32_t (*bot_current_ammo_id)(BotHandle bot);
+    /* Wraps sRandomItemMgr.GetAmmo(level, ammo_subclass). Returns an item id
+     * or 0. `ammo_subclass` is ITEM_SUBCLASS_ARROW/BULLET/THROWN. */
+    uint32_t (*factory_pick_ammo_for_level)(BotHandle bot, uint32_t level, uint32_t ammo_subclass);
+    /* Calls Player::SetAmmo(item_id). */
+    void     (*bot_set_ammo)(BotHandle bot, uint32_t item_id);
+
+    /* ── Factory: skills ─────────────────────────────────────────────── */
+    /* Current skill value for `skill_id` (0 if the skill is not known). */
+    uint32_t (*bot_get_skill_value)(BotHandle bot, uint32_t skill_id);
+    /* Player::SetSkill(skill_id, value, max). Grants the skill if not yet
+     * known. `step` passes 0 (let the game derive it). */
+    void     (*bot_set_skill)(BotHandle bot, uint32_t skill_id, uint32_t value, uint32_t max);
+    /* Player::UpdateSkillsForLevel(true). */
+    void     (*bot_update_skills_for_level)(BotHandle bot);
+
+    /* ── Factory: item prototype queries ─────────────────────────────── */
+    /* ItemPrototype.Quality (0..7 — poor/common/uncommon/rare/epic/...). */
+    uint32_t (*item_prototype_quality)(BotHandle bot, uint32_t item_id);
+
+    /* ── Factory: random item picks ──────────────────────────────────── */
+    /* Wraps sRandomItemMgr.GetRandomTrade(level). Returns an item id or 0. */
+    uint32_t (*factory_pick_trade_for_level)(BotHandle bot, uint32_t level);
+
+    /* ── Factory: config list queries ────────────────────────────────── */
+    /* Snapshot of sPlayerbotAIConfig.randomBotSpellIds — the list of spell
+     * IDs that `InitSpecialSpells` hands out to every bot. Returned as a
+     * freshly-allocated array; caller must free it via `free_bot_spells`. */
+    uint32_t* (*get_random_bot_spell_ids)(BotHandle bot, uint32_t* out_count);
+
+    /* ── Factory: taxi nodes ─────────────────────────────────────────── */
+    /* Overworld taxi nodes (maps 0, 1, 530, 571) that carry a mount for the
+     * given team (0=Alliance, 1=Horde). Returned as a freshly-allocated
+     * array; caller must call `free_taxi_nodes`. Matches the pre-filtered
+     * `overworldTaxiNodeLevelsA/H` tables on the C++ side. */
+    BotTaxiNode* (*get_overworld_taxi_nodes)(BotHandle bot, uint8_t team, uint32_t* out_count);
+    void         (*free_taxi_nodes)(BotTaxiNode* list);
+    /* Mark a taxi node as discovered (Player::m_taxi.SetTaximaskNode). */
+    void         (*bot_set_taxi_node)(BotHandle bot, uint32_t node_index);
+
+    /* ── Factory: talents ────────────────────────────────────────────── */
+    /* All `TalentEntry` rows belonging to `spec_no` (0..2 = the three talent
+     * tabs) that match the bot's class mask, sorted arbitrarily. Returned
+     * as a freshly-allocated array; caller must call `free_class_talents`. */
+    BotTalentEntry* (*get_class_talents)(BotHandle bot, uint8_t spec_no, uint32_t* out_count);
+    void            (*free_class_talents)(BotTalentEntry* list);
+    /* Free talent points the bot has available (wraps Player::GetFreeTalentPoints). */
+    uint32_t        (*bot_free_talent_points)(BotHandle bot);
+    /* Recompute free talent points after learning a talent spell
+     * (wraps Player::UpdateFreeTalentPoints(false)). */
+    void            (*bot_update_free_talent_points)(BotHandle bot);
 } BotCallbacks;
 
 /* ── Rust exports (entry points CMaNGOS calls into Rust) ─────────────────── */
@@ -454,9 +548,25 @@ void playerbot_factory_reset_progression(void* state, uint8_t kind);
  * Miscellaneous factory step via the Rust factory module.
  *
  *   kind — 0 = cancel auras, 1 = init skill-tool starter kit,
- *          2 = init mounts (learn race- and level-appropriate mount spells)
+ *          2 = init mounts (learn race- and level-appropriate mount spells),
+ *          3 = init bags (equip starter bags into empty bag slots),
+ *          4 = init reputations (grant honored standing with PvP & end-game factions),
+ *          5 = init ammo (top up ranged-weapon ammo for warrior/rogue/hunter),
+ *          6 = init inventory trade (stock one random trade good),
+ *          7 = init skills (armor/weapon/riding proficiencies),
+ *          8 = init special spells (teach config-listed spell IDs),
+ *          9 = init taxi nodes (flag level-appropriate overworld flight paths),
+ *         10 = init available spells (teach default + class-level spellbook)
  */
 void playerbot_factory_misc(void* state, uint8_t kind);
+
+/**
+ * Learn talents for the given spec tab (0..2 = three talent trees). Walks the
+ * class's talent rows for the requested tab and randomly invests points until
+ * the bot has spent its free-talent-points budget, matching the policy of the
+ * old `PlayerbotFactory::InitTalents`.
+ */
+void playerbot_factory_init_talents(void* state, uint32_t spec_no);
 
 #ifdef __cplusplus
 } /* extern "C" */

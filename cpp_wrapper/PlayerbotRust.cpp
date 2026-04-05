@@ -156,3 +156,9 @@ void PlayerbotRust::FactoryMiscViaRust(uint8_t kind)
     if (m_rustState)
         playerbot_factory_misc(m_rustState, kind);
 }
+
+void PlayerbotRust::FactoryInitTalentsViaRust(uint32_t spec_no)
+{
+    if (m_rustState)
+        playerbot_factory_init_talents(m_rustState, spec_no);
+}

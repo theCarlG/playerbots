@@ -131,6 +131,9 @@ public:
     /// Run a miscellaneous factory step via the Rust factory module.
     ///   kind = 0: cancel auras, 1: init skill tool kit
     void FactoryMiscViaRust(uint8_t kind);
+
+    /// Learn talents for one spec tab (0..2) via the Rust factory module.
+    void FactoryInitTalentsViaRust(uint32_t spec_no);
     void TellPlayerNoFacing(Player* /*target*/, const std::string& /*msg*/) {}
     void CastSpell(uint32_t /*spellId*/, Unit* /*target*/) {}
     void EnchantItemT(uint32_t /*spellId*/, uint8_t /*slot*/, Item* /*item*/) {}

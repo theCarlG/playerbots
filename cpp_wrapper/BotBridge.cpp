@@ -25,6 +25,7 @@
 #include "Entities/Bag.h"
 #include "Entities/Item.h"
 #include "Entities/ItemPrototype.h"
+#include "playerbot/PlayerbotAIConfig.h"
 #include "playerbot/RandomItemMgr.h"
 #include "Util/Util.h"
 #include "Globals/ObjectAccessor.h"
@@ -39,6 +40,8 @@
 #include "Grids/GridNotifiersImpl.h"
 #include "Grids/CellImpl.h"
 #include "Server/SQLStorages.h"
+#include "Server/DBCStores.h"
+#include "Reputation/ReputationMgr.h"
 
 #ifdef CMANGOS
 #include "Combat/ThreatManager.h"
@@ -271,10 +274,36 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.bot_remove_all_auras                = CB_BotRemoveAllAuras;
     cbs.bot_has_skill                       = CB_BotHasSkill;
     cbs.bot_learn_spell                     = CB_BotLearnSpell;
+    cbs.bot_learn_default_spells            = CB_BotLearnDefaultSpells;
+    cbs.bot_learn_class_level_spells        = CB_BotLearnClassLevelSpells;
 
     cbs.get_spell_info                      = CB_GetSpellInfo;
     cbs.get_bot_spells                      = CB_GetBotSpells;
     cbs.free_bot_spells                     = CB_FreeBotSpells;
+    cbs.bot_empty_bag_slot_count            = CB_BotEmptyBagSlotCount;
+    cbs.bot_store_new_in_best_slots         = CB_BotStoreNewInBestSlots;
+    cbs.bot_set_reputation                  = CB_BotSetReputation;
+
+    cbs.bot_equipped_ranged_subclass        = CB_BotEquippedRangedSubclass;
+    cbs.bot_current_ammo_id                 = CB_BotCurrentAmmoId;
+    cbs.factory_pick_ammo_for_level         = CB_FactoryPickAmmoForLevel;
+    cbs.bot_set_ammo                        = CB_BotSetAmmo;
+
+    cbs.bot_get_skill_value                 = CB_BotGetSkillValue;
+    cbs.bot_set_skill                       = CB_BotSetSkill;
+    cbs.bot_update_skills_for_level         = CB_BotUpdateSkillsForLevel;
+
+    cbs.item_prototype_quality              = CB_ItemPrototypeQuality;
+    cbs.factory_pick_trade_for_level        = CB_FactoryPickTradeForLevel;
+    cbs.get_random_bot_spell_ids            = CB_GetRandomBotSpellIds;
+
+    cbs.get_overworld_taxi_nodes            = CB_GetOverworldTaxiNodes;
+    cbs.free_taxi_nodes                     = CB_FreeTaxiNodes;
+    cbs.bot_set_taxi_node                   = CB_BotSetTaxiNode;
+    cbs.get_class_talents                   = CB_GetClassTalents;
+    cbs.free_class_talents                  = CB_FreeClassTalents;
+    cbs.bot_free_talent_points              = CB_BotFreeTalentPoints;
+    cbs.bot_update_free_talent_points       = CB_BotUpdateFreeTalentPoints;
 
     return cbs;
 }
@@ -2147,6 +2176,22 @@ void BotBridge::CB_BotLearnSpell(BotHandle bot, uint32_t spell_id)
     b->learnSpell(spell_id, false);
 }
 
+void BotBridge::CB_BotLearnDefaultSpells(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+    b->learnDefaultSpells();
+}
+
+void BotBridge::CB_BotLearnClassLevelSpells(BotHandle bot, bool include_quest_rewards)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+    b->learnClassLevelSpells(include_quest_rewards);
+}
+
 BotSpellInfo BotBridge::CB_GetSpellInfo(BotHandle /*bot*/, uint32_t spell_id)
 {
     BotSpellInfo out = {};
@@ -2228,4 +2273,274 @@ uint32_t* BotBridge::CB_GetBotSpells(BotHandle bot, uint32_t* out_count)
 void BotBridge::CB_FreeBotSpells(uint32_t* list)
 {
     std::free(list);
+}
+
+uint32_t BotBridge::CB_BotEmptyBagSlotCount(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b) return 0;
+    uint32_t empty = 0;
+    for (uint8 slot = INVENTORY_SLOT_BAG_START; slot < INVENTORY_SLOT_BAG_END; ++slot)
+    {
+        if (!b->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+            ++empty;
+    }
+    return empty;
+}
+
+bool BotBridge::CB_BotStoreNewInBestSlots(BotHandle bot, uint32_t item_id, uint32_t count)
+{
+    Player* b = FindBot(bot);
+    if (!b || item_id == 0 || count == 0) return false;
+    return b->StoreNewItemInBestSlots(item_id, count);
+}
+
+bool BotBridge::CB_BotSetReputation(BotHandle bot, uint32_t faction_id, int32_t value)
+{
+    Player* b = FindBot(bot);
+    if (!b) return false;
+    FactionEntry const* f = sFactionStore.LookupEntry(faction_id);
+    if (!f || !f->HasReputation()) return false;
+    b->GetReputationMgr().SetReputation(f, value);
+    return true;
+}
+
+// ── Factory: ammo management ──────────────────────────────────────────────
+
+uint32_t BotBridge::CB_BotEquippedRangedSubclass(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b) return UINT32_MAX;
+    Item* pItem = b->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_RANGED);
+    if (!pItem) return UINT32_MAX;
+    return pItem->GetProto()->SubClass;
+}
+
+uint32_t BotBridge::CB_BotCurrentAmmoId(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b) return 0;
+    return b->GetUInt32Value(PLAYER_AMMO_ID);
+}
+
+uint32_t BotBridge::CB_FactoryPickAmmoForLevel(BotHandle /*bot*/, uint32_t level, uint32_t ammo_subclass)
+{
+    return sRandomItemMgr.GetAmmo(level, ammo_subclass);
+}
+
+void BotBridge::CB_BotSetAmmo(BotHandle bot, uint32_t item_id)
+{
+    Player* b = FindBot(bot);
+    if (!b) return;
+    b->SetAmmo(item_id);
+}
+
+// ── Factory: skills ───────────────────────────────────────────────────────
+
+uint32_t BotBridge::CB_BotGetSkillValue(BotHandle bot, uint32_t skill_id)
+{
+    Player* b = FindBot(bot);
+    if (!b) return 0;
+    return b->GetSkillValue(static_cast<uint16>(skill_id));
+}
+
+void BotBridge::CB_BotSetSkill(BotHandle bot, uint32_t skill_id, uint32_t value, uint32_t max)
+{
+    Player* b = FindBot(bot);
+    if (!b) return;
+    b->SetSkill(static_cast<uint16>(skill_id),
+                static_cast<uint16>(value),
+                static_cast<uint16>(max));
+}
+
+void BotBridge::CB_BotUpdateSkillsForLevel(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b) return;
+    b->UpdateSkillsForLevel(true);
+}
+
+// ── Factory: item prototype queries ───────────────────────────────────────
+
+uint32_t BotBridge::CB_ItemPrototypeQuality(BotHandle /*bot*/, uint32_t item_id)
+{
+    ItemPrototype const* proto = sObjectMgr.GetItemPrototype(item_id);
+    if (!proto) return 0;
+    return proto->Quality;
+}
+
+// ── Factory: random item picks ────────────────────────────────────────────
+
+uint32_t BotBridge::CB_FactoryPickTradeForLevel(BotHandle /*bot*/, uint32_t level)
+{
+    return sRandomItemMgr.GetRandomTrade(level);
+}
+
+// ── Factory: taxi nodes ───────────────────────────────────────────────────
+
+BotTaxiNode* BotBridge::CB_GetOverworldTaxiNodes(BotHandle /*bot*/, uint8_t team, uint32_t* out_count)
+{
+    if (out_count)
+        *out_count = 0;
+    if (!out_count)
+        return nullptr;
+
+    // Mount index: C++ source has MountCreatureID[0]=horde, [1]=alliance.
+    // BotWorldSnapshot.team is normalized to 0=Alliance, 1=Horde.
+    const uint32 mountIdx = (team == 0) ? 1u : 0u;
+
+    // First pass — count.
+    uint32_t count = 0;
+    for (uint32 i = 1; i < sTaxiNodesStore.GetNumRows(); ++i)
+    {
+        TaxiNodesEntry const* node = sTaxiNodesStore.LookupEntry(i);
+        if (!node)
+            continue;
+        uint32 mapId = node->map_id;
+        if (mapId != 0 && mapId != 1 && mapId != 530 && mapId != 571)
+            continue;
+        if (!node->MountCreatureID[mountIdx])
+            continue;
+        ++count;
+    }
+    if (count == 0)
+        return nullptr;
+
+    BotTaxiNode* arr = static_cast<BotTaxiNode*>(std::malloc(count * sizeof(BotTaxiNode)));
+    if (!arr)
+        return nullptr;
+
+    uint32_t j = 0;
+    for (uint32 i = 1; i < sTaxiNodesStore.GetNumRows(); ++i)
+    {
+        TaxiNodesEntry const* node = sTaxiNodesStore.LookupEntry(i);
+        if (!node)
+            continue;
+        uint32 mapId = node->map_id;
+        if (mapId != 0 && mapId != 1 && mapId != 530 && mapId != 571)
+            continue;
+        if (!node->MountCreatureID[mountIdx])
+            continue;
+        arr[j].index = i;
+        arr[j].map_id = mapId;
+        ++j;
+    }
+    *out_count = count;
+    return arr;
+}
+
+void BotBridge::CB_FreeTaxiNodes(BotTaxiNode* list)
+{
+    std::free(list);
+}
+
+void BotBridge::CB_BotSetTaxiNode(BotHandle bot, uint32_t node_index)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+    b->m_taxi.SetTaximaskNode(node_index);
+}
+
+// ── Factory: talents ──────────────────────────────────────────────────────
+
+BotTalentEntry* BotBridge::CB_GetClassTalents(BotHandle bot, uint8_t spec_no, uint32_t* out_count)
+{
+    if (out_count)
+        *out_count = 0;
+    if (!out_count)
+        return nullptr;
+
+    Player* b = FindBot(bot);
+    if (!b)
+        return nullptr;
+
+    const uint32 classMask = b->getClassMask();
+
+    // First pass — count matching rows.
+    uint32_t count = 0;
+    for (uint32 i = 0; i < sTalentStore.GetNumRows(); ++i)
+    {
+        TalentEntry const* talentInfo = sTalentStore.LookupEntry(i);
+        if (!talentInfo)
+            continue;
+        TalentTabEntry const* tab = sTalentTabStore.LookupEntry(talentInfo->TalentTab);
+        if (!tab || tab->tabpage != spec_no)
+            continue;
+        if ((classMask & tab->ClassMask) == 0)
+            continue;
+        ++count;
+    }
+    if (count == 0)
+        return nullptr;
+
+    BotTalentEntry* arr = static_cast<BotTalentEntry*>(std::malloc(count * sizeof(BotTalentEntry)));
+    if (!arr)
+        return nullptr;
+
+    uint32_t j = 0;
+    for (uint32 i = 0; i < sTalentStore.GetNumRows(); ++i)
+    {
+        TalentEntry const* talentInfo = sTalentStore.LookupEntry(i);
+        if (!talentInfo)
+            continue;
+        TalentTabEntry const* tab = sTalentTabStore.LookupEntry(talentInfo->TalentTab);
+        if (!tab || tab->tabpage != spec_no)
+            continue;
+        if ((classMask & tab->ClassMask) == 0)
+            continue;
+
+        arr[j].row = talentInfo->Row;
+        for (int r = 0; r < 5; ++r)
+            arr[j].rank_ids[r] = (r < MAX_TALENT_RANK) ? talentInfo->RankID[r] : 0;
+        ++j;
+    }
+    *out_count = count;
+    return arr;
+}
+
+void BotBridge::CB_FreeClassTalents(BotTalentEntry* list)
+{
+    std::free(list);
+}
+
+uint32_t BotBridge::CB_BotFreeTalentPoints(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+    return b->GetFreeTalentPoints();
+}
+
+void BotBridge::CB_BotUpdateFreeTalentPoints(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+    b->UpdateFreeTalentPoints(false);
+}
+
+// ── Factory: config list queries ──────────────────────────────────────────
+
+uint32_t* BotBridge::CB_GetRandomBotSpellIds(BotHandle /*bot*/, uint32_t* out_count)
+{
+    if (out_count)
+        *out_count = 0;
+    if (!out_count)
+        return nullptr;
+
+    std::list<uint32> const& list = sPlayerbotAIConfig.randomBotSpellIds;
+    if (list.empty())
+        return nullptr;
+
+    uint32_t count = static_cast<uint32_t>(list.size());
+    uint32_t* arr = static_cast<uint32_t*>(std::malloc(count * sizeof(uint32_t)));
+    if (!arr)
+        return nullptr;
+
+    uint32_t i = 0;
+    for (std::list<uint32>::const_iterator it = list.begin(); it != list.end(); ++it)
+        arr[i++] = *it;
+    *out_count = count;
+    return arr;
 }

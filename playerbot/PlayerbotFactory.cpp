@@ -95,9 +95,6 @@ uint32 PlayerbotFactory::tradeSkills[] =
 std::list<uint32> PlayerbotFactory::classQuestIds;
 std::list<uint32> PlayerbotFactory::specialQuestIds;
 
-TaxiNodeLevelContainer PlayerbotFactory::overworldTaxiNodeLevelsA;
-TaxiNodeLevelContainer PlayerbotFactory::overworldTaxiNodeLevelsH;
-
 void PlayerbotFactory::Init()
 {
     if (sPlayerbotAIConfig.randomBotPreQuests) {
@@ -123,33 +120,6 @@ void PlayerbotFactory::Init()
         }
     }
 
-    overworldTaxiNodeLevelsH.clear();
-    overworldTaxiNodeLevelsA.clear();
-
-    for (uint32 i = 1; i < sTaxiNodesStore.GetNumRows(); ++i)
-    {
-        TaxiNodesEntry const* taxiNode = sTaxiNodesStore.LookupEntry(i);
-
-        if (!taxiNode)
-            continue;
-
-        // Only include overworld taxi nodes (maps 0, 1, 530, 571)
-        uint32 mapId = taxiNode->map_id;
-        if (mapId != 0 && mapId != 1 && mapId != 530 && mapId != 571)
-            continue;
-
-        TaxiNodeLevel taxiNodeLevel = TaxiNodeLevel();
-
-        taxiNodeLevel.Index = i;
-        taxiNodeLevel.MapId = mapId;
-        taxiNodeLevel.Level = 1;  // Simplified — area level detection moved to Rust
-
-        if (taxiNode->MountCreatureID[0])
-            overworldTaxiNodeLevelsH.push_back(taxiNodeLevel);
-
-        if (taxiNode->MountCreatureID[1])
-            overworldTaxiNodeLevelsA.push_back(taxiNodeLevel);
-    }
 }
 
 void PlayerbotFactory::Prepare()
@@ -1536,81 +1506,7 @@ void PlayerbotFactory::ClearSkills() { ai->ResetProgressionViaRust(0); }
 void PlayerbotFactory::ClearSpells() { ai->ResetProgressionViaRust(1); }
 void PlayerbotFactory::ResetQuests() { ai->ResetProgressionViaRust(2); }
 
-void PlayerbotFactory::InitReputations()
-{
-    // list of factions
-    std::list<uint32> factions;
-
-    // neutral
-    if (level >= 60)
-    {
-        factions.push_back(910); // nozdormu
-        factions.push_back(749); // hydraxian waterlords
-        factions.push_back(529); // argent dawn
-    }
-
-    // pvp factions
-    if (level >= 60)
-    {
-        if (bot->GetTeam() == ALLIANCE)
-        {
-            factions.push_back(890); // Silverwing Sentinels
-            factions.push_back(730); // Stormpike Guard
-            factions.push_back(509); // The League of Arathor
-        }
-        else
-        {
-            factions.push_back(729); // Frostwolf Clan
-            factions.push_back(510); // The Defilers
-            factions.push_back(889); // Warsong Outriders
-        }
-    }
-
-#ifndef MANGOSBOT_ZERO
-    // TBC factions
-    if (level >= 60)
-    {
-        factions.push_back(942);  // cenarion expedition
-        factions.push_back(935);  // sha'tar
-        factions.push_back(1011); // lower city
-        factions.push_back(989);  // keepers of time
-        factions.push_back(967);  // violet eye
-        factions.push_back(1015); // netherwing
-        factions.push_back(1077); // shattered sun
-        factions.push_back(1012); // ashtongue
-        factions.push_back(970);  // sporegarr
-        factions.push_back(933);  // consortium
-        factions.push_back(1031); // sha'tari skyguard
-        factions.push_back(933);
-
-        if (bot->GetTeam() == ALLIANCE)
-        {
-            factions.push_back(946); // honor hold
-            factions.push_back(978); // kurenai
-        }
-        else
-        {
-            factions.push_back(947); // thrallmar
-            factions.push_back(941); // mag'har
-            factions.push_back(922); // tranquillen
-        }
-    }
-#endif
-
-    for (auto faction : factions)
-    {
-#ifdef MANGOSBOT_ONE
-        FactionEntry const* factionEntry = sFactionStore.LookupEntry<FactionEntry>(faction);
-#else
-        FactionEntry const* factionEntry = sFactionStore.LookupEntry(faction);
-#endif
-
-        if (!factionEntry || !factionEntry->HasReputation())
-            continue;
-
-        bot->GetReputationMgr().SetReputation(factionEntry, 42000);
-    }
-}
+void PlayerbotFactory::InitReputations() { ai->FactoryMiscViaRust(4); }
 
 void PlayerbotFactory::InitSpells()
 {
@@ -2860,22 +2756,7 @@ void PlayerbotFactory::InitSecondEquipmentSet()
     }
 }
 
-void PlayerbotFactory::InitBags()
-{
-    for (uint8 slot = INVENTORY_SLOT_BAG_START; slot < INVENTORY_SLOT_BAG_END; ++slot)
-    {
-        Bag* pBag = (Bag*)bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
-        if (!pBag)
-        {
-#ifdef MANGOSBOT_ZERO
-            bot->StoreNewItemInBestSlots(4500, 1); // add Traveler's Backpack if no bag in slot
-#else
-
-            bot->StoreNewItemInBestSlots(23162, 1);
-#endif
-        }
-    }
-}
+void PlayerbotFactory::InitBags() { ai->FactoryMiscViaRust(3); }
 
 void PlayerbotFactory::EnchantItem(Item* item)
 {
@@ -3213,7 +3094,11 @@ void PlayerbotFactory::UpdateTradeSkills()
     }
 }
 
-void PlayerbotFactory::InitSkills()
+void PlayerbotFactory::InitSkills() { ai->FactoryMiscViaRust(7); }
+
+// Ported to Rust — playerbot-rs/src/factory/skills.rs
+#if 0
+void PlayerbotFactory::InitSkills_removed()
 {
     bot->UpdateSkillsForLevel(true);
 
@@ -3380,181 +3265,15 @@ void PlayerbotFactory::SetRandomSkill(uint16 id)
     if (!bot->HasSkill(id) || value > curValue)
         bot->SetSkill(id, value, maxValue);
 }
+#endif // Ported to Rust (InitSkills)
 
-void PlayerbotFactory::InitAvailableSpells()
-{
-    bot->learnDefaultSpells();
-    bot->learnClassLevelSpells(true);
+void PlayerbotFactory::InitAvailableSpells() { ai->FactoryMiscViaRust(10); }
 
-#ifndef MANGOSBOT_TWO
-    if (bot->getClass() == CLASS_PALADIN)
-    {
-        // judgement missing
-        if(!bot->HasSpell(20271))
-        {
-            bot->learnSpell(20271, false);
-        }
-
-        // crusader strike
-        if(!bot->HasSpell(33394))
-        {
-            bot->learnSpell(33394, false);
-        }
-
-        // hand of reckoning
-        if (!bot->HasSpell(33395))
-        {
-            bot->learnSpell(33395, false);
-        }
-    }
-#endif
-
-    // add polymorph pig/turtle
-    if (bot->getClass() == CLASS_MAGE && bot->GetLevel() >= 60)
-    {
-        bot->learnSpell(28271, false);
-        bot->learnSpell(28272, false);
-    }
-
-    // add inferno
-    if (bot->getClass() == CLASS_WARLOCK && !bot->HasSpell(1122) && bot->GetLevel() >= 50)
-        bot->learnSpell(1122, false);
-
-#ifdef MANGOSBOT_ZERO
-    // add book spells
-    if (bot->GetLevel() == 60)
-    {
-        std::vector<uint32> bookSpells;
-        switch (bot->getClass())
-        {
-        case CLASS_WARRIOR:
-            bookSpells.push_back(25289);
-            bookSpells.push_back(25288);
-            bookSpells.push_back(25958);
-            break;
-        case CLASS_PALADIN:
-            bookSpells.push_back(25291);
-            bookSpells.push_back(25290);
-            bookSpells.push_back(25292);
-            break;
-        case CLASS_HUNTER:
-            bookSpells.push_back(25296);
-            bookSpells.push_back(25294);
-            bookSpells.push_back(25295);
-            break;
-        case CLASS_MAGE:
-            bookSpells.push_back(23028);
-            bookSpells.push_back(25345);
-            bookSpells.push_back(25306);
-            bookSpells.push_back(3723);
-            bookSpells.push_back(28612);
-            break;
-        case CLASS_ROGUE:
-            bookSpells.push_back(25300);
-            bookSpells.push_back(25302);
-            bookSpells.push_back(31016);
-            break;
-        case CLASS_PRIEST:
-            bookSpells.push_back(25314);
-            bookSpells.push_back(25315);
-            bookSpells.push_back(25316);
-            bookSpells.push_back(21564);
-            bookSpells.push_back(27683);
-            break;
-        case CLASS_SHAMAN:
-            bookSpells.push_back(29228);
-            bookSpells.push_back(25359);
-            bookSpells.push_back(25357);
-            bookSpells.push_back(25361);
-            break;
-        case CLASS_WARLOCK:
-            bookSpells.push_back(25311);
-            bookSpells.push_back(25309);
-            bookSpells.push_back(25307);
-            bookSpells.push_back(28610);
-            break;
-        case CLASS_DRUID:
-            bookSpells.push_back(31018);
-            bookSpells.push_back(25297);
-            bookSpells.push_back(25299);
-            bookSpells.push_back(25298);
-            bookSpells.push_back(21850);
-            break;
-        }
-
-        for (auto spellId : bookSpells)
-        {
-            if (!bot->HasSpell(spellId))
-                bot->learnSpell(spellId, false);
-        }
-    }
-#endif
-}
-
-
-void PlayerbotFactory::InitSpecialSpells()
-{
-    for (std::list<uint32>::iterator i = sPlayerbotAIConfig.randomBotSpellIds.begin(); i != sPlayerbotAIConfig.randomBotSpellIds.end(); ++i)
-    {
-        uint32 spellId = *i;
-
-        SpellEntry const* spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(spellId);
-
-        if(spellInfo)
-            bot->learnSpell(spellId, false);
-    }
-}
+void PlayerbotFactory::InitSpecialSpells() { ai->FactoryMiscViaRust(8); }
 
 void PlayerbotFactory::InitTalents(uint32 specNo)
 {
-    uint32 classMask = bot->getClassMask();
-
-    std::map<uint32, std::vector<TalentEntry const*> > spells;
-    for (uint32 i = 0; i < sTalentStore.GetNumRows(); ++i)
-    {
-        TalentEntry const *talentInfo = sTalentStore.LookupEntry(i);
-        if(!talentInfo)
-            continue;
-
-        TalentTabEntry const *talentTabInfo = sTalentTabStore.LookupEntry( talentInfo->TalentTab );
-        if(!talentTabInfo || talentTabInfo->tabpage != specNo)
-            continue;
-
-        if( (classMask & talentTabInfo->ClassMask) == 0 )
-            continue;
-
-        spells[talentInfo->Row].push_back(talentInfo);
-    }
-
-    uint32 freePoints = bot->GetFreeTalentPoints();
-    for (std::map<uint32, std::vector<TalentEntry const*> >::iterator i = spells.begin(); i != spells.end(); ++i)
-    {
-        std::vector<TalentEntry const*> &spells = i->second;
-        if (spells.empty())
-        {
-            sLog.outError("%s: No spells for talent row %d", bot->GetName(), i->first);
-            continue;
-        }
-
-        int attemptCount = 0;
-        while (!spells.empty() && (int)freePoints - (int)bot->GetFreeTalentPoints() < 5 && attemptCount++ < 3 && bot->GetFreeTalentPoints())
-        {
-            int index = urand(0, spells.size() - 1);
-            TalentEntry const *talentInfo = spells[index];
-            for (int rank = 0; rank < MAX_TALENT_RANK && bot->GetFreeTalentPoints(); ++rank)
-            {
-                uint32 spellId = talentInfo->RankID[rank];
-                if (!spellId)
-                    continue;
-
-                bot->learnSpell(spellId, false);
-                bot->UpdateFreeTalentPoints(false);
-            }
-            spells.erase(spells.begin() + index);
-        }
-
-        freePoints = bot->GetFreeTalentPoints();
-    }
+    ai->FactoryInitTalentsViaRust(specNo);
 }
 
 ObjectGuid PlayerbotFactory::GetRandomBot()
@@ -3634,63 +3353,7 @@ void PlayerbotFactory::ClearAllItems()
     ai->ClearInventoryViaRust(1);
 }
 
-void PlayerbotFactory::InitAmmo()
-{
-    if (bot->getClass() != CLASS_HUNTER && bot->getClass() != CLASS_ROGUE && bot->getClass() != CLASS_WARRIOR)
-        return;
-
-    Item* pItem = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_RANGED);
-    if (!pItem)
-        return;
-
-    uint32 subClass = 0;
-    switch (pItem->GetProto()->SubClass)
-    {
-    case ITEM_SUBCLASS_WEAPON_GUN:
-        subClass = ITEM_SUBCLASS_BULLET;
-        break;
-    case ITEM_SUBCLASS_WEAPON_BOW:
-    case ITEM_SUBCLASS_WEAPON_CROSSBOW:
-        subClass = ITEM_SUBCLASS_ARROW;
-        break;
-    case ITEM_SUBCLASS_WEAPON_THROWN:
-        if (bot->getClass() != CLASS_HUNTER)
-        {
-            subClass = ITEM_SUBCLASS_THROWN;
-            break;
-        }
-    }
-
-    if (!subClass)
-        return;
-
-    uint32 entry = bot->GetUInt32Value(PLAYER_AMMO_ID);
-    uint32 count = bot->GetItemCount(entry) / 200;
-    uint32 maxCount = 5 + level / 10;
-
-    if (ai->HasCheat(BotCheatMask::item))
-        maxCount = 1;
-
-    if (!entry || count <= 2)
-    {
-        entry = sRandomItemMgr.GetAmmo(level, subClass);
-        count = bot->GetItemCount(entry) / 200;
-    }
-
-    if (!entry)
-        return;
-
-    if (count < maxCount)
-    {
-        for (uint32 i = 0; i < maxCount - count; i++)
-        {
-            Item* newItem = bot->StoreNewItemInInventorySlot(entry, 200);
-        }
-    }
-
-    if(bot->GetUInt32Value(PLAYER_AMMO_ID) != entry)
-        bot->SetAmmo(entry);
-}
+void PlayerbotFactory::InitAmmo() { ai->FactoryMiscViaRust(5); }
 
 void PlayerbotFactory::InitMounts() { ai->FactoryMiscViaRust(2); }
 
@@ -3737,35 +3400,7 @@ Item* PlayerbotFactory::StoreItem(uint32 itemId, uint32 count, bool ignoreCount)
     return bot->StoreNewItem(sDest, itemId, true, Item::GenerateItemRandomPropertyId(itemId));
 }
 
-void PlayerbotFactory::InitInventoryTrade()
-{
-    uint32 itemId = sRandomItemMgr.GetRandomTrade(level);
-    if (!itemId)
-    {
-        sLog.outError("No trade items available for bot %s (%d level)", bot->GetName(), bot->GetLevel());
-        return;
-    }
-
-    ItemPrototype const* proto = sObjectMgr.GetItemPrototype(itemId);
-    if (!proto)
-        return;
-
-    uint32 count = 1, stacks = 1;
-    switch (proto->Quality)
-    {
-    case ITEM_QUALITY_NORMAL:
-        count = proto->GetMaxStackSize();
-        stacks = urand(1, 3);
-        break;
-    case ITEM_QUALITY_UNCOMMON:
-        stacks = 1;
-        count = urand(1, proto->GetMaxStackSize() / 2);
-        break;
-    }
-
-    for (uint32 i = 0; i < stacks; i++)
-        StoreItem(itemId, count);
-}
+void PlayerbotFactory::InitInventoryTrade() { ai->FactoryMiscViaRust(6); }
 
 void PlayerbotFactory::InitInventoryEquip()
 {
@@ -4377,29 +4012,5 @@ void PlayerbotFactory::InitGems() //WIP
 
 void PlayerbotFactory::InitTaxiNodes()
 {
-    uint32 startMap = bot->GetMapId();
-
-    if (startMap == 530) //BE=EK, DREA=KAL
-        startMap = bot->GetTeam() == ALLIANCE ? 1 : 0;
-
-    TaxiNodeLevelContainer const& overworldTaxiNodeLevels = bot->GetTeam() == ALLIANCE ? overworldTaxiNodeLevelsA : overworldTaxiNodeLevelsH;
-
-    for (TaxiNodeLevelContainer::const_iterator itr = overworldTaxiNodeLevels.begin(); itr != overworldTaxiNodeLevels.end(); ++itr)
-    {
-        TaxiNodeLevel const& taxiNodeLevel = *itr;
-
-        if (taxiNodeLevel.MapId == 571 && bot->GetLevel() < 66) //Don't learn nodes in northrend before level 66.
-            continue;
-
-        if (taxiNodeLevel.MapId == 530 && bot->GetLevel() < 58) //Don't learn nodes in outland before level 58.
-            continue;
-
-        if (taxiNodeLevel.Level > bot->GetLevel() && urand(0, 20)) //Limit nodes in high level area's.
-            continue;
-
-        if (taxiNodeLevel.MapId != startMap && taxiNodeLevel.Level + 20 > bot->GetLevel() && urand(0, 4)) //Limit nodes on other map.
-            continue;
-
-        bot->m_taxi.SetTaximaskNode(taxiNodeLevel.Index);
-    }
+    ai->FactoryMiscViaRust(9);
 }

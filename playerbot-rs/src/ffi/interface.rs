@@ -6,8 +6,8 @@
 /// `BtNode` and `TickContext` use `&dyn BotInterface` so they work in both contexts
 /// without any conditional compilation.
 use super::{
-    BotAuraInfo, BotCallbacks, BotHandle, BotPosition, BotSpellInfo, BotThreatEntry,
-    BotUnitSnapshot, BotWorldSnapshot, UnitHandle,
+    BotAuraInfo, BotCallbacks, BotHandle, BotPosition, BotSpellInfo, BotTalentEntry, BotTaxiNode,
+    BotThreatEntry, BotUnitSnapshot, BotWorldSnapshot, UnitHandle,
     types::{BotRole, ItemId, SpellId},
 };
 
@@ -349,6 +349,15 @@ pub trait BotInterface: Send {
     /// Used by the factory mount / spell initialization steps.
     fn bot_learn_spell(&self, _spell_id: u32) {}
 
+    /// Teach the bot its race/class starter spells — wraps
+    /// `Player::learnDefaultSpells()`.
+    fn bot_learn_default_spells(&self) {}
+
+    /// Teach every class spell available at the bot's current level — wraps
+    /// `Player::learnClassLevelSpells`. `include_quest_rewards=true` also
+    /// folds in quest-reward spells the bot qualifies for by level.
+    fn bot_learn_class_level_spells(&self, _include_quest_rewards: bool) {}
+
     /* ── Spell store queries ─────────────────────────────────────────── */
 
     /// Look up a subset of `SpellEntry` fields for `spell_id`. Returns
@@ -362,6 +371,115 @@ pub trait BotInterface: Send {
     fn get_bot_spells(&self) -> Vec<u32> {
         Vec::new()
     }
+
+    /* ── Bag slot management ─────────────────────────────────────────── */
+
+    /// Number of empty equipped bag slots (0..=4).
+    fn bot_empty_bag_slot_count(&self) -> u32 {
+        0
+    }
+
+    /// Store `count` of `item_id` via `Player::StoreNewItemInBestSlots`,
+    /// auto-equipping bags into empty bag slots. Returns `true` on success.
+    fn bot_store_new_in_best_slots(&self, _item_id: ItemId, _count: u32) -> bool {
+        false
+    }
+
+    /// Set reputation with `faction_id` to `value` standing points. Returns
+    /// `true` when the faction exists and has a reputation list, `false`
+    /// otherwise. Used by the factory reputation initialization step.
+    fn bot_set_reputation(&self, _faction_id: u32, _value: i32) -> bool {
+        false
+    }
+
+    /* ── Ammo management ─────────────────────────────────────────────── */
+
+    /// Weapon `SubClass` of the item in the ranged slot, or `u32::MAX` when
+    /// no ranged weapon is equipped.
+    fn bot_equipped_ranged_subclass(&self) -> u32 {
+        u32::MAX
+    }
+
+    /// Item id of the currently-equipped ammo (`PLAYER_AMMO_ID`), or 0.
+    fn bot_current_ammo_id(&self) -> u32 {
+        0
+    }
+
+    /// Wraps `sRandomItemMgr.GetAmmo(level, ammo_subclass)`. Returns 0 when
+    /// no suitable ammo exists.
+    fn factory_pick_ammo_for_level(&self, _level: u32, _ammo_subclass: u32) -> u32 {
+        0
+    }
+
+    /// Equip `item_id` as the bot's active ammo (`Player::SetAmmo`).
+    fn bot_set_ammo(&self, _item_id: u32) {}
+
+    /* ── Skills ──────────────────────────────────────────────────────── */
+
+    /// Current value of `skill_id` (0 when the skill is not known).
+    fn bot_get_skill_value(&self, _skill_id: u32) -> u32 {
+        0
+    }
+
+    /// Set (and, if necessary, learn) `skill_id` with the given value / max.
+    fn bot_set_skill(&self, _skill_id: u32, _value: u32, _max: u32) {}
+
+    /// `Player::UpdateSkillsForLevel(true)`.
+    fn bot_update_skills_for_level(&self) {}
+
+    /* ── Item prototype queries ──────────────────────────────────────── */
+
+    /// `ItemPrototype::Quality` (0..7). Returns 0 when the item id is unknown.
+    fn item_prototype_quality(&self, _item_id: u32) -> u32 {
+        0
+    }
+
+    /* ── Random item picks ───────────────────────────────────────────── */
+
+    /// Wraps `sRandomItemMgr.GetRandomTrade(level)`. Returns 0 when no
+    /// suitable trade good exists.
+    fn factory_pick_trade_for_level(&self, _level: u32) -> u32 {
+        0
+    }
+
+    /* ── Config list queries ─────────────────────────────────────────── */
+
+    /// Snapshot of `sPlayerbotAIConfig.randomBotSpellIds` — the list of spell
+    /// IDs handed to every bot by `InitSpecialSpells`. Returns an empty vec
+    /// when the config list is empty.
+    fn get_random_bot_spell_ids(&self) -> Vec<u32> {
+        Vec::new()
+    }
+
+    /* ── Taxi nodes ──────────────────────────────────────────────────── */
+
+    /// Overworld taxi nodes filtered for the bot's team (0=Alliance, 1=Horde).
+    /// Caller gets `(node_index, map_id)` pairs; the factory picks which ones
+    /// to flag on the bot via `bot_set_taxi_node`.
+    fn get_overworld_taxi_nodes(&self, _team: u8) -> Vec<BotTaxiNode> {
+        Vec::new()
+    }
+
+    /// Mark `node_index` as discovered on this bot's taxi mask.
+    fn bot_set_taxi_node(&self, _node_index: u32) {}
+
+    /* ── Talents ─────────────────────────────────────────────────────── */
+
+    /// All `TalentEntry` rows belonging to `spec_no` (0..2) that match the
+    /// bot's class mask. Returned as owned data — the FFI malloc is freed
+    /// inside the wrapper.
+    fn get_class_talents(&self, _spec_no: u8) -> Vec<BotTalentEntry> {
+        Vec::new()
+    }
+
+    /// Current `Player::GetFreeTalentPoints()`.
+    fn bot_free_talent_points(&self) -> u32 {
+        0
+    }
+
+    /// Wraps `Player::UpdateFreeTalentPoints(false)`. Recomputes the free
+    /// talent point count after a talent spell has been learned.
+    fn bot_update_free_talent_points(&self) {}
 }
 
 /// Quest info returned from the FFI.
@@ -910,6 +1028,16 @@ impl BotInterface for RealInterface {
         unsafe { (self.cbs.bot_learn_spell.unwrap())(self.handle, spell_id) }
     }
 
+    fn bot_learn_default_spells(&self) {
+        unsafe { (self.cbs.bot_learn_default_spells.unwrap())(self.handle) }
+    }
+
+    fn bot_learn_class_level_spells(&self, include_quest_rewards: bool) {
+        unsafe {
+            (self.cbs.bot_learn_class_level_spells.unwrap())(self.handle, include_quest_rewards)
+        }
+    }
+
     fn get_spell_info(&self, spell_id: u32) -> Option<BotSpellInfo> {
         let info = unsafe { (self.cbs.get_spell_info.unwrap())(self.handle, spell_id) };
         if info.is_valid { Some(info) } else { None }
@@ -925,5 +1053,105 @@ impl BotInterface for RealInterface {
         let out = slice.to_vec();
         unsafe { (self.cbs.free_bot_spells.unwrap())(ptr) };
         out
+    }
+
+    fn bot_empty_bag_slot_count(&self) -> u32 {
+        unsafe { (self.cbs.bot_empty_bag_slot_count.unwrap())(self.handle) }
+    }
+
+    fn bot_store_new_in_best_slots(&self, item_id: ItemId, count: u32) -> bool {
+        unsafe { (self.cbs.bot_store_new_in_best_slots.unwrap())(self.handle, item_id.raw(), count) }
+    }
+
+    fn bot_set_reputation(&self, faction_id: u32, value: i32) -> bool {
+        unsafe { (self.cbs.bot_set_reputation.unwrap())(self.handle, faction_id, value) }
+    }
+
+    fn bot_equipped_ranged_subclass(&self) -> u32 {
+        unsafe { (self.cbs.bot_equipped_ranged_subclass.unwrap())(self.handle) }
+    }
+
+    fn bot_current_ammo_id(&self) -> u32 {
+        unsafe { (self.cbs.bot_current_ammo_id.unwrap())(self.handle) }
+    }
+
+    fn factory_pick_ammo_for_level(&self, level: u32, ammo_subclass: u32) -> u32 {
+        unsafe { (self.cbs.factory_pick_ammo_for_level.unwrap())(self.handle, level, ammo_subclass) }
+    }
+
+    fn bot_set_ammo(&self, item_id: u32) {
+        unsafe { (self.cbs.bot_set_ammo.unwrap())(self.handle, item_id) }
+    }
+
+    fn bot_get_skill_value(&self, skill_id: u32) -> u32 {
+        unsafe { (self.cbs.bot_get_skill_value.unwrap())(self.handle, skill_id) }
+    }
+
+    fn bot_set_skill(&self, skill_id: u32, value: u32, max: u32) {
+        unsafe { (self.cbs.bot_set_skill.unwrap())(self.handle, skill_id, value, max) }
+    }
+
+    fn bot_update_skills_for_level(&self) {
+        unsafe { (self.cbs.bot_update_skills_for_level.unwrap())(self.handle) }
+    }
+
+    fn item_prototype_quality(&self, item_id: u32) -> u32 {
+        unsafe { (self.cbs.item_prototype_quality.unwrap())(self.handle, item_id) }
+    }
+
+    fn factory_pick_trade_for_level(&self, level: u32) -> u32 {
+        unsafe { (self.cbs.factory_pick_trade_for_level.unwrap())(self.handle, level) }
+    }
+
+    fn get_random_bot_spell_ids(&self) -> Vec<u32> {
+        let mut count: u32 = 0;
+        let ptr =
+            unsafe { (self.cbs.get_random_bot_spell_ids.unwrap())(self.handle, &mut count) };
+        if ptr.is_null() || count == 0 {
+            return Vec::new();
+        }
+        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
+        let out = slice.to_vec();
+        // Reuses free_bot_spells — same malloc/free contract (uint32_t array).
+        unsafe { (self.cbs.free_bot_spells.unwrap())(ptr) };
+        out
+    }
+
+    fn get_overworld_taxi_nodes(&self, team: u8) -> Vec<BotTaxiNode> {
+        let mut count: u32 = 0;
+        let ptr =
+            unsafe { (self.cbs.get_overworld_taxi_nodes.unwrap())(self.handle, team, &mut count) };
+        if ptr.is_null() || count == 0 {
+            return Vec::new();
+        }
+        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
+        let out = slice.to_vec();
+        unsafe { (self.cbs.free_taxi_nodes.unwrap())(ptr) };
+        out
+    }
+
+    fn bot_set_taxi_node(&self, node_index: u32) {
+        unsafe { (self.cbs.bot_set_taxi_node.unwrap())(self.handle, node_index) };
+    }
+
+    fn get_class_talents(&self, spec_no: u8) -> Vec<BotTalentEntry> {
+        let mut count: u32 = 0;
+        let ptr =
+            unsafe { (self.cbs.get_class_talents.unwrap())(self.handle, spec_no, &mut count) };
+        if ptr.is_null() || count == 0 {
+            return Vec::new();
+        }
+        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
+        let out = slice.to_vec();
+        unsafe { (self.cbs.free_class_talents.unwrap())(ptr) };
+        out
+    }
+
+    fn bot_free_talent_points(&self) -> u32 {
+        unsafe { (self.cbs.bot_free_talent_points.unwrap())(self.handle) }
+    }
+
+    fn bot_update_free_talent_points(&self) {
+        unsafe { (self.cbs.bot_update_free_talent_points.unwrap())(self.handle) };
     }
 }

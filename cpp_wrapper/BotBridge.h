@@ -167,11 +167,51 @@ namespace BotBridge
     void CB_BotRemoveAllAuras(BotHandle bot);
     bool CB_BotHasSkill(BotHandle bot, uint32_t skill_id);
     void CB_BotLearnSpell(BotHandle bot, uint32_t spell_id);
+    void CB_BotLearnDefaultSpells(BotHandle bot);
+    void CB_BotLearnClassLevelSpells(BotHandle bot, bool include_quest_rewards);
 
     // ── Spell store queries ────────────────────────────────────────────────
     BotSpellInfo CB_GetSpellInfo(BotHandle bot, uint32_t spell_id);
     uint32_t*    CB_GetBotSpells(BotHandle bot, uint32_t* out_count);
     void         CB_FreeBotSpells(uint32_t* list);
+
+    // ── Factory: bag slot management ───────────────────────────────────────
+    uint32_t CB_BotEmptyBagSlotCount(BotHandle bot);
+    bool     CB_BotStoreNewInBestSlots(BotHandle bot, uint32_t item_id, uint32_t count);
+
+    // ── Factory: reputation ────────────────────────────────────────────────
+    bool     CB_BotSetReputation(BotHandle bot, uint32_t faction_id, int32_t value);
+
+    // ── Factory: ammo management ───────────────────────────────────────────
+    uint32_t CB_BotEquippedRangedSubclass(BotHandle bot);
+    uint32_t CB_BotCurrentAmmoId(BotHandle bot);
+    uint32_t CB_FactoryPickAmmoForLevel(BotHandle bot, uint32_t level, uint32_t ammo_subclass);
+    void     CB_BotSetAmmo(BotHandle bot, uint32_t item_id);
+
+    // ── Factory: skills ────────────────────────────────────────────────────
+    uint32_t CB_BotGetSkillValue(BotHandle bot, uint32_t skill_id);
+    void     CB_BotSetSkill(BotHandle bot, uint32_t skill_id, uint32_t value, uint32_t max);
+    void     CB_BotUpdateSkillsForLevel(BotHandle bot);
+
+    // ── Factory: item prototype queries ────────────────────────────────────
+    uint32_t CB_ItemPrototypeQuality(BotHandle bot, uint32_t item_id);
+
+    // ── Factory: random item picks ─────────────────────────────────────────
+    uint32_t CB_FactoryPickTradeForLevel(BotHandle bot, uint32_t level);
+
+    // ── Factory: config list queries ───────────────────────────────────────
+    uint32_t* CB_GetRandomBotSpellIds(BotHandle bot, uint32_t* out_count);
+
+    // ── Factory: taxi nodes ────────────────────────────────────────────────
+    BotTaxiNode* CB_GetOverworldTaxiNodes(BotHandle bot, uint8_t team, uint32_t* out_count);
+    void         CB_FreeTaxiNodes(BotTaxiNode* list);
+    void         CB_BotSetTaxiNode(BotHandle bot, uint32_t node_index);
+
+    // ── Factory: talents ───────────────────────────────────────────────────
+    BotTalentEntry* CB_GetClassTalents(BotHandle bot, uint8_t spec_no, uint32_t* out_count);
+    void            CB_FreeClassTalents(BotTalentEntry* list);
+    uint32_t        CB_BotFreeTalentPoints(BotHandle bot);
+    void            CB_BotUpdateFreeTalentPoints(BotHandle bot);
 
     // ── Internal helpers ────────────────────────────────────────────────────
     Player* FindBot(BotHandle bot);

@@ -47,6 +47,23 @@ pub fn cancel_auras(iface: &dyn BotInterface) {
     iface.bot_remove_all_auras();
 }
 
+/// Equip a starter bag into every empty bag slot.
+///
+/// Mirrors `PlayerbotFactory::InitBags`: on Classic, every empty slot of
+/// `INVENTORY_SLOT_BAG_START..END` gets a Traveler's Backpack (item 4500).
+/// On TBC/WotLK it would be a Netherweave Bag (23162) — wired via cfg.
+#[cfg(feature = "vanilla")]
+const STARTER_BAG: ItemId = ItemId(4500); // Traveler's Backpack
+#[cfg(not(feature = "vanilla"))]
+const STARTER_BAG: ItemId = ItemId(23162); // Netherweave Bag
+
+pub fn init_bags(iface: &dyn BotInterface) {
+    let empty = iface.bot_empty_bag_slot_count();
+    for _ in 0..empty {
+        iface.bot_store_new_in_best_slots(STARTER_BAG, 1);
+    }
+}
+
 /// Give the bot the mandatory tool for each trade skill it already knows.
 ///
 /// Mirrors `PlayerbotFactory::InitInventorySkill`. The C++ version calls
@@ -103,12 +120,14 @@ mod tests {
     struct Calls {
         remove_auras: u32,
         added: Vec<(ItemId, u32)>,
+        bags_added: Vec<(ItemId, u32)>,
     }
 
     #[derive(Default)]
     struct MockIface {
         skills: HashSet<u32>,
         carried: std::collections::HashMap<u32, u32>,
+        empty_bag_slots: u32,
         calls: RefCell<Calls>,
     }
 
@@ -244,6 +263,13 @@ mod tests {
             self.calls.borrow_mut().added.push((item, count));
             count
         }
+        fn bot_empty_bag_slot_count(&self) -> u32 {
+            self.empty_bag_slots
+        }
+        fn bot_store_new_in_best_slots(&self, item: ItemId, count: u32) -> bool {
+            self.calls.borrow_mut().bags_added.push((item, count));
+            true
+        }
     }
 
     #[test]
@@ -303,6 +329,33 @@ mod tests {
         let added = &m.calls.borrow().added;
         assert_eq!(added.len(), 1);
         assert_eq!(added[0], (ITEM_RUNED_ARCANITE_ROD, 1));
+    }
+
+    #[test]
+    fn init_bags_is_noop_when_no_empty_slots() {
+        let m = MockIface::default();
+        init_bags(&m);
+        assert!(m.calls.borrow().bags_added.is_empty());
+    }
+
+    #[test]
+    fn init_bags_equips_one_starter_bag_per_empty_slot() {
+        let mut m = MockIface::default();
+        m.empty_bag_slots = 3;
+        init_bags(&m);
+        let added = &m.calls.borrow().bags_added;
+        assert_eq!(added.len(), 3);
+        for entry in added {
+            assert_eq!(*entry, (STARTER_BAG, 1));
+        }
+    }
+
+    #[test]
+    fn init_bags_fills_all_four_slots() {
+        let mut m = MockIface::default();
+        m.empty_bag_slots = 4;
+        init_bags(&m);
+        assert_eq!(m.calls.borrow().bags_added.len(), 4);
     }
 
     #[test]

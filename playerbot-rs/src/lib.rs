@@ -347,6 +347,21 @@ pub unsafe extern "C" fn playerbot_factory_misc(state: *mut (), kind: u8) {
     factory::run_misc(bot.interface.as_ref(), k);
 }
 
+/// Learn talents for the given spec tab (0..2). Matches the old
+/// `PlayerbotFactory::InitTalents` policy — randomly invests 5 points per
+/// row until the bot's free-talent-points budget is spent.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_init_talents(state: *mut (), spec_no: u32) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &*state.cast::<BotState>() };
+    factory::talents::init_talents(bot.interface.as_ref(), spec_no);
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 unsafe fn packet_bytes(data: *const u8, len: u32) -> Vec<u8> {

@@ -13,11 +13,19 @@
 //! Submodules are pure policy: they take `&dyn BotInterface` and call methods
 //! on it. They do not touch `CMaNGOS` directly — the FFI layer handles that.
 
+pub mod ammo;
+pub mod available_spells;
 pub mod consumables;
 pub mod inventory;
+pub mod inventory_trade;
 pub mod misc;
 pub mod mounts;
 pub mod progression;
+pub mod reputations;
+pub mod skills;
+pub mod special_spells;
+pub mod talents;
+pub mod taxi_nodes;
 
 use crate::ffi::interface::BotInterface;
 
@@ -131,6 +139,23 @@ pub enum MiscKind {
     InitSkillToolKit,
     /// Teach the bot its race- and level-appropriate mount spells.
     InitMounts,
+    /// Equip a starter bag into each empty bag slot.
+    InitBags,
+    /// Grant honored standing with level- and team-appropriate factions.
+    InitReputations,
+    /// Top up ranged-weapon ammo (arrows/bullets/thrown) for warrior/rogue/hunter.
+    InitAmmo,
+    /// Stock the bot with one random trade good appropriate for its level.
+    InitInventoryTrade,
+    /// Initialize armor/weapon/riding skill proficiencies for the bot.
+    InitSkills,
+    /// Teach config-listed "special" spells (e.g. Cold Weather Flying).
+    InitSpecialSpells,
+    /// Flag level-appropriate overworld taxi nodes on the bot.
+    InitTaxiNodes,
+    /// Teach the bot its default + class-level spellbook plus the hard-coded
+    /// paladin/mage/warlock/classic level-60 top-ups.
+    InitAvailableSpells,
 }
 
 impl MiscKind {
@@ -140,6 +165,14 @@ impl MiscKind {
             0 => Some(Self::CancelAuras),
             1 => Some(Self::InitSkillToolKit),
             2 => Some(Self::InitMounts),
+            3 => Some(Self::InitBags),
+            4 => Some(Self::InitReputations),
+            5 => Some(Self::InitAmmo),
+            6 => Some(Self::InitInventoryTrade),
+            7 => Some(Self::InitSkills),
+            8 => Some(Self::InitSpecialSpells),
+            9 => Some(Self::InitTaxiNodes),
+            10 => Some(Self::InitAvailableSpells),
             _ => None,
         }
     }
@@ -157,6 +190,43 @@ pub fn run_misc(iface: &dyn BotInterface, kind: MiscKind) {
                 u32::from(snap.self_.level),
                 snap.self_.race_id,
                 snap.self_.team,
+            );
+        }
+        MiscKind::InitBags => misc::init_bags(iface),
+        MiscKind::InitReputations => {
+            let snap = iface.get_snapshot();
+            reputations::init_reputations(iface, u32::from(snap.self_.level), snap.self_.team);
+        }
+        MiscKind::InitAmmo => {
+            let snap = iface.get_snapshot();
+            ammo::init_ammo(iface, snap.self_.class_id, u32::from(snap.self_.level));
+        }
+        MiscKind::InitInventoryTrade => {
+            let snap = iface.get_snapshot();
+            inventory_trade::init_inventory_trade(iface, u32::from(snap.self_.level));
+        }
+        MiscKind::InitSkills => {
+            let snap = iface.get_snapshot();
+            skills::init_skills(iface, snap.self_.class_id, u32::from(snap.self_.level));
+        }
+        MiscKind::InitSpecialSpells => {
+            special_spells::init_special_spells(iface);
+        }
+        MiscKind::InitTaxiNodes => {
+            let snap = iface.get_snapshot();
+            taxi_nodes::init_taxi_nodes(
+                iface,
+                u32::from(snap.self_.level),
+                snap.self_.team,
+                snap.self_.pos.map_id,
+            );
+        }
+        MiscKind::InitAvailableSpells => {
+            let snap = iface.get_snapshot();
+            available_spells::init_available_spells(
+                iface,
+                snap.self_.class_id,
+                u32::from(snap.self_.level),
             );
         }
     }
