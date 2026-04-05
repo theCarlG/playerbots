@@ -2685,7 +2685,7 @@ BotSkillEntry* BotBridge::CB_BotGetLearnedSkills(BotHandle bot, uint32_t* out_co
             continue;
         arr[j].skill_id = id;
         arr[j].value    = b->GetSkillValue(static_cast<uint16>(id));
-        arr[j].max      = b->GetMaxSkillValue(static_cast<uint16>(id));
+        arr[j].max      = b->GetSkillMax(static_cast<uint16>(id));
         ++j;
     }
     *out_count = count;
