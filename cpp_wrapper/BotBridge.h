@@ -224,6 +224,11 @@ namespace BotBridge
     bool                CB_BotQuestAcceptFrom(BotHandle bot, UnitHandle npc);
     bool                CB_BotQuestAbandon(BotHandle bot, uint32_t quest_id);
 
+    // ── Chat-command helpers (Wave 3: mail + guild) ────────────────────────
+    BotMailSummary      CB_BotMailSummary(BotHandle bot);
+    bool                CB_BotMailTakeAll(BotHandle bot);
+    bool                CB_BotGuildLeave(BotHandle bot);
+
     // ── Internal helpers ────────────────────────────────────────────────────
     Player* FindBot(BotHandle bot);
     Unit*   FindUnit(BotHandle bot, UnitHandle handle);

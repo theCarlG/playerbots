@@ -6,9 +6,9 @@
 /// `BtNode` and `TickContext` use `&dyn BotInterface` so they work in both contexts
 /// without any conditional compilation.
 use super::{
-    BotAuraInfo, BotCallbacks, BotHandle, BotPosition, BotReputationEntry, BotSkillEntry,
-    BotSpellInfo, BotTalentEntry, BotTaxiNode, BotThreatEntry, BotUnitSnapshot, BotWorldSnapshot,
-    UnitHandle,
+    BotAuraInfo, BotCallbacks, BotHandle, BotMailSummary, BotPosition, BotReputationEntry,
+    BotSkillEntry, BotSpellInfo, BotTalentEntry, BotTaxiNode, BotThreatEntry, BotUnitSnapshot,
+    BotWorldSnapshot, UnitHandle,
     types::{BotRole, ItemId, SpellId},
 };
 
@@ -517,6 +517,30 @@ pub trait BotInterface: Send {
 
     /// Abandon an in-progress quest (removes it from the log).
     fn bot_quest_abandon(&self, _quest_id: u32) -> bool {
+        false
+    }
+
+    /* ── Chat-command helpers (Wave 3: mail + guild) ─────────────────── */
+
+    /// Mailbox summary — totals only, no per-mail details.
+    fn bot_mail_summary(&self) -> BotMailSummary {
+        BotMailSummary {
+            total_mails: 0,
+            mails_with_money: 0,
+            mails_with_items: 0,
+            total_money: 0,
+        }
+    }
+
+    /// Take all money and items from every mail in the inbox. Requires the
+    /// bot to be next to a mailbox GameObject.
+    fn bot_mail_take_all(&self) -> bool {
+        false
+    }
+
+    /// Leave the bot's current guild. Returns false if not in a guild or
+    /// if the bot is the guild master.
+    fn bot_guild_leave(&self) -> bool {
         false
     }
 }
@@ -1238,5 +1262,19 @@ impl BotInterface for RealInterface {
 
     fn bot_quest_abandon(&self, quest_id: u32) -> bool {
         unsafe { (self.cbs.bot_quest_abandon.unwrap())(self.handle, quest_id) }
+    }
+
+    /* ── Chat-command helpers (Wave 3: mail + guild) ─────────────────── */
+
+    fn bot_mail_summary(&self) -> BotMailSummary {
+        unsafe { (self.cbs.bot_mail_summary.unwrap())(self.handle) }
+    }
+
+    fn bot_mail_take_all(&self) -> bool {
+        unsafe { (self.cbs.bot_mail_take_all.unwrap())(self.handle) }
+    }
+
+    fn bot_guild_leave(&self) -> bool {
+        unsafe { (self.cbs.bot_guild_leave.unwrap())(self.handle) }
     }
 }

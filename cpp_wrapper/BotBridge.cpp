@@ -43,6 +43,10 @@
 #include "Server/SQLStorages.h"
 #include "Server/DBCStores.h"
 #include "Reputation/ReputationMgr.h"
+#include "Mails/Mail.h"
+#include "Guilds/Guild.h"
+#include "Guilds/GuildMgr.h"
+#include "Server/WorldSession.h"
 
 #ifdef CMANGOS
 #include "Combat/ThreatManager.h"
@@ -316,6 +320,11 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.bot_free_skill_list                 = CB_BotFreeSkillList;
     cbs.bot_quest_accept_from               = CB_BotQuestAcceptFrom;
     cbs.bot_quest_abandon                   = CB_BotQuestAbandon;
+
+    // Chat-command helpers (Wave 3: mail + guild)
+    cbs.bot_mail_summary                    = CB_BotMailSummary;
+    cbs.bot_mail_take_all                   = CB_BotMailTakeAll;
+    cbs.bot_guild_leave                     = CB_BotGuildLeave;
 
     return cbs;
 }
@@ -2718,4 +2727,140 @@ bool BotBridge::CB_BotQuestAbandon(BotHandle bot, uint32_t quest_id)
     b->SetQuestStatus(quest_id, QUEST_STATUS_NONE);
     b->getQuestStatusMap()[quest_id].m_rewarded = false;
     return removed;
+}
+
+// ── Chat-command helpers (Wave 3: mail + guild) ───────────────────────────
+
+BotMailSummary BotBridge::CB_BotMailSummary(BotHandle bot)
+{
+    BotMailSummary s{};
+    Player* b = FindBot(bot);
+    if (!b)
+        return s;
+
+    for (auto it = b->GetMailBegin(); it != b->GetMailEnd(); ++it)
+    {
+        Mail* mail = *it;
+        if (!mail)
+            continue;
+        ++s.total_mails;
+        if (mail->money > 0)
+        {
+            ++s.mails_with_money;
+            s.total_money += mail->money;
+        }
+        if (mail->HasItems())
+            ++s.mails_with_items;
+    }
+    return s;
+}
+
+// Locate a nearby mailbox GameObject the bot can interact with. Mirrors the
+// PB2 `FindMailbox` helper: scan game objects within 10 yards, return the
+// first one of type MAILBOX.
+static ObjectGuid FindNearbyMailbox(Player* b)
+{
+    constexpr float kMailboxRange = 10.0f;
+    GameObjectList gos;
+    MaNGOS::GameObjectInPosRangeCheck check(
+        *b, b->GetPositionX(), b->GetPositionY(), b->GetPositionZ(), kMailboxRange);
+    MaNGOS::GameObjectListSearcher<MaNGOS::GameObjectInPosRangeCheck> searcher(gos, check);
+    Cell::VisitAllObjects(b, searcher, kMailboxRange);
+
+    for (GameObject* go : gos)
+    {
+        if (go && go->IsSpawned() && go->GetGoType() == GAMEOBJECT_TYPE_MAILBOX)
+            return go->GetObjectGuid();
+    }
+    return ObjectGuid();
+}
+
+bool BotBridge::CB_BotMailTakeAll(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    ObjectGuid mailbox = FindNearbyMailbox(b);
+    if (mailbox.IsEmpty())
+        return false;
+
+    // Snapshot the message ids up front — taking money/items mutates the
+    // underlying list and invalidates iterators.
+    std::vector<uint32> mailIds;
+    for (auto it = b->GetMailBegin(); it != b->GetMailEnd(); ++it)
+    {
+        if (*it)
+            mailIds.push_back((*it)->messageID);
+    }
+
+    bool anyProcessed = false;
+    for (uint32 id : mailIds)
+    {
+        Mail* mail = b->GetMail(id);
+        if (!mail)
+            continue;
+
+        if (mail->money > 0)
+        {
+            WorldPacket moneyPacket;
+            moneyPacket << mailbox;
+            moneyPacket << id;
+            b->GetSession()->HandleMailTakeMoney(moneyPacket);
+            anyProcessed = true;
+        }
+
+        if (mail->HasItems())
+        {
+            // Snapshot item guids up front for the same reason.
+            std::vector<uint32> itemGuids;
+            for (auto const& info : mail->items)
+                itemGuids.push_back(info.item_guid);
+
+            for (uint32 itemGuid : itemGuids)
+            {
+                WorldPacket itemPacket;
+                itemPacket << mailbox;
+                itemPacket << id;
+#ifndef MANGOSBOT_ZERO
+                itemPacket << itemGuid;
+#endif
+                b->GetSession()->HandleMailTakeItem(itemPacket);
+            }
+            anyProcessed = true;
+        }
+
+        // Delete the (now-empty) mail.
+        WorldPacket delPacket;
+        delPacket << mailbox;
+        delPacket << id;
+#ifndef MANGOSBOT_ZERO
+        delPacket << uint32(0); // mailTemplateId
+#endif
+        b->GetSession()->HandleMailDelete(delPacket);
+    }
+
+    return anyProcessed;
+}
+
+bool BotBridge::CB_BotGuildLeave(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    uint32 guildId = b->GetGuildId();
+    if (guildId == 0)
+        return false;
+
+    Guild* g = sGuildMgr.GetGuildById(guildId);
+    if (!g)
+        return false;
+
+    // DelMember refuses to remove the guild master — leader must transfer
+    // or disband first. Mirror PB2 behavior and return false in that case.
+    if (g->GetLeaderGuid() == b->GetObjectGuid())
+        return false;
+
+    return g->DelMember(b->GetObjectGuid());
 }

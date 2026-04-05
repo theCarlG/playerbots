@@ -170,6 +170,17 @@ const COMMANDS: &[CommandSpec] = &[
                 .map(BotCommand::QuestDrop)
         },
     },
+    CommandSpec {
+        names: &["mail"],
+        parse: |_, a| match a.first().copied() {
+            Some("take") | Some("takeall") | Some("all") => Some(BotCommand::MailTakeAll),
+            _ => Some(BotCommand::MailSummary),
+        },
+    },
+    CommandSpec {
+        names: &["leave"],
+        parse: |_, _| Some(BotCommand::GuildLeave),
+    },
 ];
 
 /// Parse a chat message into a `BotCommand`.
@@ -956,6 +967,15 @@ mod tests {
         assert_eq!(parse("skills"), Some(BotCommand::ListSkills));
         assert_eq!(parse("accept"), Some(BotCommand::QuestAccept));
         assert_eq!(parse("drop 1234"), Some(BotCommand::QuestDrop(1234)));
+    }
+
+    #[test]
+    fn wave3_mail_guild_commands() {
+        assert_eq!(parse("mail"), Some(BotCommand::MailSummary));
+        assert_eq!(parse("mail take"), Some(BotCommand::MailTakeAll));
+        assert_eq!(parse("mail takeall"), Some(BotCommand::MailTakeAll));
+        assert_eq!(parse("mail all"), Some(BotCommand::MailTakeAll));
+        assert_eq!(parse("leave"), Some(BotCommand::GuildLeave));
     }
 
     #[test]

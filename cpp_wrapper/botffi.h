@@ -120,6 +120,16 @@ typedef struct {
     uint32_t max;
 } BotSkillEntry;
 
+/* Aggregate snapshot of the bot's mailbox — returned by `bot_mail_summary`.
+ * All counts include read and unread mail. `total_money` is the sum of
+ * attached copper across all mails (not the bot's personal gold). */
+typedef struct {
+    uint32_t total_mails;
+    uint32_t mails_with_money;
+    uint32_t mails_with_items;
+    uint32_t total_money;
+} BotMailSummary;
+
 typedef struct {
     UnitHandle unit;
     uint32_t   spell_id;        /* debuff spell ID */
@@ -448,6 +458,19 @@ typedef struct BotCallbacks {
     /* Abandon the quest with id `quest_id` from the bot's log. Returns
      * true if the quest was found and removed. */
     bool            (*bot_quest_abandon)(BotHandle bot, uint32_t quest_id);
+
+    /* ── Chat-command helpers (Wave 3: mail + guild) ────────────────── */
+    /* Summary of the bot's current mailbox — totals only, no per-mail
+     * details. Useful for the `mail` chat-command reply. */
+    BotMailSummary  (*bot_mail_summary)(BotHandle bot);
+    /* Take all attached money and items from every mail in the inbox.
+     * Requires the bot to be within interaction range of a mailbox
+     * GameObject. Returns true if any mail was processed. */
+    bool            (*bot_mail_take_all)(BotHandle bot);
+    /* Make the bot leave its current guild. Returns false if the bot is
+     * not in a guild or is the guild master (leader must disband or
+     * transfer leadership first). */
+    bool            (*bot_guild_leave)(BotHandle bot);
 } BotCallbacks;
 
 /* ── Rust exports (entry points CMaNGOS calls into Rust) ─────────────────── */

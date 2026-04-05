@@ -166,6 +166,13 @@ pub enum BotCommand {
     QuestAccept,
     /// `drop <quest_id>` — abandon an in-progress quest.
     QuestDrop(u32),
+    /// `mail` — whisper inbox summary.
+    MailSummary,
+    /// `mail take` — take all money and items from the inbox (needs a
+    /// nearby mailbox).
+    MailTakeAll,
+    /// `leave` — leave the bot's current guild.
+    GuildLeave,
 
     // -- Unknown --
     Unknown(String),
@@ -187,13 +194,12 @@ impl BotCommand {
         match self {
             // Information queries — anyone who can talk to the bot.
             Status | ListSettings | Where | Help | Ready | Unknown(_) | Debug | CheckLos
-            | ListQuests | ListTalents | ListSpells | ListReputation | ListSkills => {
-                SecurityLevel::Talk
-            }
+            | ListQuests | ListTalents | ListSpells | ListReputation | ListSkills
+            | MailSummary => SecurityLevel::Talk,
 
             // Destructive / account-level — master only.
             Reset | ResetStrategies | BlacklistSpell(_) | UnblacklistSpell(_)
-            | SetCheatFlags(_) => SecurityLevel::AllowAll,
+            | SetCheatFlags(_) | GuildLeave => SecurityLevel::AllowAll,
 
             // Everything else — group members.
             SetMode(_)
@@ -246,7 +252,8 @@ impl BotCommand {
             | Jump
             | UseHearth
             | QuestAccept
-            | QuestDrop(_) => SecurityLevel::Invite,
+            | QuestDrop(_)
+            | MailTakeAll => SecurityLevel::Invite,
         }
     }
 }
@@ -719,12 +726,34 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         }
         BotCommand::ListReputation => {
             let list = bot.interface.bot_get_reputation_list();
-            let msg = format!("Reputations tracked: {}", list.len());
+            // Bucket by rank tier (0=hated .. 7=exalted). Matches the
+            // FactionRank enum the C++ side passes via `standing`.
+            let mut buckets = [0u32; 8];
+            for entry in &list {
+                let idx = (entry.standing as usize).min(7);
+                buckets[idx] += 1;
+            }
+            let msg = format!(
+                "Rep: {} tracked (ex:{} rev:{} hon:{} fri:{} neu:{} unf:{} hos:{} hat:{})",
+                list.len(),
+                buckets[7], buckets[6], buckets[5], buckets[4],
+                buckets[3], buckets[2], buckets[1], buckets[0],
+            );
             reply(bot, pc, &msg);
         }
         BotCommand::ListSkills => {
-            let list = bot.interface.bot_get_learned_skills();
-            let msg = format!("Skills learned: {}", list.len());
+            let mut list = bot.interface.bot_get_learned_skills();
+            list.sort_by(|a, b| b.value.cmp(&a.value));
+            let top: Vec<String> = list
+                .iter()
+                .take(5)
+                .map(|s| format!("{}:{}/{}", s.skill_id, s.value, s.max))
+                .collect();
+            let msg = if top.is_empty() {
+                "Skills: none".to_string()
+            } else {
+                format!("Skills ({} total): {}", list.len(), top.join(", "))
+            };
             reply(bot, pc, &msg);
         }
         BotCommand::QuestAccept => {
@@ -735,6 +764,36 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         }
         BotCommand::QuestDrop(quest_id) => {
             bot.interface.bot_quest_abandon(*quest_id);
+        }
+        BotCommand::MailSummary => {
+            let s = bot.interface.bot_mail_summary();
+            let msg = format!(
+                "Mail: {} total ({} money, {} items, {}c total)",
+                s.total_mails, s.mails_with_money, s.mails_with_items, s.total_money,
+            );
+            reply(bot, pc, &msg);
+        }
+        BotCommand::MailTakeAll => {
+            let ok = bot.interface.bot_mail_take_all();
+            if bot.settings.verbose {
+                let msg = if ok {
+                    "mail: taken"
+                } else {
+                    "mail: nothing to take (or no mailbox in range)"
+                };
+                reply(bot, pc, msg);
+            }
+        }
+        BotCommand::GuildLeave => {
+            let ok = bot.interface.bot_guild_leave();
+            if bot.settings.verbose {
+                let msg = if ok {
+                    "guild: left"
+                } else {
+                    "guild: cannot leave (not in guild or guild master)"
+                };
+                reply(bot, pc, msg);
+            }
         }
 
         BotCommand::Unknown(text) => {
