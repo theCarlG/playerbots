@@ -1262,8 +1262,11 @@ mod tests {
 
     #[test]
     fn strategy_filter_nc_match_and_miss() {
-        // `flee` is in the NonCombat default set (pb2_defaults).
+        // `flee` is NOT a PB2 baseline default — it's layered in per-class
+        // by `AiFactory::kit` (priest/mage/hunter/etc.). Insert it
+        // explicitly here so the filter matches.
         let mut set = StrategySet::pb2_defaults();
+        set.get_mut(BotStateKind::NonCombat).insert(StrategyFlags::FLEE);
         assert!(set.has(BotStateKind::NonCombat, StrategyFlags::FLEE));
         assert_eq!(strategy_filter(&set, "@nc=flee wander"), "wander");
 
@@ -1277,7 +1280,11 @@ mod tests {
 
     #[test]
     fn strategy_filter_negated_forms() {
-        let set = StrategySet::pb2_defaults();
+        // PB2 nonCombat baseline = `+return,+delayed roll` only; `flee`
+        // is layered in per-class by AiFactory. Add it manually so the
+        // `@nonc=flee` path exercises a match.
+        let mut set = StrategySet::pb2_defaults();
+        set.get_mut(BotStateKind::NonCombat).insert(StrategyFlags::FLEE);
         // `grind` is NOT in the NonCombat default set.
         assert!(!set.has(BotStateKind::NonCombat, StrategyFlags::GRIND));
         assert_eq!(strategy_filter(&set, "@nonc=grind idle"), "idle");

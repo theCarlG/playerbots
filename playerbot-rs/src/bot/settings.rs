@@ -295,12 +295,20 @@ impl StrategyFlags {
     pub const FLEE: Self = Self(1 << 11);
     pub const EMOTE: Self = Self(1 << 12);
     pub const CC: Self = Self(1 << 13);
-
-    /// Default set enabled at bot creation. Matches the C++ "defaults"
-    /// loadout: reactive flee, RTSC accepting, basic RPG.
-    pub const fn defaults() -> Self {
-        Self(Self::RTSC.0 | Self::FLEE.0 | Self::RPG.0 | Self::RPG_MAINTENANCE.0)
-    }
+    /// PB2 `ReturnStrategy` — when the bot drifts away from its marked
+    /// "return position" (set by `stay` / `guard` or encounter scripts),
+    /// walk back. One of PB2's two non-combat defaults from
+    /// `PlayerbotAIConfig.cpp` (`nonCombatStrategies = "+return,+delayed roll"`).
+    /// The BT leaves that consume this flag land in Part 5 Step 11 —
+    /// for now the flag parses/describes so chat filters and `nc ?`
+    /// reports are byte-correct.
+    pub const RETURN: Self = Self(1 << 14);
+    /// PB2 `DelayedRollStrategy` — hold Need/Greed/Pass roll decisions
+    /// for a short window so master/party policy can override. The
+    /// second PB2 non-combat default. Consumer lands in Part 5 Step 16
+    /// alongside the loot FSM; the flag is present now so `@nc=delayed roll`
+    /// filters and `nc ?` queries match PB2.
+    pub const DELAYED_ROLL: Self = Self(1 << 15);
 
     pub const fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
@@ -330,6 +338,8 @@ impl StrategyFlags {
             "flee" => Self::FLEE,
             "emote" => Self::EMOTE,
             "cc" => Self::CC,
+            "return" => Self::RETURN,
+            "delayed roll" => Self::DELAYED_ROLL,
             _ => return None,
         })
     }
@@ -355,6 +365,8 @@ impl StrategyFlags {
             (Self::FLEE, "flee"),
             (Self::EMOTE, "emote"),
             (Self::CC, "cc"),
+            (Self::RETURN, "return"),
+            (Self::DELAYED_ROLL, "delayed roll"),
         ];
         for (flag, name) in pairs {
             if self.contains(*flag) {
@@ -379,21 +391,31 @@ pub struct StrategySet {
 }
 
 impl StrategySet {
-    /// Per-state defaults matching PB2 `AiFactory.cpp` / `PlayerbotAIConfig`:
+    /// Per-state defaults matching PB2 `PlayerbotAIConfig.cpp` exactly
+    /// (the global baseline before `AiFactory::kit` layers per-class
+    /// strategies on top):
     ///
-    /// - `combatStrategies       = ""`
-    /// - `nonCombatStrategies    = "+return,+delayed roll"`
-    /// - `reactStrategies        = ""`
-    /// - `deadStrategies         = ""`
+    /// - `combatStrategies       = ""`                        → empty
+    /// - `nonCombatStrategies    = "+return,+delayed roll"`  → RETURN | DELAYED_ROLL
+    /// - `reactStrategies        = ""`                        → empty
+    /// - `deadStrategies         = ""`                        → empty
     ///
-    /// Until the `return` and `delayed roll` strategy flags exist in the
-    /// Rust port, the non-combat slot ships with the existing Rust
-    /// defaults (RTSC + FLEE + RPG + RPG_MAINTENANCE) so current
-    /// behavior is preserved. Replace with PB2's exact list as those
-    /// strategies are ported (tracked under Part 5 Step 5).
+    /// Per-class layering (warrior+`mount avoid mobs racials default
+    /// duel`, priest+`discipline dps assist flee …`, etc., all documented
+    /// in PARITY_PLAN §3.2) happens at `AiFactory::kit` time and is NOT
+    /// in this baseline. This matches PB2's two-layer composition where
+    /// `AiFactory::AddDefaultCombatStrategies` runs after the config
+    /// string is parsed.
+    ///
+    /// Random-bot overrides (`randomBotCombatStrategies = "-threat,+custom::say"`,
+    /// `randomBotNonCombatStrategies = "+custom::say"`) are a separate
+    /// code path — not applied here because the Rust port doesn't yet
+    /// model `RandomPlayerbotMgr`. They will land alongside the random-bot
+    /// population module under Part 5 Step 5 follow-ups.
     pub fn pb2_defaults() -> Self {
         let mut s = Self::default();
-        s.slots[BotStateKind::NonCombat as usize] = StrategyFlags::defaults();
+        s.slots[BotStateKind::NonCombat as usize] =
+            StrategyFlags(StrategyFlags::RETURN.0 | StrategyFlags::DELAYED_ROLL.0);
         s
     }
 
@@ -539,7 +561,7 @@ impl std::ops::Sub for LootPolicy {
 
 impl Default for StrategyFlags {
     fn default() -> Self {
-        Self::defaults()
+        Self::NONE
     }
 }
 
@@ -769,7 +791,7 @@ impl Default for BotSettings {
             flee_hp_pct: 0.0,
             heal_self_threshold: 0.60,
             heal_party_threshold: 0.80,
-            follow_distance: 3.0,
+            follow_distance: 1.5,
             follow_formation: FollowFormation::Near,
             guard_position: None,
             flee_override_until_ms: 0,
@@ -827,6 +849,178 @@ impl BehaviorMode {
     }
 }
 
+/// Server-global AI tuning constants mirrored from PB2's
+/// `PlayerbotAIConfig` (populated from `aiplayerbot*.conf.dist.in`). Every
+/// value here is read at runtime by some trigger, value, or action — PB2
+/// exposes them as `sPlayerbotAIConfig.xxx`, and individual rotations
+/// depend on the exact numbers matching (e.g. `sightDistance = 75` is the
+/// sensor horizon, `spellDistance = 25` gates cast-gated kite leaves).
+///
+/// These are server-wide, not per-bot. The Rust port keeps one instance
+/// alongside `BotSettings` for now (constructed via `pb2_defaults()`) and
+/// will later be loaded from the same config file. Per-bot overrides
+/// (like `follow_distance`) still live on `BotSettings`, which read from
+/// this struct at bot-init time.
+///
+/// All values come straight from PB2 `PlayerbotAIConfig.cpp`
+/// defaults — change them together with any PB2 upstream change.
+#[derive(Debug, Clone)]
+pub struct BotAiConfig {
+    // -- Timing (milliseconds) --
+    pub global_cool_down_ms: u32,
+    pub react_delay_ms: u32,
+    pub max_wait_for_move_ms: u32,
+    pub passive_delay_ms: u32,
+    pub repeat_delay_ms: u32,
+    pub error_delay_ms: u32,
+    pub rpg_delay_ms: u32,
+    pub sit_delay_ms: u32,
+    pub return_delay_ms: u32,
+    pub loot_delay_ms: u32,
+    pub expire_action_time_ms: u32,
+    pub dispel_aura_duration_ms: u32,
+
+    // -- Distances (yards) --
+    pub sight_distance: f32,
+    pub spell_distance: f32,
+    pub shoot_distance: f32,
+    pub heal_distance: f32,
+    pub react_distance: f32,
+    pub grind_distance: f32,
+    pub aggro_distance: f32,
+    pub loot_distance: f32,
+    pub group_member_loot_distance: f32,
+    pub group_member_loot_distance_active_master: f32,
+    pub gathering_distance: f32,
+    pub gathering_distance_active_master: f32,
+    pub flee_distance: f32,
+    pub too_close_distance: f32,
+    pub melee_distance: f32,
+    pub follow_distance: f32,
+    pub raid_follow_distance: f32,
+    pub wander_min_distance: f32,
+    pub wander_max_distance: f32,
+    pub whisper_distance: f32,
+    pub contact_distance: f32,
+    pub aoe_radius: f32,
+    pub rpg_distance: f32,
+    pub proximity_distance: f32,
+    pub far_distance: f32,
+    pub max_free_move_distance: f32,
+    pub free_move_delay: f32,
+
+    // -- Health / mana thresholds (% of max, 0..=100) --
+    pub critical_health: u8,
+    pub low_health: u8,
+    pub medium_health: u8,
+    pub almost_full_health: u8,
+    pub low_mana: u8,
+    pub medium_mana: u8,
+
+    // -- Jump mechanics --
+    pub jump_no_combat_chance: f32,
+    pub jump_melee_in_combat_chance: f32,
+    pub jump_random_chance: f32,
+    pub jump_in_place_chance: f32,
+    pub jump_backward_chance: f32,
+    pub jump_height_limit: f32,
+    pub jump_v_speed: f32,
+    pub jump_h_speed: f32,
+    pub jump_in_bg: bool,
+    pub jump_with_player: bool,
+    pub jump_follow: bool,
+    pub jump_chase: bool,
+
+    // -- Formation / movement policy --
+    pub default_formation: FollowFormation,
+    pub use_wander_as_default_follow_strategy: bool,
+}
+
+impl BotAiConfig {
+    /// Hard-coded PB2 defaults from `PlayerbotAIConfig.cpp`. These match
+    /// `aiplayerbot*.conf.dist.in` — the server can later override by
+    /// reading that config, but until the Rust port loads a config file
+    /// this is the single source of truth.
+    pub const fn pb2_defaults() -> Self {
+        Self {
+            // Timing.
+            global_cool_down_ms: 500,
+            react_delay_ms: 100,
+            max_wait_for_move_ms: 3000,
+            passive_delay_ms: 4000,
+            repeat_delay_ms: 5000,
+            error_delay_ms: 5000,
+            rpg_delay_ms: 3000,
+            sit_delay_ms: 30000,
+            return_delay_ms: 7000,
+            loot_delay_ms: 750,
+            expire_action_time_ms: 5000,
+            dispel_aura_duration_ms: 2000,
+
+            // Distances.
+            sight_distance: 75.0,
+            spell_distance: 25.0,
+            shoot_distance: 25.0,
+            heal_distance: 125.0,
+            react_distance: 150.0,
+            grind_distance: 75.0,
+            aggro_distance: 22.0,
+            loot_distance: 25.0,
+            group_member_loot_distance: 15.0,
+            group_member_loot_distance_active_master: 10.0,
+            gathering_distance: 15.0,
+            gathering_distance_active_master: 5.0,
+            flee_distance: 8.0,
+            too_close_distance: 5.0,
+            melee_distance: 1.5,
+            follow_distance: 1.5,
+            raid_follow_distance: 5.0,
+            wander_min_distance: 5.0,
+            wander_max_distance: 50.0,
+            whisper_distance: 6000.0,
+            contact_distance: 0.5,
+            aoe_radius: 5.0,
+            rpg_distance: 80.0,
+            proximity_distance: 20.0,
+            far_distance: 20.0,
+            max_free_move_distance: 150.0,
+            free_move_delay: 30.0,
+
+            // Thresholds.
+            critical_health: 20,
+            low_health: 50,
+            medium_health: 70,
+            almost_full_health: 90,
+            low_mana: 15,
+            medium_mana: 40,
+
+            // Jump mechanics.
+            jump_no_combat_chance: 0.5,
+            jump_melee_in_combat_chance: 0.5,
+            jump_random_chance: 0.20,
+            jump_in_place_chance: 0.50,
+            jump_backward_chance: 0.10,
+            jump_height_limit: 60.0,
+            jump_v_speed: 7.96,
+            jump_h_speed: 7.0,
+            jump_in_bg: false,
+            jump_with_player: false,
+            jump_follow: true,
+            jump_chase: true,
+
+            // Formation.
+            default_formation: FollowFormation::Near,
+            use_wander_as_default_follow_strategy: true,
+        }
+    }
+}
+
+impl Default for BotAiConfig {
+    fn default() -> Self {
+        Self::pb2_defaults()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -840,6 +1034,70 @@ mod tests {
         assert!(s.spell_blacklist.is_empty());
         assert!(s.auto_loot);
         assert!(s.auto_repair);
+    }
+
+    #[test]
+    fn pb2_default_follow_distance_is_1_5() {
+        // PB2 `followDistance = 1.5`; previous Rust default was 3.0,
+        // which caused bots to string out too far in raids.
+        let s = BotSettings::default();
+        assert!((s.follow_distance - 1.5).abs() < f32::EPSILON);
+        assert_eq!(s.follow_formation, FollowFormation::Near);
+    }
+
+    #[test]
+    fn pb2_default_strategies_match_aiconfig_cpp() {
+        // PB2 AiFactory defaults: only NonCombat has `+return,+delayed roll`.
+        let s = StrategySet::pb2_defaults();
+        assert_eq!(s.get(BotStateKind::Combat), StrategyFlags::NONE);
+        assert_eq!(
+            s.get(BotStateKind::NonCombat),
+            StrategyFlags(StrategyFlags::RETURN.0 | StrategyFlags::DELAYED_ROLL.0)
+        );
+        assert_eq!(s.get(BotStateKind::Reaction), StrategyFlags::NONE);
+        assert_eq!(s.get(BotStateKind::Dead), StrategyFlags::NONE);
+    }
+
+    #[test]
+    fn bot_ai_config_pb2_defaults_match_playerbotaiconfig_cpp() {
+        // Spot-check a cross-section of §3.1 values so upstream PB2
+        // changes (or accidental local edits) surface loudly.
+        let c = BotAiConfig::pb2_defaults();
+        // Timing.
+        assert_eq!(c.global_cool_down_ms, 500);
+        assert_eq!(c.react_delay_ms, 100);
+        assert_eq!(c.return_delay_ms, 7000);
+        // Distances.
+        assert!((c.sight_distance - 75.0).abs() < f32::EPSILON);
+        assert!((c.spell_distance - 25.0).abs() < f32::EPSILON);
+        assert!((c.flee_distance - 8.0).abs() < f32::EPSILON);
+        assert!((c.follow_distance - 1.5).abs() < f32::EPSILON);
+        assert!((c.melee_distance - 1.5).abs() < f32::EPSILON);
+        // Thresholds.
+        assert_eq!(c.critical_health, 20);
+        assert_eq!(c.low_health, 50);
+        assert_eq!(c.low_mana, 15);
+        // Jump mechanics.
+        assert!((c.jump_v_speed - 7.96).abs() < f32::EPSILON);
+        assert!(c.jump_follow);
+        assert!(!c.jump_in_bg);
+        // Formation.
+        assert_eq!(c.default_formation, FollowFormation::Near);
+        assert!(c.use_wander_as_default_follow_strategy);
+    }
+
+    #[test]
+    fn return_and_delayed_roll_parse_and_describe() {
+        assert_eq!(
+            StrategyFlags::parse_name("return"),
+            Some(StrategyFlags::RETURN)
+        );
+        assert_eq!(
+            StrategyFlags::parse_name("delayed roll"),
+            Some(StrategyFlags::DELAYED_ROLL)
+        );
+        let both = StrategyFlags(StrategyFlags::RETURN.0 | StrategyFlags::DELAYED_ROLL.0);
+        assert_eq!(both.describe(), "return, delayed roll");
     }
 
     #[test]

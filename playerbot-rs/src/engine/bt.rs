@@ -1203,10 +1203,16 @@ fn check_setting(ctx: &TickContext<'_>, s: Setting) -> bool {
 
 // ── Follow ──────────────────────────────────────────────────────────────────
 
-const FOLLOW_DIST: f32 = 3.0;
+/// Re-issue a chase command once the bot drifts farther than this from
+/// its follow target. Matches PB2 `PlayerbotAIConfig::tooFarDistance` —
+/// chase is sticky inside this radius, so we avoid thrashing the movement
+/// generator on every tick. The **per-bot** follow distance itself comes
+/// from `ctx.settings.follow_distance` (PB2 default 1.5, overridable via
+/// the `follow <n>` chat command); formation offsets land in Step 8.
 const REFOLLOW_THRESHOLD: f32 = 8.0;
 
 fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
+    let follow_dist = ctx.settings.follow_distance;
     // Follow-target priority order, mirroring PB2:
     //   1. The designated group tank.
     //   2. The recorded master (real player that claimed this bot).
@@ -1233,7 +1239,7 @@ fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
         && tank != ctx.bot_handle
     {
         if ctx.interface.unit_distance(tank) > REFOLLOW_THRESHOLD {
-            ctx.interface.follow(tank, FOLLOW_DIST, 0.0);
+            ctx.interface.follow(tank, follow_dist, 0.0);
         }
         return BtResult::Success;
     }
@@ -1244,7 +1250,7 @@ fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
         && master != ctx.bot_handle
     {
         if ctx.interface.unit_distance(master) > REFOLLOW_THRESHOLD {
-            ctx.interface.follow(master, FOLLOW_DIST, 0.0);
+            ctx.interface.follow(master, follow_dist, 0.0);
         }
         return BtResult::Success;
     }
@@ -1256,7 +1262,7 @@ fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
         .find(|&h| h != 0 && h != ctx.bot_handle)
     {
         if ctx.interface.unit_distance(member) > REFOLLOW_THRESHOLD {
-            ctx.interface.follow(member, FOLLOW_DIST, 0.0);
+            ctx.interface.follow(member, follow_dist, 0.0);
         }
         return BtResult::Success;
     }
