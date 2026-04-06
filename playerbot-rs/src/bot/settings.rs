@@ -420,6 +420,11 @@ impl StrategyFlags {
     /// accurately.
     pub const RTSC_JUMP: Self = Self::bit(75);
 
+    /// PB2 `TravelStrategy` — non-combat destination selection and
+    /// navigation (quest, vendor, repair, grind, explore). Gated by
+    /// `nc +travel` / `nc -travel`. Consumer: `strategies::travel::build`.
+    pub const TRAVEL: Self = Self::bit(76);
+
     pub const fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
     }
@@ -518,6 +523,8 @@ impl StrategyFlags {
         (Self::UNHOLY, "unholy"),
         (Self::FROST_AOE, "frost aoe"),
         (Self::UNHOLY_AOE, "unholy aoe"),
+        // Travel strategy.
+        (Self::TRAVEL, "travel"),
     ];
 
     /// Look up a flag by the name the addon sends. Multi-word names are

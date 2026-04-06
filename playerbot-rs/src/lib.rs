@@ -17,6 +17,8 @@ pub mod ffi;
 pub mod logging;
 pub mod noncombat;
 pub mod rtsc;
+pub mod strategies;
+pub mod travel;
 pub mod world;
 
 use bot::state::BotState;

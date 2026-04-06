@@ -24,10 +24,11 @@ pub mod ebonroc;
 pub mod firemaw;
 pub mod flamegor;
 pub mod nefarian;
+pub mod razorgore;
 pub mod vaelastrasz;
 
 use super::macros::encounter_dispatch;
-use super::{EncounterEvent, EncounterFsm, SimpleFsm};
+use super::{EncounterEvent, EncounterFsm};
 use crate::Sel;
 use crate::Seq;
 use crate::bot::encounter_prefs::DutyMode;
@@ -36,6 +37,7 @@ use crate::engine::bt::{BehaviorLeaf, Bt};
 use crate::engine::bt_nodes::BtResult;
 use crate::engine::context::TickContext;
 pub use broodlord::BroodlordFsm;
+pub use razorgore::RazorgoreFsm;
 pub use chromaggus::ChromaggusFsm;
 pub use ebonroc::EbonrocFsm;
 pub use firemaw::FiremawFsm;
@@ -69,7 +71,7 @@ pub const GO_SUPPRESSION_DEVICE: u32 = 179784;
 encounter_dispatch! {
     #[derive(Clone, PartialEq)]
     pub enum BlackwingLairBoss {
-        Razorgore(SimpleFsm),
+        Razorgore(RazorgoreFsm),
         Vaelastrasz(VaelastraszFsm),
         Broodlord(BroodlordFsm),
         Firemaw(FiremawFsm),
@@ -84,7 +86,7 @@ impl TryFrom<u32> for BlackwingLairBoss {
     type Error = ();
     fn try_from(entry: u32) -> Result<Self, Self::Error> {
         match entry {
-            ENTRY_RAZORGORE => Ok(Self::Razorgore(SimpleFsm::new(entry))),
+            ENTRY_RAZORGORE => Ok(Self::Razorgore(RazorgoreFsm::default())),
             ENTRY_VAELASTRASZ => Ok(Self::Vaelastrasz(VaelastraszFsm::default())),
             ENTRY_BROODLORD => Ok(Self::Broodlord(BroodlordFsm::default())),
             ENTRY_FIREMAW => Ok(Self::Firemaw(FiremawFsm::default())),

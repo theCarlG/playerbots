@@ -18,6 +18,7 @@ use crate::{
         timers::BotTimers,
     },
     ffi::{BotRole, BotWorldSnapshot, UnitHandle, interface::BotInterface},
+    travel::target::TravelTarget,
 };
 
 /// Which `WoW` class this bot is.
@@ -150,6 +151,9 @@ pub struct BotState {
     /// Pending commands from chat, processed at tick start.
     pub pending_commands: VecDeque<PendingCommand>,
 
+    /// Travel target — per-bot destination lifecycle (PB2 TravelTarget).
+    pub travel_target: TravelTarget,
+
     // ── Throttle timestamps ──────────────────────────────────────────────
     pub last_attackers_refresh_ms: u64,
     pub last_nearby_refresh_ms: u64,
@@ -187,6 +191,7 @@ impl BotState {
             role,
             settings,
             pending_commands: VecDeque::new(),
+            travel_target: TravelTarget::default(),
             last_attackers_refresh_ms: 0,
             last_nearby_refresh_ms: 0,
         }
@@ -250,5 +255,6 @@ impl BotState {
         self.throttles = Throttles::new();
         self.timers = BotTimers::new();
         self.encounter = None;
+        self.travel_target.clear();
     }
 }

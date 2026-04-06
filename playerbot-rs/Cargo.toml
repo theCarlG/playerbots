@@ -8,6 +8,7 @@ name = "playerbot_rs"
 crate-type = ["staticlib"]
 
 [dependencies]
+bitflags = "2"
 
 [build-dependencies]
 bindgen = "0.72"

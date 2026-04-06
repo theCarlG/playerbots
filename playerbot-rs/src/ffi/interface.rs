@@ -7,8 +7,8 @@
 /// without any conditional compilation.
 use super::{
     BotAuraInfo, BotCallbacks, BotHandle, BotMailSummary, BotPosition, BotReputationEntry,
-    BotSkillEntry, BotSpellInfo, BotTalentEntry, BotTaxiNode, BotThreatEntry, BotUnitSnapshot,
-    BotWorldSnapshot, UnitHandle,
+    BotSkillEntry, BotSpellInfo, BotTalentEntry, BotTaxiNode, BotThreatEntry, BotTravelDest,
+    BotUnitSnapshot, BotWorldSnapshot, UnitHandle,
     types::{BotRole, ItemId, SpellId},
 };
 
@@ -104,6 +104,16 @@ pub trait BotInterface: Send {
     fn stop_moving(&self) -> bool;
     fn attack(&self, target: UnitHandle) -> bool;
     fn auto_attack(&self, enable: bool) -> bool;
+    /// Ranged auto-attack / wand-shoot pull. Inspects the bot's ranged
+    /// slot and fires the appropriate spell (Auto Shot 75 for
+    /// bow/gun/crossbow, Shoot 5019 for wand) at `target`. Returns
+    /// false when the bot has no ranged weapon, doesn't know the
+    /// matching spell, or the cast fails. Used by `Bt::PullTarget`
+    /// as its first-choice pull path; callers should fall back to
+    /// `cast_spell` / `taunt` / `attack` when this returns `false`.
+    fn auto_shoot(&self, _target: UnitHandle) -> bool {
+        false
+    }
     fn say(&self, msg: &str, lang: u32) -> bool;
     /// Whisper a message directly to a specific player (`target_guid`).
     /// Used for per-command replies to the sender.
@@ -157,6 +167,20 @@ pub trait BotInterface: Send {
     fn get_unit_with_raid_icon(&self, icon: u8) -> Option<UnitHandle> {
         let _ = icon;
         None
+    }
+
+    /// Assign raid target icon `icon` (0..=7, raw `Group::SetTargetIcon`
+    /// indexing — star=0, circle=1, diamond=2, triangle=3, moon=4,
+    /// square=5, cross=6, skull=7) to `target`. Broadcasts
+    /// MSG_RAID_TARGET_UPDATE to every group member so Mangosbot
+    /// marker UI and other clients redraw. Returns `false` when the
+    /// bot is ungrouped, the icon is out of range, or the target
+    /// cannot be resolved. Passing `target = 0` clears the icon.
+    /// Used by `Bt::MarkRti` / `Bt::MarkRtiCc`. GOTCHA: this uses
+    /// 0..=7 indexing, while the existing `get_unit_with_raid_icon`
+    /// uses 1..=8 — the BT handlers translate at the boundary.
+    fn group_set_target_icon(&self, _target: UnitHandle, _icon: u8) -> bool {
+        false
     }
 
     /* ── Group / raid ────────────────────────────────────────────────── */
@@ -255,6 +279,11 @@ pub trait BotInterface: Send {
     fn is_casting_interruptible(&self, _target: UnitHandle) -> bool {
         false
     }
+    /// Coarse category for `target`:
+    /// 0 = other/unknown, 1 = player, 2 = pet, 3 = critter.
+    fn unit_kind(&self, _target: UnitHandle) -> u8 {
+        0
+    }
 
     /* ── Pet management ─────────────────────────────────────────────── */
 
@@ -281,13 +310,110 @@ pub trait BotInterface: Send {
 
     /// Find a group member with a dispellable debuff that this bot can remove.
     /// Returns (`member_handle`, `debuff_spell_id`).
-    fn find_dispellable_target(&self) -> Option<(UnitHandle, SpellId)> {
+    ///
+    /// `dispel_mask` restricts the search to specific schools. It's a
+    /// bitmask over `DispelType` values — bit 1 = magic, bit 2 = curse,
+    /// bit 3 = disease, bit 4 = poison (matching `1 << DispelType`).
+    /// Passing `0` means "any school the bot can dispel" (the PB2
+    /// `DispelTrigger` default).
+    fn find_dispellable_target(&self, _dispel_mask: u8) -> Option<(UnitHandle, SpellId)> {
         None
     }
 
     /// Find a dead group member that can be resurrected.
     fn find_dead_party_member(&self) -> Option<UnitHandle> {
         None
+    }
+
+    /// Return the item id of the first usable potion in the bot's bags
+    /// matching `category`, or `ItemId(0)` if none. `category`: 0 = buff
+    /// potion (stat/damage elixirs), 1 = utility potion (free action,
+    /// invulnerability, swiftness). Healing/mana potions are not covered
+    /// here — they're selected via `factory_pick_potion_for_level`.
+    fn find_potion_in_bags(&self, _category: u8) -> ItemId {
+        ItemId(0)
+    }
+
+    /// True when the bot's shared potion item cooldown (category 4) is
+    /// ready. Cheap gate to run before `UseBuffPotion` action leaves
+    /// enter the cast path. Defaults to `true` so stubs don't block
+    /// strategies that never actually query it.
+    fn potion_cooldown_ready(&self) -> bool {
+        true
+    }
+
+    /// Activate the trinket equipped in `slot` (0 = top trinket /
+    /// `EQUIPMENT_SLOT_TRINKET1`, 1 = bottom trinket /
+    /// `EQUIPMENT_SLOT_TRINKET2`). Resolves the item slot, walks its
+    /// OnUse spell list, and fires the first ready one. Returns `false`
+    /// when the slot is empty, the item has no OnUse effect, every OnUse
+    /// spell is on cooldown, or the cast fails. Used by the
+    /// `Bt::UseTrinket(slot)` BT leaf (11h). Default stub returns
+    /// `false` so existing mocks stay happy.
+    fn use_trinket(&self, _slot: u8) -> bool {
+        false
+    }
+
+    /* ── Social / group actions (11i) ──────────────────────────────────── */
+
+    /// Accept a pending group/raid invitation. Returns false when no
+    /// invite is pending.
+    fn accept_group_invite(&self) -> bool {
+        false
+    }
+    /// Leave the bot's current group/raid.
+    fn leave_group(&self) -> bool {
+        false
+    }
+    /// Accept a pending ready check.
+    fn accept_ready_check(&self) -> bool {
+        false
+    }
+    /// Accept a pending trade window.
+    fn accept_trade(&self) -> bool {
+        false
+    }
+    /// Accept an incoming duel request (duel_state == 1).
+    fn accept_duel(&self) -> bool {
+        false
+    }
+    /// Decline an incoming duel request.
+    fn decline_duel(&self) -> bool {
+        false
+    }
+    /// Accept a pending warlock/meeting-stone summon.
+    fn accept_summon(&self) -> bool {
+        false
+    }
+    /// Interact with a nearby meeting stone and queue for summoning.
+    fn use_meeting_stone(&self) -> bool {
+        false
+    }
+
+    /* ── PvP / duel / faction (11d) ──────────────────────────────────── */
+
+    /// True when the bot currently has the PvP flag set
+    /// (`Player::IsPvP`). Used by `PvpFlagged` BT condition to gate
+    /// PvP-only strategies.
+    fn is_pvp_flagged(&self) -> bool {
+        false
+    }
+
+    /// Encoded duel state: `0` = no active duel, `1` = challenged /
+    /// countdown (request pending, fight hasn't started), `2` = in
+    /// progress (`DuelInfo::startTime > 0`). Direction (sender vs
+    /// receiver) is intentionally collapsed — strategies only care
+    /// whether a fight is about to happen or already happening.
+    fn duel_state(&self) -> u8 {
+        0
+    }
+
+    /// The bot's reputation rank with `faction_id`, as `ReputationRank`
+    /// (0=hated .. 7=exalted). Returns `3` (neutral) when the bot has
+    /// no record for the faction — mirrors the client default — and
+    /// `255` when the faction id doesn't exist in the DBC.
+    fn reputation_rank(&self, _faction_id: u32) -> u8 {
+        3
     }
 
     /* ── Battleground ───────────────────────────────────────────────── */
@@ -669,6 +795,37 @@ pub trait BotInterface: Send {
     fn bot_read_log_file(&self, _name: &str) -> Option<String> {
         None
     }
+
+    /* ── Loot rolling ───────────────────────────────────────────────── */
+
+    /// Number of pending loot rolls the bot hasn't voted on.
+    fn get_pending_roll_count(&self) -> u32 {
+        0
+    }
+
+    /// Auto-roll on the next pending item (need/greed/pass based on item value).
+    fn auto_loot_roll(&self) -> bool {
+        false
+    }
+
+    /// Cast a specific roll vote on the next pending item.
+    /// 0 = pass, 1 = need, 2 = greed.
+    fn cast_loot_roll(&self, _vote: u8) -> bool {
+        false
+    }
+
+    /* ── Travel destination queries ─────────────────────────────────── */
+
+    /// Find nearby travel destinations matching `purpose_flags`.
+    /// Returns up to `max_results` sorted by distance.
+    fn find_travel_dests(
+        &self,
+        _purpose_flags: u32,
+        _max_range: f32,
+        _max_results: u32,
+    ) -> Vec<BotTravelDest> {
+        vec![]
+    }
 }
 
 /// Quest info returned from the FFI.
@@ -857,6 +1014,10 @@ impl BotInterface for RealInterface {
         unsafe { (self.cbs.attack.unwrap())(self.handle, target) }
     }
 
+    fn auto_shoot(&self, target: UnitHandle) -> bool {
+        unsafe { (self.cbs.auto_shoot.unwrap())(self.handle, target) }
+    }
+
     fn auto_attack(&self, enable: bool) -> bool {
         unsafe { (self.cbs.auto_attack.unwrap())(self.handle, enable) }
     }
@@ -922,6 +1083,10 @@ impl BotInterface for RealInterface {
     fn get_unit_with_raid_icon(&self, icon: u8) -> Option<UnitHandle> {
         let h = unsafe { (self.cbs.get_unit_with_raid_icon.unwrap())(self.handle, icon) };
         if h == 0 { None } else { Some(h) }
+    }
+
+    fn group_set_target_icon(&self, target: UnitHandle, icon: u8) -> bool {
+        unsafe { (self.cbs.group_set_target_icon.unwrap())(self.handle, target, icon) }
     }
 
     /* ── Death / resurrection ───────────────────────────────────────── */
@@ -1064,6 +1229,10 @@ impl BotInterface for RealInterface {
         unsafe { (self.cbs.is_casting_interruptible.unwrap())(self.handle, target) }
     }
 
+    fn unit_kind(&self, target: UnitHandle) -> u8 {
+        unsafe { (self.cbs.unit_kind.unwrap())(self.handle, target) }
+    }
+
     /* ── Pet management ─────────────────────────────────────────────── */
 
     fn has_pet(&self) -> bool {
@@ -1092,8 +1261,9 @@ impl BotInterface for RealInterface {
 
     /* ── Dispel / party queries ─────────────────────────────────────── */
 
-    fn find_dispellable_target(&self) -> Option<(UnitHandle, SpellId)> {
-        let result = unsafe { (self.cbs.find_dispellable_target.unwrap())(self.handle) };
+    fn find_dispellable_target(&self, dispel_mask: u8) -> Option<(UnitHandle, SpellId)> {
+        let result =
+            unsafe { (self.cbs.find_dispellable_target.unwrap())(self.handle, dispel_mask) };
         if result.found {
             Some((result.unit, SpellId(result.spell_id)))
         } else {
@@ -1104,6 +1274,56 @@ impl BotInterface for RealInterface {
     fn find_dead_party_member(&self) -> Option<UnitHandle> {
         let h = unsafe { (self.cbs.find_dead_party_member.unwrap())(self.handle) };
         if h == 0 { None } else { Some(h) }
+    }
+
+    fn find_potion_in_bags(&self, category: u8) -> ItemId {
+        let id = unsafe { (self.cbs.find_potion_in_bags.unwrap())(self.handle, category) };
+        ItemId(id)
+    }
+
+    fn potion_cooldown_ready(&self) -> bool {
+        unsafe { (self.cbs.potion_cooldown_ready.unwrap())(self.handle) }
+    }
+
+    fn use_trinket(&self, slot: u8) -> bool {
+        unsafe { (self.cbs.use_trinket.unwrap())(self.handle, slot) }
+    }
+
+    fn accept_group_invite(&self) -> bool {
+        unsafe { (self.cbs.accept_group_invite.unwrap())(self.handle) }
+    }
+    fn leave_group(&self) -> bool {
+        unsafe { (self.cbs.leave_group.unwrap())(self.handle) }
+    }
+    fn accept_ready_check(&self) -> bool {
+        unsafe { (self.cbs.accept_ready_check.unwrap())(self.handle) }
+    }
+    fn accept_trade(&self) -> bool {
+        unsafe { (self.cbs.accept_trade.unwrap())(self.handle) }
+    }
+    fn accept_duel(&self) -> bool {
+        unsafe { (self.cbs.accept_duel.unwrap())(self.handle) }
+    }
+    fn decline_duel(&self) -> bool {
+        unsafe { (self.cbs.decline_duel.unwrap())(self.handle) }
+    }
+    fn accept_summon(&self) -> bool {
+        unsafe { (self.cbs.accept_summon.unwrap())(self.handle) }
+    }
+    fn use_meeting_stone(&self) -> bool {
+        unsafe { (self.cbs.use_meeting_stone.unwrap())(self.handle) }
+    }
+
+    fn is_pvp_flagged(&self) -> bool {
+        unsafe { (self.cbs.is_pvp_flagged.unwrap())(self.handle) }
+    }
+
+    fn duel_state(&self) -> u8 {
+        unsafe { (self.cbs.duel_state.unwrap())(self.handle) }
+    }
+
+    fn reputation_rank(&self, faction_id: u32) -> u8 {
+        unsafe { (self.cbs.reputation_rank.unwrap())(self.handle, faction_id) }
     }
 
     /* ── Battleground ───────────────────────────────────────────────── */
@@ -1527,5 +1747,42 @@ impl BotInterface for RealInterface {
             .into_owned();
         unsafe { (self.cbs.bot_free_string.unwrap())(out_ptr) };
         Some(s)
+    }
+
+    fn get_pending_roll_count(&self) -> u32 {
+        unsafe { (self.cbs.get_pending_roll_count.unwrap())(self.handle) }
+    }
+
+    fn auto_loot_roll(&self) -> bool {
+        unsafe { (self.cbs.auto_loot_roll.unwrap())(self.handle) }
+    }
+
+    fn cast_loot_roll(&self, vote: u8) -> bool {
+        unsafe { (self.cbs.cast_loot_roll.unwrap())(self.handle, vote) }
+    }
+
+    fn find_travel_dests(
+        &self,
+        purpose_flags: u32,
+        max_range: f32,
+        max_results: u32,
+    ) -> Vec<BotTravelDest> {
+        let mut count: u32 = 0;
+        let ptr = unsafe {
+            (self.cbs.bot_find_travel_dests.unwrap())(
+                self.handle,
+                purpose_flags,
+                max_range,
+                max_results,
+                &mut count,
+            )
+        };
+        if ptr.is_null() || count == 0 {
+            return vec![];
+        }
+        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
+        let result = slice.to_vec();
+        unsafe { (self.cbs.bot_free_travel_dests.unwrap())(ptr) };
+        result
     }
 }

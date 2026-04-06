@@ -191,6 +191,17 @@ typedef struct {
     bool       found;           /* false = no dispellable target */
 } BotDispelTarget;
 
+/* Travel destination returned by the travel FFI. Represents one location the
+ * bot could travel to (vendor, repair NPC, quest giver, grind spot, etc.).
+ * `entry` is a creature entry (positive) or GO entry (negative). */
+typedef struct {
+    int32_t  entry;      /* creature (>0) or GO (<0) entry, 0 = position-only */
+    uint32_t quest_id;   /* associated quest id, 0 = none */
+    uint32_t purpose;    /* TravelPurpose bitflags */
+    uint32_t map_id;
+    float    x, y, z;
+} BotTravelDest;
+
 /* Subset of CMaNGOS SpellEntry — just the fields the bot factory / AI needs.
  * Array sizes match the DBC constants: MAX_EFFECT_INDEX=3, MAX_SPELL_TOTEMS=2,
  * MAX_SPELL_REAGENTS=8. Fields are 0 when not applicable; `is_valid` is false
@@ -295,6 +306,14 @@ typedef struct BotCallbacks {
     bool (*stop_moving)(BotHandle bot);
     bool (*attack)(BotHandle bot, UnitHandle target);
     bool (*auto_attack)(BotHandle bot, bool enable);
+    /* Ranged auto-attack / wand-shoot pull. Inspects the bot's ranged slot
+     * and fires the appropriate spell (Auto Shot 75 for bow/gun/crossbow,
+     * Shoot 5019 for wand) at `target`. Returns false if no ranged weapon
+     * is equipped, the bot doesn't know / can't cast the corresponding
+     * spell, or the cast fails. Used by the generic `PullTarget` BT leaf
+     * as the "shoot pull" branch so cross-class strategies don't need to
+     * know which class is driving them. */
+    bool (*auto_shoot)(BotHandle bot, UnitHandle target);
     bool (*say)(BotHandle bot, const char* msg, uint32_t lang);
     bool (*whisper)(BotHandle bot, uint64_t target_guid, const char* msg);
     /* PB2-style TellPlayerNoFacing routing: broadcasts to the bot's party/raid
@@ -332,6 +351,15 @@ typedef struct BotCallbacks {
     /* Find the nearest hostile unit marked with raid target icon 1..8.
      * Returns 0 if no such unit exists. */
     UnitHandle (*get_unit_with_raid_icon)(BotHandle bot, uint8_t icon);
+    /* Assign raid target icon `icon` (0..7 — star/circle/diamond/triangle/
+     * moon/square/cross/skull) to `target`. Wraps `Group::SetTargetIcon`,
+     * which broadcasts MSG_RAID_TARGET_UPDATE to the whole group and also
+     * clears the icon from any other unit currently wearing it. No-ops and
+     * returns false when the bot isn't grouped (solo `SetTargetIcon` is
+     * not a thing on this server) or the icon index is out of range.
+     * Passing `target = 0` clears the icon. Used by the 11g
+     * `MarkRti`/`MarkRtiCc` BT leaves. */
+    bool (*group_set_target_icon)(BotHandle bot, UnitHandle target, uint8_t icon);
 
     /* ── Death / resurrection ────────────────────────────────────────── */
     bool        (*accept_resurrect)(BotHandle bot);
@@ -354,6 +382,18 @@ typedef struct BotCallbacks {
     bool        (*open_loot)(BotHandle bot, UnitHandle target);
     bool        (*take_all_loot)(BotHandle bot);
 
+    /* ── Loot rolling ───────────────────────────────────────────────── */
+    /* Get the count of pending loot rolls the bot hasn't voted on yet.
+     * Returns 0 if not in a group or no active rolls. */
+    uint32_t    (*get_pending_roll_count)(BotHandle bot);
+    /* Auto-roll on the next pending item. Applies the same logic as PB2:
+     * need for equippable upgrades, greed for tradeable/usable, pass
+     * otherwise. Returns true if a vote was cast. */
+    bool        (*auto_loot_roll)(BotHandle bot);
+    /* Cast a specific roll vote (0=pass, 1=need, 2=greed) on the next
+     * pending item. Returns true if a vote was cast. */
+    bool        (*cast_loot_roll)(BotHandle bot, uint8_t vote);
+
     /* ── NPC interaction ─────────────────────────────────────────────── */
     UnitHandle* (*get_nearby_npcs)(BotHandle bot, float range, uint32_t npc_flags,
                                    uint32_t* out_count);
@@ -373,6 +413,18 @@ typedef struct BotCallbacks {
     bool    (*is_attackable)(BotHandle bot, UnitHandle target);
     uint8_t (*get_unit_level)(BotHandle bot, UnitHandle target);
     bool    (*is_casting_interruptible)(BotHandle bot, UnitHandle target);
+    /* Coarse unit category used by BT condition leaves that need to
+     * distinguish players/pets/critters from regular creatures (e.g.
+     * pull-target eligibility, CC vocabulary, do-not-attack-critter
+     * gates). Return values:
+     *   0 = other / unknown (regular creature, GO, empty handle, …)
+     *   1 = player (ObjectGuid::IsPlayer)
+     *   2 = pet    (ObjectGuid::IsPet)
+     *   3 = critter (Creature::IsCritter — requires resolving the unit)
+     * Cheaper than `get_unit_snapshot` since players/pets can be
+     * decided from the guid high bits alone; only the critter branch
+     * resolves the live Creature*. */
+    uint8_t (*unit_kind)(BotHandle bot, UnitHandle target);
 
     /* ── Pet management ──────────────────────────────────────────────── */
     bool    (*has_pet)(BotHandle bot);
@@ -383,8 +435,88 @@ typedef struct BotCallbacks {
     bool    (*feed_pet)(BotHandle bot);
 
     /* ── Dispel / party queries ──────────────────────────────────────── */
-    BotDispelTarget (*find_dispellable_target)(BotHandle bot);
+    /* Find a nearby group member (or self when solo) with a dispellable
+     * debuff that this bot can remove. `dispel_mask` is a bitmask over
+     * DispelType values — bit (1 << DISPEL_MAGIC), (1 << DISPEL_CURSE),
+     * (1 << DISPEL_DISEASE), (1 << DISPEL_POISON). Passing `0` is
+     * interpreted as "any school the bot can dispel". */
+    BotDispelTarget (*find_dispellable_target)(BotHandle bot, uint8_t dispel_mask);
     UnitHandle      (*find_dead_party_member)(BotHandle bot);
+
+    /* ── Consumables: potion query ───────────────────────────────────── */
+    /* Return the item id of the first usable potion the bot carries in
+     * bags matching `category`, or 0 if none. Categories:
+     *   0 = buff potion (temporary stat/damage increase — e.g. Elixir of
+     *       the Mongoose, Greater Arcane Elixir).
+     *   1 = utility potion (free action, invulnerability, swiftness,
+     *       living action — consumables that break out of effects).
+     * Healing/mana potions use existing `factory_pick_potion_for_level`
+     * selection paths and are not covered here. */
+    uint32_t        (*find_potion_in_bags)(BotHandle bot, uint8_t category);
+    /* True if the bot's shared potion item cooldown (category 4) is
+     * ready. Mirrors `Player::HasItemCooldown` on a representative
+     * potion — used as a cheap gate before `UseBuffPotion` leaves
+     * enter the cast path. */
+    bool            (*potion_cooldown_ready)(BotHandle bot);
+
+    /* ── Consumables: trinket activation (11h) ───────────────────────── */
+    /* Activate the trinket currently equipped in the requested trinket
+     * slot. `slot` is a logical index: 0 = EQUIPMENT_SLOT_TRINKET1,
+     * 1 = EQUIPMENT_SLOT_TRINKET2. Looks up the item in that slot,
+     * reads its first OnUse spell, gates on `Player::HasSpellCooldown`
+     * + `Player::IsSpellReady`, and fires the spell directly (same path
+     * as `CB_UseItem`). Returns false when the slot is empty, the item
+     * has no OnUse effect, the item is on cooldown, or the cast fails.
+     * Used by the `Bt::UseTrinket(slot)` BT leaf. */
+    bool            (*use_trinket)(BotHandle bot, uint8_t slot);
+
+    /* ── Social / group actions (11i) ───────────────────────────────── */
+    /* Accept a pending group/raid invitation. Returns false if the bot
+     * has no pending invite. */
+    bool (*accept_group_invite)(BotHandle bot);
+    /* Make the bot leave its current group/raid. Returns false when the
+     * bot is not grouped. */
+    bool (*leave_group)(BotHandle bot);
+    /* Accept a pending ready check. Returns false if no ready check is
+     * active. */
+    bool (*accept_ready_check)(BotHandle bot);
+    /* Accept a pending trade window. Returns false if no trade is
+     * pending. */
+    bool (*accept_trade)(BotHandle bot);
+    /* Accept an incoming duel request. Returns false if duel_state != 1
+     * or the accept fails. */
+    bool (*accept_duel)(BotHandle bot);
+    /* Decline an incoming duel request. Returns false if duel_state != 1
+     * or the decline fails. */
+    bool (*decline_duel)(BotHandle bot);
+    /* Accept a pending summon (warlock ritual, meeting stone). Returns
+     * false if no summon is pending. */
+    bool (*accept_summon)(BotHandle bot);
+    /* Interact with the nearest meeting stone within 20y and queue the
+     * bot for summoning. Returns false when no stone is in range. */
+    bool (*use_meeting_stone)(BotHandle bot);
+
+    /* ── PvP / duel / faction queries (11d) ──────────────────────────── */
+    /* `Player::IsPvP()` — true when the bot currently carries the PvP
+     * flag (either through a PvP zone or a manual toggle). */
+    bool    (*is_pvp_flagged)(BotHandle bot);
+    /* Encoded state of `Player::duel`:
+     *   0 = no active duel at all,
+     *   1 = challenged / countdown (a request is pending — the bot
+     *       hasn't started fighting yet, regardless of whether it
+     *       sent or received the request),
+     *   2 = in progress (bot is currently dueling).
+     * `3` (completed) is collapsed into `0` since strategies don't
+     * care about the post-duel cleanup window. */
+    uint8_t (*duel_state)(BotHandle bot);
+    /* The bot's reputation rank with `faction_id`, encoded as the
+     * server's `ReputationRank` (0=hated .. 7=exalted). Returns `3`
+     * (neutral) when the bot has no record for the faction — this
+     * matches how the client displays unfilled factions and lets
+     * `RepWithFactionBelow` treat "never touched" as "has not yet
+     * earned any standing". Returns `255` when the faction id does
+     * not exist in the DBC. */
+    uint8_t (*reputation_rank)(BotHandle bot, uint32_t faction_id);
 
     /* ── Battleground ────────────────────────────────────────────────── */
     bool           (*is_in_battleground)(BotHandle bot);
@@ -632,6 +764,23 @@ typedef struct BotCallbacks {
      * `target_guid` is the sender (master) ObjectGuid; the packet is
      * delivered directly to that player so only they receive it. */
     bool            (*bot_tell_addon)(BotHandle bot, uint64_t target_guid, const char* msg);
+
+    /* ── Travel destination queries ─────────────────────────────────────
+     * These allow the Rust travel planner to query the server for nearby
+     * NPCs/GOs that serve a specific purpose (vendor, repair, quest, etc.).
+     * Each returns a freshly-allocated array; caller must call the
+     * corresponding free function. */
+
+    /* Find nearby NPC(s) matching a purpose bitmask (TravelPurpose flags).
+     * Returns up to `max_results` destinations sorted by distance.
+     * `max_range` is the search radius in yards (0 = use default 1000y).
+     * The returned array is heap-allocated; free with `bot_free_travel_dests`. */
+    BotTravelDest*  (*bot_find_travel_dests)(BotHandle bot,
+                                             uint32_t purpose_flags,
+                                             float max_range,
+                                             uint32_t max_results,
+                                             uint32_t* out_count);
+    void            (*bot_free_travel_dests)(BotTravelDest* list);
 } BotCallbacks;
 
 /* ── Rust exports (entry points CMaNGOS calls into Rust) ─────────────────── */

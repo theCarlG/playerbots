@@ -940,6 +940,8 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             // 5s window is enough for one retreat; combat re-evaluates.
             let now = bot.snap.server_time_ms;
             s.flee_override_until_ms = now + 5_000;
+            // Mangosbot.lua:3149 watches for "Fleeing" at position 1.
+            reply(bot, pc, "Fleeing...");
         }
         BotCommand::Free => {
             s.focus_target = None;

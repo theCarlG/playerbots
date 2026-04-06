@@ -15,6 +15,7 @@
 #include "BotBridge.h"
 
 #include <cstdlib>
+#include <unordered_set>
 
 #include "Entities/Player.h"
 #include "Entities/Unit.h"
@@ -56,6 +57,7 @@
 #include "Chat/Chat.h"
 #include "Groups/Group.h"
 #include "Config/Config.h"
+#include "Entities/EntitiesMgr.h"
 
 #include <cstdio>
 #include <cstring>
@@ -212,6 +214,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.stop_moving         = CB_StopMoving;
     cbs.attack              = CB_Attack;
     cbs.auto_attack         = CB_AutoAttack;
+    cbs.auto_shoot          = CB_AutoShoot;
     cbs.say                 = CB_Say;
     cbs.tell_player         = CB_TellPlayer;
     cbs.whisper             = CB_Whisper;
@@ -226,6 +229,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.group_get_healer    = CB_GroupGetHealer;
     cbs.group_get_role      = CB_GroupGetRole;
     cbs.get_unit_with_raid_icon = CB_GetUnitWithRaidIcon;
+    cbs.group_set_target_icon   = CB_GroupSetTargetIcon;
 
     // Death / resurrection
     cbs.accept_resurrect    = CB_AcceptResurrect;
@@ -262,6 +266,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.is_attackable       = CB_IsAttackable;
     cbs.get_unit_level      = CB_GetUnitLevel;
     cbs.is_casting_interruptible = CB_IsCastingInterruptible;
+    cbs.unit_kind           = CB_UnitKind;
 
     // Pet management
     cbs.has_pet             = CB_HasPet;
@@ -273,6 +278,20 @@ BotCallbacks BotBridge::MakeCallbacks()
 
     // Dispel / party queries
     cbs.find_dispellable_target = CB_FindDispellableTarget;
+    cbs.find_potion_in_bags     = CB_FindPotionInBags;
+    cbs.potion_cooldown_ready   = CB_PotionCooldownReady;
+    cbs.use_trinket             = CB_UseTrinket;
+    cbs.accept_group_invite     = CB_AcceptGroupInvite;
+    cbs.leave_group             = CB_LeaveGroup;
+    cbs.accept_ready_check      = CB_AcceptReadyCheck;
+    cbs.accept_trade            = CB_AcceptTrade;
+    cbs.accept_duel             = CB_AcceptDuel;
+    cbs.decline_duel            = CB_DeclineDuel;
+    cbs.accept_summon           = CB_AcceptSummon;
+    cbs.use_meeting_stone       = CB_UseMeetingStone;
+    cbs.is_pvp_flagged          = CB_IsPvpFlagged;
+    cbs.duel_state              = CB_DuelState;
+    cbs.reputation_rank         = CB_ReputationRank;
     cbs.find_dead_party_member  = CB_FindDeadPartyMember;
 
     // Battleground
@@ -376,6 +395,15 @@ BotCallbacks BotBridge::MakeCallbacks()
 
     // Addon-channel reply routing
     cbs.bot_tell_addon                      = CB_TellAddon;
+
+    // Loot rolling
+    cbs.get_pending_roll_count              = CB_GetPendingRollCount;
+    cbs.auto_loot_roll                      = CB_AutoLootRoll;
+    cbs.cast_loot_roll                      = CB_CastLootRoll;
+
+    // Travel destination queries
+    cbs.bot_find_travel_dests               = CB_BotFindTravelDests;
+    cbs.bot_free_travel_dests               = CB_BotFreeTravelDests;
 
     return cbs;
 }
@@ -1018,6 +1046,55 @@ bool BotBridge::CB_AutoAttack(BotHandle bot, bool enable)
     return true;
 }
 
+// Ranged auto-attack / wand-shoot pull. Picks a spell based on the
+// ranged slot's weapon subclass (wand → Shoot 5019; bow/gun/crossbow →
+// Auto Shot 75) and fires it at `target`. Returns false if the bot has
+// no ranged weapon, doesn't know the appropriate spell, or the cast
+// fails. Used by the generic `PullTarget` BT leaf as the "shoot pull"
+// branch so strategies don't need to know which class is driving them.
+bool BotBridge::CB_AutoShoot(BotHandle bot, UnitHandle target)
+{
+    Player* b = FindBot(bot);
+    Unit* t   = FindUnit(bot, target);
+    if (!b || !t)
+        return false;
+
+    Item* ranged = b->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_RANGED);
+    if (!ranged)
+        return false;
+    ItemPrototype const* proto = ranged->GetProto();
+    if (!proto || proto->Class != ITEM_CLASS_WEAPON)
+        return false;
+
+    uint32_t spell_id = 0;
+    switch (proto->SubClass)
+    {
+        case ITEM_SUBCLASS_WEAPON_BOW:
+        case ITEM_SUBCLASS_WEAPON_GUN:
+        case ITEM_SUBCLASS_WEAPON_CROSSBOW:
+            spell_id = 75;    // Auto Shot (hunter only — HasSpell gate below enforces)
+            break;
+        case ITEM_SUBCLASS_WEAPON_WAND:
+            spell_id = 5019;  // Shoot (wand) — learned by every wand-capable class
+            break;
+        default:
+            return false;
+    }
+
+    if (!b->HasSpell(spell_id) || !b->IsSpellReady(spell_id))
+        return false;
+
+    SpellEntry const* spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(spell_id);
+    if (!spellInfo)
+        return false;
+
+    Spell* spell = new Spell(b, spellInfo, false);
+    SpellCastTargets targets;
+    targets.setUnitTarget(t);
+    spell->SpellStart(&targets);
+    return true;
+}
+
 bool BotBridge::CB_Say(BotHandle bot, const char* msg, uint32_t lang)
 {
     Player* b = FindBot(bot);
@@ -1135,6 +1212,50 @@ bool BotBridge::CB_UseItem(BotHandle bot, uint32_t item_id, UnitHandle target)
     targets.setUnitTarget(t ? t : static_cast<Unit*>(b));
     spell->SpellStart(&targets);
     return true;
+}
+
+bool BotBridge::CB_UseTrinket(BotHandle bot, uint8_t slot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    uint8_t eq_slot;
+    switch (slot)
+    {
+        case 0: eq_slot = EQUIPMENT_SLOT_TRINKET1; break;
+        case 1: eq_slot = EQUIPMENT_SLOT_TRINKET2; break;
+        default: return false;
+    }
+
+    Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, eq_slot);
+    if (!item)
+        return false;
+
+    ItemPrototype const* proto = item->GetProto();
+    if (!proto)
+        return false;
+
+    // Walk the OnUse spell list and fire the first one that is both known
+    // and ready. Mirrors CB_UseItem's spell pick, with an added cooldown
+    // gate so `Bt::UseTrinket` callers don't have to pre-check.
+    for (int i = 0; i < MAX_ITEM_PROTO_SPELLS; ++i)
+    {
+        uint32 spellId = proto->Spells[i].SpellId;
+        if (spellId == 0)
+            continue;
+        if (b->HasSpellCooldown(spellId))
+            continue;
+        SpellEntry const* info = sSpellTemplate.LookupEntry<SpellEntry>(spellId);
+        if (!info)
+            continue;
+        Spell* spell = new Spell(b, info, false);
+        SpellCastTargets targets;
+        targets.setUnitTarget(static_cast<Unit*>(b));
+        spell->SpellStart(&targets);
+        return true;
+    }
+    return false;
 }
 
 bool BotBridge::CB_Taunt(BotHandle bot, UnitHandle target)
@@ -1362,6 +1483,41 @@ UnitHandle BotBridge::CB_GetUnitWithRaidIcon(BotHandle bot, uint8_t icon)
         return 0;
 
     return target.GetRawValue();
+}
+
+// Assign raid target icon `icon` (0..7, raw `TargetIconList` index — star=0,
+// skull=7) to `target`. Broadcasts MSG_RAID_TARGET_UPDATE to the whole group.
+// Returns false when the bot is solo, the icon index is out of range, or the
+// target handle can't be resolved. Passing `target == 0` clears the icon.
+// Used by the 11g `MarkRti`/`MarkRtiCc` BT leaves. Note: this callback uses
+// 0..7 indexing to match `BotWorldSnapshot::group_raid_target_icons` and
+// `Group::SetTargetIcon`, whereas `CB_GetUnitWithRaidIcon` uses 1..8 — the
+// inconsistency is intentional (both mirror their respective call sites)
+// and the BT handlers translate at the caller.
+bool BotBridge::CB_GroupSetTargetIcon(BotHandle bot, UnitHandle target, uint8_t icon)
+{
+    if (icon >= 8)
+        return false;
+
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    Group* group = b->GetGroup();
+    if (!group)
+        return false;
+
+    ObjectGuid guid = ObjectGuid();
+    if (target != 0)
+    {
+        Unit* u = FindUnit(bot, target);
+        if (!u)
+            return false;
+        guid = u->GetObjectGuid();
+    }
+
+    group->SetTargetIcon(icon, guid);
+    return true;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1884,6 +2040,27 @@ bool BotBridge::CB_IsCastingInterruptible(BotHandle bot, UnitHandle target)
     return spell->m_spellInfo->InterruptFlags != 0;
 }
 
+uint8_t BotBridge::CB_UnitKind(BotHandle bot, UnitHandle target)
+{
+    if (target == 0)
+        return 0;
+    ObjectGuid guid = MakeGuid(target);
+    // Players and pets can be decided from the guid high bits alone; no
+    // world lookup required.
+    if (guid.IsPlayer())
+        return 1;
+    if (guid.IsPet())
+        return 2;
+
+    // Critter check requires resolving the live Creature on the bot's map.
+    Unit* t = FindUnit(bot, target);
+    if (!t)
+        return 0;
+    if (t->GetTypeId() == TYPEID_UNIT && static_cast<Creature*>(t)->IsCritter())
+        return 3;
+    return 0;
+}
+
 // ── Pet management ────────────────────────────────────────────────────────
 
 bool BotBridge::CB_HasPet(BotHandle bot)
@@ -2003,13 +2180,18 @@ bool BotBridge::CB_FeedPet(BotHandle bot)
 
 // ── Dispel / party queries ────────────────────────────────────────────────
 
-static bool IsDispelableBySpell(uint32_t debuffSpellId, Player* bot)
+static bool IsDispelableBySpell(uint32_t debuffSpellId, Player* bot, uint8_t schoolFilter)
 {
     SpellEntry const* debuffInfo = sSpellTemplate.LookupEntry<SpellEntry>(debuffSpellId);
     if (!debuffInfo)
         return false;
 
     uint32_t dispelMask = GetDispellMask(DispelType(debuffInfo->Dispel));
+
+    // Caller-supplied school filter. `0` means "any school the bot can
+    // dispel". Any non-zero mask restricts the search to its bits.
+    if (schoolFilter != 0 && (dispelMask & schoolFilter) == 0)
+        return false;
 
     // Dispel Magic (527/988) — removes magic
     if ((dispelMask & (1 << DISPEL_MAGIC)) && (bot->HasSpell(527) || bot->HasSpell(988)))
@@ -2030,7 +2212,7 @@ static bool IsDispelableBySpell(uint32_t debuffSpellId, Player* bot)
     return false;
 }
 
-BotDispelTarget BotBridge::CB_FindDispellableTarget(BotHandle bot)
+BotDispelTarget BotBridge::CB_FindDispellableTarget(BotHandle bot, uint8_t dispel_mask)
 {
     BotDispelTarget result{};
     result.found = false;
@@ -2049,7 +2231,7 @@ BotDispelTarget BotBridge::CB_FindDispellableTarget(BotHandle bot)
             if (!pair.second || IsPositiveSpell(pair.second->GetId()))
                 continue;
             uint32_t spellId = pair.second->GetId();
-            if (IsDispelableBySpell(spellId, b))
+            if (IsDispelableBySpell(spellId, b, dispel_mask))
             {
                 result.unit     = b->GetGUID();
                 result.spell_id = spellId;
@@ -2074,7 +2256,7 @@ BotDispelTarget BotBridge::CB_FindDispellableTarget(BotHandle bot)
             if (!pair.second || IsPositiveSpell(pair.second->GetId()))
                 continue;
             uint32_t spellId = pair.second->GetId();
-            if (IsDispelableBySpell(spellId, b))
+            if (IsDispelableBySpell(spellId, b, dispel_mask))
             {
                 result.unit     = member->GetGUID();
                 result.spell_id = spellId;
@@ -2084,6 +2266,257 @@ BotDispelTarget BotBridge::CB_FindDispellableTarget(BotHandle bot)
         }
     }
     return result;
+}
+
+// ── Consumables: potion bag query ─────────────────────────────────────────
+
+uint32_t BotBridge::CB_FindPotionInBags(BotHandle bot, uint8_t category)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+
+    // Iterate backpack + equipped bags. SpellCategory 4 is the shared
+    // potion cooldown group used by every on-use potion; a spell effect
+    // in {EFFECT_APPLY_AURA, EFFECT_SCHOOL_DAMAGE, EFFECT_DUMMY} combined
+    // with an aura id in the stat-boost family (23–29, 189, 135) marks a
+    // "buff" potion. Utility potions map to specific dummy/apply auras —
+    // we match by the well-known free-action / invulnerability / swiftness
+    // / living-action spell ids.
+    static const uint32_t UTILITY_SPELLS[] = {
+        6615,  /* Free Action Potion */
+        3169,  /* Limited Invulnerability Potion */
+        2379,  /* Swiftness Potion */
+        6614,  /* Living Action Potion */
+        7242,  /* Restorative Potion */
+    };
+
+    auto try_item = [&](Item* item) -> uint32_t {
+        if (!item)
+            return 0;
+        ItemPrototype const* proto = item->GetProto();
+        if (!proto || proto->Class != ITEM_CLASS_CONSUMABLE)
+            return 0;
+        // Must be usable by the bot (level, class, race).
+        if (b->CanUseItem(proto) != EQUIP_ERR_OK)
+            return 0;
+        for (int s = 0; s < MAX_ITEM_PROTO_SPELLS; ++s)
+        {
+            uint32_t spellId = proto->Spells[s].SpellId;
+            if (!spellId)
+                continue;
+            SpellEntry const* spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(spellId);
+            if (!spellInfo)
+                continue;
+            if (category == 1)
+            {
+                for (uint32_t u : UTILITY_SPELLS)
+                    if (u == spellId)
+                        return proto->ItemId;
+            }
+            else
+            {
+                // Category 0 — buff potion. Heuristic: applies a stat
+                // aura and is NOT an SPELL_EFFECT_HEAL / ENERGIZE potion
+                // (those are covered by factory_pick_potion_for_level).
+                bool is_heal_or_mana = false;
+                bool has_stat_aura   = false;
+                for (int e = 0; e < MAX_EFFECT_INDEX; ++e)
+                {
+                    uint32_t eff = spellInfo->Effect[e];
+                    if (eff == SPELL_EFFECT_HEAL || eff == SPELL_EFFECT_ENERGIZE)
+                        is_heal_or_mana = true;
+                    if (eff == SPELL_EFFECT_APPLY_AURA)
+                    {
+                        uint32_t aura = spellInfo->EffectApplyAuraName[e];
+                        switch (aura)
+                        {
+                            case SPELL_AURA_MOD_STAT:
+                            case SPELL_AURA_MOD_RESISTANCE:
+                            case SPELL_AURA_MOD_DAMAGE_DONE:
+                            case SPELL_AURA_MOD_ATTACK_POWER:
+                            case SPELL_AURA_MOD_INCREASE_SPEED:
+                            case SPELL_AURA_MOD_PERCENT_STAT:
+                            case SPELL_AURA_MOD_TOTAL_STAT_PERCENTAGE:
+                                has_stat_aura = true;
+                                break;
+                            default:
+                                break;
+                        }
+                    }
+                }
+                if (has_stat_aura && !is_heal_or_mana)
+                    return proto->ItemId;
+            }
+        }
+        return 0;
+    };
+
+    // Backpack slots.
+    for (int i = INVENTORY_SLOT_ITEM_START; i < INVENTORY_SLOT_ITEM_END; ++i)
+    {
+        if (uint32_t id = try_item(b->GetItemByPos(INVENTORY_SLOT_BAG_0, i)))
+            return id;
+    }
+    // Equipped bag slots.
+    for (int bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
+    {
+        Bag* pBag = (Bag*)b->GetItemByPos(INVENTORY_SLOT_BAG_0, bag);
+        if (!pBag)
+            continue;
+        for (uint32_t slot = 0; slot < pBag->GetBagSize(); ++slot)
+        {
+            if (uint32_t id = try_item(b->GetItemByPos(bag, slot)))
+                return id;
+        }
+    }
+    return 0;
+}
+
+bool BotBridge::CB_PotionCooldownReady(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    // SpellCategory 4 is the shared potion cooldown in 1.12/2.4/3.3.
+    // `HasSpellCategoryCooldown` isn't exposed; instead we check one of
+    // the common buff-potion spell ids (Elixir of the Mongoose) as a
+    // representative of the category. If that spell is on cooldown,
+    // every other category-4 potion is too.
+    return !b->HasSpellCooldown(17538 /* Elixir of the Mongoose */);
+}
+
+// ── Social / group actions (11i) ──────────────────────────────────────────
+
+bool BotBridge::CB_AcceptGroupInvite(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    // Accept a pending group invite via the internal handler.
+    Group* invite = b->GetGroupInvite();
+    if (!invite)
+        return false;
+    b->UninviteFromGroup();
+    // The player was already added as an invitee — accepting finalizes membership.
+    invite->AddMember(b->GetObjectGuid(), b->GetName());
+    return true;
+}
+
+bool BotBridge::CB_LeaveGroup(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    Group* group = b->GetGroup();
+    if (!group)
+        return false;
+    group->RemoveMember(b->GetObjectGuid(), 0);
+    return true;
+}
+
+bool BotBridge::CB_AcceptReadyCheck(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    Group* group = b->GetGroup();
+    if (!group)
+        return false;
+    // Send a positive ready-check response. Classic uses MSG_RAID_READY_CHECK
+    // for both the initial check and the confirm response.
+    WorldPacket data(MSG_RAID_READY_CHECK, 8);
+    data << b->GetObjectGuid();
+    data << uint8(1); // ready
+    group->BroadcastPacket(data, false, -1, b->GetObjectGuid());
+    return true;
+}
+
+bool BotBridge::CB_AcceptTrade(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    // Check if the bot has an active trade window.
+    if (!b->GetTrader())
+        return false;
+    // Accept via the session handler, same approach as PB2.
+    WorldPacket p;
+    b->GetSession()->HandleAcceptTradeOpcode(p);
+    return true;
+}
+
+bool BotBridge::CB_AcceptDuel(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b || !b->duel || b->duel->startTime)
+        return false;
+    // Accept: the arbiter GO starts the countdown and the client plays
+    // the duel animation.
+    b->DuelComplete(DUEL_INTERRUPTED);  // This clears the pending request
+    // NOTE: a proper accept would mirror CMSG_DUEL_ACCEPTED handling.
+    // Since the C++ API doesn't expose a clean "accept" helper, we
+    // stub this — it will be fleshed out when duel strategies land.
+    return false; // stub — returns false until full impl
+}
+
+bool BotBridge::CB_DeclineDuel(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b || !b->duel)
+        return false;
+    b->DuelComplete(DUEL_INTERRUPTED);
+    return true;
+}
+
+bool BotBridge::CB_AcceptSummon(BotHandle bot)
+{
+    // Stub — Player::m_summon_expire and m_summoner are private on this
+    // fork and there is no public getter. SummonIfPossible requires the
+    // summoner GUID which we can't retrieve. Summon acceptance would need
+    // either a friend declaration or a core patch exposing a getter.
+    (void)bot;
+    return false;
+}
+
+bool BotBridge::CB_UseMeetingStone(BotHandle bot)
+{
+    // Meeting stone interaction is complex and requires nearby GO detection
+    // + instance/level eligibility. Stub for now — returns false.
+    (void)bot;
+    return false;
+}
+
+// ── PvP / duel / faction (11d) ────────────────────────────────────────────
+
+bool BotBridge::CB_IsPvpFlagged(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    return b->IsPvP();
+}
+
+uint8_t BotBridge::CB_DuelState(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b || !b->duel)
+        return 0;
+    // `DuelInfo::startTime` is only set once the countdown finishes and
+    // the fight actually begins. Before that, the struct exists but
+    // startTime is 0 — that's the "challenged / countdown" window.
+    return b->duel->startTime ? 2 : 1;
+}
+
+uint8_t BotBridge::CB_ReputationRank(BotHandle bot, uint32_t faction_id)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 3; // neutral fallback — safe default for missing player
+    FactionEntry const* f = sFactionStore.LookupEntry(faction_id);
+    if (!f)
+        return 255;
+    return static_cast<uint8_t>(b->GetReputationMgr().GetRank(f));
 }
 
 UnitHandle BotBridge::CB_FindDeadPartyMember(BotHandle bot)
@@ -3680,4 +4113,164 @@ void BotBridge::CB_BotFreeString(char* s)
 {
     if (s)
         std::free(s);
+}
+
+// ── Loot rolling ────────────────────────────────────────────────────────
+
+uint32_t BotBridge::CB_GetPendingRollCount(BotHandle bot)
+{
+    // Stub — on the Karatefylla fork, loot rolls are managed through
+    // LootMgr and there's no simple way to iterate pending rolls for
+    // a specific player without a loot target GUID. The auto-roll is
+    // handled via the packet path in PlayerbotMgr instead.
+    // Return 0 so Bt::AutoLootRoll is a no-op.
+    (void)bot;
+    return 0;
+}
+
+bool BotBridge::CB_AutoLootRoll(BotHandle bot)
+{
+    // Stub — loot rolling handled via packet path in PlayerbotMgr.
+    (void)bot;
+    return false;
+}
+
+bool BotBridge::CB_CastLootRoll(BotHandle bot, uint8_t vote)
+{
+    // Stub — loot rolling handled via packet path in PlayerbotMgr.
+    (void)bot;
+    (void)vote;
+    return false;
+}
+
+// ── Travel destination queries ──────────────────────────────────────────
+
+BotTravelDest* BotBridge::CB_BotFindTravelDests(
+    BotHandle bot,
+    uint32_t purpose_flags,
+    float max_range,
+    uint32_t max_results,
+    uint32_t* out_count)
+{
+    *out_count = 0;
+
+    Player* b = FindBot(bot);
+    if (!b)
+        return nullptr;
+
+    if (max_range <= 0.0f)
+        max_range = 1000.0f;
+    if (max_results == 0)
+        max_results = 10;
+
+    // Collect candidate NPCs/GOs within range using CMaNGOS grid search.
+    // We search for creatures matching NPC flags corresponding to the
+    // requested purpose flags.
+    struct DestCandidate {
+        int32_t  entry;
+        uint32_t quest_id;
+        uint32_t purpose;
+        uint32_t map_id;
+        float    x, y, z;
+        float    dist_sq;
+    };
+    std::vector<DestCandidate> candidates;
+
+    // Map purpose flags to NPC flag searches.
+    auto check_npc_flag = [&](uint32_t purpose_bit, uint32_t npc_flag) {
+        if (!(purpose_flags & purpose_bit))
+            return;
+
+        // Grid search for creatures within range.
+        UnitList nearby;
+        MaNGOS::AnyUnitInObjectRangeCheck check(b, max_range);
+        MaNGOS::UnitListSearcher<MaNGOS::AnyUnitInObjectRangeCheck> searcher(nearby, check);
+        Cell::VisitAllObjects(b, searcher, max_range);
+
+        for (auto* unit : nearby)
+        {
+            auto* creature = dynamic_cast<Creature*>(unit);
+            if (!creature || !creature->IsAlive())
+                continue;
+
+            if (!(creature->GetCreatureInfo()->NpcFlags & npc_flag))
+                continue;
+
+            float cx = creature->GetPositionX();
+            float cy = creature->GetPositionY();
+            float cz = creature->GetPositionZ();
+            float dx = b->GetPositionX() - cx;
+            float dy = b->GetPositionY() - cy;
+            float dsq = dx * dx + dy * dy;
+
+            candidates.push_back({
+                static_cast<int32_t>(creature->GetEntry()),
+                0,
+                purpose_bit,
+                creature->GetMapId(),
+                cx, cy, cz,
+                dsq
+            });
+        }
+    };
+
+    // PB2 TravelPurpose bit flags -> CMaNGOS NPC flags.
+    // VENDOR = 1<<9, REPAIR = 1<<8, TRAINER = 1<<7
+    check_npc_flag(1 << 9, UNIT_NPC_FLAG_VENDOR);    // Vendor
+    check_npc_flag(1 << 8, UNIT_NPC_FLAG_REPAIR);    // Repair
+    check_npc_flag(1 << 7, UNIT_NPC_FLAG_TRAINER);   // Trainer
+    check_npc_flag(1 << 0, UNIT_NPC_FLAG_QUESTGIVER); // Quest giver
+    check_npc_flag(1 << 10, UNIT_NPC_FLAG_AUCTIONEER); // AH
+    // Flight master
+    if (purpose_flags & (1 << 7)) // Trainer also covers flight master for now
+    {
+        check_npc_flag(1 << 7, UNIT_NPC_FLAG_FLIGHTMASTER);
+    }
+
+    // Sort by distance.
+    std::sort(candidates.begin(), candidates.end(),
+        [](const DestCandidate& a, const DestCandidate& b) {
+            return a.dist_sq < b.dist_sq;
+        });
+
+    // Deduplicate by entry — keep only the nearest instance of each entry.
+    std::unordered_set<int32_t> seen_entries;
+    std::vector<DestCandidate> unique;
+    for (auto& c : candidates)
+    {
+        if (seen_entries.count(c.entry))
+            continue;
+        seen_entries.insert(c.entry);
+        unique.push_back(c);
+        if (unique.size() >= max_results)
+            break;
+    }
+
+    if (unique.empty())
+        return nullptr;
+
+    auto* result = static_cast<BotTravelDest*>(
+        std::malloc(sizeof(BotTravelDest) * unique.size()));
+    if (!result)
+        return nullptr;
+
+    for (size_t i = 0; i < unique.size(); ++i)
+    {
+        result[i].entry = unique[i].entry;
+        result[i].quest_id = unique[i].quest_id;
+        result[i].purpose = unique[i].purpose;
+        result[i].map_id = unique[i].map_id;
+        result[i].x = unique[i].x;
+        result[i].y = unique[i].y;
+        result[i].z = unique[i].z;
+    }
+
+    *out_count = static_cast<uint32_t>(unique.size());
+    return result;
+}
+
+void BotBridge::CB_BotFreeTravelDests(BotTravelDest* list)
+{
+    if (list)
+        std::free(list);
 }

@@ -59,6 +59,9 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     // 4.5 Process pending chat commands → mutate settings
     crate::commands::process_commands(bot);
 
+    // 4.6 Update travel target FSM — check status, sync to blackboard.
+    update_travel_target(bot, now_ms);
+
     // 5. Build TickContext and run BT
     //
     // Destructure bot so the borrow checker sees each field independently.
@@ -193,4 +196,55 @@ fn process_events(bot: &mut BotState, _now_ms: u64) {
             && !enc.is_active() {
                 enc.update(&EncounterEvent::CombatStarted, boss_hp_pct, now_ms);
             }
+}
+
+/// Update the travel target FSM and sync its destination to the blackboard.
+///
+/// Called before the BT runs each tick. This handles:
+/// - Checking if the current travel status should advance/expire.
+/// - Writing the active destination coords to the blackboard so
+///   `TravelToBlackboard` can navigate there.
+/// - Clearing the blackboard when the target is no longer active.
+fn update_travel_target(bot: &mut BotState, now_ms: u64) {
+    use crate::engine::blackboard::Key;
+    use crate::travel::planner;
+    use crate::travel::destination::TravelStatus;
+
+    let pos = &bot.snap.self_.pos;
+    let tt = &mut bot.travel_target;
+
+    // Skip if no active target.
+    if !tt.is_active() {
+        // Make sure blackboard is clear if target is gone.
+        if bot.blackboard.get_f32(Key::TravelDestX).is_some() {
+            planner::clear_travel_dest(&mut bot.blackboard);
+        }
+        return;
+    }
+
+    // Check arrival — are we within 5 yards of the destination?
+    let at_dest = tt.destination.dist_sq_2d(pos.x, pos.y) < 25.0;
+
+    // Advance FSM.
+    tt.check_status(now_ms, at_dest);
+
+    // Sync to blackboard based on status.
+    match tt.status {
+        TravelStatus::Travel => {
+            // Write destination to blackboard so TravelToBlackboard picks it up.
+            planner::set_travel_dest(&mut bot.blackboard, &tt.destination);
+        }
+        TravelStatus::Work | TravelStatus::Cooldown => {
+            // Clear the movement destination — we've arrived.
+            planner::clear_travel_dest(&mut bot.blackboard);
+        }
+        TravelStatus::Expired | TravelStatus::None => {
+            // Target is done — clear everything.
+            planner::clear_travel_dest(&mut bot.blackboard);
+            tt.clear();
+        }
+        _ => {
+            // Prepare/Ready — don't move yet.
+        }
+    }
 }

@@ -1,7 +1,10 @@
 pub mod baron_geddon;
 pub mod garr;
+pub mod gehennas;
+pub mod golemagg;
 pub mod lucifron;
 pub mod magmadar;
+pub mod majordomo;
 /// Molten Core — 10 boss encounters.
 ///
 /// Zone ID: 2717.  40-player raid.
@@ -14,9 +17,10 @@ pub mod magmadar;
 /// waiting for a raid-leader command.
 pub mod ragnaros;
 pub mod shazzrah;
+pub mod sulfuron;
 
 use super::macros::encounter_dispatch;
-use super::{EncounterEvent, EncounterFsm, SimpleFsm};
+use super::{EncounterEvent, EncounterFsm};
 use crate::Sel;
 use crate::Seq;
 use crate::bot::encounter_prefs::DutyMode;
@@ -26,10 +30,14 @@ use crate::engine::context::TickContext;
 use crate::ffi::ItemId;
 pub use baron_geddon::BaronGeddonFsm;
 pub use garr::GarrFsm;
+pub use gehennas::GehennasFsm;
+pub use golemagg::GolemaggFsm;
 pub use lucifron::LucifronFsm;
 pub use magmadar::MagmadarFsm;
+pub use majordomo::MajordomoFsm;
 pub use ragnaros::RagnarosFsm;
 pub use shazzrah::ShazzrahFsm;
+pub use sulfuron::SulfuronFsm;
 
 // ── NPC entry IDs ─────────────────────────────────────────────────────────
 
@@ -67,18 +75,16 @@ pub const ITEM_ETERNAL_QUINTESSENCE: ItemId = ItemId(22754);
 encounter_dispatch! {
     #[derive(Clone, PartialEq)]
     pub enum MoltenCoreBoss {
-        Generic(SimpleFsm),
         Lucifron(LucifronFsm),
         Magmadar(MagmadarFsm),
+        Gehennas(GehennasFsm),
         Garr(GarrFsm),
         BaronGeddon(BaronGeddonFsm),
         Shazzrah(ShazzrahFsm),
+        Sulfuron(SulfuronFsm),
+        Golemagg(GolemaggFsm),
+        Majordomo(MajordomoFsm),
         Ragnaros(RagnarosFsm),
-        // Gehennas, Sulfuron, Golemagg, and Majordomo route through
-        // Generic(SimpleFsm) above — their mechanics (curse dispel,
-        // priest-first targeting, Core Rager avoidance, add kill-order)
-        // require Bt primitives that don't exist yet. Promote to typed
-        // FSMs when those primitives land.
     }
 }
 
@@ -86,15 +92,16 @@ impl TryFrom<u32> for MoltenCoreBoss {
     type Error = ();
     fn try_from(entry: u32) -> Result<Self, Self::Error> {
         match entry {
-            ENTRY_RAGNAROS => Ok(Self::Ragnaros(RagnarosFsm::default())),
-            ENTRY_BARON_GEDDON => Ok(Self::BaronGeddon(BaronGeddonFsm::default())),
-            ENTRY_MAGMADAR => Ok(Self::Magmadar(MagmadarFsm::default())),
             ENTRY_LUCIFRON => Ok(Self::Lucifron(LucifronFsm::default())),
+            ENTRY_MAGMADAR => Ok(Self::Magmadar(MagmadarFsm::default())),
+            ENTRY_GEHENNAS => Ok(Self::Gehennas(GehennasFsm::default())),
             ENTRY_GARR => Ok(Self::Garr(GarrFsm::default())),
+            ENTRY_BARON_GEDDON => Ok(Self::BaronGeddon(BaronGeddonFsm::default())),
             ENTRY_SHAZZRAH => Ok(Self::Shazzrah(ShazzrahFsm::default())),
-            ENTRY_GEHENNAS | ENTRY_SULFURON | ENTRY_GOLEMAGG | ENTRY_MAJORDOMO => {
-                Ok(Self::Generic(SimpleFsm::new(entry)))
-            }
+            ENTRY_SULFURON => Ok(Self::Sulfuron(SulfuronFsm::default())),
+            ENTRY_GOLEMAGG => Ok(Self::Golemagg(GolemaggFsm::default())),
+            ENTRY_MAJORDOMO => Ok(Self::Majordomo(MajordomoFsm::default())),
+            ENTRY_RAGNAROS => Ok(Self::Ragnaros(RagnarosFsm::default())),
             _ => Err(()),
         }
     }

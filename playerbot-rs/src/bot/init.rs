@@ -437,11 +437,19 @@ fn build_root_tree(class: PlayerClass, spec: PlayerSpec) -> Bt {
         ModeIs(BehaviorMode::Passive),
         // 3. Eat/drink — out of combat only.
         Seq!(InCombat.not(), Consumables),
-        // 4. Encounter override.
-        EncounterOverride,
-        // 5. In combat → reactive + rotation.
+        // 4. Duel request handling — accept if duel strategy enabled, else decline.
         Seq!(
-            Sel!(InCombat, ShouldEngage),
+            Bt::DuelRequested,
+            Sel!(
+                Seq!(Bt::StrategyEnabled(StrategyFlags::DUEL), Bt::AcceptDuelRequest),
+                Bt::DeclineDuelRequest,
+            ),
+        ),
+        // 5. Encounter override.
+        EncounterOverride,
+        // 6. In combat → reactive + rotation (duels use normal combat).
+        Seq!(
+            Sel!(InCombat, ShouldEngage, Bt::InDuel),
             combat_wrapper(combat_tree),
         ),
         // 6. Out-of-combat mode dispatch.
@@ -451,17 +459,40 @@ fn build_root_tree(class: PlayerClass, spec: PlayerSpec) -> Bt {
     )
 }
 
-/// Wrap a class rotation in the shared reactive subtrees (flee, interrupt,
-/// dispel, threat, targeting) that apply to every class.
+/// Wrap a class rotation in the shared reactive subtrees that apply to
+/// every class. Priority order (highest first):
+///   1. Flee — emergency escape
+///   2. Interrupt — stop enemy casts
+///   3. Heal interrupt — cancel own cast for emergency (stub)
+///   4. Dispel — remove party debuffs
+///   5. Resurrect — rez dead party members
+///   6. Threat — dump threat when pulling aggro
+///   7. Pull-back — return to group after pulling
+///   8. Pre-heal — front-load heals as combat starts (stub)
+///   9. Targeting — select correct target
+///  10. Mark RTI — tank marks kill target
+///  11. Positioning (close / ranged / behind / kite)
+///  12. Curse upkeep
+///  13. Class rotation
 fn combat_wrapper(class_rotation: Bt) -> Bt {
     use Bt::MaintainConfiguredCurse;
     Sel!(
         reactive::flee_subtree(),
         reactive::interrupt_subtree(),
+        reactive::heal_interrupt_subtree(),
         reactive::dispel_subtree(),
         reactive::resurrect_subtree(),
         reactive::threat_subtree(),
+        reactive::pull_back_subtree(),
+        reactive::preheal_subtree(),
         reactive::targeting_subtree(),
+        reactive::mark_rti_subtree(),
+        // Positioning — only one of these fires per tick based on
+        // which strategy flags are active for this bot's spec.
+        reactive::close_subtree(),
+        reactive::ranged_subtree(),
+        reactive::behind_subtree(),
+        reactive::kite_subtree(),
         // Warlock curse upkeep on the current target (no-op for other
         // classes — self-filters via `ClassPrefs::as_warlock`).
         Bt::throttle(2_000, MaintainConfiguredCurse),
@@ -491,6 +522,7 @@ fn mode_dispatch() -> Bt {
             ModeIs(BehaviorMode::Follow),
             Sel!(
                 Follow,
+                crate::strategies::travel::build(),
                 world::rpg::rpg_subtree(),
                 world::grind::grind_subtree(),
             ),
@@ -544,6 +576,13 @@ fn maintenance_subtree(buffs: &'static [GroupBuff]) -> Bt {
             InCombat.not(),
             Bt::throttle(30_000, ApplyShamanImbues),
         ),
+        // Auto-roll on pending loot items (delayed roll strategy).
+        Bt::throttle(2_000, Bt::AutoLootRoll),
+        // Check mail when near a mailbox.
+        Bt::throttle(10_000, Bt::CheckMail),
+        // Learn level-appropriate spells and apply talent build.
+        Bt::throttle(60_000, Bt::LearnTrainerSpells),
+        Bt::throttle(60_000, Bt::ApplyTalentBuild),
         world::pet::pet_subtree(),
         world::loot::loot_subtree(),
         world::gather::gather_subtree(),

@@ -15,7 +15,7 @@ pub mod types;
 pub use bindings::{
     BotAuraInfo, BotCallbacks, BotDispelTarget, BotHandle, BotMailSummary, BotPosition,
     BotQuestInfo, BotReputationEntry, BotSafePosition, BotSkillEntry, BotSpellInfo, BotTalentEntry,
-    BotTaxiNode, BotThreatEntry, BotUnitSnapshot, BotWorldSnapshot, UnitHandle,
+    BotTaxiNode, BotThreatEntry, BotTravelDest, BotUnitSnapshot, BotWorldSnapshot, UnitHandle,
 };
 
 // Re-export newtypes for use throughout the crate.

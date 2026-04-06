@@ -1,4 +1,5 @@
-/// Reactive combat behaviors — interrupt, dispel, resurrect, flee, threat.
+/// Reactive combat behaviors — interrupt, dispel, resurrect, flee, threat,
+/// pull-back, positioning, and more.
 ///
 /// These wrap around class-specific rotations in the root BT.
 /// They fire based on conditions and have higher priority than
@@ -7,6 +8,7 @@
 /// The class rotation itself is a `Box<dyn BtNode>` (closure-based),
 /// so the combat wrapper is built in `bot::init` as a `Box<dyn BtNode>`
 /// selector containing both `Bt` enum nodes and the class rotation.
+use crate::bot::settings::StrategyFlags;
 use crate::bot::state::PlayerClass;
 use crate::engine::bt::Bt::{self, *};
 use crate::{Seq, Sel};
@@ -54,6 +56,71 @@ pub fn resurrect_subtree() -> Bt {
 /// Threat dump when DPS is about to pull aggro.
 pub fn threat_subtree() -> Bt {
     Seq!(IsTank.not(), InCombat, PullingAggro, ThreatDump)
+}
+
+/// Pull-back after pulling — return to the group, then wait for the
+/// mob to arrive. Gated on the PULL_BACK strategy flag (tanks only).
+pub fn pull_back_subtree() -> Bt {
+    Seq!(
+        StrategyEnabled(StrategyFlags::PULL_BACK),
+        PullBack,
+        WaitForAttack,
+    )
+}
+
+/// Pre-heal: healers cast a heal on an injured party member as combat
+/// starts. Gated on the HEAL strategy flag (but currently the leaf
+/// itself is a stub — class files provide the real implementation).
+pub fn preheal_subtree() -> Bt {
+    Bt::throttle(2_000, PreHeal)
+}
+
+/// Interrupt own cast in an emergency. Currently a stub — the FFI
+/// callback for self-cast-interrupt hasn't been added yet.
+pub fn heal_interrupt_subtree() -> Bt {
+    HealInterrupt
+}
+
+/// Kite: ranged DPS move away when an attacker enters melee range.
+/// Gated on CLOSE strategy flag (reused for kite, matching kite.rs).
+pub fn kite_subtree() -> Bt {
+    Seq!(
+        StrategyEnabled(StrategyFlags::CLOSE),
+        Bt::throttle(1_000, KiteFromTarget(8.0)),
+    )
+}
+
+/// Close to melee range. Gated on the CLOSE strategy flag.
+pub fn close_subtree() -> Bt {
+    Seq!(
+        StrategyEnabled(StrategyFlags::CLOSE),
+        CloseToTarget(5.0),
+    )
+}
+
+/// Maintain ranged distance. Gated on the RANGED strategy flag.
+pub fn ranged_subtree() -> Bt {
+    Seq!(
+        StrategyEnabled(StrategyFlags::RANGED),
+        MaintainRange(25.0),
+    )
+}
+
+/// Stay behind the target. Gated on the BEHIND strategy flag.
+pub fn behind_subtree() -> Bt {
+    Seq!(
+        StrategyEnabled(StrategyFlags::BEHIND),
+        Bt::throttle(1_000, MoveBehind(2.0)),
+    )
+}
+
+/// Mark the current target with the raid target icon (skull by default).
+/// Gated on TANK_ASSIST — only tanks/leaders should mark targets.
+pub fn mark_rti_subtree() -> Bt {
+    Seq!(
+        StrategyEnabled(StrategyFlags::TANK_ASSIST),
+        Bt::throttle(3_000, MarkRti(7)),
+    )
 }
 
 /// Target selection based on combat order and settings.

@@ -20,10 +20,14 @@ pub mod macros;
 pub mod molten_core;
 pub mod naxxramas;
 pub mod onyxias_lair;
+pub mod zul_gurub;
 
 // TBC content
 #[cfg(any(feature = "tbc", feature = "wotlk"))]
 pub mod karazhan;
+
+// Battlegrounds
+pub mod bg;
 
 use crate::engine::bt::Bt;
 use crate::ffi::SpellId;

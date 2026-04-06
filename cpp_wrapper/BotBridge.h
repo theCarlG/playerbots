@@ -72,6 +72,7 @@ namespace BotBridge
     bool CB_StopMoving(BotHandle bot);
     bool CB_Attack(BotHandle bot, UnitHandle target);
     bool CB_AutoAttack(BotHandle bot, bool enable);
+    bool CB_AutoShoot(BotHandle bot, UnitHandle target);
     bool CB_Say(BotHandle bot, const char* msg, uint32_t lang);
     bool CB_Whisper(BotHandle bot, uint64_t target_guid, const char* msg);
     bool CB_TellPlayer(BotHandle bot, uint64_t target_guid, const char* msg);
@@ -87,6 +88,7 @@ namespace BotBridge
     UnitHandle CB_GroupGetHealer(BotHandle bot);
     uint8_t    CB_GroupGetRole(BotHandle bot, UnitHandle member);
     UnitHandle CB_GetUnitWithRaidIcon(BotHandle bot, uint8_t icon);
+    bool       CB_GroupSetTargetIcon(BotHandle bot, UnitHandle target, uint8_t icon);
 
     // ── Death / resurrection ───────────────────────────────────────────────
     bool        CB_AcceptResurrect(BotHandle bot);
@@ -124,6 +126,7 @@ namespace BotBridge
     bool    CB_IsAttackable(BotHandle bot, UnitHandle target);
     uint8_t CB_GetUnitLevel(BotHandle bot, UnitHandle target);
     bool    CB_IsCastingInterruptible(BotHandle bot, UnitHandle target);
+    uint8_t CB_UnitKind(BotHandle bot, UnitHandle target);
 
     // ── Pet management ─────────────────────────────────────────────────────
     bool    CB_HasPet(BotHandle bot);
@@ -134,8 +137,30 @@ namespace BotBridge
     bool    CB_FeedPet(BotHandle bot);
 
     // ── Dispel / party queries ─────────────────────────────────────────────
-    BotDispelTarget CB_FindDispellableTarget(BotHandle bot);
+    BotDispelTarget CB_FindDispellableTarget(BotHandle bot, uint8_t dispel_mask);
     UnitHandle      CB_FindDeadPartyMember(BotHandle bot);
+
+    // ── Consumables: potion query ──────────────────────────────────────────
+    uint32_t CB_FindPotionInBags(BotHandle bot, uint8_t category);
+    bool     CB_PotionCooldownReady(BotHandle bot);
+
+    // ── Consumables: trinket activation (11h) ──────────────────────────────
+    bool     CB_UseTrinket(BotHandle bot, uint8_t slot);
+
+    // ── Social / group actions (11i) ────────────────────────────────────────
+    bool CB_AcceptGroupInvite(BotHandle bot);
+    bool CB_LeaveGroup(BotHandle bot);
+    bool CB_AcceptReadyCheck(BotHandle bot);
+    bool CB_AcceptTrade(BotHandle bot);
+    bool CB_AcceptDuel(BotHandle bot);
+    bool CB_DeclineDuel(BotHandle bot);
+    bool CB_AcceptSummon(BotHandle bot);
+    bool CB_UseMeetingStone(BotHandle bot);
+
+    // ── PvP / duel / faction (11d) ─────────────────────────────────────────
+    bool    CB_IsPvpFlagged(BotHandle bot);
+    uint8_t CB_DuelState(BotHandle bot);
+    uint8_t CB_ReputationRank(BotHandle bot, uint32_t faction_id);
 
     // ── Battleground ───────────────────────────────────────────────────────
     bool            CB_IsInBattleground(BotHandle bot);
@@ -252,6 +277,17 @@ namespace BotBridge
     bool CB_BotWriteLogFile(BotHandle bot, const char* name, const char* body);
     bool CB_BotReadLogFile(BotHandle bot, const char* name, char** out_body);
     void CB_BotFreeString(char* s);
+
+    // ── Loot rolling ──────────────────────────────────────────────────────
+    uint32_t        CB_GetPendingRollCount(BotHandle bot);
+    bool            CB_AutoLootRoll(BotHandle bot);
+    bool            CB_CastLootRoll(BotHandle bot, uint8_t vote);
+
+    // ── Travel destination queries ────────────────────────────────────────
+    BotTravelDest*  CB_BotFindTravelDests(BotHandle bot, uint32_t purpose_flags,
+                                           float max_range, uint32_t max_results,
+                                           uint32_t* out_count);
+    void            CB_BotFreeTravelDests(BotTravelDest* list);
 
     // ── Internal helpers ────────────────────────────────────────────────────
     Player* FindBot(BotHandle bot);
