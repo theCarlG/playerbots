@@ -56,6 +56,11 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     // 4. Process push events
     process_events(bot, now_ms);
 
+    // 4.1 Auto-respond to pending group invites (PB2 parity).
+    // NOTE: Ready checks are handled C++-side (packet-driven, not polled)
+    // to avoid spamming responses every tick.
+    bot.interface.accept_group_invite();
+
     // 4.5 Process pending chat commands → mutate settings
     crate::commands::process_commands(bot);
 
@@ -66,6 +71,8 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     //
     // Destructure bot so the borrow checker sees each field independently.
     // This avoids the raw pointer cast that was previously needed.
+    let monitor_active = bot.monitor_active;
+
     let BotState {
         ref snap,
         ref attackers,
@@ -107,9 +114,52 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         class,
         role,
         settings,
+        monitor_trace: if monitor_active {
+            Some(std::cell::RefCell::new(Vec::new()))
+        } else {
+            None
+        },
     };
 
     let _ = root_tree.tick(&mut ctx);
+
+    // 6. Monitor: BT path tracing + throttled tick summary
+    //
+    // Collect data from `ctx` first (which borrows `bot` fields), then
+    // drop the borrows before accessing `bot` directly for logging.
+    let monitor_path = if monitor_active {
+        ctx.monitor_trace
+            .as_ref()
+            .map(|trace| trace.borrow().join(" > "))
+    } else {
+        None
+    };
+    // Collect monitor diagnostic lines before dropping ctx.
+    let monitor_lines: Vec<String> = if monitor_active {
+        ctx.blackboard.drain_monitor_lines().collect()
+    } else {
+        Vec::new()
+    };
+    drop(ctx);
+    drop(ctx_group);
+    if monitor_active {
+        if let Some(path) = monitor_path {
+            if !path.is_empty() && path != bot.last_bt_path {
+                crate::bot::monitor::monitor_bt_path(bot, &path);
+                bot.last_bt_path = path;
+            }
+        }
+        for line in monitor_lines {
+            crate::bot::monitor::monitor_log(bot, &line);
+        }
+        if now_ms.saturating_sub(bot.last_monitor_summary_ms) >= 5000 {
+            crate::bot::monitor::monitor_tick_summary(bot);
+            if !bot.last_bt_path.is_empty() {
+                crate::bot::monitor::monitor_bt_path(bot, &bot.last_bt_path);
+            }
+            bot.last_monitor_summary_ms = now_ms;
+        }
+    }
 
     // 7. Advance timers
     bot.timers.advance(now_ms);

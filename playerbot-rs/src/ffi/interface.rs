@@ -600,6 +600,64 @@ pub trait BotInterface: Send {
         Vec::new()
     }
 
+    /// Resolve a spell name (case-insensitive) to a spell ID by querying the
+    /// server's spell store. Returns the highest rank the bot knows, or the
+    /// highest rank in the store if the bot doesn't know any. Returns 0 on miss.
+    fn resolve_spell_by_name(&self, _name: &str) -> u32 {
+        0
+    }
+
+    /// Resolve an item name (case-insensitive) to an item ID by querying the
+    /// server's item store. Prefers exact matches over substring matches.
+    /// Returns 0 on miss.
+    fn resolve_item_by_name(&self, _name: &str) -> u32 {
+        0
+    }
+
+    /// Equip an item by ID in the bot's best available slot.
+    /// Returns true if the item was successfully equipped.
+    fn equip_item(&self, _item_id: ItemId) -> bool {
+        false
+    }
+
+    /// Transfer group/raid leadership from the bot to `target_guid`.
+    /// Returns true if the bot was the leader and the transfer succeeded.
+    fn give_leader(&self, _target_guid: UnitHandle) -> bool {
+        false
+    }
+
+    /// Resolve a player name (case-insensitive) to their ObjectGuid.
+    /// Returns 0 when no player matches.
+    fn resolve_player_by_name(&self, _name: &str) -> UnitHandle {
+        0
+    }
+
+    /// Unequip the item with the given item_id from equipped slots, moving it to bags.
+    /// Returns true if the item was successfully unequipped.
+    fn unequip_item(&self, _item_id: ItemId) -> bool {
+        false
+    }
+
+    /// Invite a player (by GUID) to the bot's group, creating one if needed.
+    fn invite_to_group(&self, _target_guid: UnitHandle) -> bool {
+        false
+    }
+
+    /// Destroy the first stack of `item_id` found in inventory.
+    fn destroy_item(&self, _item_id: ItemId) -> bool {
+        false
+    }
+
+    /// Share a quest with the party. quest_id=0 means first shareable quest.
+    fn share_quest(&self, _quest_id: u32) -> bool {
+        false
+    }
+
+    /// Perform a text emote (/wave, /dance, etc).
+    fn do_text_emote(&self, _emote_id: u32) -> bool {
+        false
+    }
+
     /* ── Bag slot management ─────────────────────────────────────────── */
 
     /// Number of empty equipped bag slots (0..=4).
@@ -791,6 +849,11 @@ pub trait BotInterface: Send {
         false
     }
 
+    /// Append a line to a bot-data file (opens in append mode, not truncate).
+    fn bot_append_log_file(&self, _name: &str, _line: &str) -> bool {
+        false
+    }
+
     /// Read the contents of a bot-data file written via `bot_write_log_file`.
     fn bot_read_log_file(&self, _name: &str) -> Option<String> {
         None
@@ -825,6 +888,132 @@ pub trait BotInterface: Send {
         _max_results: u32,
     ) -> Vec<BotTravelDest> {
         vec![]
+    }
+
+    /* ── World buffs ────────────────────────────────────────────────── */
+
+    /// Directly apply aura `spell_id` to the bot (bypasses normal casting).
+    fn add_aura(&self, _spell_id: u32) -> bool {
+        false
+    }
+
+    /// Get the list of world buff spell IDs the bot is missing per config
+    /// (`AiPlayerbot.WorldBuff.*` with faction/class/spec/level filtering).
+    fn get_needed_world_buffs(&self) -> Vec<u32> {
+        vec![]
+    }
+
+    /* ── Heal interrupt ─────────────────────────────────────────────── */
+
+    /// Interrupt the bot's own current cast. Returns true if a cast was cancelled.
+    fn interrupt_own_cast(&self) -> bool {
+        false
+    }
+
+    /* ── NPC interaction (gossip) ────────────────────────────────────── */
+
+    /// Gossip-hello with a nearby NPC matching `entry`.
+    fn gossip_hello(&self, _npc_entry: u32) -> bool {
+        false
+    }
+
+    /// Buy `qty` of `item_id` from a nearby vendor.
+    fn buy_from_vendor(&self, _item_id: u32, _qty: u32) -> bool {
+        false
+    }
+
+    /* ── Mail ────────────────────────────────────────────────────────── */
+
+    /// Send an item from the bot's bags to the master.
+    fn mail_item_to_master(&self) -> bool {
+        false
+    }
+
+    /* ── Bank ────────────────────────────────────────────────────────── */
+
+    /// Deposit excess items into the bank.
+    fn bank_deposit(&self) -> bool {
+        false
+    }
+
+    /// Withdraw useful items from the bank.
+    fn bank_withdraw(&self) -> bool {
+        false
+    }
+
+    /* ── Auction house ───────────────────────────────────────────────── */
+
+    /// Post items on the auction house.
+    fn ah_post(&self) -> bool {
+        false
+    }
+
+    /// Bid on auction house listings.
+    fn ah_bid(&self) -> bool {
+        false
+    }
+
+    /* ── Outfit ──────────────────────────────────────────────────────── */
+
+    /// Apply the current saved outfit.
+    fn apply_outfit(&self) -> bool {
+        false
+    }
+
+    /* ── Fishing ─────────────────────────────────────────────────────── */
+
+    /// Start fishing (equip pole + cast).
+    fn start_fishing(&self) -> bool {
+        false
+    }
+
+    /* ── BG/Arena ────────────────────────────────────────────────────── */
+
+    /// Queue the bot for a random battleground.
+    fn queue_bg(&self) -> bool {
+        false
+    }
+
+    /// Accept a pending BG invitation.
+    fn accept_bg_invite(&self) -> bool {
+        false
+    }
+
+    /// Get the position of a BG objective.
+    /// `objective_type`: 0=defend, 1=assault, 2=flag, 3=return_flag.
+    fn get_bg_objective_pos(&self, _objective_type: u8) -> BotPosition {
+        BotPosition { x: 0.0, y: 0.0, z: 0.0, o: 0.0, map_id: 0 }
+    }
+
+    /* ── LFG ─────────────────────────────────────────────────────────── */
+
+    /// Join the LFG queue (WotLK only).
+    fn lfg_join(&self) -> bool {
+        false
+    }
+
+    /// Accept a pending LFG proposal (WotLK only).
+    fn lfg_accept(&self) -> bool {
+        false
+    }
+
+    /* ── Dungeon awareness ───────────────────────────────────────────── */
+
+    /// Get the tank's current position for stay-near-tank logic.
+    fn get_tank_position(&self) -> BotPosition {
+        BotPosition { x: 0.0, y: 0.0, z: 0.0, o: 0.0, map_id: 0 }
+    }
+
+    /// Check if the given target has an active CC.
+    fn is_unit_cc(&self, _target: UnitHandle) -> bool {
+        false
+    }
+
+    /* ── Debug ───────────────────────────────────────────────────────── */
+
+    /// Dump debug state. kind: 0=full, 1=strategies, 2=blackboard.
+    fn debug_dump_state(&self, _kind: u8) -> bool {
+        false
     }
 }
 
@@ -1541,6 +1730,49 @@ impl BotInterface for RealInterface {
         out
     }
 
+    fn resolve_spell_by_name(&self, name: &str) -> u32 {
+        let c_name = std::ffi::CString::new(name).unwrap_or_default();
+        unsafe { (self.cbs.resolve_spell_by_name.unwrap())(self.handle, c_name.as_ptr()) }
+    }
+
+    fn resolve_item_by_name(&self, name: &str) -> u32 {
+        let c_name = std::ffi::CString::new(name).unwrap_or_default();
+        unsafe { (self.cbs.resolve_item_by_name.unwrap())(self.handle, c_name.as_ptr()) }
+    }
+
+    fn equip_item(&self, item_id: ItemId) -> bool {
+        unsafe { (self.cbs.equip_item.unwrap())(self.handle, item_id.raw()) }
+    }
+
+    fn give_leader(&self, target_guid: UnitHandle) -> bool {
+        unsafe { (self.cbs.give_leader.unwrap())(self.handle, target_guid) }
+    }
+
+    fn resolve_player_by_name(&self, name: &str) -> UnitHandle {
+        let c_name = std::ffi::CString::new(name).unwrap_or_default();
+        unsafe { (self.cbs.resolve_player_by_name.unwrap())(self.handle, c_name.as_ptr()) }
+    }
+
+    fn unequip_item(&self, item_id: ItemId) -> bool {
+        unsafe { (self.cbs.unequip_item.unwrap())(self.handle, item_id.raw()) }
+    }
+
+    fn invite_to_group(&self, target_guid: UnitHandle) -> bool {
+        unsafe { (self.cbs.invite_to_group.unwrap())(self.handle, target_guid) }
+    }
+
+    fn destroy_item(&self, item_id: ItemId) -> bool {
+        unsafe { (self.cbs.destroy_item.unwrap())(self.handle, item_id.raw()) }
+    }
+
+    fn share_quest(&self, quest_id: u32) -> bool {
+        unsafe { (self.cbs.share_quest.unwrap())(self.handle, quest_id) }
+    }
+
+    fn do_text_emote(&self, emote_id: u32) -> bool {
+        unsafe { (self.cbs.do_text_emote.unwrap())(self.handle, emote_id) }
+    }
+
     fn bot_empty_bag_slot_count(&self) -> u32 {
         unsafe { (self.cbs.bot_empty_bag_slot_count.unwrap())(self.handle) }
     }
@@ -1739,6 +1971,18 @@ impl BotInterface for RealInterface {
         }
     }
 
+    fn bot_append_log_file(&self, name: &str, line: &str) -> bool {
+        let Ok(cname) = std::ffi::CString::new(name) else {
+            return false;
+        };
+        let Ok(cline) = std::ffi::CString::new(line) else {
+            return false;
+        };
+        unsafe {
+            (self.cbs.bot_append_log_file.unwrap())(self.handle, cname.as_ptr(), cline.as_ptr())
+        }
+    }
+
     fn bot_read_log_file(&self, name: &str) -> Option<String> {
         let cname = std::ffi::CString::new(name).ok()?;
         let mut out_ptr: *mut std::os::raw::c_char = std::ptr::null_mut();
@@ -1799,5 +2043,93 @@ impl BotInterface for RealInterface {
         let result = slice.to_vec();
         unsafe { (self.cbs.bot_free_travel_dests.unwrap())(ptr) };
         result
+    }
+
+    fn add_aura(&self, spell_id: u32) -> bool {
+        unsafe { (self.cbs.add_aura.unwrap())(self.handle, spell_id) }
+    }
+
+    fn get_needed_world_buffs(&self) -> Vec<u32> {
+        let mut buf = [0u32; 64];
+        let count = unsafe {
+            (self.cbs.get_needed_world_buffs.unwrap())(
+                self.handle,
+                buf.as_mut_ptr(),
+                buf.len() as u32,
+            )
+        };
+        buf[..count as usize].to_vec()
+    }
+
+    fn interrupt_own_cast(&self) -> bool {
+        unsafe { (self.cbs.interrupt_own_cast.unwrap())(self.handle) }
+    }
+
+    fn gossip_hello(&self, npc_entry: u32) -> bool {
+        unsafe { (self.cbs.gossip_hello.unwrap())(self.handle, npc_entry) }
+    }
+
+    fn buy_from_vendor(&self, item_id: u32, qty: u32) -> bool {
+        unsafe { (self.cbs.buy_from_vendor.unwrap())(self.handle, item_id, qty) }
+    }
+
+    fn mail_item_to_master(&self) -> bool {
+        unsafe { (self.cbs.mail_item_to_master.unwrap())(self.handle) }
+    }
+
+    fn bank_deposit(&self) -> bool {
+        unsafe { (self.cbs.bank_deposit.unwrap())(self.handle) }
+    }
+
+    fn bank_withdraw(&self) -> bool {
+        unsafe { (self.cbs.bank_withdraw.unwrap())(self.handle) }
+    }
+
+    fn ah_post(&self) -> bool {
+        unsafe { (self.cbs.ah_post.unwrap())(self.handle) }
+    }
+
+    fn ah_bid(&self) -> bool {
+        unsafe { (self.cbs.ah_bid.unwrap())(self.handle) }
+    }
+
+    fn apply_outfit(&self) -> bool {
+        unsafe { (self.cbs.apply_outfit.unwrap())(self.handle) }
+    }
+
+    fn start_fishing(&self) -> bool {
+        unsafe { (self.cbs.start_fishing.unwrap())(self.handle) }
+    }
+
+    fn queue_bg(&self) -> bool {
+        unsafe { (self.cbs.queue_bg.unwrap())(self.handle) }
+    }
+
+    fn accept_bg_invite(&self) -> bool {
+        unsafe { (self.cbs.accept_bg_invite.unwrap())(self.handle) }
+    }
+
+    fn get_bg_objective_pos(&self, objective_type: u8) -> BotPosition {
+        unsafe { (self.cbs.get_bg_objective_pos.unwrap())(self.handle, objective_type) }
+    }
+
+    fn lfg_join(&self) -> bool {
+        unsafe { (self.cbs.lfg_join.unwrap())(self.handle) }
+    }
+
+    fn lfg_accept(&self) -> bool {
+        unsafe { (self.cbs.lfg_accept.unwrap())(self.handle) }
+    }
+
+    fn get_tank_position(&self) -> BotPosition {
+        unsafe { (self.cbs.get_tank_position.unwrap())(self.handle) }
+    }
+
+    fn is_unit_cc(&self, target: UnitHandle) -> bool {
+        unsafe { (self.cbs.is_unit_cc.unwrap())(self.handle, target) }
+    }
+
+    fn debug_dump_state(&self, kind: u8) -> bool {
+        unsafe { (self.cbs.debug_dump_state.unwrap())(self.handle, kind) }
     }
 }

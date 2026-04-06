@@ -7,5 +7,5 @@
 //   - Defense: guard towers and bunkers.
 //   - Objectives: turn in resources (armor scraps, blood, etc.).
 //
-// Requires BG-aware FFI: tower/bunker states, boss HP,
-// NPC positions, turn-in status. Currently a stub module.
+// BT leaves used: DefendBase, AssaultBase, CaptureFlag.
+// FFI callbacks: get_bg_objective_pos, capture_bg_objective.

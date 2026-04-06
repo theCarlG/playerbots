@@ -132,6 +132,9 @@ public:
     /// treating guilded bots as "claimed".
     bool IsInRealGuild() const;
     bool IsRealPlayer() const { return false; }
+
+    /// Toggle per-bot debug monitor (logs commands, BT path, settings to file).
+    bool ToggleMonitor();
     bool GetShouldLogOut() const { return false; }
     /// Stop the bot's current movement. Mirrors PB2's
     /// `PlayerbotAI::StopMoving`. Called from `PlayerbotMgr` on bot

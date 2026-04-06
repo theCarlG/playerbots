@@ -7,5 +7,5 @@
 //   - Node defense: guard captured nodes, call for help.
 //   - Roaming: move between nodes based on team needs.
 //
-// Requires BG-aware FFI: node ownership states, resource scores,
-// player positions. Currently a stub module.
+// BT leaves used: DefendBase, AssaultBase, CaptureFlag.
+// FFI callbacks: get_bg_objective_pos, capture_bg_objective.

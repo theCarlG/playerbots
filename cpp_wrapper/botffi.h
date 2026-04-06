@@ -752,6 +752,13 @@ typedef struct BotCallbacks {
     /* Free a string previously returned by bot_read_log_file. */
     void            (*bot_free_string)(char* s);
 
+    /* Append `line` to a bot-data file under the server logs directory.
+     * Same as bot_write_log_file but opens in append mode (std::ios::app).
+     * Used by the per-bot debug monitor. */
+    bool            (*bot_append_log_file)(BotHandle bot,
+                                           const char* name,
+                                           const char* line);
+
     /* ── Addon-channel reply routing ─────────────────────────────────────
      * PB2 `PlayerbotAI.cpp:3475-3485`: when a command arrived on the addon
      * channel (`#a ` prefix / `SendAddonMessage("BOT", …)` / `debug …`),
@@ -781,6 +788,157 @@ typedef struct BotCallbacks {
                                              uint32_t max_results,
                                              uint32_t* out_count);
     void            (*bot_free_travel_dests)(BotTravelDest* list);
+
+    /* ── Spell name resolution ──────────────────────────────────────── */
+    /* Resolve a spell name (case-insensitive) to a spell ID.
+     * Iterates sSpellTemplate looking for a matching SpellName[0].
+     * If the bot knows one or more ranks, returns the highest known rank.
+     * Otherwise returns the highest rank that exists in the spell store.
+     * Returns 0 when no spell matches the name at all. */
+    uint32_t (*resolve_spell_by_name)(BotHandle bot, const char* name);
+
+    /* ── Item name resolution ──────────────────────────────────────── */
+    /* Resolve an item name (case-insensitive) to an item ID.
+     * Iterates sItemStorage looking for a matching Name1.
+     * Prefers exact-length matches over substring matches.
+     * Returns 0 when no item matches the name at all. */
+    uint32_t (*resolve_item_by_name)(BotHandle bot, const char* name);
+
+    /* ── Equip item ────────────────────────────────────────────────── */
+    /* Equip an item by ID in the bot's best available slot.
+     * Returns true if the item was successfully equipped. */
+    bool (*equip_item)(BotHandle bot, uint32_t item_id);
+
+    /* ── Group management ──────────────────────────────────────────── */
+    /* Transfer group/raid leadership from the bot to `target_guid`.
+     * Returns true if the bot was the leader and the transfer succeeded. */
+    bool (*give_leader)(BotHandle bot, uint64_t target_guid);
+
+    /* Resolve a player name (case-insensitive) to their ObjectGuid.
+     * Searches online players first, then the character database.
+     * Returns 0 when no player matches the name. */
+    uint64_t (*resolve_player_by_name)(BotHandle bot, const char* name);
+
+    /* Unequip the item in a specific equipment slot, moving it to bags.
+     * `item_id` is the item entry to find among equipped slots.
+     * Returns true if the item was successfully unequipped. */
+    bool (*unequip_item)(BotHandle bot, uint32_t item_id);
+
+    /* Invite a player (by GUID) to the bot's group (or create one).
+     * Returns true if the invitation was sent. */
+    bool (*invite_to_group)(BotHandle bot, uint64_t target_guid);
+
+    /* Destroy the first stack of `item_id` found in the bot's inventory.
+     * Returns true if an item was destroyed. */
+    bool (*destroy_item)(BotHandle bot, uint32_t item_id);
+
+    /* Share a quest with the party. `quest_id` = 0 means share the first
+     * shareable quest in the log. Returns true if shared. */
+    bool (*share_quest)(BotHandle bot, uint32_t quest_id);
+
+    /* Send a text emote (e.g. /wave). `text_emote_id` is the TextEmote enum. */
+    bool (*do_text_emote)(BotHandle bot, uint32_t text_emote_id);
+
+    /* ── World buffs ─────────────────────────────────────────────────── */
+
+    /* Directly apply aura `spell_id` to the bot (bypasses normal casting).
+     * Used by the wbuff strategy to grant config-driven world buffs. */
+    bool (*add_aura)(BotHandle bot, uint32_t spell_id);
+
+    /* Get the list of world buff spell IDs the bot is missing (per config
+     * `AiPlayerbot.WorldBuff.*` filtering on faction/class/spec/level).
+     * Writes up to `max_out` spell IDs into `out_spells` and returns the
+     * count written. */
+    uint32_t (*get_needed_world_buffs)(BotHandle bot, uint32_t* out_spells, uint32_t max_out);
+
+    /* ── Heal interrupt ──────────────────────────────────────────────── */
+
+    /* Interrupt the bot's own current cast. Returns true if a cast was
+     * actually cancelled. */
+    bool (*interrupt_own_cast)(BotHandle bot);
+
+    /* ── NPC interaction (gossip) ────────────────────────────────────── */
+
+    /* Gossip-hello with a nearby NPC matching `entry`. Returns true if
+     * the NPC was found and the gossip menu was opened. */
+    bool (*gossip_hello)(BotHandle bot, uint32_t npc_entry);
+
+    /* Buy `qty` of `item_id` from a nearby vendor. Returns true on
+     * success. */
+    bool (*buy_from_vendor)(BotHandle bot, uint32_t item_id, uint32_t qty);
+
+    /* ── Mail ────────────────────────────────────────────────────────── */
+
+    /* Send an item from the bot's bags to the master. Returns true on
+     * success. */
+    bool (*mail_item_to_master)(BotHandle bot);
+
+    /* ── Bank ────────────────────────────────────────────────────────── */
+
+    /* Deposit excess items into the bank. Returns true if anything was
+     * deposited. */
+    bool (*bank_deposit)(BotHandle bot);
+
+    /* Withdraw useful items from the bank. Returns true if anything was
+     * withdrawn. */
+    bool (*bank_withdraw)(BotHandle bot);
+
+    /* ── Auction house ───────────────────────────────────────────────── */
+
+    /* Post items on the auction house. Returns true if anything was
+     * posted. */
+    bool (*ah_post)(BotHandle bot);
+
+    /* Bid on auction house listings. Returns true if a bid was placed. */
+    bool (*ah_bid)(BotHandle bot);
+
+    /* ── Outfit ──────────────────────────────────────────────────────── */
+
+    /* Apply the current saved outfit. Returns true if items were
+     * equipped. */
+    bool (*apply_outfit)(BotHandle bot);
+
+    /* ── Fishing ─────────────────────────────────────────────────────── */
+
+    /* Start fishing (equip pole + cast). Returns true if cast started. */
+    bool (*start_fishing)(BotHandle bot);
+
+    /* ── BG/Arena ────────────────────────────────────────────────────── */
+
+    /* Queue the bot for a random battleground. */
+    bool (*queue_bg)(BotHandle bot);
+
+    /* Accept a pending BG invitation. */
+    bool (*accept_bg_invite)(BotHandle bot);
+
+    /* Get the position of a BG objective (base/flag).
+     * `objective_type`: 0=defend, 1=assault, 2=flag, 3=return_flag.
+     * Returns {0,0,0} if no objective found. */
+    BotPosition (*get_bg_objective_pos)(BotHandle bot, uint8_t objective_type);
+
+    /* ── LFG (WotLK only) ───────────────────────────────────────────── */
+
+    /* Join the LFG queue. Returns true if queued. */
+    bool (*lfg_join)(BotHandle bot);
+
+    /* Accept a pending LFG proposal. Returns true if accepted. */
+    bool (*lfg_accept)(BotHandle bot);
+
+    /* ── Dungeon awareness ───────────────────────────────────────────── */
+
+    /* Get the tank's current position for stay-near-tank logic.
+     * Returns {0,0,0} if no tank found. */
+    BotPosition (*get_tank_position)(BotHandle bot);
+
+    /* Check if the given target has an active CC (polymorph, sap, etc.).
+     * Returns true if the target is CC'd. */
+    bool (*is_unit_cc)(BotHandle bot, UnitHandle target);
+
+    /* ── Debug ───────────────────────────────────────────────────────── */
+
+    /* Dump debug state. kind: 0=full, 1=strategies, 2=blackboard.
+     * Returns true if dump was written. */
+    bool (*debug_dump_state)(BotHandle bot, uint8_t kind);
 } BotCallbacks;
 
 /* ── Rust exports (entry points CMaNGOS calls into Rust) ─────────────────── */
@@ -1009,6 +1167,13 @@ void playerbot_factory_init_talents(void* state, uint32_t spec_no);
  * chosen against the config probability table.
  */
 void playerbot_factory_init_talents_tree(void* state, bool incremental);
+
+/**
+ * Toggle the per-bot debug monitor. Returns true if monitoring is now ON,
+ * false if OFF. When toggled on, the Rust side dumps a full settings snapshot
+ * to the monitor log file. The log file is written via bot_append_log_file.
+ */
+bool playerbot_toggle_monitor(void* state);
 
 #ifdef __cplusplus
 } /* extern "C" */

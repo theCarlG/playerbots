@@ -3,6 +3,7 @@ pub mod encounter_prefs;
 pub mod events;
 pub mod formation;
 pub mod init;
+pub mod monitor;
 pub mod settings;
 pub mod state;
 pub mod tick;

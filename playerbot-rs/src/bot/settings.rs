@@ -277,16 +277,22 @@ impl BotStateKind {
 /// (combat rotations, reactive layer, mode dispatch) is NOT a strategy —
 /// strategies are the knobs a raid leader turns during a pull.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct StrategyFlags(pub u128);
+pub struct StrategyFlags(pub u128, pub u128);
 
 impl StrategyFlags {
-    /// Helper: build a single-bit flag at position `n` in the u128 backing
-    /// store. `const fn` so every constant below is compile-time.
+    /// Helper: build a single-bit flag at position `n` (0..127) in the
+    /// first u128 word.
     const fn bit(n: u32) -> Self {
-        Self(1u128 << n)
+        Self(1u128 << n, 0)
     }
 
-    pub const NONE: Self = Self(0);
+    /// Helper: build a single-bit flag at position `n` (0..127) in the
+    /// second u128 word (for bits 128+).
+    const fn bit2(n: u32) -> Self {
+        Self(0, 1u128 << n)
+    }
+
+    pub const NONE: Self = Self(0, 0);
 
     // ── Bits 0–15: original RPG / RTSC / Grind / Flee / CC set (pre Step 6).
     pub const RPG: Self = Self::bit(0);
@@ -425,14 +431,95 @@ impl StrategyFlags {
     /// `nc +travel` / `nc -travel`. Consumer: `strategies::travel::build`.
     pub const TRAVEL: Self = Self::bit(76);
 
+    // ── Bits 77–127: additional PB2 generic strategies.
+    pub const LOOT: Self = Self::bit(77);
+    pub const GATHER: Self = Self::bit(78);
+    pub const ROLL: Self = Self::bit(79);
+    pub const PASSIVE: Self = Self::bit(80);
+    pub const CONSERVE_MANA: Self = Self::bit(81);
+    pub const FOOD: Self = Self::bit(82);
+    pub const CONSUMABLES: Self = Self::bit(83);
+    pub const READY_CHECK: Self = Self::bit(84);
+    pub const DEAD: Self = Self::bit(85);
+    pub const POTIONS: Self = Self::bit(86);
+    pub const CAST_TIME: Self = Self::bit(87);
+    pub const THREAT: Self = Self::bit(88);
+    pub const TELL_TARGET: Self = Self::bit(89);
+    pub const LFG: Self = Self::bit(90);
+    pub const CUSTOM: Self = Self::bit(91);
+    pub const REVEAL: Self = Self::bit(92);
+    pub const COLLISION: Self = Self::bit(93);
+    pub const MARK_RTI: Self = Self::bit(94);
+    pub const ADS: Self = Self::bit(95);
+    pub const ATTACK_TAGGED: Self = Self::bit(96);
+    pub const DEBUG: Self = Self::bit(97);
+    pub const BG: Self = Self::bit(98);
+    pub const BATTLEGROUND: Self = Self::bit(99);
+    pub const WARSONG: Self = Self::bit(100);
+    pub const ALTERAC: Self = Self::bit(101);
+    pub const ARATHI: Self = Self::bit(102);
+    pub const EYE: Self = Self::bit(103);
+    pub const ISLE: Self = Self::bit(104);
+    pub const ARENA: Self = Self::bit(105);
+    pub const MAINTENANCE: Self = Self::bit(106);
+    pub const GROUP: Self = Self::bit(107);
+    pub const GUILD: Self = Self::bit(108);
+    pub const SIT: Self = Self::bit(109);
+    pub const WBUFF_TRAVEL: Self = Self::bit(110);
+    pub const SILENT: Self = Self::bit(111);
+    pub const NOWAR: Self = Self::bit(112);
+    pub const GLYPH: Self = Self::bit(113);
+    pub const EXPLORE: Self = Self::bit(114);
+    pub const TRAVEL_ONCE: Self = Self::bit(115);
+    pub const MAP: Self = Self::bit(116);
+    pub const MAP_FULL: Self = Self::bit(117);
+    pub const KITE: Self = Self::bit(118);
+    pub const START_DUEL: Self = Self::bit(119);
+    pub const FOCUS_HEAL_TARGETS: Self = Self::bit(120);
+    pub const FOCUS_RTI_TARGETS: Self = Self::bit(121);
+    pub const HEAL_INTERRUPT: Self = Self::bit(122);
+    pub const PREHEAL: Self = Self::bit(123);
+    pub const FLEE_FROM_ADDS: Self = Self::bit(124);
+    pub const FOLLOW_JUMP: Self = Self::bit(125);
+    pub const CHASE_JUMP: Self = Self::bit(126);
+    pub const DPS_AOE: Self = Self::bit(127);
+
+    // ── Movement strategies (registered in PB2 MovementStrategyContext)
+    pub const STAY: Self = Self::bit2(0);
+    pub const RUNAWAY: Self = Self::bit2(1);
+    pub const GUARD: Self = Self::bit2(2);
+    pub const WANDER: Self = Self::bit2(3);
+    pub const FOLLOW: Self = Self::bit2(4);
+    pub const FREE: Self = Self::bit2(5);
+
+    // ── Quest / fish strategies
+    pub const QUEST: Self = Self::bit2(6);
+    pub const ACCEPT_ALL_QUESTS: Self = Self::bit2(7);
+    pub const FISH: Self = Self::bit2(8);
+
+    // ── Misc PB2 strategies
+    pub const AVOID_AOE: Self = Self::bit2(9);
+    pub const WAIT_FOR_ATTACK: Self = Self::bit2(10);
+    pub const POWERSHIFT: Self = Self::bit2(11);
+    pub const STEALTHED: Self = Self::bit2(12);
+
+    // ── Class alias strategies (PB2 registers "tank", "heal", "dps" etc.)
+    pub const TANK: Self = Self::bit2(13);
+    pub const HEAL: Self = Self::bit2(14);
+    pub const DPS: Self = Self::bit2(15);
+    pub const BEAR: Self = Self::bit2(16);
+    pub const CAT: Self = Self::bit2(17);
+
     pub const fn contains(self, other: Self) -> bool {
-        (self.0 & other.0) == other.0
+        (self.0 & other.0) == other.0 && (self.1 & other.1) == other.1
     }
     pub fn insert(&mut self, other: Self) {
         self.0 |= other.0;
+        self.1 |= other.1;
     }
     pub fn remove(&mut self, other: Self) {
         self.0 &= !other.0;
+        self.1 &= !other.1;
     }
 
     /// Canonical flag → addon-name table. Single source of truth used by
@@ -525,21 +612,144 @@ impl StrategyFlags {
         (Self::UNHOLY_AOE, "unholy aoe"),
         // Travel strategy.
         (Self::TRAVEL, "travel"),
+        // Additional PB2 generic strategies.
+        (Self::LOOT, "loot"),
+        (Self::GATHER, "gather"),
+        (Self::ROLL, "roll"),
+        (Self::PASSIVE, "passive"),
+        (Self::CONSERVE_MANA, "conserve mana"),
+        (Self::FOOD, "food"),
+        (Self::CONSUMABLES, "consumables"),
+        (Self::READY_CHECK, "ready check"),
+        (Self::DEAD, "dead"),
+        (Self::POTIONS, "potions"),
+        (Self::CAST_TIME, "cast time"),
+        (Self::THREAT, "threat"),
+        (Self::TELL_TARGET, "tell target"),
+        (Self::LFG, "lfg"),
+        (Self::CUSTOM, "custom"),
+        (Self::REVEAL, "reveal"),
+        (Self::COLLISION, "collision"),
+        (Self::MARK_RTI, "mark rti"),
+        (Self::ADS, "ads"),
+        (Self::ATTACK_TAGGED, "attack tagged"),
+        (Self::DEBUG, "debug"),
+        (Self::BG, "bg"),
+        (Self::BATTLEGROUND, "battleground"),
+        (Self::WARSONG, "warsong"),
+        (Self::ALTERAC, "alterac"),
+        (Self::ARATHI, "arathi"),
+        (Self::EYE, "eye"),
+        (Self::ISLE, "isle"),
+        (Self::ARENA, "arena"),
+        (Self::MAINTENANCE, "maintenance"),
+        (Self::GROUP, "group"),
+        (Self::GUILD, "guild"),
+        (Self::SIT, "sit"),
+        (Self::WBUFF_TRAVEL, "wbuff travel"),
+        (Self::SILENT, "silent"),
+        (Self::NOWAR, "nowar"),
+        (Self::GLYPH, "glyph"),
+        (Self::EXPLORE, "explore"),
+        (Self::TRAVEL_ONCE, "travel once"),
+        (Self::MAP, "map"),
+        (Self::MAP_FULL, "map full"),
+        (Self::KITE, "kite"),
+        (Self::START_DUEL, "start duel"),
+        (Self::FOCUS_HEAL_TARGETS, "focus heal targets"),
+        (Self::FOCUS_RTI_TARGETS, "focus rti targets"),
+        (Self::HEAL_INTERRUPT, "heal interrupt"),
+        (Self::PREHEAL, "preheal"),
+        (Self::FLEE_FROM_ADDS, "flee from adds"),
+        (Self::FOLLOW_JUMP, "follow jump"),
+        (Self::CHASE_JUMP, "chase jump"),
+        (Self::DPS_AOE, "dps aoe"),
+        // Movement strategies.
+        (Self::STAY, "stay"),
+        (Self::RUNAWAY, "runaway"),
+        (Self::GUARD, "guard"),
+        (Self::WANDER, "wander"),
+        (Self::FOLLOW, "follow"),
+        (Self::FREE, "free"),
+        // Quest / fish.
+        (Self::QUEST, "quest"),
+        (Self::ACCEPT_ALL_QUESTS, "accept all quests"),
+        (Self::FISH, "fish"),
+        // Misc.
+        (Self::AVOID_AOE, "avoid aoe"),
+        (Self::WAIT_FOR_ATTACK, "wait for attack"),
+        (Self::POWERSHIFT, "powershift"),
+        (Self::STEALTHED, "stealthed"),
+        // Class aliases.
+        (Self::TANK, "tank"),
+        (Self::HEAL, "heal"),
+        (Self::DPS, "dps"),
+        (Self::BEAR, "bear"),
+        (Self::CAT, "cat"),
     ];
 
     /// Look up a flag by the name the addon sends. Multi-word names are
     /// joined with a space ("rpg bg", "rpg maintenance", "tank assist").
+    ///
+    /// First tries an exact match in `NAME_TABLE`. If that fails, tries to
+    /// decompose compound PB2 strategy names (e.g. `aoe frost pvp` →
+    /// `AOE | FROST | PVP`, `totem earth strength` → `TOTEMS`) by matching
+    /// each word individually. This mirrors PB2's `AiObjectContext` where
+    /// compound strategies combine a tactic + spec + situation.
     pub fn parse_name(name: &str) -> Option<Self> {
         let trimmed = name.trim();
-        Self::NAME_TABLE
-            .iter()
-            .find(|(_, n)| *n == trimmed)
-            .map(|(f, _)| *f)
+
+        // 1. Exact match — handles all single-word and known multi-word names.
+        if let Some((f, _)) = Self::NAME_TABLE.iter().find(|(_, n)| *n == trimmed) {
+            return Some(*f);
+        }
+
+        // 2. Compound decomposition — split into words and combine flags.
+        //    PB2 situations ("pve", "pvp", "raid") are context modifiers that
+        //    PB2 uses to select different trigger/action sets. The Rust BT
+        //    doesn't branch on situation, so we accept them without a flag.
+        let words: Vec<&str> = trimmed.split_whitespace().collect();
+        if words.len() < 2 {
+            return None;
+        }
+
+        let mut combined = Self::NONE;
+        let mut matched_any = false;
+        for word in &words {
+            // Try known situation modifiers (no flag needed, just accept).
+            if matches!(*word, "pve" | "pvp" | "raid") {
+                matched_any = true;
+                continue;
+            }
+            // Try single-word exact match in NAME_TABLE.
+            if let Some((f, _)) = Self::NAME_TABLE.iter().find(|(_, n)| *n == *word) {
+                combined.insert(*f);
+                matched_any = true;
+            }
+            // Also try two-word combos for entries like "tank feral", "beast mastery", etc.
+            // (handled by the initial exact match above for the full string)
+        }
+
+        // Also try known two-word sub-phrases within the compound name.
+        // E.g. "aoe beast mastery pvp" should match "beast mastery" as a unit.
+        let joined = words.join(" ");
+        for (f, n) in Self::NAME_TABLE.iter() {
+            if n.contains(' ') && joined.contains(n) {
+                combined.insert(*f);
+                matched_any = true;
+            }
+        }
+
+        if matched_any {
+            Some(combined)
+        } else {
+            None
+        }
     }
 
     /// Render as a comma-separated string for query responses.
     pub fn describe(self) -> String {
-        if self.0 == 0 {
+        if self.0 == 0 && self.1 == 0 {
             return "none".to_string();
         }
         let mut parts: Vec<&str> = Vec::new();
@@ -590,7 +800,7 @@ impl StrategySet {
     pub fn pb2_defaults() -> Self {
         let mut s = Self::default();
         s.slots[BotStateKind::NonCombat as usize] =
-            StrategyFlags(StrategyFlags::RETURN.0 | StrategyFlags::DELAYED_ROLL.0);
+            StrategyFlags(StrategyFlags::RETURN.0 | StrategyFlags::DELAYED_ROLL.0, 0);
         s
     }
 
@@ -743,7 +953,7 @@ impl Default for StrategyFlags {
 impl std::ops::BitOr for StrategyFlags {
     type Output = Self;
     fn bitor(self, rhs: Self) -> Self {
-        Self(self.0 | rhs.0)
+        Self(self.0 | rhs.0, self.1 | rhs.1)
     }
 }
 
@@ -862,6 +1072,12 @@ pub struct BotSettings {
 
     // -- Movement --
     pub follow_distance: f32,
+    pub follow_distance_raid: f32,
+    pub attack_range: f32,
+    pub spell_range: f32,
+    pub heal_range: f32,
+    pub shoot_range: f32,
+    pub flee_range: f32,
     pub follow_formation: FollowFormation,
     pub guard_position: Option<(f32, f32, f32)>,
     /// Set when a `flee` / `runaway` / `panic` command arrives. Cleared
@@ -901,7 +1117,10 @@ pub struct BotSettings {
     pub stance: u8,
     /// `save mana` toggle — when true, the bot prefers cheap casts and avoids
     /// full-cost rotation spells until mana is topped up.
-    pub save_mana: bool,
+    /// Save mana level: 0 = off, 1-5 = increasing conservation. PB2 uses
+    /// levels 1-5; the Mangosbot addon buttons map to `save mana 1` through
+    /// `save mana 5`. Level 0 disables mana conservation entirely.
+    pub save_mana: u8,
     /// Loot-policy bitfield driven by the Mangosbot `ll` command.
     pub loot_policy: LootPolicy,
     /// `self res` toggle — when true, the bot will use a soulstone / ankh /
@@ -936,6 +1155,15 @@ pub struct BotSettings {
     /// out. Default: every field is [`DutyMode::Auto`], so any
     /// eligible bot participates.
     pub encounter_prefs: EncounterPrefs,
+
+    /// `wait for attack <N>` — seconds to delay before engaging after pull.
+    /// 0 = engage immediately (default).
+    pub wait_for_attack_secs: u32,
+
+    /// `blacklisted_spells` — spells the bot should never cast (from `ss`
+    /// command). Different from `spell_blacklist` which is per-session; this
+    /// one accumulates across commands.
+    pub blacklisted_spells: HashSet<SpellId>,
 }
 
 /// Chat channel bitfield for `BotSettings::chat_channels`. Mirrors the PB2
@@ -991,6 +1219,12 @@ impl Default for BotSettings {
             heal_self_threshold: 0.60,
             heal_party_threshold: 0.80,
             follow_distance: 1.5,
+            follow_distance_raid: 1.5,
+            attack_range: 30.0,
+            spell_range: 26.0,
+            heal_range: 25.0,
+            shoot_range: 26.0,
+            flee_range: 20.0,
             follow_formation: FollowFormation::Near,
             guard_position: None,
             flee_override_until_ms: 0,
@@ -1006,7 +1240,7 @@ impl Default for BotSettings {
             rtsc_waypoints: HashMap::new(),
             rtsc_last_seen: None,
             stance: 0,
-            save_mana: false,
+            save_mana: 0,
             loot_policy: LootPolicy::defaults(),
             self_res: false,
             cheat_flags: 0,
@@ -1016,6 +1250,8 @@ impl Default for BotSettings {
             preferred_cc_rti_icon: None,
             class_prefs: ClassPrefs::None,
             encounter_prefs: EncounterPrefs::default(),
+            wait_for_attack_secs: 0,
+            blacklisted_spells: HashSet::new(),
         }
     }
 }
@@ -1252,7 +1488,7 @@ mod tests {
         assert_eq!(s.get(BotStateKind::Combat), StrategyFlags::NONE);
         assert_eq!(
             s.get(BotStateKind::NonCombat),
-            StrategyFlags(StrategyFlags::RETURN.0 | StrategyFlags::DELAYED_ROLL.0)
+            StrategyFlags(StrategyFlags::RETURN.0 | StrategyFlags::DELAYED_ROLL.0, 0)
         );
         assert_eq!(s.get(BotStateKind::Reaction), StrategyFlags::NONE);
         assert_eq!(s.get(BotStateKind::Dead), StrategyFlags::NONE);
@@ -1289,12 +1525,12 @@ mod tests {
     #[test]
     fn strategy_flags_fit_in_backing_store() {
         // Every named strategy in NAME_TABLE must be representable in
-        // the u128 backing store. If a future edit runs off the end of
-        // the `bit(n)` range, this test catches it immediately.
+        // the backing store (two u128 words). If a future edit runs off
+        // the end of the range, this test catches it immediately.
         for (flag, name) in StrategyFlags::NAME_TABLE {
-            assert_ne!(
-                flag.0, 0,
-                "strategy `{name}` has zero bit — off the end of the u128?"
+            assert!(
+                flag.0 != 0 || flag.1 != 0,
+                "strategy `{name}` has zero bits — off the end of the backing store?"
             );
         }
     }
@@ -1306,8 +1542,8 @@ mod tests {
         let table = StrategyFlags::NAME_TABLE;
         for i in 0..table.len() {
             for j in (i + 1)..table.len() {
-                assert_ne!(
-                    table[i].0.0, table[j].0.0,
+                assert!(
+                    table[i].0 .0 != table[j].0 .0 || table[i].0 .1 != table[j].0 .1,
                     "duplicate bit between `{}` and `{}`",
                     table[i].1, table[j].1
                 );
@@ -1366,7 +1602,7 @@ mod tests {
             StrategyFlags::parse_name("delayed roll"),
             Some(StrategyFlags::DELAYED_ROLL)
         );
-        let both = StrategyFlags(StrategyFlags::RETURN.0 | StrategyFlags::DELAYED_ROLL.0);
+        let both = StrategyFlags(StrategyFlags::RETURN.0 | StrategyFlags::DELAYED_ROLL.0, 0);
         assert_eq!(both.describe(), "return, delayed roll");
     }
 

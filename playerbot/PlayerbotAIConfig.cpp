@@ -83,7 +83,7 @@ inline ParsedUrl parseUrl(const std::string& url) {
 
 bool PlayerbotAIConfig::Initialize()
 {
-    sLog.outString("Initializing AI Playerbot by ike3, based on the original Playerbot by blueboy");
+    sLog.outString("Initializing AI Playerbot by CarlG, based on the original Playerbot by ike3 and blueboy");
 
     if (!config.SetSource(_D_AIPLAYERBOT_CONFIG, "PlayerBots_"))
     {

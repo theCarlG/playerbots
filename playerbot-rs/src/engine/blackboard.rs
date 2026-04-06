@@ -46,6 +46,14 @@ pub enum Key {
     ChaosDy,              // f32
     ChaosLastChangeSecs,  // u64
 
+    // ── Death behavior ───────────────────────────────────────────────
+    DeathTimestampMs, // u64: server_time_ms when the bot died (0 = alive)
+
+    // ── RTSC move queue ─────────────────────────────────────────────
+    RtscMoveX, // f32: next RTSC move waypoint
+    RtscMoveY,
+    RtscMoveZ,
+
     // Add new keys above this line. Keep count accurate.
     _Count,
 }
@@ -66,25 +74,43 @@ pub enum Value {
 
 /// The blackboard itself — a fixed-size array of Values.
 #[derive(Debug)]
-pub struct Blackboard([Value; BOARD_SIZE]);
+pub struct Blackboard {
+    slots: [Value; BOARD_SIZE],
+    /// Temporary monitor log lines accumulated during a tick.
+    /// Flushed after the BT tick when monitoring is active.
+    monitor_lines: Vec<String>,
+}
 
 impl Default for Blackboard {
     fn default() -> Self {
-        Self([Value::None; BOARD_SIZE])
+        Self {
+            slots: [Value::None; BOARD_SIZE],
+            monitor_lines: Vec::new(),
+        }
     }
 }
 
 impl Blackboard {
     pub fn get(&self, key: Key) -> Value {
-        self.0[key as usize]
+        self.slots[key as usize]
     }
 
     pub fn set(&mut self, key: Key, value: Value) {
-        self.0[key as usize] = value;
+        self.slots[key as usize] = value;
     }
 
     pub fn clear(&mut self, key: Key) {
-        self.0[key as usize] = Value::None;
+        self.slots[key as usize] = Value::None;
+    }
+
+    /// Push a monitor log line (flushed after the BT tick).
+    pub fn push_monitor_line(&mut self, line: String) {
+        self.monitor_lines.push(line);
+    }
+
+    /// Drain all accumulated monitor lines.
+    pub fn drain_monitor_lines(&mut self) -> std::vec::Drain<'_, String> {
+        self.monitor_lines.drain(..)
     }
 
     pub fn get_u32(&self, key: Key) -> Option<u32> {

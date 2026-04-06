@@ -2,6 +2,7 @@
 #include "playerbot/PlayerbotAIConfig.h"
 #include "playerbot/PlayerbotFactory.h"
 #include "playerbot/RandomPlayerbotMgr.h"
+#include "PlayerbotRust.h"
 #include "Chat/ChannelMgr.h"
 #include "Social/SocialMgr.h"
 
@@ -52,6 +53,7 @@ PlayerbotHolder::PlayerbotHolder() : PlayerbotAIBase()
 
     m_botCommandHandlers["always"] = &PlayerbotHolder::HandleBotAlways;
     m_botCommandHandlers["debug"] = &PlayerbotHolder::HandleBotDebug;
+    m_botCommandHandlers["monitor"] = &PlayerbotHolder::HandleBotMonitor;
     m_botCommandHandlers["c"] = &PlayerbotHolder::HandleBotC;
     m_botCommandHandlers["w"] = &PlayerbotHolder::HandleConsoleWhisper;
     m_botCommandHandlers["cmd"] = &PlayerbotHolder::HandleConsoleCmd;
@@ -1213,6 +1215,49 @@ std::list<std::string> PlayerbotHolder::HandleSelf(Player* master, const std::st
 std::string PlayerbotHolder::HandleBotDebug(Player* /*bot*/, Player* /*master*/, const std::string /*param*/)
 {
     return "Debug not available — AI managed by Rust module";
+}
+
+std::string PlayerbotHolder::HandleBotMonitor(Player* bot, Player* master, const std::string param)
+{
+    // ".bot monitor <name> group" — toggle monitoring for all bots in the
+    // master's group/raid.  Temporary debug tool, not for production use.
+    if (param == "group" || param == "raid")
+    {
+        if (!master)
+            return "No master — cannot enumerate group";
+        Group* group = master->GetGroup();
+        if (!group)
+            return "Not in a group";
+
+        uint32 count = 0;
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->getSource();
+            if (!member || member == master)
+                continue;
+            PlayerbotAIBase* memberAi = member->GetPlayerbotAI();
+            if (!memberAi)
+                continue;
+            PlayerbotRust* rustMember = dynamic_cast<PlayerbotRust*>(memberAi);
+            if (!rustMember)
+                continue;
+            rustMember->ToggleMonitor();
+            ++count;
+        }
+        return "Toggled monitor for " + std::to_string(count) + " bot(s) in group";
+    }
+
+    if (!bot)
+        return "No bot selected";
+    PlayerbotAIBase* ai = bot->GetPlayerbotAI();
+    if (!ai)
+        return "Bot has no AI";
+    PlayerbotRust* rustAi = dynamic_cast<PlayerbotRust*>(ai);
+    if (!rustAi)
+        return "Bot AI is not Rust-managed";
+    bool nowActive = rustAi->ToggleMonitor();
+    return nowActive ? "Monitor enabled — logging to playerbot_monitor_*.txt"
+                     : "Monitor disabled";
 }
 
 std::string PlayerbotHolder::HandleBotC(Player* /*bot*/, Player* /*master*/, const std::string /*param*/)

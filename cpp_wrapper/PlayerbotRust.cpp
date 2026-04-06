@@ -567,3 +567,10 @@ void PlayerbotRust::FactoryInitTalentsTreeViaRust(bool incremental)
     if (m_rustState)
         playerbot_factory_init_talents_tree(m_rustState.get(), incremental);
 }
+
+bool PlayerbotRust::ToggleMonitor()
+{
+    if (m_rustState)
+        return playerbot_toggle_monitor(m_rustState.get());
+    return false;
+}

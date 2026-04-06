@@ -213,6 +213,16 @@ namespace BotBridge
     BotSpellInfo CB_GetSpellInfo(BotHandle bot, uint32_t spell_id);
     uint32_t*    CB_GetBotSpells(BotHandle bot, uint32_t* out_count);
     void         CB_FreeBotSpells(uint32_t* list);
+    uint32_t     CB_ResolveSpellByName(BotHandle bot, const char* name);
+    uint32_t     CB_ResolveItemByName(BotHandle bot, const char* name);
+    bool         CB_EquipItem(BotHandle bot, uint32_t item_id);
+    bool         CB_GiveLeader(BotHandle bot, uint64_t target_guid);
+    uint64_t     CB_ResolvePlayerByName(BotHandle bot, const char* name);
+    bool         CB_UnequipItem(BotHandle bot, uint32_t item_id);
+    bool         CB_InviteToGroup(BotHandle bot, uint64_t target_guid);
+    bool         CB_DestroyItem(BotHandle bot, uint32_t item_id);
+    bool         CB_ShareQuest(BotHandle bot, uint32_t quest_id);
+    bool         CB_DoTextEmote(BotHandle bot, uint32_t text_emote_id);
 
     // ── Factory: bag slot management ───────────────────────────────────────
     uint32_t CB_BotEmptyBagSlotCount(BotHandle bot);
@@ -275,6 +285,7 @@ namespace BotBridge
     bool CB_BotWriteLogFile(BotHandle bot, const char* name, const char* body);
     bool CB_BotReadLogFile(BotHandle bot, const char* name, char** out_body);
     void CB_BotFreeString(char* s);
+    bool CB_BotAppendLogFile(BotHandle bot, const char* name, const char* line);
 
 
     // ── Travel destination queries ────────────────────────────────────────
@@ -282,6 +293,50 @@ namespace BotBridge
                                            float max_range, uint32_t max_results,
                                            uint32_t* out_count);
     void            CB_BotFreeTravelDests(BotTravelDest* list);
+
+    // ── World buffs ───────────────────────────────────────────────────────
+    bool     CB_AddAura(BotHandle bot, uint32_t spell_id);
+    uint32_t CB_GetNeededWorldBuffs(BotHandle bot, uint32_t* out_spells, uint32_t max_out);
+
+    // ── Heal interrupt ────────────────────────────────────────────────────
+    bool CB_InterruptOwnCast(BotHandle bot);
+
+    // ── NPC interaction ───────────────────────────────────────────────────
+    bool CB_GossipHello(BotHandle bot, uint32_t npc_entry);
+    bool CB_BuyFromVendor(BotHandle bot, uint32_t item_id, uint32_t qty);
+
+    // ── Mail ──────────────────────────────────────────────────────────────
+    bool CB_MailItemToMaster(BotHandle bot);
+
+    // ── Bank ──────────────────────────────────────────────────────────────
+    bool CB_BankDeposit(BotHandle bot);
+    bool CB_BankWithdraw(BotHandle bot);
+
+    // ── Auction house ─────────────────────────────────────────────────────
+    bool CB_AhPost(BotHandle bot);
+    bool CB_AhBid(BotHandle bot);
+
+    // ── Outfit ────────────────────────────────────────────────────────────
+    bool CB_ApplyOutfit(BotHandle bot);
+
+    // ── Fishing ───────────────────────────────────────────────────────────
+    bool CB_StartFishing(BotHandle bot);
+
+    // ── BG/Arena ──────────────────────────────────────────────────────────
+    bool        CB_QueueBg(BotHandle bot);
+    bool        CB_AcceptBgInvite(BotHandle bot);
+    BotPosition CB_GetBgObjectivePos(BotHandle bot, uint8_t objective_type);
+
+    // ── LFG ───────────────────────────────────────────────────────────────
+    bool CB_LfgJoin(BotHandle bot);
+    bool CB_LfgAccept(BotHandle bot);
+
+    // ── Dungeon awareness ─────────────────────────────────────────────────
+    BotPosition CB_GetTankPosition(BotHandle bot);
+    bool        CB_IsUnitCc(BotHandle bot, UnitHandle target);
+
+    // ── Debug ─────────────────────────────────────────────────────────────
+    bool CB_DebugDumpState(BotHandle bot, uint8_t kind);
 
     // ── Internal helpers ────────────────────────────────────────────────────
     Player* FindBot(BotHandle bot);

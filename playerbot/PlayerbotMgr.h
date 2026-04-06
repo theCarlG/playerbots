@@ -75,6 +75,7 @@ private:
 
     std::string HandleBotAlways(Player* bot, Player* master, const std::string param);
     std::string HandleBotDebug(Player* bot, Player* master, const std::string param);
+    std::string HandleBotMonitor(Player* bot, Player* master, const std::string param);
     std::string HandleBotC(Player* bot, Player* master, const std::string param);
     std::string HandleConsoleWhisper(Player* bot, Player* master, const std::string param);
     std::string HandleConsoleCmd(Player* bot, Player* master, const std::string param);

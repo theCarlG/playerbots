@@ -69,14 +69,15 @@ pub fn pull_back_subtree() -> Bt {
 }
 
 /// Pre-heal: healers cast a heal on an injured party member as combat
-/// starts. Gated on the HEAL strategy flag (but currently the leaf
-/// itself is a stub — class files provide the real implementation).
+/// starts. Gated on the HEAL strategy flag. The generic leaf returns
+/// Failure; class files provide the real implementation via higher-priority
+/// HealLowest/CastOnLowestAlly leaves.
 pub fn preheal_subtree() -> Bt {
     Bt::throttle(2_000, PreHeal)
 }
 
-/// Interrupt own cast in an emergency. Currently a stub — the FFI
-/// callback for self-cast-interrupt hasn't been added yet.
+/// Interrupt own cast when the heal target is no longer injured
+/// (overheal prevention). Uses the `interrupt_own_cast` FFI callback.
 pub fn heal_interrupt_subtree() -> Bt {
     HealInterrupt
 }

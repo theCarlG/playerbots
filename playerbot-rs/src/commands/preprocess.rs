@@ -46,7 +46,7 @@
 
 use crate::bot::settings::{BotStateKind, StrategyFlags, StrategySet};
 use crate::bot::state::{BotState, PlayerClass, PlayerSpec};
-use crate::commands::{ChatOrigin, PendingCommand, SecurityLevel, parser};
+use crate::commands::{ChatOrigin, LANG_ADDON, PendingCommand, SecurityLevel, parser};
 use crate::ffi::{BotRole, BotWorldSnapshot};
 
 const DEFAULT_SEPARATOR: &str = "\\\\";
@@ -70,13 +70,24 @@ pub fn preprocess_and_enqueue(
     }
 
     // Chat channel prefix.
+    // When `#a ` (addon channel) is detected, override the origin to
+    // LANG_ADDON so that `origin.is_addon()` returns true and replies
+    // route through `tell_addon` (CHAT_MSG_ADDON) instead of regular
+    // whisper. Without this, the Mangosbot UI never sees responses.
     let mut text = text;
+    let mut origin = origin;
     for p in CHAT_PREFIXES {
         if let Some(rest) = text.strip_prefix(p) {
+            if *p == "#a " {
+                origin = ChatOrigin::new(origin.chat_type, LANG_ADDON);
+            }
             text = rest;
             break;
         }
     }
+
+    // Monitor: log the raw command text (after prefix strip, before filters).
+    crate::bot::monitor::monitor_command_received(bot, text, sender_guid, &origin);
 
     // Filter chain.
     let trimmed = text.trim().to_string();
@@ -89,8 +100,15 @@ pub fn preprocess_and_enqueue(
 
     // Parse + enqueue.
     let Some(cmd) = parser::parse(&filtered) else {
+        if bot.monitor_active {
+            crate::bot::monitor::monitor_log(bot, &format!("CMD PARSE FAILED: {filtered}"));
+        }
         return;
     };
+    // Monitor: log the parsed command.
+    if bot.monitor_active {
+        crate::bot::monitor::monitor_command_parsed(bot, &filtered, &format!("{cmd:?}"));
+    }
     let pc = if sender_guid == 0 {
         PendingCommand::internal(cmd)
     } else {

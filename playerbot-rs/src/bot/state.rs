@@ -157,6 +157,14 @@ pub struct BotState {
     // ── Throttle timestamps ──────────────────────────────────────────────
     pub last_attackers_refresh_ms: u64,
     pub last_nearby_refresh_ms: u64,
+
+    // ── Debug monitor ───────────────────────────────────────────────────
+    /// When true, commands/BT path/settings are logged to a file.
+    pub monitor_active: bool,
+    /// Previous tick's BT path string (for change detection).
+    pub last_bt_path: String,
+    /// Last time we wrote a TICK summary line.
+    pub last_monitor_summary_ms: u64,
 }
 
 impl BotState {
@@ -194,6 +202,9 @@ impl BotState {
             travel_target: TravelTarget::default(),
             last_attackers_refresh_ms: 0,
             last_nearby_refresh_ms: 0,
+            monitor_active: false,
+            last_bt_path: String::new(),
+            last_monitor_summary_ms: 0,
         }
     }
 

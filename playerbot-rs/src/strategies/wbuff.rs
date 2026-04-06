@@ -2,14 +2,17 @@ use crate::{Sel, Seq};
 use crate::bot::settings::StrategyFlags;
 use crate::engine::bt::Bt;
 
-/// World buff strategy — travel to world buff locations.
+/// World buff strategy — apply missing world buffs from config, then optionally
+/// travel to world buff locations.
 /// PB2: `WBuffStrategy` — gated on the `wbuff` strategy flag.
-/// Stub until the travel subsystem (Step 5.6) lands.
 pub fn build() -> Bt {
     Seq!(
         Bt::StrategyEnabled(StrategyFlags::WBUFF),
-        // Placeholder — will be replaced by TravelToWorldBuff when
-        // the travel subsystem is implemented.
-        Bt::TravelToBlackboard,
+        Sel!(
+            // First: apply any missing config-driven world buffs directly.
+            Bt::ApplyWorldBuffs,
+            // Fallback: travel to world buff location if travel is enabled.
+            Bt::TravelToBlackboard,
+        ),
     )
 }

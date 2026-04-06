@@ -93,10 +93,10 @@ pub fn pb2_kit_strategies(class: PlayerClass, spec: PlayerSpec) -> StrategySet {
                 | F::BOOST
         }
         (Warrior, WarriorArms) => {
-            F::ARMS | F::DPS_ASSIST | F::BEHIND | F::AOE | F::CC | F::BUFF | F::BOOST
+            F::ARMS | F::DPS_ASSIST | F::CLOSE | F::BEHIND | F::AOE | F::CC | F::BUFF | F::BOOST
         }
         (Warrior, WarriorFury) => {
-            F::FURY | F::DPS_ASSIST | F::BEHIND | F::AOE | F::CC | F::BUFF | F::BOOST
+            F::FURY | F::DPS_ASSIST | F::CLOSE | F::BEHIND | F::AOE | F::CC | F::BUFF | F::BOOST
         }
 
         // Priest (all specs share dps assist/flee/cure/ranged/cc/buff/aoe/boost).
@@ -430,53 +430,67 @@ fn build_root_tree(class: PlayerClass, spec: PlayerSpec) -> Bt {
         buffs,
     } = class_kit(class, spec);
 
-    Sel!(
-        // 1. Death handling.
-        world::death::death_subtree(),
-        // 2. Passive mode — do nothing.
-        ModeIs(BehaviorMode::Passive),
-        // 3. Eat/drink — out of combat only.
-        Seq!(InCombat.not(), Consumables),
-        // 4. Duel request handling — accept if duel strategy enabled, else decline.
-        Seq!(
-            Bt::DuelRequested,
-            Sel!(
-                Seq!(Bt::StrategyEnabled(StrategyFlags::DUEL), Bt::AcceptDuelRequest),
-                Bt::DeclineDuelRequest,
+    // Root is a Seq of two passes:
+    //   Pass 1 — Primary behavior (exclusive Sel).
+    //   Pass 2 — Maintenance (buffing, mounting, looting, etc.).
+    //
+    // The old flat `Sel` put maintenance as the lowest-priority sibling
+    // of mode_dispatch. Because mode_dispatch (Follow) always succeeds
+    // for grouped bots, maintenance NEVER ran — bots would not buff,
+    // mount, loot, or do any upkeep. Splitting into two passes ensures
+    // bots always get a maintenance check after their primary action.
+    Seq!(
+        Sel!(
+            // 1. Death handling.
+            world::death::death_subtree(),
+            // 2. Passive mode — do nothing.
+            ModeIs(BehaviorMode::Passive),
+            // 3. Eat/drink — out of combat only.
+            Seq!(InCombat.not(), Consumables),
+            // 4. Duel request handling.
+            Seq!(
+                Bt::DuelRequested,
+                Sel!(
+                    Seq!(Bt::StrategyEnabled(StrategyFlags::DUEL), Bt::AcceptDuelRequest),
+                    Bt::DeclineDuelRequest,
+                ),
             ),
+            // 5. Encounter override.
+            EncounterOverride,
+            // 6. In combat → reactive + rotation (duels use normal combat).
+            Seq!(
+                Sel!(InCombat, ShouldEngage, Bt::InDuel),
+                combat_wrapper(combat_tree),
+            ),
+            // 7. Out-of-combat mode dispatch.
+            mode_dispatch(),
+            // Fallback: always succeed so the Seq continues to maintenance.
+            Bt::Noop,
         ),
-        // 5. Encounter override.
-        EncounterOverride,
-        // 6. In combat → reactive + rotation (duels use normal combat).
-        Seq!(
-            Sel!(InCombat, ShouldEngage, Bt::InDuel),
-            combat_wrapper(combat_tree),
-        ),
-        // 6. Out-of-combat mode dispatch.
-        mode_dispatch(),
-        // 7. Maintenance.
-        maintenance_subtree(buffs),
+        // 8. Maintenance — runs after the primary action above.
+        //    Wrapped in Sel with Noop so a "nothing to maintain" Failure
+        //    doesn't fail the root Seq (the primary action already ran).
+        Sel!(maintenance_subtree(buffs), Bt::Noop),
     )
 }
 
 /// Wrap a class rotation in the shared reactive subtrees that apply to
-/// every class. Priority order (highest first):
-///   1. Flee — emergency escape
-///   2. Interrupt — stop enemy casts
-///   3. Heal interrupt — cancel own cast for emergency (stub)
-///   4. Dispel — remove party debuffs
-///   5. Resurrect — rez dead party members
-///   6. Threat — dump threat when pulling aggro
-///   7. Pull-back — return to group after pulling
-///   8. Pre-heal — front-load heals as combat starts (stub)
-///   9. Targeting — select correct target
-///  10. Mark RTI — tank marks kill target
-///  11. Positioning (close / ranged / behind / kite)
-///  12. Curse upkeep
-///  13. Class rotation
+/// every class.
+///
+/// Structure:
+///   A) **Reactive Sel** — high-priority behaviors that short-circuit the
+///      rest (flee, interrupt, dispel, rez, threat, pull-back, pre-heal).
+///      Any one of these firing replaces the normal rotation for that tick.
+///   B) **Combat action Sel** — targeting+positioning, then rotation.
+///      Targeting is *optional* (wrapped in `Sel(targeting, Noop)`) so
+///      healers and other support specs can reach their rotation even
+///      without an enemy target. When targeting succeeds the bot also
+///      gets positioning (close/ranged/behind/kite). When it fails
+///      the bot still proceeds to the rotation for healing, buffing, etc.
 fn combat_wrapper(class_rotation: Bt) -> Bt {
     use Bt::MaintainConfiguredCurse;
     Sel!(
+        // ── A) Reactive — any one short-circuits the rest ────────────
         reactive::flee_subtree(),
         reactive::interrupt_subtree(),
         reactive::heal_interrupt_subtree(),
@@ -485,18 +499,38 @@ fn combat_wrapper(class_rotation: Bt) -> Bt {
         reactive::threat_subtree(),
         reactive::pull_back_subtree(),
         reactive::preheal_subtree(),
-        reactive::targeting_subtree(),
-        reactive::mark_rti_subtree(),
-        // Positioning — only one of these fires per tick based on
-        // which strategy flags are active for this bot's spec.
-        reactive::close_subtree(),
-        reactive::ranged_subtree(),
-        reactive::behind_subtree(),
-        reactive::kite_subtree(),
-        // Warlock curse upkeep on the current target (no-op for other
-        // classes — self-filters via `ClassPrefs::as_warlock`).
-        Bt::throttle(2_000, MaintainConfiguredCurse),
-        class_rotation,
+        // ── B) Combat pipeline ───────────────────────────────────────
+        //
+        // Three-step Seq: target → position → act. Each step uses
+        // `Optional` or `Sel(…, Noop)` to always return Success so the
+        // Seq continues to the next step regardless.
+        //
+        // This ensures the class rotation always gets a chance to run.
+        // Positioning nodes fire-and-forget movement commands; the
+        // rotation will naturally fail when out of range (melee at 30y)
+        // but succeeds once the bot arrives.
+        Seq!(
+            // B.1 — Targeting (optional — healers may have no enemy)
+            Sel!(reactive::targeting_subtree(), Bt::Noop),
+            // B.2 — Mark RTI (optional, tank only)
+            Sel!(reactive::mark_rti_subtree(), Bt::Noop),
+            // B.3 — Positioning (optional, fire-and-forget). Wrapped in
+            //        `Optional` so Running from move commands doesn't
+            //        block the Seq from continuing to the rotation.
+            Bt::Optional(Box::new(Sel!(
+                reactive::close_subtree(),
+                reactive::ranged_subtree(),
+                reactive::behind_subtree(),
+                reactive::kite_subtree(),
+            ))),
+            // B.4 — Class rotation (the main event). Curse upkeep runs
+            //        first since it's cheap and class-filtered.
+            Sel!(
+                Bt::throttle(2_000, MaintainConfiguredCurse),
+                class_rotation,
+                Bt::Noop,
+            ),
+        ),
     )
 }
 
@@ -589,8 +623,10 @@ fn maintenance_subtree(buffs: &'static [GroupBuff]) -> Bt {
         world::mount::mount_subtree(),
         world::vendor::vendor_subtree(),
         world::repair::repair_subtree(),
-        // Follow as absolute fallback.
-        Bt::throttle(2_000, Follow),
+        // Follow as absolute fallback — but not during combat (would fight
+        // with combat positioning, causing the bot to ping-pong between
+        // following master and closing to target).
+        Seq!(InCombat.not(), Bt::throttle(2_000, Follow)),
     )
 }
 
@@ -683,7 +719,7 @@ mod tests {
         }
 
         let arms = pb2_kit_strategies(PlayerClass::Warrior, PlayerSpec::WarriorArms);
-        for f in [F::ARMS, F::DPS_ASSIST, F::BEHIND, F::AOE, F::CC, F::BUFF, F::BOOST] {
+        for f in [F::ARMS, F::DPS_ASSIST, F::CLOSE, F::BEHIND, F::AOE, F::CC, F::BUFF, F::BOOST] {
             assert!(
                 arms.get(BotStateKind::Combat).contains(f),
                 "arms warrior missing {:?}",

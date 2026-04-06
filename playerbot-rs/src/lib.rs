@@ -317,6 +317,29 @@ pub unsafe extern "C" fn playerbot_chat_command(
     }
 }
 
+// ── Monitor toggle ──────────────────────────────────────────────────────
+
+/// Toggle per-bot debug monitor. Returns `true` if now ON, `false` if OFF.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_toggle_monitor(state: *mut ()) -> bool {
+    if state.is_null() {
+        return false;
+    }
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    if bot.monitor_active {
+        // Log the disable message while still active, then turn off.
+        bot::monitor::monitor_log(bot, "=== MONITOR DISABLED ===");
+        bot.monitor_active = false;
+    } else {
+        bot.monitor_active = true;
+        bot::monitor::monitor_dump_settings(bot);
+    }
+    bot.monitor_active
+}
+
 // ── Global coordination tick ──────────────────────────────────────────────
 
 /// Called from sRandomPlayerbotMgr.UpdateAI (world thread, existing `CMaNGOS` hook).

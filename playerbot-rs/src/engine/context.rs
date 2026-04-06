@@ -55,6 +55,12 @@ pub struct TickContext<'a> {
     // ── Settings ──────────────────────────────────────────────────────
     /// Per-bot runtime settings (read-only during tick).
     pub settings: &'a BotSettings,
+
+    // ── Debug monitor ────────────────────────────────────────────────
+    /// When `Some`, the BT tick records the full path from root to the
+    /// winning leaf. Each compositor pushes its variant+index, the leaf
+    /// pushes its Debug name. After the tick, join with ` > `.
+    pub monitor_trace: Option<std::cell::RefCell<Vec<String>>>,
 }
 
 impl<'a> TickContext<'a> {
@@ -262,6 +268,7 @@ pub mod tests {
             class: PlayerClass::Warrior,
             role: BotRole::DPS,
             settings: default_test_settings(),
+            monitor_trace: None,
         }
     }
 
@@ -317,6 +324,7 @@ pub mod tests {
                 class: PlayerClass::Warrior,
                 role: BotRole::DPS,
                 settings: &self.settings,
+                monitor_trace: None,
             }
         }
     }

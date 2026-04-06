@@ -11,6 +11,8 @@
 
 #include "botpch.h"
 #include "Chat/Chat.h"
+#include "PlayerbotMgr.h"
+#include "RandomPlayerbotMgr.h"
 
 #include <cstring>
 #include <cctype>
@@ -23,14 +25,14 @@
 // Returning `true` suppresses the "invalid command" reply while the Rust
 // side does not yet implement chat-driven bot control.
 
-bool ChatHandler::HandlePlayerbotCommand(char* /*args*/)
+bool ChatHandler::HandlePlayerbotCommand(char* args)
 {
-    return true;
+    return PlayerbotMgr::HandlePlayerbotMgrCommand(this, args);
 }
 
-bool ChatHandler::HandleRandomPlayerbotCommand(char* /*args*/)
+bool ChatHandler::HandleRandomPlayerbotCommand(char* args)
 {
-    return true;
+    return RandomPlayerbotMgr::HandlePlayerbotConsoleCommand(this, args);
 }
 
 bool ChatHandler::HandlePerfMonCommand(char* /*args*/)

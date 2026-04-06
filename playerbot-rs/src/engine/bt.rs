@@ -258,6 +258,10 @@ pub enum Bt {
     Sel(Vec<Bt>),
     /// Inverts Success ↔ Failure (Running unchanged).
     Not(Box<Bt>),
+    /// Run child but always return Success. Used to make a subtree
+    /// non-blocking in a Seq — the child's result (including Running)
+    /// is discarded so the Seq continues to the next step.
+    Optional(Box<Bt>),
     /// Run child at most once per `interval_ms`. Returns Failure when throttled.
     ///
     /// The tree itself is stateless — last-fire timestamps live on the bot in
@@ -300,6 +304,8 @@ pub enum Bt {
     GroupMembersBelow(u8, f32),
 
     // ── Conditions — general ─────────────────────────────────────────────
+    /// No-op: always succeeds, consumes the tick.
+    Noop,
     /// Bot is currently in combat.
     InCombat,
     /// Bot is alive (not dead/ghost).
@@ -609,6 +615,12 @@ pub enum Bt {
     CorpseRun,
     /// Use spirit healer as last resort.
     UseSpiritHealer,
+    /// Check if any group member is alive (for waiting for rez).
+    HasAliveGroupMember,
+    /// Record death timestamp if not already set (use in Seq with IsAlive.not()).
+    RecordDeathTime,
+    /// Check if the bot has been dead for less than N milliseconds.
+    DeadForLessThan(u64),
     /// Mount up for travel.
     MountUp,
     /// Dismount.
@@ -795,74 +807,75 @@ pub enum Bt {
 
     // ── Actions — 11j: world interaction / economy (stubs) ────────────
     // These variants are placeholders. Each returns Failure until the
-    // corresponding subsystem (Step 12+) is implemented.
-    /// Gossip with a specific NPC `entry`. Stub.
+    /// Gossip with a specific NPC `entry`.
     Gossip(u32),
-    /// Buy `qty` of `item_id` from a nearby vendor. Stub.
+    /// Buy `qty` of `item_id` from a nearby vendor.
     BuyFromVendor(ItemId, u32),
-    /// Mail an item to the master. Stub.
+    /// Mail an item to the master.
     MailItem,
-    /// Check the bot's mailbox. Stub.
+    /// Check the bot's mailbox.
     CheckMail,
-    /// Deposit items into the bank. Stub.
+    /// Deposit items into the bank.
     BankDeposit,
-    /// Withdraw items from the bank. Stub.
+    /// Withdraw items from the bank.
     BankWithdraw,
-    /// Post an item on the auction house. Stub.
+    /// Post an item on the auction house.
     AhPost,
-    /// Bid on an auction house listing. Stub.
+    /// Bid on an auction house listing.
     AhBid,
-    /// Roll on a loot item (need/greed/pass). Stub.
+    /// Roll on a loot item (need/greed/pass).
     LootRoll,
-    /// Automatically roll on loot based on settings. Stub.
+    /// Automatically roll on loot based on settings.
     AutoLootRoll,
-    /// Share a quest with party members. Stub.
+    /// Share a quest with party members.
     ShareQuest,
-    /// Learn all available spells from a nearby trainer. Stub.
+    /// Learn all available spells from a nearby trainer.
     LearnTrainerSpells,
-    /// Apply a saved talent build. Stub.
+    /// Apply a saved talent build.
     ApplyTalentBuild,
-    /// Equip an item by id. Stub.
+    /// Equip an item by id.
     EquipItem(ItemId),
-    /// Unequip an item slot. Stub.
+    /// Unequip an item slot.
     UnequipSlot(u8),
-    /// Apply a saved outfit preset. Stub.
+    /// Apply a saved outfit preset.
     ApplyOutfit,
-    /// Cast fishing and wait for catch. Stub.
+    /// Cast fishing and wait for catch.
     Fish,
-    /// Play a random emote (non-RPG context — e.g. idle chatter). Stub.
+    /// Play a random emote (non-RPG context — e.g. idle chatter).
     RandomEmote,
-    /// Say a random message (RP phrases, idle chatter). Stub.
+    /// Say a random message (RP phrases, idle chatter).
     RandomSay,
-    /// Travel to a world buff location for `buff_id`. Stub.
+    /// Apply all missing world buffs from config (AddAura for each).
+    ApplyWorldBuffs,
+    /// Travel to a world buff location for `buff_id`.
     WorldBuffTravel(SpellId),
-    /// Consume the next entry in the RTSC move queue. Stub.
+    /// Consume the next entry in the RTSC move queue.
     RtscConsumeMoveQueue,
-    /// Join LFG queue (WotLK only). Stub — needs LFG FFI.
+    /// Join LFG queue (WotLK only).
     LfgJoin,
-    /// Accept LFG proposal (WotLK only). Stub — needs LFG FFI.
+    /// Accept LFG proposal (WotLK only).
     LfgAccept,
-    /// Accept a pending battleground invite. Stub.
+    /// Accept a pending battleground invite.
     AcceptBgInvite,
-    /// Queue for a battleground. Stub.
+    /// Queue for a battleground.
     QueueBg,
-    /// Defend a BG base/node. Stub.
+    /// Defend a BG base/node.
     DefendBase,
-    /// Capture a BG flag. Stub.
+    /// Capture a BG flag.
     CaptureFlag,
-    /// Return a dropped friendly flag. Stub.
+    /// Return a dropped friendly flag.
     ReturnFlag,
-    /// Assault a BG base/node. Stub.
+    /// Assault a BG base/node.
     AssaultBase,
-    /// Arena: initial engage positioning setup. Stub.
+    /// Arena: initial engage positioning setup.
     ArenaEngageSetup,
-    /// Arena: peel for a teammate under pressure. Stub.
+    /// Arena: peel for a teammate under pressure.
     ArenaPeel,
-    /// Dungeon: stay within range of the tank. Stub.
+    /// Dungeon: stay within range of the tank.
     DungeonStayNearTank,
-    /// Dungeon: avoid breaking CC'd mobs. Stub.
+    /// Dungeon: avoid breaking CC'd mobs.
     DungeonAvoidBreakingCc,
-    /// Dump debug state (kind 0=full, 1=strategies, 2=blackboard). Stub.
+    /// Dump debug state (kind 0=full, 1=strategies, 2=blackboard).
     DebugDumpState(u8),
 
     // ── Battleground ─────────────────────────────────────────────────────
@@ -1077,31 +1090,68 @@ impl Bt {
 
 impl BtNode for Bt {
     fn tick(&self, ctx: &mut TickContext<'_>) -> BtResult {
-        match self {
+        let result = match self {
             // ── Compositors ──────────────────────────────────────────────
             Bt::Seq(children) => {
-                for child in children {
+                let mut last_i = 0;
+                let mut res = BtResult::Success;
+                for (i, child) in children.iter().enumerate() {
+                    last_i = i;
                     match child.tick(ctx) {
                         BtResult::Success => {}
-                        other => return other,
+                        other => {
+                            res = other;
+                            break;
+                        }
                     }
                 }
-                BtResult::Success
+                if let Some(ref trace) = ctx.monitor_trace {
+                    if res != BtResult::Failure {
+                        trace.borrow_mut().insert(0, format!("Seq[{last_i}]"));
+                    }
+                }
+                return res;
             }
             Bt::Sel(children) => {
-                for child in children {
+                for (i, child) in children.iter().enumerate() {
+                    // Clear trace before each child so failed branches
+                    // don't leave stale entries.
+                    if let Some(ref trace) = ctx.monitor_trace {
+                        trace.borrow_mut().clear();
+                    }
                     match child.tick(ctx) {
                         BtResult::Failure => {}
-                        other => return other,
+                        other => {
+                            if let Some(ref trace) = ctx.monitor_trace {
+                                trace.borrow_mut().insert(0, format!("Sel[{i}]"));
+                            }
+                            return other;
+                        }
                     }
                 }
-                BtResult::Failure
+                return BtResult::Failure;
             }
-            Bt::Not(child) => match child.tick(ctx) {
-                BtResult::Success => BtResult::Failure,
-                BtResult::Failure => BtResult::Success,
-                other @ BtResult::Running => other,
-            },
+            Bt::Not(child) => {
+                let r = match child.tick(ctx) {
+                    BtResult::Success => BtResult::Failure,
+                    BtResult::Failure => BtResult::Success,
+                    other @ BtResult::Running => other,
+                };
+                if let Some(ref trace) = ctx.monitor_trace {
+                    if r != BtResult::Failure {
+                        trace.borrow_mut().insert(0, "Not".to_string());
+                    }
+                }
+                return r;
+            }
+            Bt::Optional(child) => {
+                let _ = child.tick(ctx);
+                // Always succeed so parent Seq continues.
+                if let Some(ref trace) = ctx.monitor_trace {
+                    trace.borrow_mut().insert(0, "Optional".to_string());
+                }
+                return BtResult::Success;
+            }
             Bt::Throttle {
                 key,
                 interval_ms,
@@ -1135,7 +1185,12 @@ impl BtNode for Bt {
                         ctx.throttles.set_running(*key, false);
                     }
                 }
-                result
+                if let Some(ref trace) = ctx.monitor_trace {
+                    if result != BtResult::Failure {
+                        trace.borrow_mut().insert(0, "Throttle".to_string());
+                    }
+                }
+                return result;
             }
 
             // ── Conditions — encounter ───────────────────────────────────
@@ -1177,6 +1232,7 @@ impl BtNode for Bt {
             }
 
             // ── Conditions — general ─────────────────────────────────────
+            Bt::Noop => BtResult::Success,
             Bt::InCombat => ok(ctx.in_combat()),
             Bt::IsAlive => ok(ctx.snap.self_.is_alive),
             Bt::IsMounted => ok(ctx.interface.is_mounted()),
@@ -1393,6 +1449,12 @@ impl BtNode for Bt {
                     Some(t) => t,
                     None => return BtResult::Failure,
                 };
+                // Already behind and within melee range — nothing to do.
+                if ctx.interface.bot_is_behind(target)
+                    && ctx.interface.unit_distance(target) <= 5.0
+                {
+                    return BtResult::Failure;
+                }
                 let pos = ctx.interface.get_behind_position(target, *distance);
                 if ctx.interface.move_to(pos.x, pos.y, pos.z) {
                     BtResult::Running
@@ -1433,6 +1495,9 @@ impl BtNode for Bt {
                 }
             }
             Bt::StickToTarget(range) => {
+                if ctx.snap.self_.is_casting {
+                    return BtResult::Failure;
+                }
                 let target = match ctx.current_target() {
                     Some(t) => t,
                     None => return BtResult::Failure,
@@ -1484,6 +1549,8 @@ impl BtNode for Bt {
             // ── World actions ────────────────────────────────────────────
             Bt::AcceptResurrect => {
                 if ctx.interface.accept_resurrect() {
+                    use crate::engine::blackboard::Key;
+                    ctx.blackboard.clear(Key::DeathTimestampMs);
                     BtResult::Success
                 } else {
                     BtResult::Failure
@@ -1502,6 +1569,32 @@ impl BtNode for Bt {
                     BtResult::Success
                 } else {
                     BtResult::Failure
+                }
+            }
+            Bt::HasAliveGroupMember => {
+                // If the bot is in a group, assume there may be alive members
+                // who could resurrect. PB2 checks for alive party members;
+                // here we use group_size as a proxy since the snapshot doesn't
+                // expose individual member alive/dead states in the tick path.
+                ok(ctx.snap.group_size > 0)
+            }
+            Bt::RecordDeathTime => {
+                use crate::engine::blackboard::{Key, Value};
+                // Only record once per death.
+                if ctx.blackboard.get_u64(Key::DeathTimestampMs).is_none() {
+                    ctx.blackboard.set(Key::DeathTimestampMs, Value::U64(ctx.server_time_ms));
+                }
+                BtResult::Success
+            }
+            Bt::DeadForLessThan(max_ms) => {
+                use crate::engine::blackboard::Key;
+                match ctx.blackboard.get_u64(Key::DeathTimestampMs) {
+                    Some(death_ms) => {
+                        let elapsed = ctx.server_time_ms.saturating_sub(death_ms);
+                        ok(elapsed < *max_ms)
+                    }
+                    // No recorded death time — treat as "just died"
+                    None => BtResult::Success,
                 }
             }
             Bt::MountUp => {
@@ -1532,6 +1625,10 @@ impl BtNode for Bt {
             Bt::TravelToBlackboard => tick_travel(ctx),
             Bt::ChooseTravelTarget => tick_choose_travel_target(ctx),
             Bt::RevivePet => {
+                // Don't restart if already casting (Revive Pet has a cast time).
+                if ctx.snap.self_.is_casting {
+                    return BtResult::Failure;
+                }
                 if ctx.interface.revive_pet() {
                     BtResult::Success
                 } else {
@@ -1539,6 +1636,10 @@ impl BtNode for Bt {
                 }
             }
             Bt::SummonPet => {
+                // Don't restart if already casting (Summon Demon is a 10s cast).
+                if ctx.snap.self_.is_casting {
+                    return BtResult::Failure;
+                }
                 if ctx.interface.summon_pet() {
                     BtResult::Success
                 } else {
@@ -1608,38 +1709,43 @@ impl BtNode for Bt {
             Bt::AcceptSummon => ok(ctx.interface.accept_summon()),
             Bt::UseMeetingStone => ok(ctx.interface.use_meeting_stone()),
 
-            // ── Travel ───────────────────────────────────────────────
+            // ── World buffs ──────────────────────────────────────────
+            Bt::ApplyWorldBuffs => tick_apply_world_buffs(ctx),
             Bt::WorldBuffTravel(spell) => tick_world_buff_travel(ctx, *spell),
 
-            // ── Actions — 11j (stubs) ────────────────────────────────
-            Bt::Gossip(_)
-            | Bt::BuyFromVendor(_, _)
-            | Bt::MailItem
-            | Bt::BankDeposit
-            | Bt::BankWithdraw
-            | Bt::AhPost
-            | Bt::AhBid
-            | Bt::ShareQuest
-            | Bt::EquipItem(_)
-            | Bt::UnequipSlot(_)
-            | Bt::ApplyOutfit
-            | Bt::Fish
-            | Bt::RandomEmote
-            | Bt::RandomSay
-            | Bt::RtscConsumeMoveQueue
-            | Bt::LfgJoin
-            | Bt::LfgAccept
-            | Bt::AcceptBgInvite
-            | Bt::QueueBg
-            | Bt::DefendBase
-            | Bt::CaptureFlag
-            | Bt::ReturnFlag
-            | Bt::AssaultBase
-            | Bt::ArenaEngageSetup
-            | Bt::ArenaPeel
-            | Bt::DungeonStayNearTank
-            | Bt::DungeonAvoidBreakingCc
-            | Bt::DebugDumpState(_) => BtResult::Failure,
+            // ── Implemented actions ─────────────────────────────────
+            Bt::ShareQuest => ok(ctx.interface.share_quest(0)),
+            Bt::EquipItem(item) => ok(ctx.interface.equip_item(*item)),
+            Bt::UnequipSlot(_slot) => {
+                // UnequipSlot takes a slot index but the FFI takes item_id.
+                // For now, return Failure — callers use EquipItem instead.
+                BtResult::Failure
+            }
+            Bt::RandomEmote => tick_random_emote(ctx),
+            Bt::RandomSay => tick_random_say(ctx),
+            Bt::CaptureFlag => ok(ctx.interface.capture_bg_objective()),
+            Bt::Gossip(entry) => tick_gossip(ctx, *entry),
+            Bt::BuyFromVendor(item, qty) => tick_buy_from_vendor(ctx, *item, *qty),
+            Bt::MailItem => tick_mail_item(ctx),
+            Bt::BankDeposit => tick_bank_deposit(ctx),
+            Bt::BankWithdraw => tick_bank_withdraw(ctx),
+            Bt::AhPost => tick_ah_post(ctx),
+            Bt::AhBid => tick_ah_bid(ctx),
+            Bt::ApplyOutfit => tick_apply_outfit(ctx),
+            Bt::Fish => tick_fish(ctx),
+            Bt::RtscConsumeMoveQueue => tick_rtsc_consume_move_queue(ctx),
+            Bt::LfgJoin => tick_lfg_join(ctx),
+            Bt::LfgAccept => tick_lfg_accept(ctx),
+            Bt::AcceptBgInvite => tick_accept_bg_invite(ctx),
+            Bt::QueueBg => tick_queue_bg(ctx),
+            Bt::DefendBase => tick_defend_base(ctx),
+            Bt::ReturnFlag => tick_return_flag(ctx),
+            Bt::AssaultBase => tick_assault_base(ctx),
+            Bt::ArenaEngageSetup => tick_arena_engage_setup(ctx),
+            Bt::ArenaPeel => tick_arena_peel(ctx),
+            Bt::DungeonStayNearTank => tick_dungeon_stay_near_tank(ctx),
+            Bt::DungeonAvoidBreakingCc => tick_dungeon_avoid_breaking_cc(ctx),
+            Bt::DebugDumpState(kind) => tick_debug_dump_state(ctx, *kind),
 
             // ── Battleground ─────────────────────────────────────────────
             Bt::InBattleground => ok(ctx.interface.is_in_battleground()),
@@ -1705,7 +1811,16 @@ impl BtNode for Bt {
                 }
             }
             Bt::Custom(leaf) => (leaf.handler)(ctx),
+        };
+        // Record the winning leaf for the monitor trace.
+        // Compositors (Seq/Sel/Not/Throttle) return above and push their own
+        // path segments. Everything that reaches here is a leaf or condition.
+        if let Some(ref trace) = ctx.monitor_trace {
+            if matches!(result, BtResult::Success | BtResult::Running) {
+                trace.borrow_mut().push(format!("{self:?}"));
+            }
         }
+        result
     }
 }
 
@@ -1808,18 +1923,43 @@ fn move_to_safe(ctx: &mut TickContext<'_>, radius: f32) -> BtResult {
 }
 
 fn cast(ctx: &mut TickContext<'_>, spell: SpellId, target: u64) -> BtResult {
+    // Don't interrupt an in-progress cast (e.g. Summon Demon, Hearthstone).
+    if ctx.snap.self_.is_casting {
+        return BtResult::Failure;
+    }
     if ctx.timers.gcd_active(ctx.server_time_ms) {
         return BtResult::Failure;
     }
     if ctx.timers.spell_on_cooldown(spell, ctx.server_time_ms) {
+        if ctx.monitor_trace.is_some() {
+            let rem = ctx.timers.cooldown_remaining_ms(spell, ctx.server_time_ms);
+            monitor_cast_event(ctx, spell, target, &format!("CD ({rem}ms left)"));
+        }
         return BtResult::Failure;
     }
     if ctx.interface.cast_spell(spell, target) {
         ctx.timers.on_spell_cast(spell, ctx.server_time_ms);
+        if ctx.monitor_trace.is_some() {
+            monitor_cast_event(ctx, spell, target, "OK");
+        }
         BtResult::Success
     } else {
+        if ctx.monitor_trace.is_some() {
+            monitor_cast_event(ctx, spell, target, "FAIL (FFI rejected)");
+        }
         BtResult::Failure
     }
+}
+
+/// Log a cast attempt result to the monitor trace (stored in blackboard,
+/// flushed by the tick wrapper).
+fn monitor_cast_event(ctx: &mut TickContext<'_>, spell: SpellId, target: u64, result: &str) {
+    ctx.blackboard.push_monitor_line(format!(
+        "CAST {} on 0x{:X}: {}",
+        spell.raw(),
+        target,
+        result,
+    ));
 }
 
 fn count_group_members_below(ctx: &TickContext<'_>, threshold: f32) -> u8 {
@@ -1925,6 +2065,12 @@ fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
     let Some(target) = pick_follow_target(ctx) else {
         return BtResult::Failure;
     };
+
+    // Don't interrupt a long cast (Summon Demon, Hearthstone, etc.) with
+    // a movement command — the cast would be cancelled server-side.
+    if ctx.snap.self_.is_casting {
+        return BtResult::Success;
+    }
 
     if ctx.interface.unit_distance(target) <= REFOLLOW_THRESHOLD {
         // Already in chase range — don't re-issue. Sticky behavior matches
@@ -2592,6 +2738,19 @@ fn tick_choose_travel_target(ctx: &mut TickContext<'_>) -> BtResult {
     BtResult::Failure
 }
 
+/// `Bt::ApplyWorldBuffs`. Get the list of missing world buffs from the C++
+/// config system and directly apply each one via AddAura.
+fn tick_apply_world_buffs(ctx: &mut TickContext<'_>) -> BtResult {
+    let needed = ctx.interface.get_needed_world_buffs();
+    if needed.is_empty() {
+        return BtResult::Failure;
+    }
+    for spell_id in &needed {
+        ctx.interface.add_aura(*spell_id);
+    }
+    BtResult::Success
+}
+
 /// `Bt::WorldBuffTravel`. Look up the world buff location for `spell`
 /// and write it to the blackboard so `TravelToBlackboard` navigates there.
 fn tick_world_buff_travel(ctx: &mut TickContext<'_>, spell: SpellId) -> BtResult {
@@ -2616,6 +2775,264 @@ fn tick_world_buff_travel(ctx: &mut TickContext<'_>, spell: SpellId) -> BtResult
 
     crate::travel::planner::set_travel_dest(ctx.blackboard, &dest);
     BtResult::Success
+}
+
+// ── Implemented action tick handlers ─────────────────────────────────────────
+
+fn tick_random_emote(ctx: &mut TickContext<'_>) -> BtResult {
+    // Common emote IDs: wave=1, bow=2, dance=4, laugh=11, cheer=21
+    let emotes = [1u32, 2, 4, 11, 21, 22, 23, 24, 41, 101];
+    let idx = (ctx.snap.server_time_ms as usize) % emotes.len();
+    if ctx.interface.do_text_emote(emotes[idx]) {
+        BtResult::Success
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_random_say(ctx: &mut TickContext<'_>) -> BtResult {
+    let phrases = [
+        "Ready to go!",
+        "Let's do this.",
+        "On it.",
+        "Following.",
+        "Standing by.",
+    ];
+    let idx = (ctx.snap.server_time_ms as usize) % phrases.len();
+    if ctx.interface.say(phrases[idx], 0) {
+        BtResult::Success
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_gossip(ctx: &mut TickContext<'_>, entry: u32) -> BtResult {
+    if ctx.interface.gossip_hello(entry) {
+        BtResult::Success
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_buy_from_vendor(ctx: &mut TickContext<'_>, item: ItemId, qty: u32) -> BtResult {
+    if ctx.interface.buy_from_vendor(item.raw(), qty) {
+        BtResult::Success
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_mail_item(ctx: &mut TickContext<'_>) -> BtResult {
+    if ctx.interface.mail_item_to_master() {
+        BtResult::Success
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_bank_deposit(ctx: &mut TickContext<'_>) -> BtResult {
+    if ctx.interface.bank_deposit() {
+        BtResult::Success
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_bank_withdraw(ctx: &mut TickContext<'_>) -> BtResult {
+    if ctx.interface.bank_withdraw() {
+        BtResult::Success
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_ah_post(ctx: &mut TickContext<'_>) -> BtResult {
+    if ctx.interface.ah_post() {
+        BtResult::Success
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_ah_bid(ctx: &mut TickContext<'_>) -> BtResult {
+    if ctx.interface.ah_bid() {
+        BtResult::Success
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_apply_outfit(ctx: &mut TickContext<'_>) -> BtResult {
+    if ctx.interface.apply_outfit() {
+        BtResult::Success
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_fish(ctx: &mut TickContext<'_>) -> BtResult {
+    if ctx.interface.start_fishing() {
+        BtResult::Running
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_rtsc_consume_move_queue(ctx: &mut TickContext<'_>) -> BtResult {
+    use crate::engine::blackboard::Key;
+    // Consume the next RTSC move waypoint from the blackboard
+    if let (Some(x), Some(y), Some(z)) = (
+        ctx.blackboard.get_f32(Key::RtscMoveX),
+        ctx.blackboard.get_f32(Key::RtscMoveY),
+        ctx.blackboard.get_f32(Key::RtscMoveZ),
+    ) {
+        ctx.blackboard.clear(Key::RtscMoveX);
+        ctx.blackboard.clear(Key::RtscMoveY);
+        ctx.blackboard.clear(Key::RtscMoveZ);
+        if ctx.interface.move_to(x, y, z) {
+            BtResult::Running
+        } else {
+            BtResult::Failure
+        }
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_lfg_join(ctx: &mut TickContext<'_>) -> BtResult {
+    if ctx.interface.lfg_join() {
+        BtResult::Success
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_lfg_accept(ctx: &mut TickContext<'_>) -> BtResult {
+    if ctx.interface.lfg_accept() {
+        BtResult::Success
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_accept_bg_invite(ctx: &mut TickContext<'_>) -> BtResult {
+    if ctx.interface.accept_bg_invite() {
+        BtResult::Success
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_queue_bg(ctx: &mut TickContext<'_>) -> BtResult {
+    if ctx.interface.queue_bg() {
+        BtResult::Success
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_defend_base(ctx: &mut TickContext<'_>) -> BtResult {
+    let pos = ctx.interface.get_bg_objective_pos(0); // 0 = defend
+    if pos.x == 0.0 && pos.y == 0.0 && pos.z == 0.0 {
+        return BtResult::Failure;
+    }
+    if ctx.interface.move_to(pos.x, pos.y, pos.z) {
+        BtResult::Running
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_return_flag(ctx: &mut TickContext<'_>) -> BtResult {
+    let pos = ctx.interface.get_bg_objective_pos(3); // 3 = return_flag
+    if pos.x == 0.0 && pos.y == 0.0 && pos.z == 0.0 {
+        return BtResult::Failure;
+    }
+    if ctx.interface.move_to(pos.x, pos.y, pos.z) {
+        BtResult::Running
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_assault_base(ctx: &mut TickContext<'_>) -> BtResult {
+    let pos = ctx.interface.get_bg_objective_pos(1); // 1 = assault
+    if pos.x == 0.0 && pos.y == 0.0 && pos.z == 0.0 {
+        return BtResult::Failure;
+    }
+    if ctx.interface.move_to(pos.x, pos.y, pos.z) {
+        BtResult::Running
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_arena_engage_setup(ctx: &mut TickContext<'_>) -> BtResult {
+    // Move toward the center of the arena to engage
+    let pos = ctx.interface.get_bg_objective_pos(1); // Use assault position
+    if pos.x == 0.0 && pos.y == 0.0 && pos.z == 0.0 {
+        return BtResult::Failure;
+    }
+    if ctx.interface.move_to(pos.x, pos.y, pos.z) {
+        BtResult::Running
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_arena_peel(ctx: &mut TickContext<'_>) -> BtResult {
+    // Move toward the healer/teammate under pressure
+    let pos = ctx.interface.get_tank_position();
+    if pos.x == 0.0 && pos.y == 0.0 && pos.z == 0.0 {
+        return BtResult::Failure;
+    }
+    // Move to defend position near the tank/healer
+    if ctx.interface.move_to(pos.x, pos.y, pos.z) {
+        BtResult::Running
+    } else {
+        BtResult::Failure
+    }
+}
+
+fn tick_dungeon_stay_near_tank(ctx: &mut TickContext<'_>) -> BtResult {
+    let tank_pos = ctx.interface.get_tank_position();
+    if tank_pos.x == 0.0 && tank_pos.y == 0.0 && tank_pos.z == 0.0 {
+        return BtResult::Failure;
+    }
+
+    let self_pos = &ctx.snap.self_.pos;
+    let dx = self_pos.x - tank_pos.x;
+    let dy = self_pos.y - tank_pos.y;
+    let dist_sq = dx * dx + dy * dy;
+
+    // Stay within 15 yards of the tank
+    if dist_sq > 15.0 * 15.0 {
+        if ctx.interface.move_to(tank_pos.x, tank_pos.y, tank_pos.z) {
+            return BtResult::Running;
+        }
+    }
+
+    BtResult::Success
+}
+
+fn tick_dungeon_avoid_breaking_cc(ctx: &mut TickContext<'_>) -> BtResult {
+    // Check nearby enemies for CC — if our current target is CC'd, switch targets
+    if let Some(target) = ctx.current_target() {
+        if ctx.interface.is_unit_cc(target) {
+            // Target is CC'd — stop attacking it
+            ctx.interface.auto_attack(false);
+            return BtResult::Success;
+        }
+    }
+    BtResult::Failure
+}
+
+fn tick_debug_dump_state(ctx: &mut TickContext<'_>, kind: u8) -> BtResult {
+    if ctx.interface.debug_dump_state(kind) {
+        BtResult::Success
+    } else {
+        BtResult::Failure
+    }
 }
 
 fn tick_grind(ctx: &mut TickContext<'_>) -> BtResult {
@@ -2705,6 +3122,9 @@ fn tick_kite_from_target(ctx: &mut TickContext<'_>, dist: f32) -> BtResult {
 /// but kept as its own helper so future divergence (e.g. a "close
 /// with leap" variant for classes with a gap closer) lands cleanly.
 fn tick_close_to_target(ctx: &mut TickContext<'_>, dist: f32) -> BtResult {
+    if ctx.snap.self_.is_casting {
+        return BtResult::Failure;
+    }
     let target = match ctx.current_target() {
         Some(t) => t,
         None => return BtResult::Failure,
@@ -2783,7 +3203,7 @@ fn tick_wait_for_attack(ctx: &mut TickContext<'_>) -> BtResult {
     }
 }
 
-/// `Bt::PreHeal`. Cross-class preheal stub — returns Failure.
+/// `Bt::PreHeal`. Cross-class preheal fallback — returns Failure.
 /// Actual preheal logic is class-specific (each healer spec knows its
 /// fast heal spell) and is layered via the class file's reaction
 /// leaves. This variant exists so strategies can reference it
@@ -2793,11 +3213,29 @@ fn tick_preheal(_ctx: &mut TickContext<'_>) -> BtResult {
     BtResult::Failure
 }
 
-/// `Bt::HealInterrupt`. Cross-class self-cast-interrupt stub — returns
-/// Failure. Requires a dedicated FFI callback (`interrupt_own_cast`)
-/// that has not been added yet. When it lands, this handler should
-/// gate on `is_casting(bot_handle)` and call the interrupt callback.
-fn tick_heal_interrupt(_ctx: &mut TickContext<'_>) -> BtResult {
+/// `Bt::HealInterrupt`. Cancel the bot's own cast if the heal target
+/// is no longer injured (overheal prevention). Uses the
+/// `interrupt_own_cast` FFI callback.
+fn tick_heal_interrupt(ctx: &mut TickContext<'_>) -> BtResult {
+    // Only relevant if the bot is currently casting
+    if !ctx.snap.self_.is_casting {
+        return BtResult::Failure;
+    }
+
+    // Check if the target we're healing is still injured
+    if let Some(target) = ctx.current_target() {
+        let snap = ctx.interface.get_unit_snapshot(target);
+        if snap.max_health > 0 {
+            let pct = (snap.health as f32) / (snap.max_health as f32);
+            // If the target is above 95% health, cancel the heal
+            if pct > 0.95 {
+                if ctx.interface.interrupt_own_cast() {
+                    return BtResult::Success;
+                }
+            }
+        }
+    }
+
     BtResult::Failure
 }
 
@@ -3433,6 +3871,7 @@ mod tests {
             class: PlayerClass::Warrior,
             role: BotRole::DPS,
             settings: &owned.settings,
+            monitor_trace: None,
         }
     }
 
@@ -4773,12 +5212,13 @@ mod tests {
         assert_eq!(Bt::UseTrinket(0).tick(&mut ctx), BtResult::Failure);
     }
 
-    // ── 11j: world interaction / economy stubs ────────────────────────
+    // ── 11j: world interaction / economy actions ────────────────────────
 
     #[test]
-    fn world_interaction_stubs_return_failure() {
+    fn world_interaction_actions_with_default_mock() {
         let mut owned = TestCtxOwned::new();
         let mut ctx = owned.ctx();
+        // Actions that delegate to FFI and the mock returns false by default:
         assert_eq!(Bt::Gossip(123).tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::BuyFromVendor(ItemId(100), 1).tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::MailItem.tick(&mut ctx), BtResult::Failure);
@@ -4790,14 +5230,14 @@ mod tests {
         assert_eq!(Bt::LootRoll.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::AutoLootRoll.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::ShareQuest.tick(&mut ctx), BtResult::Failure);
-        // LearnTrainerSpells always succeeds (just calls FFI), so test it separately.
-        // ApplyTalentBuild returns Failure with 0 free talent points (mock default).
         assert_eq!(Bt::EquipItem(ItemId(100)).tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::UnequipSlot(0).tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::ApplyOutfit.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::Fish.tick(&mut ctx), BtResult::Failure);
+        // RandomEmote: mock do_text_emote returns false (default)
         assert_eq!(Bt::RandomEmote.tick(&mut ctx), BtResult::Failure);
-        assert_eq!(Bt::RandomSay.tick(&mut ctx), BtResult::Failure);
+        // RandomSay: mock say returns true (overridden in test mock)
+        assert_eq!(Bt::RandomSay.tick(&mut ctx), BtResult::Success);
         assert_eq!(Bt::WorldBuffTravel(SpellId(1)).tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::RtscConsumeMoveQueue.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::LfgJoin.tick(&mut ctx), BtResult::Failure);
@@ -4810,6 +5250,7 @@ mod tests {
         assert_eq!(Bt::AssaultBase.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::ArenaEngageSetup.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::ArenaPeel.tick(&mut ctx), BtResult::Failure);
+        // DungeonStayNearTank: tank position is {0,0,0} so returns Failure
         assert_eq!(Bt::DungeonStayNearTank.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::DungeonAvoidBreakingCc.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::DebugDumpState(0).tick(&mut ctx), BtResult::Failure);

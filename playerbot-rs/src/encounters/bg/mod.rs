@@ -1,15 +1,14 @@
 /// Battleground encounter modules.
 ///
 /// Each BG has its own file owning the node/flag/base logic.
-/// BG "encounters" are not boss FSMs — they track the strategic state
+/// BG "encounters" are not boss FSMs �� they track the strategic state
 /// of the battleground (flag positions, base ownership, timers) and
 /// provide BT overrides for flag-carrying, base defense, etc.
 ///
-/// Currently scaffolded as stubs — the BT leaves (`DefendBase`,
-/// `CaptureFlag`, `ReturnFlag`, `AssaultBase`, `QueueBg`,
-/// `AcceptBgInvite`) exist in `engine/bt.rs` but return `Failure`.
-/// These modules will be fleshed out when BG FFI and map-awareness
-/// primitives land.
+/// The BT leaves (`DefendBase`, `CaptureFlag`, `ReturnFlag`,
+/// `AssaultBase`, `QueueBg`, `AcceptBgInvite`) are implemented in
+/// `engine/bt.rs` via FFI callbacks (`get_bg_objective_pos`,
+/// `capture_bg_objective`, `queue_bg`, `accept_bg_invite`).
 pub mod warsong;
 pub mod arathi;
 pub mod alterac;

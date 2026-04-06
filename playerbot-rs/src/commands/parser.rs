@@ -119,7 +119,15 @@ const COMMANDS: &[CommandSpec] = &[
     // -- Named-location travel --
     CommandSpec { names: &["travel", "goto"], parse: |_, a| parse_travel(a) },
     // -- Tunables / PB2 Wave 1 --
-    CommandSpec { names: &["range"], parse: |_, a| parse_range(a) },
+    CommandSpec { names: &["range", "ra"], parse: |_, a| parse_range(a) },
+    // `all +strat,-strat` — apply strategies to all 4 PB2 state engines.
+    CommandSpec { names: &["all"], parse: |_, a| parse_all(a) },
+    // `stop` — stop current action / go passive.
+    CommandSpec { names: &["stop"], parse: |_, _| Some(BotCommand::Stop) },
+    // `u <item name>` / `use <item name>` — use an item by name.
+    CommandSpec { names: &["u", "use"], parse: |_, a| parse_use_item(a) },
+    // `e <item name>` / `equip <item name>` — equip an item by name.
+    CommandSpec { names: &["e", "equip"], parse: |_, a| parse_equip_item(a) },
     CommandSpec { names: &["stance"], parse: |_, a| parse_stance(a) },
     CommandSpec {
         names: &["max-dps", "maxdps"],
@@ -207,6 +215,70 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec { names: &["forcestance", "stancelock"], parse: |_, a| parse_forcestance(a) },
     CommandSpec { names: &["suppression"], parse: |_, a| parse_duty(a, DutyKind::Suppression) },
     CommandSpec { names: &["douse"], parse: |_, a| parse_duty(a, DutyKind::Douse) },
+    // -- PB2 parity: remaining commands --
+    // Single-letter shortcuts from PB2
+    CommandSpec { names: &["s"], parse: |_, _| Some(BotCommand::Vendor) }, // sell
+    CommandSpec { names: &["b"], parse: |_, _| Some(BotCommand::Buy) },
+    CommandSpec { names: &["bb"], parse: |_, _| Some(BotCommand::Buyback) },
+    CommandSpec { names: &["r"], parse: |_, _| Some(BotCommand::QuestReward) },
+    CommandSpec { names: &["t", "nt"], parse: |_, _| Some(BotCommand::Trade) },
+    CommandSpec { names: &["ue"], parse: |_, a| Some(BotCommand::UnequipItemByName(a.join(" "))) },
+    // PB2 targeted commands
+    CommandSpec { names: &["wait for attack"], parse: |_, a| {
+        let secs = a.first().and_then(|s| s.parse::<u32>().ok()).unwrap_or(3);
+        Some(BotCommand::SetWaitForAttack(secs))
+    }},
+    CommandSpec { names: &["tank attack"], parse: |_, _| Some(BotCommand::TankAttack) },
+    CommandSpec { names: &["loot", "add all loot"], parse: |_, _| Some(BotCommand::Loot) },
+    CommandSpec { names: &["destroy"], parse: |_, a| Some(BotCommand::DestroyItem(a.join(" "))) },
+    CommandSpec { names: &["ss"], parse: |_, a| Some(BotCommand::SkipSpell(a.join(" "))) },
+    CommandSpec { names: &["roll"], parse: |_, a| Some(BotCommand::LootRoll(a.first().unwrap_or(&"pass").to_string())) },
+    CommandSpec { names: &["give leader"], parse: |_, _| Some(BotCommand::GiveLeader) },
+    CommandSpec { names: &["invite"], parse: |_, a| Some(BotCommand::InvitePlayer(a.join(" "))) },
+    CommandSpec { names: &["pet"], parse: |_, a| Some(BotCommand::Pet(a.join(" "))) },
+    CommandSpec { names: &["buff target"], parse: |_, a| Some(BotCommand::BuffTarget(a.join(" "))) },
+    CommandSpec { names: &["boost target"], parse: |_, a| Some(BotCommand::BoostTarget(a.join(" "))) },
+    CommandSpec { names: &["revive target"], parse: |_, a| Some(BotCommand::ReviveTarget(a.join(" "))) },
+    CommandSpec { names: &["follow target"], parse: |_, a| Some(BotCommand::FollowTarget(a.join(" "))) },
+    CommandSpec { names: &["focus heal"], parse: |_, a| Some(BotCommand::FocusHeal(a.join(" "))) },
+    CommandSpec { names: &["max dps"], parse: |_, _| Some(BotCommand::MaxDps) },
+    CommandSpec { names: &["self res"], parse: |_, _| Some(BotCommand::ToggleSelfRes) },
+    // NOTE: "save mana" is handled by the single-word "save" entry which
+    // checks args[0]=="mana". We must NOT add a multi-word "save mana" entry
+    // here because it would steal args from parse_save().
+    CommandSpec { names: &["move style"], parse: |_, a| Some(BotCommand::MoveStyle(a.first().unwrap_or(&"run").to_string())) },
+    CommandSpec { names: &["talk"], parse: |_, _| Some(BotCommand::Talk) },
+    CommandSpec { names: &["trainer"], parse: |_, _| Some(BotCommand::Trainer) },
+    CommandSpec { names: &["taxi"], parse: |_, _| Some(BotCommand::Taxi) },
+    CommandSpec { names: &["craft"], parse: |_, a| Some(BotCommand::Craft(a.join(" "))) },
+    CommandSpec { names: &["outfit"], parse: |_, a| Some(BotCommand::Outfit(a.join(" "))) },
+    CommandSpec { names: &["log"], parse: |_, a| Some(BotCommand::LogLevel(a.join(" "))) },
+    CommandSpec { names: &["share"], parse: |_, _| Some(BotCommand::ShareQuest) },
+    CommandSpec { names: &["doquest"], parse: |_, a| Some(BotCommand::DoQuest(a.join(" "))) },
+    CommandSpec { names: &["bank", "gb", "gbank"], parse: |_, _| Some(BotCommand::Bank) },
+    CommandSpec { names: &["ah"], parse: |_, a| Some(BotCommand::AuctionHouse(a.join(" "))) },
+    CommandSpec { names: &["guild invite", "guild join", "guild promote", "guild demote", "guild remove", "guild leader"], parse: |cmd, _| Some(BotCommand::GuildCommand(cmd.to_string())) },
+    CommandSpec { names: &["bg free"], parse: |_, _| Some(BotCommand::BgFree) },
+    CommandSpec { names: &["flag"], parse: |_, _| Some(BotCommand::Flag) },
+    CommandSpec { names: &["sendmail"], parse: |_, a| Some(BotCommand::SendMail(a.join(" "))) },
+    CommandSpec { names: &["possible attack targets"], parse: |_, _| Some(BotCommand::PossibleAttackTargets) },
+    CommandSpec { names: &["attackers"], parse: |_, _| Some(BotCommand::ShowAttackers) },
+    // PB2 commands that map to existing functionality or are no-ops
+    CommandSpec { names: &["load ai", "list ai", "save ai"], parse: |cmd, a| Some(BotCommand::AiProfile(format!("{} {}", cmd, a.join(" ")).trim().to_string())) },
+    CommandSpec { names: &["reset strats"], parse: |_, _| Some(BotCommand::ResetStrategies) },
+    CommandSpec { names: &["reset values"], parse: |_, _| Some(BotCommand::Reset) },
+    CommandSpec { names: &["cs"], parse: |_, a| Some(BotCommand::CustomStrategy(a.join(" "))) },
+    CommandSpec { names: &["wts"], parse: |_, _| Some(BotCommand::WhatToSell) },
+    CommandSpec { names: &["teleport"], parse: |_, a| Some(BotCommand::Teleport(a.join(" "))) },
+    CommandSpec { names: &["hire"], parse: |_, _| Some(BotCommand::Trainer) }, // hire = trainer (PB2 alias)
+    CommandSpec { names: &["glyph"], parse: |_, _| Some(BotCommand::Trainer) }, // glyph = trainer (PB2 alias for glyph master)
+    CommandSpec { names: &["faction"], parse: |_, _| Some(BotCommand::ShowFaction) },
+    CommandSpec { names: &["set value"], parse: |_, a| Some(BotCommand::SetValue(a.join(" "))) },
+    CommandSpec { names: &["speak"], parse: |_, a| Some(BotCommand::Speak(a.join(" "))) },
+    CommandSpec { names: &["warning"], parse: |_, _| Some(BotCommand::Flee) }, // warning = flee
+    CommandSpec { names: &["runaway"], parse: |_, _| Some(BotCommand::Flee) }, // alias
+    CommandSpec { names: &["quest reward", "reward"], parse: |_, _| Some(BotCommand::QuestReward) },
+    CommandSpec { names: &["lfg"], parse: |_, _| Some(BotCommand::Lfg) },
 ];
 
 /// Parse a chat message into a `BotCommand`.
@@ -220,12 +292,16 @@ pub fn parse(text: &str) -> Option<BotCommand> {
 
     let lower = text.to_lowercase();
     let parts: Vec<&str> = lower.split_whitespace().collect();
-    let cmd = parts[0];
-    let args = &parts[1..];
 
-    for spec in COMMANDS {
-        if spec.names.contains(&cmd) {
-            return (spec.parse)(cmd, args);
+    // Try multi-word command names first (longest match wins).
+    // Check 4-word, 3-word, 2-word, then 1-word prefixes.
+    for word_count in (1..=parts.len().min(4)).rev() {
+        let candidate = parts[..word_count].join(" ");
+        let args = &parts[word_count..];
+        for spec in COMMANDS {
+            if spec.names.iter().any(|n| *n == candidate) {
+                return (spec.parse)(&candidate, args);
+            }
         }
     }
     Some(BotCommand::Unknown(text.to_string()))
@@ -244,23 +320,24 @@ fn parse_combat_order(args: &[&str]) -> Option<BotCommand> {
 
     // Re-join so we can split on commas (the addon sends `co x,y` as one arg chain).
     let joined = args.join(" ");
-    let signed = joined.contains('+') || joined.contains('-');
+    let signed = joined.contains('+') || joined.contains('-') || joined.contains('~');
 
     // Bare form: single flag, full replacement.
     if !signed {
         let tokens: Vec<&str> = joined.split_whitespace().collect();
         return match CombatOrder::parse_flag(&tokens) {
             Some((flag, _)) => Some(BotCommand::SetCombatOrder(flag)),
-            None => Some(BotCommand::Unknown(format!("co: unknown flag `{joined}`"))),
+            // PB2 silently ignores unknown strategy names.
+            None => Some(BotCommand::SetCombatOrder(CombatOrder::NONE)),
         };
     }
 
-    // Signed form: walk tokens, each token starts with +/-, followed by flag name(s).
-    // A bare `?` chunk (e.g. `co +tank assist,?`) is Mangosbot's request to
-    // apply *and* re-query the flags in one round-trip — strip it and set
-    // `query=true` on the emitted command.
+    // Signed form: walk tokens, each token starts with +/-/~, followed by flag name(s).
+    // `~` = toggle. A bare `?` chunk (e.g. `co +tank assist,?`) is Mangosbot's
+    // request to apply *and* re-query the flags in one round-trip.
     let mut add = CombatOrder::NONE;
     let mut remove = CombatOrder::NONE;
+    let mut toggle = CombatOrder::NONE;
     let mut query = false;
 
     for chunk in joined.split(',') {
@@ -276,10 +353,11 @@ fn parse_combat_order(args: &[&str]) -> Option<BotCommand> {
             let (sign, rest) = match tok.chars().next() {
                 Some('+') => (1i8, &tok[1..]),
                 Some('-') => (-1i8, &tok[1..]),
+                Some('~') => (0i8, &tok[1..]),
                 _ => {
-                    return Some(BotCommand::Unknown(format!(
-                        "co: expected +/- prefix at `{tok}`"
-                    )));
+                    // PB2 silently ignores unknown prefixes.
+                    i += 1;
+                    continue;
                 }
             };
             // Build a small slice starting with the unsigned first word.
@@ -289,33 +367,28 @@ fn parse_combat_order(args: &[&str]) -> Option<BotCommand> {
             }
             if let Some(next) = tokens.get(i + 1) {
                 // Include the next token only if it doesn't start a new signed flag.
-                if !next.starts_with('+') && !next.starts_with('-') {
+                if !next.starts_with('+') && !next.starts_with('-') && !next.starts_with('~') {
                     window.push(next);
                 }
             }
             match CombatOrder::parse_flag(&window) {
                 Some((flag, consumed)) => {
-                    if sign > 0 {
-                        add.insert(flag);
-                    } else {
-                        remove.insert(flag);
+                    match sign {
+                        1 => add.insert(flag),
+                        -1 => remove.insert(flag),
+                        _ => toggle.insert(flag),
                     }
-                    // `consumed` counts words from `window`. The first word came
-                    // from the signed token itself (same `i`); any additional
-                    // consumed words came from tokens[i+1..].
                     i += 1 + consumed.saturating_sub(1);
                 }
+                // PB2 silently ignores unknown combat strategy names.
                 None => {
-                    return Some(BotCommand::Unknown(format!(
-                        "co: unknown flag `{}`",
-                        window.join(" ")
-                    )));
+                    i += 1;
                 }
             }
         }
     }
 
-    Some(BotCommand::ApplyCombatOrder { add, remove, query })
+    Some(BotCommand::ApplyCombatOrder { add, remove, toggle, query })
 }
 
 fn parse_reactivity(args: &[&str]) -> Option<BotCommand> {
@@ -416,19 +489,23 @@ fn parse_save(args: &[&str]) -> Option<BotCommand> {
         Some("mana") => match args.get(1).copied() {
             None => Some(BotCommand::ToggleSaveMana),
             Some("?") => Some(BotCommand::QuerySaveMana),
-            Some("on") | Some("1") | Some("yes") | Some("true") => {
-                Some(BotCommand::SetSaveMana(true))
+            Some("on") | Some("yes") | Some("true") => {
+                Some(BotCommand::SetSaveMana(1))
             }
             Some("off") | Some("0") | Some("no") | Some("false") => {
-                Some(BotCommand::SetSaveMana(false))
+                Some(BotCommand::SetSaveMana(0))
             }
             Some("toggle") | Some("~") => Some(BotCommand::ToggleSaveMana),
-            Some(other) => Some(BotCommand::Unknown(format!(
-                "save mana: unknown `{other}` (expected ?/on/off/toggle)"
-            ))),
+            Some(n) => {
+                // Accept numeric levels 1-5.
+                match n.parse::<u8>() {
+                    Ok(level @ 1..=5) => Some(BotCommand::SetSaveMana(level)),
+                    _ => Some(BotCommand::SetSaveMana(1)),
+                }
+            }
         },
         _ => Some(BotCommand::Unknown(
-            "save: expected `save mana [?|on|off]`".into(),
+            "save: expected `save mana [?|on|off|1-5]`".into(),
         )),
     }
 }
@@ -618,6 +695,7 @@ fn parse_strategies(args: &[&str], state: BotStateKind) -> Option<BotCommand> {
     let joined = args.join(" ");
     let mut add = StrategyFlags::NONE;
     let mut remove = StrategyFlags::NONE;
+    let mut toggle = StrategyFlags::NONE;
     let mut query = false;
 
     for chunk in joined.split(',') {
@@ -633,34 +711,62 @@ fn parse_strategies(args: &[&str], state: BotStateKind) -> Option<BotCommand> {
         let (sign, name): (i8, &str) = match chunk.chars().next() {
             Some('+') => (1, chunk[1..].trim()),
             Some('-') => (-1, chunk[1..].trim()),
+            Some('~') => (0, chunk[1..].trim()),
             _ => {
-                return Some(BotCommand::Unknown(format!(
-                    "{cmd_name}: expected +/- prefix on `{chunk}`"
-                )));
+                // PB2 silently ignores unknown prefixes.
+                continue;
             }
         };
 
-        match StrategyFlags::parse_name(name) {
-            Some(flag) => {
-                if sign > 0 {
-                    add.insert(flag);
-                } else {
-                    remove.insert(flag);
-                }
-            }
-            None => {
-                return Some(BotCommand::Unknown(format!(
-                    "{cmd_name}: unknown strategy `{name}`"
-                )));
+        // PB2 silently ignores unknown strategy names — they are simply
+        // not added. No error is reported.
+        if let Some(flag) = StrategyFlags::parse_name(name) {
+            match sign {
+                1 => add.insert(flag),
+                -1 => remove.insert(flag),
+                _ => toggle.insert(flag),
             }
         }
     }
 
-    Some(BotCommand::ApplyStrategies { state, add, remove, query })
+    Some(BotCommand::ApplyStrategies { state, add, remove, toggle, query })
+}
+
+/// `all +strat,-strat` — apply strategies to ALL four state engines.
+/// PB2's `ChangeAllStrategyAction` iterates all four `BotState` values.
+fn parse_all(args: &[&str]) -> Option<BotCommand> {
+    if args.is_empty() {
+        return Some(BotCommand::Unknown("all: need +/-/~strategy args".into()));
+    }
+    let joined = args.join(" ");
+    let mut add = StrategyFlags::NONE;
+    let mut remove = StrategyFlags::NONE;
+
+    for chunk in joined.split(',') {
+        let chunk = chunk.trim();
+        if chunk.is_empty() {
+            continue;
+        }
+        let (sign, name): (i8, &str) = match chunk.chars().next() {
+            Some('+') => (1, chunk[1..].trim()),
+            Some('-') => (-1, chunk[1..].trim()),
+            Some('~') => (1, chunk[1..].trim()), // toggle → treat as add for `all`
+            _ => continue,
+        };
+        if let Some(flag) = StrategyFlags::parse_name(name) {
+            if sign > 0 {
+                add.insert(flag);
+            } else {
+                remove.insert(flag);
+            }
+        }
+    }
+
+    Some(BotCommand::ApplyStrategiesAll { add, remove })
 }
 
 /// `cast <spell name>` or `cast self <spell name>`. Uses the spell-name
-/// table in `data::spells` — anything not there returns `Unknown`.
+/// table in `data::spells` — anything not there falls through to FFI.
 fn parse_cast(args: &[&str]) -> Option<BotCommand> {
     if args.is_empty() {
         return Some(BotCommand::Unknown("cast: missing spell name".into()));
@@ -676,8 +782,24 @@ fn parse_cast(args: &[&str]) -> Option<BotCommand> {
     let name = name_tokens.join(" ");
     match lookup_spell_by_name(&name) {
         Some(spell) => Some(BotCommand::CastOne { spell, on_self }),
-        None => Some(BotCommand::Unknown(format!("cast: unknown spell `{name}`"))),
+        None => Some(BotCommand::CastByName { name, on_self }),
     }
+}
+
+fn parse_use_item(args: &[&str]) -> Option<BotCommand> {
+    if args.is_empty() {
+        return Some(BotCommand::Unknown("use: missing item name".into()));
+    }
+    let name = args.join(" ");
+    Some(BotCommand::UseItemByName(name))
+}
+
+fn parse_equip_item(args: &[&str]) -> Option<BotCommand> {
+    if args.is_empty() {
+        return Some(BotCommand::Unknown("equip: missing item name".into()));
+    }
+    let name = args.join(" ");
+    Some(BotCommand::EquipItemByName(name))
 }
 
 fn parse_formation(args: &[&str]) -> Option<BotCommand> {
@@ -712,9 +834,27 @@ fn parse_spell_id(args: &[&str]) -> Option<SpellId> {
 }
 
 fn parse_range(args: &[&str]) -> Option<BotCommand> {
-    match args.first().and_then(|s| s.parse::<f32>().ok()) {
-        Some(d) if (0.5..=40.0).contains(&d) => Some(BotCommand::SetRange(d)),
-        _ => Some(BotCommand::Unknown("range: need yards (0.5-40)".into())),
+    match args {
+        ["?"] => Some(BotCommand::QueryRange),
+        [qualifier, val] => {
+            if *qualifier == "?" {
+                return Some(BotCommand::QueryRange);
+            }
+            match val.parse::<f32>() {
+                Ok(d) => Some(BotCommand::SetRangeQualified {
+                    qualifier: qualifier.to_string(),
+                    value: d,
+                }),
+                Err(_) if *val == "?" => Some(BotCommand::QueryRange),
+                _ => Some(BotCommand::Unknown(format!("range: invalid value `{val}`"))),
+            }
+        }
+        [val] => match val.parse::<f32>() {
+            Ok(d) if (0.0..=100.0).contains(&d) => Some(BotCommand::SetRange(d)),
+            _ => Some(BotCommand::Unknown("range: need yards (0-100)".into())),
+        },
+        [] => Some(BotCommand::QueryRange),
+        _ => Some(BotCommand::Unknown("range: bad arguments".into())),
     }
 }
 
@@ -1107,6 +1247,7 @@ mod tests {
             Some(BotCommand::ApplyCombatOrder { query: false,
                 add: CombatOrder::TANK,
                 remove: CombatOrder::NONE,
+                toggle: CombatOrder::NONE,
             }),
         );
         // Subtractive.
@@ -1115,6 +1256,7 @@ mod tests {
             Some(BotCommand::ApplyCombatOrder { query: false,
                 add: CombatOrder::NONE,
                 remove: CombatOrder::THREAT,
+                toggle: CombatOrder::NONE,
             }),
         );
         // Multi-word flag.
@@ -1123,6 +1265,7 @@ mod tests {
             Some(BotCommand::ApplyCombatOrder { query: false,
                 add: CombatOrder::TANK_ASSIST,
                 remove: CombatOrder::NONE,
+                toggle: CombatOrder::NONE,
             }),
         );
         // Comma-separated mixed.
@@ -1131,6 +1274,7 @@ mod tests {
             Some(BotCommand::ApplyCombatOrder { query: false,
                 add: CombatOrder::DPS_ASSIST,
                 remove: CombatOrder::TANK_ASSIST,
+                toggle: CombatOrder::NONE,
             }),
         );
         // Space-separated mixed, multi-flag.
@@ -1139,6 +1283,7 @@ mod tests {
             Some(BotCommand::ApplyCombatOrder { query: false,
                 add: CombatOrder::TANK_ASSIST,
                 remove: CombatOrder::THREAT | CombatOrder::DPS_ASSIST | CombatOrder::CLOSE,
+                toggle: CombatOrder::NONE,
             }),
         );
         // pull back — two-word flag in subtractive form.
@@ -1147,6 +1292,7 @@ mod tests {
             Some(BotCommand::ApplyCombatOrder { query: false,
                 add: CombatOrder::NONE,
                 remove: CombatOrder::PULL_BACK,
+                toggle: CombatOrder::NONE,
             }),
         );
     }
@@ -1323,6 +1469,7 @@ mod tests {
                 query: false,
                 add: StrategyFlags::RTSC,
                 remove: StrategyFlags::NONE,
+                toggle: StrategyFlags::NONE,
             }),
         );
         assert_eq!(
@@ -1332,6 +1479,7 @@ mod tests {
                 query: false,
                 add: StrategyFlags::NONE,
                 remove: StrategyFlags::RPG_BG,
+                toggle: StrategyFlags::NONE,
             }),
         );
         assert_eq!(
@@ -1341,9 +1489,20 @@ mod tests {
                 query: false,
                 add: StrategyFlags::RTSC,
                 remove: StrategyFlags::RPG | StrategyFlags::RPG_BG | StrategyFlags::RPG_EXPLORE,
+                toggle: StrategyFlags::NONE,
             }),
         );
-        assert!(matches!(parse("nc +bogus"), Some(BotCommand::Unknown(_))));
+        // PB2 silently ignores unknown strategy names — no error returned.
+        assert_eq!(
+            parse("nc +bogus"),
+            Some(BotCommand::ApplyStrategies {
+                state: BotStateKind::NonCombat,
+                query: false,
+                add: StrategyFlags::NONE,
+                remove: StrategyFlags::NONE,
+                toggle: StrategyFlags::NONE,
+            }),
+        );
         // `de` targets the Dead-state engine in PB2's 4-state model.
         assert_eq!(
             parse("de +rtsc"),
@@ -1352,6 +1511,7 @@ mod tests {
                 query: false,
                 add: StrategyFlags::RTSC,
                 remove: StrategyFlags::NONE,
+                toggle: StrategyFlags::NONE,
             }),
         );
         // `react +flee` routes to the Reaction slot (PB2 parity).
@@ -1362,6 +1522,27 @@ mod tests {
                 query: false,
                 add: StrategyFlags::FLEE,
                 remove: StrategyFlags::NONE,
+                toggle: StrategyFlags::NONE,
+            }),
+        );
+        // Toggle with ~ prefix.
+        assert_eq!(
+            parse("nc ~rpg,?"),
+            Some(BotCommand::ApplyStrategies {
+                state: BotStateKind::NonCombat,
+                query: true,
+                add: StrategyFlags::NONE,
+                remove: StrategyFlags::NONE,
+                toggle: StrategyFlags::RPG,
+            }),
+        );
+        assert_eq!(
+            parse("co ~threat,?"),
+            Some(BotCommand::ApplyCombatOrder {
+                query: true,
+                add: CombatOrder::NONE,
+                remove: CombatOrder::NONE,
+                toggle: CombatOrder::THREAT,
             }),
         );
     }
@@ -1397,7 +1578,8 @@ mod tests {
                 on_self: true
             }),
         );
-        assert!(matches!(parse("cast xyzzy"), Some(BotCommand::Unknown(_))));
+        // Unknown spell names fall through to CastByName for FFI resolution
+        assert!(matches!(parse("cast xyzzy"), Some(BotCommand::CastByName { .. })));
         assert!(matches!(parse("cast"), Some(BotCommand::Unknown(_))));
     }
 
@@ -1552,9 +1734,11 @@ mod tests {
 
     #[test]
     fn save_mana_explicit_set() {
-        assert_eq!(parse("save mana on"), Some(BotCommand::SetSaveMana(true)));
-        assert_eq!(parse("save mana off"), Some(BotCommand::SetSaveMana(false)));
+        assert_eq!(parse("save mana on"), Some(BotCommand::SetSaveMana(1)));
+        assert_eq!(parse("save mana off"), Some(BotCommand::SetSaveMana(0)));
         assert_eq!(parse("save mana"), Some(BotCommand::ToggleSaveMana));
+        assert_eq!(parse("save mana 3"), Some(BotCommand::SetSaveMana(3)));
+        assert_eq!(parse("save mana 5"), Some(BotCommand::SetSaveMana(5)));
     }
 
     #[test]
@@ -1597,6 +1781,7 @@ mod tests {
             Some(BotCommand::ApplyCombatOrder { query: false,
                 add: CombatOrder::BOOST,
                 remove: CombatOrder::NONE,
+                toggle: CombatOrder::NONE,
             }),
         );
         // Mangosbot uses `i` as alias for boost.
@@ -1605,6 +1790,7 @@ mod tests {
             Some(BotCommand::ApplyCombatOrder { query: false,
                 add: CombatOrder::BOOST,
                 remove: CombatOrder::NONE,
+                toggle: CombatOrder::NONE,
             }),
         );
     }

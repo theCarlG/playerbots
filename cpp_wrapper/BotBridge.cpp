@@ -15,6 +15,7 @@
 #include "BotBridge.h"
 
 #include <cstdlib>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "Entities/Player.h"
@@ -54,6 +55,9 @@
 #include "BattleGround/BattleGround.h"
 #include "BattleGround/BattleGroundWS.h"
 #include "BattleGround/BattleGroundAB.h"
+#include "BattleGround/BattleGroundMgr.h"
+#include "BattleGround/BattleGroundDefines.h"
+#include "AuctionHouse/AuctionHouseMgr.h"
 #include "Chat/Chat.h"
 #include "Groups/Group.h"
 #include "Config/Config.h"
@@ -392,6 +396,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.bot_write_log_file                  = CB_BotWriteLogFile;
     cbs.bot_read_log_file                   = CB_BotReadLogFile;
     cbs.bot_free_string                     = CB_BotFreeString;
+    cbs.bot_append_log_file                 = CB_BotAppendLogFile;
 
     // Addon-channel reply routing
     cbs.bot_tell_addon                      = CB_TellAddon;
@@ -406,6 +411,66 @@ BotCallbacks BotBridge::MakeCallbacks()
     // Travel destination queries
     cbs.bot_find_travel_dests               = CB_BotFindTravelDests;
     cbs.bot_free_travel_dests               = CB_BotFreeTravelDests;
+
+    // Spell name resolution
+    cbs.resolve_spell_by_name               = CB_ResolveSpellByName;
+
+    // Item name resolution + equip
+    cbs.resolve_item_by_name                = CB_ResolveItemByName;
+    cbs.equip_item                          = CB_EquipItem;
+
+    // Group management
+    cbs.give_leader                         = CB_GiveLeader;
+    cbs.resolve_player_by_name              = CB_ResolvePlayerByName;
+    cbs.unequip_item                        = CB_UnequipItem;
+    cbs.invite_to_group                     = CB_InviteToGroup;
+    cbs.destroy_item                        = CB_DestroyItem;
+    cbs.share_quest                         = CB_ShareQuest;
+    cbs.do_text_emote                       = CB_DoTextEmote;
+
+    // World buffs
+    cbs.add_aura                            = CB_AddAura;
+    cbs.get_needed_world_buffs              = CB_GetNeededWorldBuffs;
+
+    // Heal interrupt
+    cbs.interrupt_own_cast                  = CB_InterruptOwnCast;
+
+    // NPC interaction
+    cbs.gossip_hello                        = CB_GossipHello;
+    cbs.buy_from_vendor                     = CB_BuyFromVendor;
+
+    // Mail
+    cbs.mail_item_to_master                 = CB_MailItemToMaster;
+
+    // Bank
+    cbs.bank_deposit                        = CB_BankDeposit;
+    cbs.bank_withdraw                       = CB_BankWithdraw;
+
+    // Auction house
+    cbs.ah_post                             = CB_AhPost;
+    cbs.ah_bid                              = CB_AhBid;
+
+    // Outfit
+    cbs.apply_outfit                        = CB_ApplyOutfit;
+
+    // Fishing
+    cbs.start_fishing                       = CB_StartFishing;
+
+    // BG/Arena
+    cbs.queue_bg                            = CB_QueueBg;
+    cbs.accept_bg_invite                    = CB_AcceptBgInvite;
+    cbs.get_bg_objective_pos                = CB_GetBgObjectivePos;
+
+    // LFG
+    cbs.lfg_join                            = CB_LfgJoin;
+    cbs.lfg_accept                          = CB_LfgAccept;
+
+    // Dungeon awareness
+    cbs.get_tank_position                   = CB_GetTankPosition;
+    cbs.is_unit_cc                          = CB_IsUnitCc;
+
+    // Debug
+    cbs.debug_dump_state                    = CB_DebugDumpState;
 
     return cbs;
 }
@@ -966,9 +1031,19 @@ bool BotBridge::CB_CastSpell(BotHandle bot, uint32_t spell_id, UnitHandle target
     if (!b->HasSpell(spell_id) || !b->IsSpellReady(spell_id))
         return false;
 
+    // Pre-validate with CheckCast so we don't trigger a GCD on the Rust side
+    // for a spell that will fail (wrong stance, out of range, not enough power, etc.)
     Spell* spell = new Spell(b, spellInfo, false);
     SpellCastTargets targets;
     targets.setUnitTarget(t);
+    spell->m_targets = targets;
+    SpellCastResult result = spell->CheckCast(true);
+    if (result != SPELL_CAST_OK)
+    {
+        delete spell;
+        return false;
+    }
+
     spell->SpellStart(&targets);
     return true;
 }
@@ -990,8 +1065,47 @@ bool BotBridge::CB_CastSpellPos(BotHandle bot, uint32_t spell_id,
     Spell* spell = new Spell(b, spellInfo, false);
     SpellCastTargets targets;
     targets.setDestination(x, y, z);
+    spell->m_targets = targets;
+    SpellCastResult result = spell->CheckCast(true);
+    if (result != SPELL_CAST_OK)
+    {
+        delete spell;
+        return false;
+    }
+
     spell->SpellStart(&targets);
     return true;
+}
+
+// ── Movement de-duplication ──────────────────────────────────────────────────
+//
+// The Rust BT re-calls move_to / follow on every tick while an action returns
+// Running (throttle "Running-transparency"). Without de-duplication each call
+// creates a *new* MovePoint / MoveFollow generator, which restarts the walk
+// animation and produces the visible "walk-stop-walk" stutter.
+//
+// We track the last-issued destination per bot. If the new request matches the
+// previous one (within a small epsilon) and the bot is still moving, we skip
+// the MotionMaster call entirely.
+
+struct MoveState
+{
+    enum Kind { NONE, POINT, FOLLOW };
+    float x = 0, y = 0, z = 0;
+    UnitHandle followTarget = 0;
+    float followDist = 0;
+    float followAngle = 0;
+    Kind kind = NONE;
+};
+
+static std::unordered_map<BotHandle, MoveState> s_moveState;
+
+static constexpr float MOVE_EPSILON_SQ = 0.5f * 0.5f; // 0.5 yard
+
+static bool sameDest(const MoveState& s, float x, float y, float z)
+{
+    float dx = s.x - x, dy = s.y - y, dz = s.z - z;
+    return (dx * dx + dy * dy + dz * dz) < MOVE_EPSILON_SQ;
 }
 
 bool BotBridge::CB_MoveTo(BotHandle bot, float x, float y, float z)
@@ -1000,7 +1114,18 @@ bool BotBridge::CB_MoveTo(BotHandle bot, float x, float y, float z)
     if (!b)
         return false;
 
+    auto& st = s_moveState[bot];
+    if (st.kind == MoveState::POINT && sameDest(st, x, y, z) && b->IsMoving())
+        return true; // already heading there
+
+    // Ensure run mode — bots default to walking without this.
+    if (b->IsWalking())
+        b->m_movementInfo.RemoveMovementFlag(MOVEFLAG_WALK_MODE);
+
     b->GetMotionMaster()->MovePoint(0, x, y, z);
+    st.x = x; st.y = y; st.z = z;
+    st.followTarget = 0; st.followDist = 0; st.followAngle = 0;
+    st.kind = MoveState::POINT;
     return true;
 }
 
@@ -1011,7 +1136,19 @@ bool BotBridge::CB_Follow(BotHandle bot, UnitHandle target, float dist, float an
     if (!b || !t)
         return false;
 
+    auto& st = s_moveState[bot];
+    if (st.kind == MoveState::FOLLOW && st.followTarget == target
+        && st.followDist == dist && st.followAngle == angle)
+        return true; // already following same target with same params
+
+    // Ensure run mode — bots default to walking without this.
+    if (b->IsWalking())
+        b->m_movementInfo.RemoveMovementFlag(MOVEFLAG_WALK_MODE);
+
     b->GetMotionMaster()->MoveFollow(t, dist, angle);
+    st.x = 0; st.y = 0; st.z = 0;
+    st.followTarget = target; st.followDist = dist; st.followAngle = angle;
+    st.kind = MoveState::FOLLOW;
     return true;
 }
 
@@ -1022,6 +1159,7 @@ bool BotBridge::CB_StopMoving(BotHandle bot)
         return false;
     b->GetMotionMaster()->Clear(false);
     b->StopMoving();
+    s_moveState.erase(bot);
     return true;
 }
 
@@ -2462,6 +2600,11 @@ bool BotBridge::CB_AcceptReadyCheck(BotHandle bot)
     Group* group = b->GetGroup();
     if (!group)
         return false;
+
+    // Leaders initiate ready checks, they don't respond to them.
+    if (group->IsLeader(b->GetObjectGuid()))
+        return false;
+
     WorldPacket data(MSG_RAID_READY_CHECK, 8);
     data << b->GetObjectGuid();
     data << uint8(1); // ready
@@ -3338,6 +3481,333 @@ void BotBridge::CB_FreeBotSpells(uint32_t* list)
     std::free(list);
 }
 
+uint32_t BotBridge::CB_ResolveSpellByName(BotHandle bot, const char* name)
+{
+    if (!name || !name[0])
+        return 0;
+
+    // Case-insensitive compare: lowercase the input once.
+    std::string needle(name);
+    for (auto& c : needle)
+        c = std::tolower(static_cast<unsigned char>(c));
+
+    // Collect all spell IDs whose name matches (multiple ranks).
+    std::vector<uint32> matches;
+    for (uint32 i = 1; i < sSpellTemplate.GetMaxEntry(); ++i)
+    {
+        SpellEntry const* s = sSpellTemplate.LookupEntry<SpellEntry>(i);
+        if (!s || !s->SpellName[0])
+            continue;
+        std::string sname(s->SpellName[0]);
+        for (auto& c : sname)
+            c = std::tolower(static_cast<unsigned char>(c));
+        if (sname == needle)
+            matches.push_back(s->Id);
+    }
+
+    if (matches.empty())
+        return 0;
+
+    // If we have a bot, prefer the highest-rank spell the bot actually knows.
+    Player* b = FindBot(bot);
+    if (b)
+    {
+        uint32 best = 0;
+        for (uint32 id : matches)
+        {
+            if (b->HasSpell(id) && id > best)
+                best = id;
+        }
+        if (best)
+            return best;
+    }
+
+    // Fallback: return the highest spell ID (generally the highest rank).
+    uint32 best = 0;
+    for (uint32 id : matches)
+    {
+        if (id > best)
+            best = id;
+    }
+    return best;
+}
+
+uint32_t BotBridge::CB_ResolveItemByName(BotHandle bot, const char* name)
+{
+    if (!name || !name[0])
+        return 0;
+
+    // Case-insensitive compare: lowercase the input once.
+    std::string needle(name);
+    for (auto& c : needle)
+        c = std::tolower(static_cast<unsigned char>(c));
+
+    uint32 exactMatch = 0;
+    uint32 substringMatch = 0;
+
+    for (uint32 i = 0; i < sItemStorage.GetMaxEntry(); ++i)
+    {
+        ItemPrototype const* proto = sItemStorage.LookupEntry<ItemPrototype>(i);
+        if (!proto || !proto->Name1 || !proto->Name1[0])
+            continue;
+
+        std::string itemName(proto->Name1);
+        for (auto& c : itemName)
+            c = std::tolower(static_cast<unsigned char>(c));
+
+        if (itemName == needle)
+        {
+            exactMatch = proto->ItemId;
+            break;  // Exact match — done.
+        }
+
+        if (!substringMatch && itemName.find(needle) != std::string::npos)
+            substringMatch = proto->ItemId;
+    }
+
+    return exactMatch ? exactMatch : substringMatch;
+}
+
+bool BotBridge::CB_EquipItem(BotHandle bot, uint32_t item_id)
+{
+    Player* b = FindBot(bot);
+    if (!b || item_id == 0)
+        return false;
+
+    // Find the item in the bot's inventory.
+    Item* item = nullptr;
+    for (uint8 bag = INVENTORY_SLOT_BAG_0; bag < INVENTORY_SLOT_BAG_END; ++bag)
+    {
+        for (uint8 slot = 0; slot < MAX_BAG_SIZE; ++slot)
+        {
+            Item* check = b->GetItemByPos(bag, slot);
+            if (check && check->GetEntry() == item_id)
+            {
+                item = check;
+                break;
+            }
+        }
+        if (item)
+            break;
+    }
+
+    // Also check equipped slots — item might already be equipped.
+    if (!item)
+    {
+        for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+        {
+            Item* check = b->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+            if (check && check->GetEntry() == item_id)
+                return true;  // Already equipped.
+        }
+    }
+
+    if (!item)
+        return false;
+
+    // Find the best equip slot for this item.
+    uint16 dest = 0;
+    ItemPrototype const* proto = item->GetProto();
+    if (!proto)
+        return false;
+
+    uint8 eslot = EQUIPMENT_SLOT_END;
+    for (uint8 s = EQUIPMENT_SLOT_START; s < EQUIPMENT_SLOT_END; ++s)
+    {
+        if (b->CanEquipItem(s, dest, item, false) == EQUIP_ERR_OK)
+        {
+            eslot = s;
+            break;
+        }
+    }
+
+    if (eslot == EQUIPMENT_SLOT_END)
+        return false;
+
+    // Perform the swap.
+    b->SwapItem(item->GetPos(), (INVENTORY_SLOT_BAG_0 << 8) | eslot);
+    return true;
+}
+
+bool BotBridge::CB_GiveLeader(BotHandle bot, uint64_t target_guid)
+{
+    Player* b = FindBot(bot);
+    if (!b || target_guid == 0)
+        return false;
+    Group* group = b->GetGroup();
+    if (!group)
+        return false;
+    // Only the current leader can transfer leadership.
+    if (!group->IsLeader(b->GetObjectGuid()))
+        return false;
+    // Verify the target is a group member.
+    ObjectGuid targetGuid(target_guid);
+    if (!group->IsMember(targetGuid))
+        return false;
+    // Use HandleGroupSetLeaderOpcode just like PB2 does.
+    WorldPacket p(SMSG_GROUP_SET_LEADER, 8);
+    p << targetGuid;
+    b->GetSession()->HandleGroupSetLeaderOpcode(p);
+    return true;
+}
+
+uint64_t BotBridge::CB_ResolvePlayerByName(BotHandle bot, const char* name)
+{
+    if (!name || !name[0])
+        return 0;
+    // Try online player first.
+    Player* p = sObjectAccessor.FindPlayerByName(name);
+    if (p)
+        return p->GetObjectGuid().GetRawValue();
+    // Fallback: search character database.
+    uint32 guid = sObjectMgr.GetPlayerGuidByName(std::string(name));
+    if (guid)
+        return ObjectGuid(HIGHGUID_PLAYER, guid).GetRawValue();
+    return 0;
+}
+
+bool BotBridge::CB_UnequipItem(BotHandle bot, uint32_t item_id)
+{
+    Player* b = FindBot(bot);
+    if (!b || item_id == 0)
+        return false;
+    for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+    {
+        Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+        if (item && item->GetEntry() == item_id)
+        {
+            ItemPosCountVec dest;
+            uint8 msg = b->CanStoreItem(NULL_BAG, NULL_SLOT, dest, item, false);
+            if (msg == EQUIP_ERR_OK)
+            {
+                b->RemoveItem(INVENTORY_SLOT_BAG_0, slot, true);
+                b->StoreItem(dest, item, true);
+                return true;
+            }
+            return false;
+        }
+    }
+    return false;
+}
+
+bool BotBridge::CB_InviteToGroup(BotHandle bot, uint64_t target_guid)
+{
+    Player* b = FindBot(bot);
+    if (!b || target_guid == 0)
+        return false;
+    ObjectGuid targetGuid(target_guid);
+    Player* target = sObjectAccessor.FindPlayer(targetGuid);
+    if (!target)
+        return false;
+    // If bot has no group, create one and invite the target.
+    Group* group = b->GetGroup();
+    if (!group)
+    {
+        group = new Group();
+        if (!group->Create(b->GetObjectGuid(), b->GetName()))
+        {
+            delete group;
+            return false;
+        }
+        sObjectMgr.AddGroup(group);
+    }
+    // Invite the target.
+    if (group->IsMember(targetGuid))
+        return false;
+    group->AddInvite(target);
+    // Build the SMSG_GROUP_INVITE packet for the target.
+    WorldPacket data(SMSG_GROUP_INVITE, 10);
+    data << b->GetName();
+    target->GetSession()->SendPacket(data);
+    return true;
+}
+
+bool BotBridge::CB_DestroyItem(BotHandle bot, uint32_t item_id)
+{
+    Player* b = FindBot(bot);
+    if (!b || item_id == 0)
+        return false;
+    // Search bags for the first stack of this item.
+    for (int i = INVENTORY_SLOT_BAG_START; i < INVENTORY_SLOT_BAG_END; ++i)
+    {
+        if (Bag* bag = dynamic_cast<Bag*>(b->GetItemByPos(INVENTORY_SLOT_BAG_0, i)))
+        {
+            for (uint32 j = 0; j < bag->GetBagSize(); ++j)
+            {
+                if (Item* item = bag->GetItemByPos(j))
+                {
+                    if (item->GetEntry() == item_id)
+                    {
+                        b->DestroyItem(i, j, true);
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    // Also check backpack (slots 23-38).
+    for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+    {
+        if (Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+        {
+            if (item->GetEntry() == item_id)
+            {
+                b->DestroyItem(INVENTORY_SLOT_BAG_0, slot, true);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool BotBridge::CB_ShareQuest(BotHandle bot, uint32_t quest_id)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    Group* group = b->GetGroup();
+    if (!group)
+        return false;
+    // If quest_id == 0, find first shareable quest.
+    if (quest_id == 0)
+    {
+        for (uint16 slot = 0; slot < MAX_QUEST_LOG_SIZE; ++slot)
+        {
+            uint32 qid = b->GetQuestSlotQuestId(slot);
+            if (qid == 0)
+                continue;
+            // Check if we can share it.
+            Quest const* quest = sObjectMgr.GetQuestTemplate(qid);
+            if (quest && !quest->HasQuestFlag(QUEST_FLAGS_PARTY_ACCEPT))
+            {
+                quest_id = qid;
+                break;
+            }
+        }
+    }
+    if (quest_id == 0)
+        return false;
+    // Build CMSG_QUEST_PUSH_TO_PARTY.
+    WorldPacket p(CMSG_PUSHQUESTTOPARTY, 4);
+    p << quest_id;
+    b->GetSession()->HandlePushQuestToParty(p);
+    return true;
+}
+
+bool BotBridge::CB_DoTextEmote(BotHandle bot, uint32_t text_emote_id)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    // Build CMSG_TEXT_EMOTE packet.
+    WorldPacket p(CMSG_TEXT_EMOTE, 12);
+    p << text_emote_id;
+    p << uint32(0); // emote num (unused)
+    p << ObjectGuid(); // target guid (no target)
+    b->GetSession()->HandleTextEmoteOpcode(p);
+    return true;
+}
+
 uint32_t BotBridge::CB_BotEmptyBagSlotCount(BotHandle bot)
 {
     Player* b = FindBot(bot);
@@ -4067,6 +4537,20 @@ bool BotBridge::CB_BotWriteLogFile(BotHandle bot, const char* name, const char* 
     return f.good();
 }
 
+bool BotBridge::CB_BotAppendLogFile(BotHandle bot, const char* name, const char* line)
+{
+    (void)bot;
+    std::string safe;
+    if (!SanitizeBotFileName(name, safe))
+        return false;
+    std::ofstream f(BotDataFilePath(safe), std::ios::out | std::ios::app);
+    if (!f.is_open())
+        return false;
+    if (line)
+        f << line;
+    return f.good();
+}
+
 bool BotBridge::CB_BotReadLogFile(BotHandle bot, const char* name, char** out_body)
 {
     (void)bot;
@@ -4227,4 +4711,744 @@ void BotBridge::CB_BotFreeTravelDests(BotTravelDest* list)
 {
     if (list)
         std::free(list);
+}
+
+// ── World buffs ──────────────────────────────────────────────────────────────
+
+bool BotBridge::CB_AddAura(BotHandle bot, uint32_t spell_id)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    SpellEntry const* spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(spell_id);
+    if (!spellInfo)
+        return false;
+
+    if (!IsSpellAppliesAura(spellInfo, (1 << EFFECT_INDEX_0) | (1 << EFFECT_INDEX_1) | (1 << EFFECT_INDEX_2)) &&
+        !IsSpellHaveEffect(spellInfo, SPELL_EFFECT_PERSISTENT_AREA_AURA))
+    {
+        return false;
+    }
+
+    SpellAuraHolder* holder = CreateSpellAuraHolder(spellInfo, b, b);
+
+    for (uint32 i = 0; i < MAX_EFFECT_INDEX; ++i)
+    {
+        uint8 eff = spellInfo->Effect[i];
+        if (eff >= MAX_SPELL_EFFECTS)
+            continue;
+        if (IsAreaAuraEffect(eff) ||
+            eff == SPELL_EFFECT_APPLY_AURA ||
+            eff == SPELL_EFFECT_PERSISTENT_AREA_AURA)
+        {
+            int32 basePoints = spellInfo->CalculateSimpleValue(SpellEffectIndex(i));
+            int32 damage = basePoints;
+            Aura* aur = CreateAura(spellInfo, SpellEffectIndex(i), &damage, &basePoints, holder, b);
+            holder->AddAura(aur, SpellEffectIndex(i));
+        }
+    }
+    if (!b->AddSpellAuraHolder(holder))
+        delete holder;
+
+    return true;
+}
+
+uint32_t BotBridge::CB_GetNeededWorldBuffs(BotHandle bot, uint32_t* out_spells, uint32_t max_out)
+{
+    Player* b = FindBot(bot);
+    if (!b || !out_spells || max_out == 0)
+        return 0;
+
+    if (sPlayerbotAIConfig.worldBuffs.empty())
+        return 0;
+
+    // 1 = Alliance, 2 = Horde (matches PB2's worldBuff.factionId convention)
+    uint32 factionId = (b->GetTeam() == ALLIANCE) ? 1 : 2;
+
+    uint32_t count = 0;
+    for (auto& wb : sPlayerbotAIConfig.worldBuffs)
+    {
+        if (count >= max_out)
+            break;
+
+        if (wb.factionId != 0 && wb.factionId != factionId)
+            continue;
+
+        if (wb.classId != 0 && wb.classId != b->getClass())
+            continue;
+
+        if (wb.specId != 0)
+        {
+            // Compute spec tab like PB2's AiFactory::GetPlayerSpecTab
+            int maxTalentCount = 0, bestTab = 0;
+            for (int tab = 0; tab < 3; ++tab)
+            {
+                int tabCount = 0;
+                uint32 classMask = b->getClassMask();
+                for (uint32 j = 0; j < sTalentStore.GetNumRows(); ++j)
+                {
+                    TalentEntry const* talentInfo = sTalentStore.LookupEntry(j);
+                    if (!talentInfo) continue;
+                    TalentTabEntry const* talentTabInfo = sTalentTabStore.LookupEntry(talentInfo->TalentTab);
+                    if (!talentTabInfo || talentTabInfo->tabpage != uint32(tab) || !(talentTabInfo->ClassMask & classMask)) continue;
+                    for (int rank = MAX_TALENT_RANK - 1; rank >= 0; --rank)
+                    {
+                        if (talentInfo->RankID[rank] && b->HasSpell(talentInfo->RankID[rank]))
+                        {
+                            tabCount += rank + 1;
+                            break;
+                        }
+                    }
+                }
+                if (tabCount > maxTalentCount) { maxTalentCount = tabCount; bestTab = tab; }
+            }
+            if (wb.specId != uint32(bestTab + 1))
+                continue;
+        }
+
+        if (wb.minLevel != 0 && wb.minLevel > b->GetLevel())
+            continue;
+
+        if (wb.maxLevel != 0 && wb.maxLevel < b->GetLevel())
+            continue;
+
+        if (b->HasAura(wb.spellId))
+            continue;
+
+        out_spells[count++] = wb.spellId;
+    }
+
+    return count;
+}
+
+// ── Heal interrupt ───────────────────────────────────────────────────────────
+
+bool BotBridge::CB_InterruptOwnCast(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    bool interrupted = false;
+    for (int type = CURRENT_MELEE_SPELL; type < CURRENT_CHANNELED_SPELL; type++)
+    {
+        // Skip melee and auto-repeat — only interrupt generic/channeled
+        if (type == CURRENT_MELEE_SPELL || type == CURRENT_AUTOREPEAT_SPELL)
+            continue;
+
+        Spell* currentSpell = b->GetCurrentSpell((CurrentSpellTypes)type);
+        if (currentSpell && currentSpell->CanBeInterrupted())
+        {
+            b->InterruptSpell((CurrentSpellTypes)type);
+            interrupted = true;
+        }
+    }
+
+    return interrupted;
+}
+
+// ── NPC interaction (gossip) ─────────────────────────────────────────────────
+
+bool BotBridge::CB_GossipHello(BotHandle bot, uint32_t npc_entry)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    // Find a nearby creature with this entry
+    Creature* target = nullptr;
+    CreatureList creatures;
+    MaNGOS::AllCreaturesOfEntryInRangeCheck check(b, npc_entry, INTERACTION_DISTANCE * 2);
+    MaNGOS::CreatureListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(creatures, check);
+    Cell::VisitAllObjects(b, searcher, INTERACTION_DISTANCE * 2);
+
+    for (Creature* c : creatures)
+    {
+        if (c->IsAlive() && c->IsWithinDistInMap(b, INTERACTION_DISTANCE))
+        {
+            target = c;
+            break;
+        }
+    }
+
+    if (!target)
+        return false;
+
+    b->PrepareGossipMenu(target, target->GetDefaultGossipMenuId());
+    b->SendPreparedGossip(target);
+    return true;
+}
+
+bool BotBridge::CB_BuyFromVendor(BotHandle bot, uint32_t item_id, uint32_t qty)
+{
+    Player* b = FindBot(bot);
+    if (!b || qty == 0)
+        return false;
+
+    // Find a nearby vendor
+    Creature* vendor = nullptr;
+    CreatureList creatures;
+    MaNGOS::AllCreaturesOfEntryInRangeCheck check(b, 0, INTERACTION_DISTANCE * 2);
+    MaNGOS::CreatureListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(creatures, check);
+    Cell::VisitAllObjects(b, searcher, INTERACTION_DISTANCE * 2);
+
+    for (Creature* c : creatures)
+    {
+        if (c->IsAlive() && c->isVendor() && c->IsWithinDistInMap(b, INTERACTION_DISTANCE))
+        {
+            vendor = c;
+            break;
+        }
+    }
+
+    if (!vendor)
+        return false;
+
+    // Look up the item in the vendor's item list
+    VendorItemData const* vItems = vendor->GetVendorItems();
+    if (!vItems)
+        return false;
+
+    for (uint32 slot = 0; slot < vItems->GetItemCount(); ++slot)
+    {
+        VendorItem const* vItem = vItems->GetItem(slot);
+        if (!vItem || vItem->item != item_id)
+            continue;
+
+        ItemPrototype const* proto = ObjectMgr::GetItemPrototype(item_id);
+        if (!proto)
+            return false;
+
+        uint32 price = proto->BuyPrice * qty;
+        if (b->GetMoney() < price)
+            return false;
+
+        // Add item and deduct gold
+        if (b->StoreNewItemInBestSlots(item_id, qty))
+        {
+            b->ModifyMoney(-int32(price));
+            return true;
+        }
+        return false;
+    }
+
+    return false;
+}
+
+// ── Mail ─────────────────────────────────────────────────────────────────────
+
+bool BotBridge::CB_MailItemToMaster(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b || !b->GetGroup())
+        return false;
+
+    // Find the group leader (master)
+    ObjectGuid leaderGuid = b->GetGroup()->GetLeaderGuid();
+    if (leaderGuid == b->GetObjectGuid())
+        return false;
+
+    // For simplicity, just mail the first non-grey item in bags
+    // PB2 uses more complex item selection; this covers the basic case
+    for (int i = INVENTORY_SLOT_ITEM_START; i < INVENTORY_SLOT_ITEM_END; ++i)
+    {
+        Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, i);
+        if (!item)
+            continue;
+
+        ItemPrototype const* proto = item->GetProto();
+        if (!proto || proto->Quality <= ITEM_QUALITY_POOR)
+            continue;
+
+        MailDraft draft("Bot item", "Sent by bot");
+        draft.AddItem(item);
+        draft.SendMailTo(MailReceiver(leaderGuid), MailSender(b), MAIL_CHECK_MASK_NONE);
+        b->DestroyItem(INVENTORY_SLOT_BAG_0, i, true);
+        return true;
+    }
+
+    return false;
+}
+
+// ── Bank ─────────────────────────────────────────────────────────────────────
+
+bool BotBridge::CB_BankDeposit(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    // Check if near a banker
+    bool nearBanker = false;
+    CreatureList creatures;
+    MaNGOS::AllCreaturesOfEntryInRangeCheck check(b, 0, INTERACTION_DISTANCE * 2);
+    MaNGOS::CreatureListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(creatures, check);
+    Cell::VisitAllObjects(b, searcher, INTERACTION_DISTANCE * 2);
+
+    for (Creature* c : creatures)
+    {
+        if (c->IsAlive() && c->isBanker() && c->IsWithinDistInMap(b, INTERACTION_DISTANCE))
+        {
+            nearBanker = true;
+            break;
+        }
+    }
+
+    if (!nearBanker)
+        return false;
+
+    // Move items from bags to bank — deposit grey/excess items
+    bool deposited = false;
+    for (int i = INVENTORY_SLOT_ITEM_START; i < INVENTORY_SLOT_ITEM_END; ++i)
+    {
+        Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, i);
+        if (!item)
+            continue;
+
+        ItemPrototype const* proto = item->GetProto();
+        if (!proto)
+            continue;
+
+        // Deposit grey items and trade goods
+        if (proto->Quality <= ITEM_QUALITY_POOR || proto->Class == ITEM_CLASS_TRADE_GOODS)
+        {
+            ItemPosCountVec dest;
+            if (b->CanBankItem(NULL_BAG, NULL_SLOT, dest, item, false) == EQUIP_ERR_OK)
+            {
+                b->RemoveItem(INVENTORY_SLOT_BAG_0, i, true);
+                b->BankItem(dest, item, true);
+                deposited = true;
+            }
+        }
+    }
+
+    return deposited;
+}
+
+bool BotBridge::CB_BankWithdraw(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    // Check if near a banker
+    bool nearBanker = false;
+    CreatureList creatures;
+    MaNGOS::AllCreaturesOfEntryInRangeCheck check(b, 0, INTERACTION_DISTANCE * 2);
+    MaNGOS::CreatureListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(creatures, check);
+    Cell::VisitAllObjects(b, searcher, INTERACTION_DISTANCE * 2);
+
+    for (Creature* c : creatures)
+    {
+        if (c->IsAlive() && c->isBanker() && c->IsWithinDistInMap(b, INTERACTION_DISTANCE))
+        {
+            nearBanker = true;
+            break;
+        }
+    }
+
+    if (!nearBanker)
+        return false;
+
+    // Withdraw useful items from bank to bags
+    bool withdrawn = false;
+    for (int i = BANK_SLOT_ITEM_START; i < BANK_SLOT_ITEM_END; ++i)
+    {
+        Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, i);
+        if (!item)
+            continue;
+
+        ItemPosCountVec dest;
+        if (b->CanStoreItem(NULL_BAG, NULL_SLOT, dest, item, false) == EQUIP_ERR_OK)
+        {
+            b->RemoveItem(INVENTORY_SLOT_BAG_0, i, true);
+            b->StoreItem(dest, item, true);
+            withdrawn = true;
+        }
+    }
+
+    return withdrawn;
+}
+
+// ── Auction House ────────────────────────────────────────────────────────────
+
+bool BotBridge::CB_AhPost(BotHandle bot)
+{
+    // Simplified AH posting — finds auctioneer, posts first AH-worthy item
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    // Find auctioneer
+    Creature* auctioneer = nullptr;
+    CreatureList creatures;
+    MaNGOS::AllCreaturesOfEntryInRangeCheck check(b, 0, INTERACTION_DISTANCE * 2);
+    MaNGOS::CreatureListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(creatures, check);
+    Cell::VisitAllObjects(b, searcher, INTERACTION_DISTANCE * 2);
+
+    for (Creature* c : creatures)
+    {
+        if (c->IsAlive() && c->isAuctioner() && c->IsWithinDistInMap(b, INTERACTION_DISTANCE))
+        {
+            auctioneer = c;
+            break;
+        }
+    }
+
+    if (!auctioneer)
+        return false;
+
+    AuctionHouseEntry const* ahEntry = AuctionHouseMgr::GetAuctionHouseEntry(auctioneer);
+    if (!ahEntry)
+        return false;
+
+    for (int i = INVENTORY_SLOT_ITEM_START; i < INVENTORY_SLOT_ITEM_END; ++i)
+    {
+        Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, i);
+        if (!item)
+            continue;
+
+        ItemPrototype const* proto = item->GetProto();
+        if (!proto || proto->Quality < ITEM_QUALITY_UNCOMMON)
+            continue;
+
+        // Calculate price based on vendor sell price
+        uint32 price = proto->SellPrice * 3;
+        if (price == 0)
+            price = proto->BuyPrice / 2;
+        if (price == 0)
+            continue;
+
+        uint32 deposit = AuctionHouseMgr::GetAuctionDeposit(ahEntry, 24 * HOUR, item);
+        if (b->GetMoney() < deposit)
+            continue;
+
+        b->ModifyMoney(-int32(deposit));
+
+        // Remove item from player inventory
+        b->MoveItemFromInventory(item->GetBagSlot(), item->GetSlot(), true);
+        item->DeleteFromInventoryDB();
+        item->SaveToDB();
+
+        // Add to AH using the fork's AuctionHouseObject::AddAuction API
+        sAuctionMgr.AddAItem(item);
+        AuctionHouseObject* ahObj = sAuctionMgr.GetAuctionsMap(ahEntry);
+        ahObj->AddAuction(ahEntry, item, 24 * HOUR, price, price * 2, deposit, b);
+
+        return true;
+    }
+
+    return false;
+}
+
+bool BotBridge::CB_AhBid(BotHandle bot)
+{
+    // Simplified AH bidding — bid on the cheapest useful item
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    // Find auctioneer
+    Creature* auctioneer = nullptr;
+    CreatureList creatures;
+    MaNGOS::AllCreaturesOfEntryInRangeCheck check(b, 0, INTERACTION_DISTANCE * 2);
+    MaNGOS::CreatureListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(creatures, check);
+    Cell::VisitAllObjects(b, searcher, INTERACTION_DISTANCE * 2);
+
+    for (Creature* c : creatures)
+    {
+        if (c->IsAlive() && c->isAuctioner() && c->IsWithinDistInMap(b, INTERACTION_DISTANCE))
+        {
+            auctioneer = c;
+            break;
+        }
+    }
+
+    if (!auctioneer)
+        return false;
+
+    AuctionHouseEntry const* ahEntry = AuctionHouseMgr::GetAuctionHouseEntry(auctioneer);
+    if (!ahEntry)
+        return false;
+
+    AuctionHouseObject* auctionHouse = sAuctionMgr.GetAuctionsMap(ahEntry);
+    if (!auctionHouse)
+        return false;
+
+    // Find an affordable item to bid on
+    for (auto& pair : auctionHouse->GetAuctions())
+    {
+        AuctionEntry* entry = pair.second;
+        if (!entry || entry->owner == b->GetGUIDLow())
+            continue;
+
+        uint32 bidPrice = (entry->bidder == 0) ? entry->startbid : entry->bid + entry->GetAuctionOutBid();
+        if (bidPrice > b->GetMoney())
+            continue;
+
+        // Place bid
+        b->ModifyMoney(-int32(bidPrice));
+        entry->UpdateBid(bidPrice, b);
+        return true;
+    }
+
+    return false;
+}
+
+// ── Outfit ───────────────────────────────────────────────────────────────────
+
+bool BotBridge::CB_ApplyOutfit(BotHandle bot)
+{
+    // Outfits are stored as config/blackboard data in the Rust side.
+    // This callback is a placeholder — outfit logic is handled in Rust
+    // by calling equip_item() for each item in the outfit.
+    return false;
+}
+
+// ── Fishing ──────────────────────────────────────────────────────────────────
+
+bool BotBridge::CB_StartFishing(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    // Check if the bot has a fishing pole equipped or in bags
+    // Fishing spell ID = 7731
+    SpellEntry const* spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(7731);
+    if (!spellInfo)
+        return false;
+
+    // Stop movement first
+    b->GetMotionMaster()->Clear();
+    b->GetMotionMaster()->MoveIdle();
+
+    // Cast fishing spell
+    Spell* spell = new Spell(b, spellInfo, false);
+    SpellCastTargets targets;
+    targets.setDestination(b->GetPositionX() + 3.0f * cos(b->GetOrientation()),
+                           b->GetPositionY() + 3.0f * sin(b->GetOrientation()),
+                           b->GetPositionZ());
+    spell->SpellStart(&targets);
+    return true;
+}
+
+// ── Battleground ─────────────────────────────────────────────────────────────
+
+bool BotBridge::CB_QueueBg(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    if (b->InBattleGround() || b->GetLevel() < 10)
+        return false;
+
+    if (!b->HasFreeBattleGroundQueueId())
+        return false;
+
+    if (!b->CanJoinToBattleground())
+        return false;
+
+    // Pick a random BG type appropriate for level
+    BattleGroundTypeId bgTypeId = BATTLEGROUND_WS;
+    uint32 level = b->GetLevel();
+    if (level >= 51)
+        bgTypeId = (urand(0, 1) == 0) ? BATTLEGROUND_AV : BATTLEGROUND_WS;
+    else if (level >= 20)
+        bgTypeId = (urand(0, 1) == 0) ? BATTLEGROUND_WS : BATTLEGROUND_AB;
+
+    BattleGround* bg = sBattleGroundMgr.GetBattleGroundTemplate(bgTypeId);
+    if (!bg)
+        return false;
+
+    if (!b->GetBGAccessByLevel(bgTypeId))
+        return false;
+
+    BattleGroundBracketId bracketId = sBattleGroundMgr.GetBattleGroundBracketIdFromLevel(bgTypeId, b->GetLevel());
+
+    uint32 mapId = GetBattleGrounMapIdByTypeId(bgTypeId);
+    uint32 instanceId = 0;
+    uint8 joinAsGroup = b->GetGroup() && b->GetGroup()->IsLeader(b->GetObjectGuid());
+
+    // Send the CMSG_BATTLEMASTER_JOIN packet (Classic format)
+    WorldPacket packet(CMSG_BATTLEMASTER_JOIN, 20);
+    packet << b->GetObjectGuid() << mapId << instanceId << joinAsGroup;
+    b->GetSession()->HandleBattlemasterJoinOpcode(packet);
+
+    return true;
+}
+
+bool BotBridge::CB_AcceptBgInvite(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    if (!b->InBattleGroundQueue())
+        return false;
+
+    for (uint32 i = 0; i < PLAYER_MAX_BATTLEGROUND_QUEUES; ++i)
+    {
+        BattleGroundQueueTypeId bgQueueTypeId = b->GetBattleGroundQueueTypeId(i);
+        if (bgQueueTypeId == BATTLEGROUND_QUEUE_NONE)
+            continue;
+
+        BattleGroundTypeId bgTypeId = BattleGroundMgr::BgTemplateId(bgQueueTypeId);
+
+        // Send CMSG_BATTLEFIELD_PORT to accept the invite
+        WorldPacket packet(CMSG_BATTLEFIELD_PORT, 20);
+        packet << bgTypeId << uint8(1); // 1 = accept
+        b->GetSession()->HandleBattlefieldPortOpcode(packet);
+        return true;
+    }
+
+    return false;
+}
+
+BotPosition BotBridge::CB_GetBgObjectivePos(BotHandle bot, uint8_t objective_type)
+{
+    BotPosition pos{};
+    Player* b = FindBot(bot);
+    if (!b || !b->InBattleGround())
+        return pos;
+
+    BattleGround* bg = b->GetBattleGround();
+    if (!bg)
+        return pos;
+
+    // Return a position based on the objective type and BG type
+    // These are approximate positions for common objectives
+    switch (bg->GetTypeId())
+    {
+        case BATTLEGROUND_WS:
+            if (objective_type == 2 || objective_type == 3) // flag
+            {
+                if (b->GetTeam() == ALLIANCE)
+                { pos.x = 1539.0f; pos.y = 1481.0f; pos.z = 352.0f; } // Horde flag room
+                else
+                { pos.x = 1519.0f; pos.y = 1467.0f; pos.z = 373.0f; } // Alliance flag room
+            }
+            break;
+        case BATTLEGROUND_AB:
+            // Stables position (first node)
+            pos.x = 1166.0f; pos.y = 1200.0f; pos.z = -56.0f;
+            break;
+        case BATTLEGROUND_AV:
+            // Middle of the map
+            pos.x = -375.0f; pos.y = -118.0f; pos.z = 69.0f;
+            break;
+        default:
+            break;
+    }
+
+    return pos;
+}
+
+// ── LFG ──────────────────────────────────────────────────────────────────────
+
+bool BotBridge::CB_LfgJoin(BotHandle bot)
+{
+    // LFG is WotLK only — Classic/TBC return false
+#ifdef MANGOSBOT_TWO
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    // WotLK LFG queue logic would go here
+    return false;
+#else
+    (void)bot;
+    return false;
+#endif
+}
+
+bool BotBridge::CB_LfgAccept(BotHandle bot)
+{
+#ifdef MANGOSBOT_TWO
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    return false;
+#else
+    (void)bot;
+    return false;
+#endif
+}
+
+// ── Dungeon awareness ────────────────────────────────────────────────────────
+
+BotPosition BotBridge::CB_GetTankPosition(BotHandle bot)
+{
+    BotPosition pos{};
+    Player* b = FindBot(bot);
+    if (!b || !b->GetGroup())
+        return pos;
+
+    // Find the main tank in the group
+    Group* group = b->GetGroup();
+    for (auto itr = group->GetFirstMember(); itr != nullptr; itr = itr->next())
+    {
+        Player* member = itr->getSource();
+        if (!member || member == b)
+            continue;
+
+        // Check if this member is the main tank
+        if (group->GetMainTankGuid() == member->GetObjectGuid())
+        {
+            pos.x = member->GetPositionX();
+            pos.y = member->GetPositionY();
+            pos.z = member->GetPositionZ();
+            return pos;
+        }
+    }
+
+    // Fallback: use group leader position
+    Player* leader = sObjectMgr.GetPlayer(group->GetLeaderGuid());
+    if (leader && leader != b)
+    {
+        pos.x = leader->GetPositionX();
+        pos.y = leader->GetPositionY();
+        pos.z = leader->GetPositionZ();
+    }
+
+    return pos;
+}
+
+bool BotBridge::CB_IsUnitCc(BotHandle bot, UnitHandle target)
+{
+    Unit* t = FindUnit(bot, target);
+    if (!t)
+        return false;
+
+    // Check for common CC auras
+    // Polymorph variants
+    if (t->HasAuraType(SPELL_AURA_MOD_CONFUSE))
+        return true;
+    // Sap, Gouge, Fear, etc.
+    if (t->HasAuraType(SPELL_AURA_MOD_STUN) && !t->HasAuraType(SPELL_AURA_MECHANIC_IMMUNITY))
+        return true;
+    if (t->HasAuraType(SPELL_AURA_MOD_FEAR))
+        return true;
+    // Hibernate, Entangling Roots, Freezing Trap
+    if (t->HasAuraType(SPELL_AURA_MOD_ROOT))
+        return true;
+    // Banish
+    if (t->HasAuraType(SPELL_AURA_SCHOOL_IMMUNITY))
+        return true;
+
+    return false;
+}
+
+// ── Debug ────────────────────────────────────────────────────────────────────
+
+bool BotBridge::CB_DebugDumpState(BotHandle bot, uint8_t kind)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    // Debug dump is handled on the Rust side — this just confirms
+    // the bot is valid.
+    return true;
 }
