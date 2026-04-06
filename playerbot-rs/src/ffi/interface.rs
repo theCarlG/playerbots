@@ -1308,10 +1308,16 @@ impl BotInterface for RealInterface {
         unsafe { (self.cbs.decline_duel.unwrap())(self.handle) }
     }
     fn accept_summon(&self) -> bool {
-        unsafe { (self.cbs.accept_summon.unwrap())(self.handle) }
+        match self.cbs.accept_summon {
+            Some(f) => unsafe { f(self.handle) },
+            None => false,
+        }
     }
     fn use_meeting_stone(&self) -> bool {
-        unsafe { (self.cbs.use_meeting_stone.unwrap())(self.handle) }
+        match self.cbs.use_meeting_stone {
+            Some(f) => unsafe { f(self.handle) },
+            None => false,
+        }
     }
 
     fn is_pvp_flagged(&self) -> bool {
@@ -1750,15 +1756,24 @@ impl BotInterface for RealInterface {
     }
 
     fn get_pending_roll_count(&self) -> u32 {
-        unsafe { (self.cbs.get_pending_roll_count.unwrap())(self.handle) }
+        match self.cbs.get_pending_roll_count {
+            Some(f) => unsafe { f(self.handle) },
+            None => 0,
+        }
     }
 
     fn auto_loot_roll(&self) -> bool {
-        unsafe { (self.cbs.auto_loot_roll.unwrap())(self.handle) }
+        match self.cbs.auto_loot_roll {
+            Some(f) => unsafe { f(self.handle) },
+            None => false,
+        }
     }
 
     fn cast_loot_roll(&self, vote: u8) -> bool {
-        unsafe { (self.cbs.cast_loot_roll.unwrap())(self.handle, vote) }
+        match self.cbs.cast_loot_roll {
+            Some(f) => unsafe { f(self.handle, vote) },
+            None => false,
+        }
     }
 
     fn find_travel_dests(

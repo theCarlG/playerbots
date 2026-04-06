@@ -287,8 +287,8 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.accept_trade            = CB_AcceptTrade;
     cbs.accept_duel             = CB_AcceptDuel;
     cbs.decline_duel            = CB_DeclineDuel;
-    cbs.accept_summon           = CB_AcceptSummon;
-    cbs.use_meeting_stone       = CB_UseMeetingStone;
+    cbs.accept_summon           = nullptr; // PB2 doesn't handle summon responses
+    cbs.use_meeting_stone       = nullptr; // PB2 doesn't handle meeting stones
     cbs.is_pvp_flagged          = CB_IsPvpFlagged;
     cbs.duel_state              = CB_DuelState;
     cbs.reputation_rank         = CB_ReputationRank;
@@ -396,10 +396,12 @@ BotCallbacks BotBridge::MakeCallbacks()
     // Addon-channel reply routing
     cbs.bot_tell_addon                      = CB_TellAddon;
 
-    // Loot rolling
-    cbs.get_pending_roll_count              = CB_GetPendingRollCount;
-    cbs.auto_loot_roll                      = CB_AutoLootRoll;
-    cbs.cast_loot_roll                      = CB_CastLootRoll;
+    // Loot rolling — PB2 handles this via packet interception in
+    // PlayerbotMgr::HandleMasterIncomingPacket (CMSG_LOOT_ROLL),
+    // not through proactive callbacks.
+    cbs.get_pending_roll_count              = nullptr;
+    cbs.auto_loot_roll                      = nullptr;
+    cbs.cast_loot_roll                      = nullptr;
 
     // Travel destination queries
     cbs.bot_find_travel_dests               = CB_BotFindTravelDests;
@@ -2415,23 +2417,6 @@ bool BotBridge::CB_LeaveGroup(BotHandle bot)
     return true;
 }
 
-bool BotBridge::CB_AcceptReadyCheck(BotHandle bot)
-{
-    Player* b = FindBot(bot);
-    if (!b)
-        return false;
-    Group* group = b->GetGroup();
-    if (!group)
-        return false;
-    // Send a positive ready-check response. Classic uses MSG_RAID_READY_CHECK
-    // for both the initial check and the confirm response.
-    WorldPacket data(MSG_RAID_READY_CHECK, 8);
-    data << b->GetObjectGuid();
-    data << uint8(1); // ready
-    group->BroadcastPacket(data, false, -1, b->GetObjectGuid());
-    return true;
-}
-
 bool BotBridge::CB_AcceptTrade(BotHandle bot)
 {
     Player* b = FindBot(bot);
@@ -2469,22 +2454,19 @@ bool BotBridge::CB_DeclineDuel(BotHandle bot)
     return true;
 }
 
-bool BotBridge::CB_AcceptSummon(BotHandle bot)
+bool BotBridge::CB_AcceptReadyCheck(BotHandle bot)
 {
-    // Stub — Player::m_summon_expire and m_summoner are private on this
-    // fork and there is no public getter. SummonIfPossible requires the
-    // summoner GUID which we can't retrieve. Summon acceptance would need
-    // either a friend declaration or a core patch exposing a getter.
-    (void)bot;
-    return false;
-}
-
-bool BotBridge::CB_UseMeetingStone(BotHandle bot)
-{
-    // Meeting stone interaction is complex and requires nearby GO detection
-    // + instance/level eligibility. Stub for now — returns false.
-    (void)bot;
-    return false;
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    Group* group = b->GetGroup();
+    if (!group)
+        return false;
+    WorldPacket data(MSG_RAID_READY_CHECK, 8);
+    data << b->GetObjectGuid();
+    data << uint8(1); // ready
+    group->BroadcastPacket(data, false, -1, b->GetObjectGuid());
+    return true;
 }
 
 // ── PvP / duel / faction (11d) ────────────────────────────────────────────
@@ -4113,34 +4095,6 @@ void BotBridge::CB_BotFreeString(char* s)
 {
     if (s)
         std::free(s);
-}
-
-// ── Loot rolling ────────────────────────────────────────────────────────
-
-uint32_t BotBridge::CB_GetPendingRollCount(BotHandle bot)
-{
-    // Stub — on the Karatefylla fork, loot rolls are managed through
-    // LootMgr and there's no simple way to iterate pending rolls for
-    // a specific player without a loot target GUID. The auto-roll is
-    // handled via the packet path in PlayerbotMgr instead.
-    // Return 0 so Bt::AutoLootRoll is a no-op.
-    (void)bot;
-    return 0;
-}
-
-bool BotBridge::CB_AutoLootRoll(BotHandle bot)
-{
-    // Stub — loot rolling handled via packet path in PlayerbotMgr.
-    (void)bot;
-    return false;
-}
-
-bool BotBridge::CB_CastLootRoll(BotHandle bot, uint8_t vote)
-{
-    // Stub — loot rolling handled via packet path in PlayerbotMgr.
-    (void)bot;
-    (void)vote;
-    return false;
 }
 
 // ── Travel destination queries ──────────────────────────────────────────

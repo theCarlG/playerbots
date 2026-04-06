@@ -154,8 +154,6 @@ namespace BotBridge
     bool CB_AcceptTrade(BotHandle bot);
     bool CB_AcceptDuel(BotHandle bot);
     bool CB_DeclineDuel(BotHandle bot);
-    bool CB_AcceptSummon(BotHandle bot);
-    bool CB_UseMeetingStone(BotHandle bot);
 
     // ── PvP / duel / faction (11d) ─────────────────────────────────────────
     bool    CB_IsPvpFlagged(BotHandle bot);
@@ -278,10 +276,6 @@ namespace BotBridge
     bool CB_BotReadLogFile(BotHandle bot, const char* name, char** out_body);
     void CB_BotFreeString(char* s);
 
-    // ── Loot rolling ──────────────────────────────────────────────────────
-    uint32_t        CB_GetPendingRollCount(BotHandle bot);
-    bool            CB_AutoLootRoll(BotHandle bot);
-    bool            CB_CastLootRoll(BotHandle bot, uint8_t vote);
 
     // ── Travel destination queries ────────────────────────────────────────
     BotTravelDest*  CB_BotFindTravelDests(BotHandle bot, uint32_t purpose_flags,
