@@ -10,6 +10,7 @@ use crate::{
     bot::state::PlayerSpec,
     data::spells::vanilla::shaman::{ELEMENTAL_MASTERY, LIGHTNING_SHIELD, NATURE_SWIFTNESS},
     engine::{
+        aura_helpers::LIGHTNING_SHIELD_RANKS,
         bt::Bt::{self, CastOnSelf, InCombat, StrategyEnabled},
         macro_fsm::ActiveFsm,
     },
@@ -27,7 +28,7 @@ pub fn boost() -> Bt {
 
 // Only enhancement maintains a persistent self buff; ele/resto rely on
 // situational totems handled inside their rotations.
-const ENH_BUFFS: &[GroupBuff] = &[GroupBuff::on_self(LIGHTNING_SHIELD)];
+const ENH_BUFFS: &[GroupBuff] = &[GroupBuff::on_self(LIGHTNING_SHIELD, LIGHTNING_SHIELD_RANKS)];
 const NONE: &[GroupBuff] = &[];
 
 pub fn build_tree(fsm: ActiveFsm, spec: PlayerSpec) -> Bt {

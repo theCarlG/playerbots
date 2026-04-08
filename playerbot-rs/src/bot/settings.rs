@@ -318,6 +318,29 @@ impl StrategyFlags {
         Self::ASSIST.1 | Self::PROTECT.1 | Self::TANK.1,
     );
 
+    /// All spec-name flags OR'd together. Used by `spec_exclusive_group`
+    /// to detect when a spec flag is being added.
+    pub const ALL_SPEC_FLAGS: Self = Self(
+        Self::ARMS.0 | Self::FURY.0 | Self::PROTECTION.0
+            | Self::DISCIPLINE.0 | Self::HOLY.0 | Self::SHADOW.0
+            | Self::ARCANE.0 | Self::FIRE.0 | Self::FROST.0
+            | Self::AFFLICTION.0 | Self::DEMONOLOGY.0 | Self::DESTRUCTION.0
+            | Self::RETRIBUTION.0 | Self::ELEMENTAL.0 | Self::ENHANCEMENT.0
+            | Self::RESTORATION.0 | Self::BALANCE.0
+            | Self::BEAST_MASTERY.0 | Self::MARKSMANSHIP.0 | Self::SURVIVAL.0
+            | Self::ASSASSINATION.0 | Self::ROGUE_COMBAT.0 | Self::SUBTLETY.0
+            | Self::BLOOD.0 | Self::UNHOLY.0 | Self::TANK_FERAL.0 | Self::DPS_FERAL.0,
+        Self::ARMS.1 | Self::FURY.1 | Self::PROTECTION.1
+            | Self::DISCIPLINE.1 | Self::HOLY.1 | Self::SHADOW.1
+            | Self::ARCANE.1 | Self::FIRE.1 | Self::FROST.1
+            | Self::AFFLICTION.1 | Self::DEMONOLOGY.1 | Self::DESTRUCTION.1
+            | Self::RETRIBUTION.1 | Self::ELEMENTAL.1 | Self::ENHANCEMENT.1
+            | Self::RESTORATION.1 | Self::BALANCE.1
+            | Self::BEAST_MASTERY.1 | Self::MARKSMANSHIP.1 | Self::SURVIVAL.1
+            | Self::ASSASSINATION.1 | Self::ROGUE_COMBAT.1 | Self::SUBTLETY.1
+            | Self::BLOOD.1 | Self::UNHOLY.1 | Self::TANK_FERAL.1 | Self::DPS_FERAL.1,
+    );
+
     pub const fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0 && (self.1 & other.1) == other.1
     }

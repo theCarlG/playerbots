@@ -6,7 +6,7 @@ use crate::{Sel, Seq};
 use crate::{
     data::spells::vanilla::rogue::*,
     engine::bt::{
-        Bt::{self, InCombat, ApplyPoisons, StickToTarget, Cmp, CastOnSelf, TargetIsCasting, CastOnTarget, MainHandIs, IsBehindTarget, KnowsSpell},
+        Bt::{self, InCombat, ApplyPoisons, Cmp, CastOnSelf, TargetIsCasting, CastOnTarget, MainHandIs, IsBehindTarget, KnowsSpell},
         Op::{Below, Above},
         Resource::{SelfHealthPct, SelfComboPoints, SelfEnergy, TargetHealthPct},
         WeaponType,
@@ -17,21 +17,22 @@ use crate::{
 pub fn build_tree(fsm: ActiveFsm) -> Bt {
     match fsm {
         ActiveFsm::Combat => combat_tree(),
-        ActiveFsm::World => Bt::Noop,
+        ActiveFsm::World => world_tree(),
         ActiveFsm::Dead => Bt::Noop,
     }
+}
+
+fn world_tree() -> Bt {
+    // Keep weapon poisons applied while out of combat.
+    Bt::throttle(30_000, ApplyPoisons)
 }
 
 fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (rogue-wide list).
         super::boost(),
-        // 0. OUT-OF-COMBAT MAINTENANCE: keep weapon poisons applied.
-        //    Throttled so we don't spam cast attempts on a failed apply.
-        Seq!(InCombat.not(), Bt::throttle(30_000, ApplyPoisons),),
-        // 1. UTILITY & POSITIONING (Highest Priority)
-        StickToTarget(5.0),
-        // 2. DEFENSIVE: "Oh Crap" Logic
+        // Melee approach handled by combat_wrapper's close_subtree.
+        // DEFENSIVE: "Oh Crap" Logic
         Seq!(Cmp(SelfHealthPct, Below(15)), CastOnSelf(VANISH)),
         // 3. MAIN COMBAT LOOP
         Seq!(

@@ -979,7 +979,7 @@ fn parse_reactivity(args: &[&str]) -> Option<BotCommand> {
     //
     // Dispatch on the first token's sign prefix.
     if let Some(first) = args.first().copied()
-        && (first.starts_with('+') || first.starts_with('-')) {
+        && (first.starts_with('+') || first.starts_with('-') || first.starts_with('~')) {
             return parse_strategies(args, BotStateKind::Reaction);
         }
     match args.first().copied() {

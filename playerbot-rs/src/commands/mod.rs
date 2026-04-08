@@ -1053,6 +1053,15 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             {
                 let slot = s.strategies.get_mut(*state);
                 slot.remove(*remove);
+                // Spec flags are mutually exclusive: when adding a spec,
+                // auto-remove all other spec flags so they don't accumulate.
+                let adding_specs = StrategyFlags(
+                    add.0 & StrategyFlags::ALL_SPEC_FLAGS.0,
+                    add.1 & StrategyFlags::ALL_SPEC_FLAGS.1,
+                );
+                if adding_specs != StrategyFlags::NONE {
+                    slot.remove(StrategyFlags::ALL_SPEC_FLAGS);
+                }
                 slot.insert(*add);
                 // Toggle: xor each flag in the toggle set.
                 slot.0 ^= toggle.0;
@@ -1105,6 +1114,16 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                     (BehaviorMode::Follow, StrategyFlags::FOLLOW)
                 };
                 bot.settings.mode = new_mode;
+                // Bridge to Reactivity: when PASSIVE is set via the addon
+                // (e.g. `nc ~passive`), also set Reactivity::Passive so
+                // ShouldEngage respects it. When PASSIVE is cleared (e.g.
+                // the Attack button sends `-passive`), restore Defensive.
+                if new_mode == BehaviorMode::Passive {
+                    bot.settings.reactivity = Reactivity::Passive;
+                } else if bot.settings.reactivity == Reactivity::Passive {
+                    // PASSIVE was cleared — restore to Defensive (safe default).
+                    bot.settings.reactivity = Reactivity::Defensive;
+                }
                 // Clear conflicting mode flags from nc/co, then re-set the
                 // active one. Never touch Reaction or Dead slots.
                 for state in [BotStateKind::NonCombat, BotStateKind::Combat] {
@@ -2454,13 +2473,18 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             // RaidControl sends "focus heal none" to clear the focus target.
             let name_clean = name.trim_start_matches('+');
             if name_clean.eq_ignore_ascii_case("none") || name_clean.is_empty() {
-                s.focus_target = None;
+                // Only clear protect_target — focus_target is the ATTACK
+                // target and should never be set to a friendly by this
+                // command. If focus_target was previously set by a real
+                // "focus" or "attack" command, leave it alone.
                 s.protect_target = None;
                 reply(bot, pc, "focus heal: cleared");
             } else {
                 let guid = bot.interface.resolve_player_by_name(name_clean);
                 if guid != 0 {
-                    s.focus_target = Some(guid);
+                    // Only set protect_target — this is a heal-focus, not an
+                    // attack-focus.  Setting focus_target here causes
+                    // FocusAttack to try to attack a friendly every tick.
                     s.protect_target = Some(guid);
                 } else if s.verbose {
                     reply(

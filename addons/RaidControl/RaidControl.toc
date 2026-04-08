@@ -1,0 +1,11 @@
+## Interface: 11200
+## Title: RaidControl
+## Notes: Playerbot raid control with boss-specific commands
+## Author: You
+## Version: 2.0.0
+## SavedVariables: RaidControlDB
+
+Compat.lua
+BossData.lua
+RaidControl.lua
+RaidControl.xml

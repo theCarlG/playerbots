@@ -43,7 +43,7 @@ fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (DK-wide list).
         super::boost(),
-        StickToTarget(5.0),
+        // Melee approach handled by combat_wrapper's close_subtree.
         // Death Grip pull on ranged targets.
         Seq!(Cmp(TargetDistance, Above(15)), CastOnTarget(DEATH_GRIP)),
         Seq!(

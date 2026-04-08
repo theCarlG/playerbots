@@ -9,9 +9,9 @@ use crate::{
     engine::{
         aura_helpers::{HUNTERS_MARK_RANKS, SERPENT_STING_RANKS},
         bt::{
-            Bt::{self, Cmp, CastOnSelf, MaintainRange, InCombat, CastOnTarget, TargetIsCasting},
-            Op::Below,
-            Resource::{SelfHealthPct, TargetDistance},
+            Bt::{self, Cmp, CastOnSelf, CastAoEOnTarget, InCombat, CastOnTarget, TargetIsCasting},
+            Op::{Below, AtLeast},
+            Resource::{SelfHealthPct, TargetDistance, AttackerCount},
         },
         macro_fsm::ActiveFsm,
     },
@@ -36,8 +36,6 @@ fn combat_tree() -> Bt {
             Bt::self_missing(ASPECT_OF_THE_HAWK),
             CastOnSelf(ASPECT_OF_THE_HAWK),
         ),
-        // Kite melee attackers.
-        MaintainRange(8.0),
         Seq!(
             InCombat,
             Sel!(
@@ -45,13 +43,17 @@ fn combat_tree() -> Bt {
                     Bt::target_missing_any_rank(HUNTERS_MARK_RANKS),
                     CastOnTarget(HUNTERS_MARK),
                 ),
-                // Melee fallback.
+                // Dead zone fallback (< 9y): melee abilities when kiting
+                // hasn't created enough distance yet. Wing Clip slows the
+                // mob to help the reactive kite succeed.
                 Seq!(
-                    Cmp(TargetDistance, Below(5)),
+                    Cmp(TargetDistance, Below(9)),
                     Sel!(CastOnTarget(WING_CLIP), CastOnTarget(RAPTOR_STRIKE)),
                 ),
                 // Interrupt caster.
                 Seq!(TargetIsCasting, CastOnTarget(SCATTER_SHOT)),
+                // AoE: Volley when 3+ attackers.
+                Seq!(Cmp(AttackerCount, AtLeast(3)), CastAoEOnTarget(VOLLEY)),
                 // Ranged rotation.
                 CastOnTarget(AIMED_SHOT),
                 CastOnTarget(MULTI_SHOT),

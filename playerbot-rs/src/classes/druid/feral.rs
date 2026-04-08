@@ -9,7 +9,7 @@ use crate::{
     engine::{
         aura_helpers::{DEMO_ROAR_RANKS, FAERIE_FIRE_RANKS, RAKE_RANKS, RIP_RANKS},
         bt::{
-            Bt::{self, StickToTarget, IsTank, CastOnSelf, InCombat, Cmp, CastOnTarget},
+            Bt::{self, IsTank, CastOnSelf, InCombat, Cmp, CastOnTarget},
             Op::Below,
             Resource::SelfHealthPct,
         },
@@ -33,8 +33,10 @@ fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (druid-wide list).
         super::boost(),
-        // Close gap.
-        StickToTarget(5.0),
+        // Melee approach is handled by combat_wrapper's close_subtree()
+        // (StrategyFlags::CLOSE). Do NOT put StickToTarget here — it
+        // returns Running while chasing, which short-circuits the Sel
+        // and prevents the bear/cat rotation from ever executing.
         // Tank path.
         Seq!(IsTank, bear_tree()),
         // DPS path.

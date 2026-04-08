@@ -6,9 +6,9 @@ use crate::{Sel, Seq};
 use crate::{
     data::spells::vanilla::mage::*,
     engine::bt::{
-        Bt::{self, MaintainRange, Cmp, CastOnSelf, InCombat, TargetIsCasting, CastOnTarget},
-        Op::Below,
-        Resource::{SelfHealthPct, SelfManaPct, TargetHealthPct},
+        Bt::{self, Cmp, CastOnSelf, CastAoEOnTarget, InCombat, TargetIsCasting, CastOnTarget},
+        Op::{Below, AtLeast},
+        Resource::{SelfHealthPct, SelfManaPct, TargetHealthPct, AttackerCount},
     },
     engine::macro_fsm::ActiveFsm,
     ffi::SpellId,
@@ -30,13 +30,20 @@ fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (mage-wide list).
         super::boost(),
-        MaintainRange(10.0),
+        // Positioning handled by reactive::ranged_subtree().
         Seq!(Cmp(SelfHealthPct, Below(20)), CastOnSelf(ICE_BLOCK)),
-        Seq!(Cmp(SelfManaPct, Below(15)), CastOnSelf(EVOCATION)),
         Seq!(
             InCombat,
             Sel!(
+                // Evocation: low mana, channeled — only when not moving.
+                Seq!(
+                    Cmp(SelfManaPct, Below(15)),
+                    Bt::IsMoving.not(),
+                    CastOnSelf(EVOCATION),
+                ),
                 Seq!(TargetIsCasting, CastOnTarget(COUNTERSPELL)),
+                // AoE: Flamestrike when 3+ attackers.
+                Seq!(Cmp(AttackerCount, AtLeast(3)), CastAoEOnTarget(FLAMESTRIKE)),
                 Seq!(Cmp(TargetHealthPct, Below(20)), CastOnTarget(FIRE_BLAST)),
                 // Scorch to stack Fire Vulnerability.
                 Seq!(

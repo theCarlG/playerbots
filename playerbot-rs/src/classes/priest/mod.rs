@@ -8,6 +8,7 @@ use crate::{
     bot::state::PlayerSpec,
     data::spells::vanilla::priest::{INNER_FIRE, INNER_FOCUS, POWER_WORD_FORTITUDE},
     engine::{
+        aura_helpers::{INNER_FIRE_RANKS, PW_FORTITUDE_RANKS},
         bt::Bt::{self, CastOnSelf, InCombat, StrategyEnabled},
         macro_fsm::ActiveFsm,
     },
@@ -15,8 +16,8 @@ use crate::{
 };
 
 const BUFFS: &[GroupBuff] = &[
-    GroupBuff::on_party(POWER_WORD_FORTITUDE),
-    GroupBuff::on_self(INNER_FIRE),
+    GroupBuff::on_party(POWER_WORD_FORTITUDE, PW_FORTITUDE_RANKS),
+    GroupBuff::on_self(INNER_FIRE, INNER_FIRE_RANKS),
 ];
 
 /// `co +boost` burst subtree — priest offensive cooldowns.

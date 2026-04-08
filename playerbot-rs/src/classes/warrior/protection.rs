@@ -8,9 +8,9 @@ use crate::{
     engine::{
         aura_helpers::DEMORALIZING_SHOUT_RANKS,
         bt::{
-            Bt::{self, Cmp, CastOnSelf, InShapeshift, CastOnTarget, StickToTarget, InCombat, Not},
-            Op::Below,
-            Resource::SelfHealthPct,
+            Bt::{self, Cmp, CastOnSelf, InShapeshift, CastOnTarget, InCombat, Not},
+            Op::{Below, AtLeast},
+            Resource::{SelfHealthPct, NearbyCount, SelfRage},
         },
         macro_fsm::ActiveFsm,
     },
@@ -33,9 +33,9 @@ fn combat_tree() -> Bt {
             Cmp(SelfHealthPct, Below(20)),
             Sel!(CastOnSelf(SHIELD_WALL), CastOnSelf(LAST_STAND)),
         ),
-        // Close gap (Charge requires Battle Stance).
+        // Gap closer (Charge requires Battle Stance). Melee approach
+        // handled by combat_wrapper's close_subtree.
         Seq!(InShapeshift(17), CastOnTarget(CHARGE)),
-        StickToTarget(5.0),
         Seq!(
             InCombat,
             Sel!(
@@ -53,6 +53,9 @@ fn combat_tree() -> Bt {
                 Seq!(Cmp(SelfHealthPct, Below(30)).not(), CastOnSelf(BLOODRAGE)),
                 // Revenge proc.
                 CastOnTarget(REVENGE),
+                // AoE threat when multiple mobs.
+                Seq!(Cmp(NearbyCount, AtLeast(3)), CastOnTarget(THUNDER_CLAP)),
+                Seq!(Cmp(NearbyCount, AtLeast(2)), Cmp(SelfRage, AtLeast(30)), CastOnTarget(CLEAVE)),
                 // Core threat.
                 CastOnTarget(SHIELD_SLAM),
                 CastOnTarget(SUNDER_ARMOR),

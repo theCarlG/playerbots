@@ -153,6 +153,7 @@ pub mod druid {
     pub const AQUATIC_FORM: SpellId = SpellId(1066);
     pub const NATURE_SWIFTNESS: SpellId = SpellId(17116);
     pub const TIGERS_FURY: SpellId = SpellId(9846); // rank 4
+    pub const HURRICANE: SpellId = SpellId(17402); // rank 3
 }
 
 // ── Hunter ────────────────────────────────────────────────────────────────

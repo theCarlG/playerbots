@@ -8,9 +8,9 @@ use crate::{
     engine::{
         aura_helpers::{BATTLE_SHOUT_RANKS, REND_RANKS},
         bt::{
-            Bt::{self, InShapeshift, CastOnTarget, StickToTarget, InCombat, Not, CastOnSelf, Cmp},
-            Op::Below,
-            Resource::{SelfHealthPct, TargetHealthPct},
+            Bt::{self, InShapeshift, CastOnTarget, InCombat, Not, CastOnSelf, Cmp},
+            Op::{Below, AtLeast},
+            Resource::{SelfHealthPct, TargetHealthPct, NearbyCount, SelfRage},
         },
         macro_fsm::ActiveFsm,
     },
@@ -28,9 +28,9 @@ fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (warrior-wide list).
         super::boost(),
-        // Close the gap: Charge if out of range (Battle Stance), otherwise stick.
+        // Gap closer: Charge in Battle Stance. Melee approach is handled
+        // by combat_wrapper's close_subtree (StrategyFlags::CLOSE).
         Seq!(InShapeshift(17), CastOnTarget(CHARGE)),
-        StickToTarget(5.0),
         // In-combat rotation.
         Seq!(
             InCombat,
@@ -50,7 +50,11 @@ fn combat_tree() -> Bt {
                 // Core damage.
                 CastOnTarget(MORTAL_STRIKE),
                 CastOnTarget(WHIRLWIND),
+                // AoE: Cleave when 2+ nearby.
+                Seq!(Cmp(NearbyCount, AtLeast(2)), Cmp(SelfRage, AtLeast(30)), CastOnTarget(CLEAVE)),
                 CastOnTarget(HEROIC_STRIKE),
+                // Sunder Armor debuff — stacks to 5, low priority.
+                CastOnTarget(SUNDER_ARMOR),
                 // Bleed upkeep.
                 Seq!(Bt::target_missing_any_rank(REND_RANKS), CastOnTarget(REND)),
             ),

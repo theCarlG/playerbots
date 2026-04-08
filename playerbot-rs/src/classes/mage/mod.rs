@@ -7,9 +7,10 @@ use crate::{
     bot::settings::StrategyFlags,
     bot::state::PlayerSpec,
     data::spells::vanilla::mage::{
-        ARCANE_BRILLIANCE, ARCANE_INTELLECT, ARCANE_POWER, COMBUSTION, PRESENCE_OF_MIND,
+        ARCANE_BRILLIANCE, ARCANE_POWER, COMBUSTION, PRESENCE_OF_MIND,
     },
     engine::{
+        aura_helpers::ARCANE_INTELLECT_RANKS,
         bt::Bt::{self, CastOnSelf, InCombat, StrategyEnabled},
         macro_fsm::ActiveFsm,
     },
@@ -17,9 +18,10 @@ use crate::{
 };
 
 // Cast Arcane Brilliance to apply Arcane Intellect aura to whole party.
+// Check all AI ranks + Arcane Brilliance itself.
 const BUFFS: &[GroupBuff] = &[GroupBuff::on_party_aura(
     ARCANE_BRILLIANCE,
-    ARCANE_INTELLECT,
+    ARCANE_INTELLECT_RANKS,
 )];
 
 /// `co +boost` burst subtree — mage offensive cooldowns.

@@ -78,10 +78,13 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     update_travel_target(bot, now_ms);
 
     // 5. Determine ActiveFsm (Dead > Combat > World)
+    // A focus_target (from pull/attack commands) also triggers Combat so
+    // the bot approaches and engages rather than staying in Follow mode.
+    let has_engagement = !bot.attackers.is_empty() || bot.settings.focus_target.is_some();
     let active_fsm = ActiveFsm::determine(
         bot.snap.self_.is_alive,
         bot.snap.self_.in_combat,
-        !bot.attackers.is_empty(),
+        has_engagement,
     );
     bot.active_fsm = active_fsm;
 
@@ -179,16 +182,23 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         pending_target: std::cell::Cell::new(None),
     };
 
-    // FSM-based dispatch: encounter override first, then per-state tree.
+    // FSM-based dispatch: primary tree + encounter overlay.
+    //
+    // The primary tree runs first (combat rotation, targeting, reactive
+    // subtrees, follow, etc.). The encounter BT (if any) runs afterward
+    // as a high-priority overlay — encounter-specific mechanics like
+    // positioning overrides, flee-from-AoE, and zone-wide duties (rune
+    // dousing, suppression devices). Running the encounter BT last
+    // ensures its movement commands take precedence over the primary
+    // tree's generic positioning.
+    let primary = match active_fsm {
+        ActiveFsm::Dead => &trees.dead,
+        ActiveFsm::Combat => &trees.combat,
+        ActiveFsm::World => &trees.world,
+    };
+    let _ = primary.tick(&mut ctx);
     if let Some(ref enc_bt) = enc_override {
         let _ = enc_bt.tick(&mut ctx);
-    } else {
-        let primary = match active_fsm {
-            ActiveFsm::Dead => &trees.dead,
-            ActiveFsm::Combat => &trees.combat,
-            ActiveFsm::World => &trees.world,
-        };
-        let _ = primary.tick(&mut ctx);
     }
 
     // Maintenance runs after primary in all states except Dead.
@@ -461,6 +471,23 @@ fn sync_encounter_to_group(bot: &mut BotState, now_ms: u64) {
         gs.encounter_active = false;
     }
 
+    // Auto-register tanks in group coordination. Bots with the TANK flag
+    // register as main tank (first) or off-tank (subsequent). This ensures
+    // DPS bots can assist the tank and targeting subtrees work correctly.
+    {
+        use crate::bot::settings::{BotStateKind, StrategyFlags};
+        let combat_flags = bot.settings.strategies.get(BotStateKind::Combat);
+        if combat_flags.contains(StrategyFlags::TANK) {
+            if gs.coordination.main_tank().is_none() {
+                gs.coordination.set_main_tank(bot.handle);
+            } else if gs.coordination.main_tank() != Some(bot.handle)
+                && !gs.coordination.off_tanks().any(|h| h == bot.handle)
+            {
+                gs.coordination.add_off_tank(bot.handle);
+            }
+        }
+    }
+
     // Sync paladin blessings to group coordination.
     if bot.class == crate::bot::state::PlayerClass::Paladin
         && let crate::bot::class_prefs::ClassPrefs::Paladin(ref prefs) = bot.settings.class_prefs
@@ -493,9 +520,11 @@ fn on_fsm_exit(bot: &mut BotState, prev: ActiveFsm) {
     }
     match prev {
         ActiveFsm::Combat => {
-            // Leaving combat: clear combat-only blackboard keys.
+            // Leaving combat: clear combat-only blackboard keys and
+            // transient targeting state so the bot returns to Follow.
             use crate::engine::blackboard::Key;
             bot.blackboard.clear(Key::LastAttackTarget);
+            bot.settings.focus_target = None;
         }
         ActiveFsm::Dead => {
             // Revived: clear death-related state.

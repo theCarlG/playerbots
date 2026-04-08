@@ -8,6 +8,7 @@ use crate::{
     bot::state::PlayerSpec,
     data::spells::vanilla::druid::{NATURE_SWIFTNESS, TIGERS_FURY},
     engine::{
+        aura_helpers::MARK_OF_THE_WILD_RANKS,
         bt::Bt::{self, CastOnSelf, InCombat, StrategyEnabled},
         macro_fsm::ActiveFsm,
     },
@@ -15,10 +16,10 @@ use crate::{
     noncombat::GroupBuff,
 };
 
-// Mark of the Wild rank 7.
+// Mark of the Wild rank 7 (highest — C++ auto-downranks).
 const MARK_OF_THE_WILD: SpellId = SpellId(9885);
 
-const BUFFS: &[GroupBuff] = &[GroupBuff::on_party(MARK_OF_THE_WILD)];
+const BUFFS: &[GroupBuff] = &[GroupBuff::on_party(MARK_OF_THE_WILD, MARK_OF_THE_WILD_RANKS)];
 
 /// `co +boost` burst subtree — druid offensive cooldowns.
 pub fn boost() -> Bt {

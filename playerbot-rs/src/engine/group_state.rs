@@ -236,6 +236,19 @@ impl GroupCoordination {
         }
     }
 
+    /// Returns the RTI icons (0-based, 0..=7) assigned to `tank` as focus targets.
+    /// The returned slice is written into `out` and the count is returned.
+    pub fn tank_target_icons(&self, tank: UnitHandle, out: &mut [u8; 8]) -> usize {
+        let mut n = 0;
+        for &(h, icon) in &self.tank_focus_targets {
+            if h == tank && h != 0 {
+                out[n] = icon;
+                n += 1;
+            }
+        }
+        n
+    }
+
     /// Set a paladin's blessing in the coordination table. Reuses the
     /// paladin's existing slot or takes the first empty one.
     pub fn set_paladin_blessing(&mut self, paladin: UnitHandle, spell: SpellId) {

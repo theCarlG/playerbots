@@ -14,6 +14,8 @@ end
 
 local ToolBars = {}
 local GroupToolBars = {}
+--- Ordered list of toolbar names for dynamic repositioning (populated during panel creation).
+local ToolBarOrder = {}
 local CommandSeparator = "\\\\"
 local DropDownMenu_Current = {}
 mangosbot_options = {}
@@ -68,23 +70,16 @@ end
 --- @param chat string        "PARTY" or "WHISPER".
 --- @param target string|nil  Bot name (for WHISPER).
 function SendPB(cmds, chat, target)
-    -- WHISPER goes through SendChatMessage which parses "|" as an escape
-    -- code prefix.  Send each command individually to avoid the pipe batch
-    -- separator on that path.
-    if (chat == "WHISPER" and type(cmds) == "table") then
+    -- WoW treats "|" as an escape-code prefix in both SendChatMessage and
+    -- SendAddonMessage, so we never batch with pipes.  Each command is sent
+    -- as its own PB:v1: message.
+    if (type(cmds) == "table") then
         for _, cmd in pairs(cmds) do
             SendBotCommand("PB:v1:" .. cmd, chat, nil, target)
         end
-        return
-    end
-
-    local payload
-    if (type(cmds) == "table") then
-        payload = "PB:v1:" .. table.concat(cmds, "|")
     else
-        payload = "PB:v1:" .. cmds
+        SendBotCommand("PB:v1:" .. cmds, chat, nil, target)
     end
-    SendBotCommand(payload, chat, nil, target)
 end
 
 function CreateToolBar(frame, y, name, buttons, x, spacing, register)
@@ -166,6 +161,7 @@ function CreateToolBar(frame, y, name, buttons, x, spacing, register)
     frame.toolbar[name] = tb
     if (register) then
         ToolBars[name] = buttons
+        table.insert(ToolBarOrder, name)
     end
     return buttons
 end
@@ -227,6 +223,10 @@ function ToolBarButtonOnClick(btn, visual)
         local bot = GetUnitName("target")
         if (bot == nil) then bot = CurrentBot end
         wait(0, function(cmds, bot) SendPB(cmds, "WHISPER", bot) end, pbCmds, bot)
+        -- After sending a class pref command, requery the bot's prefs so toggles update.
+        if (btn["pref_key"] ~= nil and bot ~= nil) then
+            wait(0.3, function(b) QueryClassPrefs(b) end, bot)
+        end
     end
 end
 
@@ -661,7 +661,7 @@ function CreateMovementToolBar(frame, y, name, group, x, spacing, register)
     local tb = {
         ["follow_master"] = {
             icon = "follow_master",
-            command = { [0] = "#a follow ?" },
+            command = { [0] = "follow" },
             strategy = "follow",
             tooltip = "Follow me",
             index = 0,
@@ -670,7 +670,7 @@ function CreateMovementToolBar(frame, y, name, group, x, spacing, register)
         },
         ["stay"] = {
             icon = "stay",
-            command = { [0] = "#a stay ?" },
+            command = { [0] = "stay" },
             strategy = "stay",
             tooltip = "Stay in place",
             index = 1,
@@ -679,7 +679,7 @@ function CreateMovementToolBar(frame, y, name, group, x, spacing, register)
         },
         ["free"] = {
             icon = "free",
-            command = { [0] = "#a free ?" },
+            command = { [0] = "free" },
             strategy = "free",
             tooltip = "Move around freely",
             index = 2,
@@ -690,7 +690,7 @@ function CreateMovementToolBar(frame, y, name, group, x, spacing, register)
     if (not group) then
         tb["runaway"] = {
             icon = "flee",
-            command = { [0] = "#a runaway ?" },
+            command = { [0] = "flee" },
             strategy = "runaway",
             tooltip = "Run away from mobs",
             index = index,
@@ -701,7 +701,7 @@ function CreateMovementToolBar(frame, y, name, group, x, spacing, register)
 
     tb["guard"] = {
         icon = "guard",
-        command = { [0] = "#a guard ?" },
+        command = { [0] = "guard" },
         strategy = "guard",
         tooltip = "Guard pre-set place",
         index = index,
@@ -712,7 +712,7 @@ function CreateMovementToolBar(frame, y, name, group, x, spacing, register)
     if (not group) then
         tb["grind"] = {
             icon = "grind",
-            command = { [0] = "#a nc ~grind, ?" },
+            command = { [0] = "nc ~grind,?" },
             strategy = "grind",
             tooltip = "Aggresive mode (grinding)",
             index = index,
@@ -723,7 +723,7 @@ function CreateMovementToolBar(frame, y, name, group, x, spacing, register)
 
     tb["passive"] = {
         icon = "passive",
-        command = { [0] = "#a nc ~passive,?", [1] = "#a co ~passive,?", [2] = "#a reset", [3] = "#a co ?" },
+        command = { [0] = "react passive" },
         strategy = "passive",
         tooltip = "Passive mode",
         index = index,
@@ -733,12 +733,11 @@ function CreateMovementToolBar(frame, y, name, group, x, spacing, register)
 
     tb["flee_passive"] = {
         icon = "flee_passive",
-        command = { [0] = "#a flee ?" },
+        command = { [0] = "react passive", [1] = "follow" },
         strategy = "passive",
         tooltip = "Ignore everything and follow master",
         index = index,
-        group = group,
-        emote = "flee"
+        group = group
     }
     index = index + 1
 
@@ -754,7 +753,7 @@ function CreateMovementToolBar(frame, y, name, group, x, spacing, register)
         index = index + 1
         tb["attack"] = {
             icon = "dps",
-            command = { [0] = "#a co -passive,+dps assist", [1] = "#a nc -passive,+dps assist", [2] = "#a @tank co -dps assist,+tank assist", [3] = "#a @tank nc -dps assist,+tank assist", [4] = "#a queue attack" },
+            command = { [0] = "react defensive", [1] = "attack" },
             strategy = "",
             tooltip = "Attack my target",
             index = index,
@@ -763,7 +762,7 @@ function CreateMovementToolBar(frame, y, name, group, x, spacing, register)
         index = index + 1
         tb["tank attack"] = {
             icon = "tank_assist",
-            command = { [0] = "#a @dps co -dps assist", [1] = "#a @dps nc -dps assist", [2] = "#a @tank attack" },
+            command = { [0] = "@tank attack" },
             strategy = "",
             tooltip = "tank attack",
             index = index,
@@ -871,7 +870,7 @@ function CreateGenericNonCombatToolBar(frame, y, name, group, x, spacing, regist
     return CreateToolBar(frame, -y, name, {
         ["food"] = {
             icon = "food",
-            command = { [0] = "#a nc ~food,?" },
+            command = { [0] = "nc ~food,?" },
             strategy = "food",
             tooltip = "Use food and drinks",
             index = 0,
@@ -879,7 +878,7 @@ function CreateGenericNonCombatToolBar(frame, y, name, group, x, spacing, regist
         },
         ["loot"] = {
             icon = "loot",
-            command = { [0] = "#a nc ~loot,?" },
+            command = { [0] = "nc ~loot,?" },
             strategy = "loot",
             tooltip = "Enable looting",
             index = 1,
@@ -887,7 +886,7 @@ function CreateGenericNonCombatToolBar(frame, y, name, group, x, spacing, regist
         },
         ["gather"] = {
             icon = "gather",
-            command = { [0] = "#a nc ~gather,?" },
+            command = { [0] = "nc ~gather,?" },
             strategy = "gather",
             tooltip = "Gather herbs, ore, etc.",
             index = 2,
@@ -895,21 +894,21 @@ function CreateGenericNonCombatToolBar(frame, y, name, group, x, spacing, regist
         },
         ["reveal"] = {
             icon = "stats",
-            command = { [0] = "#a nc ~reveal,?" },
+            command = { [0] = "nc ~reveal,?" },
             strategy = "reveal",
             tooltip = "Reveal gathering nodes",
             index = 3
         },
         ["mount"] = {
             icon = "mount",
-            command = { [0] = "#a nc ~mount,?" },
+            command = { [0] = "nc ~mount,?" },
             strategy = "mount",
             tooltip = "Mount up when possible",
             index = 4
         },
         ["travel"] = {
             icon = "travel",
-            command = { [0] = "#a nc ~travel,?" },
+            command = { [0] = "nc ~travel,?" },
             strategy = "travel",
             tooltip = "Move to distant locations",
             index = 5
@@ -921,7 +920,7 @@ function CreateGenericCombatToolBar(frame, y, name, group, x, spacing, register)
     return CreateToolBar(frame, -y, name, {
         ["potions"] = {
             icon = "potions",
-            command = { [0] = "#a react ~potions,?" },
+            command = { [0] = "react ~potions,?" },
             strategy = "potions",
             tooltip = "Use health and mana potions",
             index = 0,
@@ -929,7 +928,7 @@ function CreateGenericCombatToolBar(frame, y, name, group, x, spacing, register)
         },
         ["cast_time"] = {
             icon = "cast_time",
-            command = { [0] = "#a co ~cast time,?" },
+            command = { [0] = "co ~cast time,?" },
             strategy = "cast time",
             tooltip = "Do not cast long spells on almost dead targets",
             index = 1,
@@ -937,7 +936,7 @@ function CreateGenericCombatToolBar(frame, y, name, group, x, spacing, register)
         },
         ["mark_rti"] = {
             icon = "mark_rti",
-            command = { [0] = "#a co ~mark rti,?" },
+            command = { [0] = "co ~mark rti,?" },
             strategy = "mark rti",
             tooltip = "Mark current target with raid icon",
             index = 2,
@@ -945,7 +944,7 @@ function CreateGenericCombatToolBar(frame, y, name, group, x, spacing, register)
         },
         ["ads"] = {
             icon = "ads",
-            command = { [0] = "#a co ~ads,?", [1] = "#a nc ~ads,?" },
+            command = { [0] = "co ~ads,?", [1] = "nc ~ads,?" },
             strategy = "ads",
             tooltip = "Flee if ads might be pulled",
             index = 3,
@@ -953,7 +952,7 @@ function CreateGenericCombatToolBar(frame, y, name, group, x, spacing, register)
         },
         ["conserve_mana"] = {
             icon = "conserve_mana",
-            command = { [0] = "#a co ~conserve mana,?" },
+            command = { [0] = "co ~conserve mana,?" },
             strategy = "conserve mana",
             tooltip = "Reduce mana usage at cost of DPS",
             index = 4,
@@ -961,7 +960,7 @@ function CreateGenericCombatToolBar(frame, y, name, group, x, spacing, register)
         },
         ["cc"] = {
             icon = "cc",
-            command = { [0] = "#a co ~cc,?" },
+            command = { [0] = "co ~cc,?" },
             strategy = "cc",
             tooltip = "Use crowd control abilities",
             index = 5,
@@ -995,7 +994,7 @@ function StartChat()
 end
 
 -- Tank-capable WoW classes (can be assigned MT/OT).
-local TANK_CLASSES = { Warrior = true, Paladin = true, Druid = true }
+local TANK_CLASSES = { WARRIOR = true, PALADIN = true, DRUID = true }
 
 function CreateRoleAssignToolBar(frame, y, name, group, x, spacing, register)
     return CreateToolBar(frame, -y, name, {
@@ -1101,81 +1100,6 @@ function CreateTankTargetToolBar(frame, y, name, group, x, spacing, register)
     }, x, spacing, register)
 end
 
-function CreateCcAssignToolBar(frame, y, name, group, x, spacing, register)
-    return CreateToolBar(frame, -y, name, {
-        ["ca_skull"] = {
-            icon = "cc_skull",
-            command = { [0] = "cc skull" },
-            cc_assign = "skull",
-            tooltip = "CC skull mark",
-            index = 0,
-            group = group
-        },
-        ["ca_cross"] = {
-            icon = "cc_cross",
-            command = { [0] = "cc cross" },
-            cc_assign = "cross",
-            tooltip = "CC cross mark",
-            index = 1,
-            group = group
-        },
-        ["ca_circle"] = {
-            icon = "cc_circle",
-            command = { [0] = "cc circle" },
-            cc_assign = "circle",
-            tooltip = "CC circle mark",
-            index = 2,
-            group = group
-        },
-        ["ca_star"] = {
-            icon = "cc_star",
-            command = { [0] = "cc star" },
-            cc_assign = "star",
-            tooltip = "CC star mark",
-            index = 3,
-            group = group
-        },
-        ["ca_square"] = {
-            icon = "cc_square",
-            command = { [0] = "cc square" },
-            cc_assign = "square",
-            tooltip = "CC square mark",
-            index = 4,
-            group = group
-        },
-        ["ca_triangle"] = {
-            icon = "cc_triangle",
-            command = { [0] = "cc triangle" },
-            cc_assign = "triangle",
-            tooltip = "CC triangle mark",
-            index = 5,
-            group = group
-        },
-        ["ca_diamond"] = {
-            icon = "cc_diamond",
-            command = { [0] = "cc diamond" },
-            cc_assign = "diamond",
-            tooltip = "CC diamond mark",
-            index = 6,
-            group = group
-        },
-        ["ca_moon"] = {
-            icon = "cc_moon",
-            command = { [0] = "cc moon" },
-            cc_assign = "moon",
-            tooltip = "CC moon mark",
-            index = 7,
-            group = group
-        },
-        ["ca_clear"] = {
-            icon = "close",
-            command = { [0] = "uncc" },
-            tooltip = "Clear CC assignment",
-            index = 8,
-            group = group
-        }
-    }, x, spacing, register)
-end
 
 function CreateSelectedBotPanel()
     local frame = CreateFrame("Frame", "SelectedBotPanel", UIParent)
@@ -1359,56 +1283,56 @@ function CreateSelectedBotPanel()
     CreateToolBar(frame, -y, "rpg", {
         ["rpg"] = {
             icon = "rpg",
-            command = { [0] = "#a nc ~rpg,?" },
+            command = { [0] = "nc ~rpg,?" },
             strategy = "rpg",
             tooltip = "Rpg with nearby npcs",
             index = 0
         },
         ["rpg quest"] = {
             icon = "rpg_quest",
-            command = { [0] = "#a nc ~rpg quest,?" },
+            command = { [0] = "nc ~rpg quest,?" },
             strategy = "rpg quest",
             tooltip = "Talk to quest npc's",
             index = 1
         },
         ["rpg vendor"] = {
             icon = "rpg_vendor",
-            command = { [0] = "#a nc ~rpg vendor,?" },
+            command = { [0] = "nc ~rpg vendor,?" },
             strategy = "rpg vendor",
             tooltip = "Talk to vendors",
             index = 2
         },
         ["rpg explore"] = {
             icon = "rpg_explore",
-            command = { [0] = "#a nc ~rpg explore,?" },
+            command = { [0] = "nc ~rpg explore,?" },
             strategy = "rpg explore",
             tooltip = "Talk to inns, flightmasters",
             index = 3
         },
         ["rpg maintenance"] = {
             icon = "rpg_maintenance",
-            command = { [0] = "#a nc ~rpg maintenance,?" },
+            command = { [0] = "nc ~rpg maintenance,?" },
             strategy = "rpg maintenance",
             tooltip = "Talk to armorers, trainers",
             index = 4
         },
         ["rpg player"] = {
             icon = "rpg_player",
-            command = { [0] = "#a nc ~rpg player,?" },
+            command = { [0] = "nc ~rpg player,?" },
             strategy = "rpg player",
             tooltip = "Duel/trade players",
             index = 5
         },
         ["rpg craft"] = {
             icon = "rpg_craft",
-            command = { [0] = "#a nc ~rpg craft,?" },
+            command = { [0] = "nc ~rpg craft,?" },
             strategy = "rpg craft",
             tooltip = "Craft items, casts spells",
             index = 6
         },
         ["rpg bg"] = {
             icon = "rpg_bg",
-            command = { [0] = "#a nc ~rpg bg,?" },
+            command = { [0] = "nc ~rpg bg,?" },
             strategy = "rpg bg",
             tooltip = "Queue for bg at battlemasters",
             index = 7
@@ -1426,9 +1350,6 @@ function CreateSelectedBotPanel()
 
     y = y + 25
     CreateTankTargetToolBar(frame, y, "tank_targets", false, 5, 5, true)
-
-    y = y + 25
-    CreateCcAssignToolBar(frame, y, "cc_assign", false, 5, 5, true)
 
     y = y + 25
     CreateSaveManaToolBar(frame, y, "savemana", false, 5, 5, true)
@@ -1490,49 +1411,49 @@ function CreateSelectedBotPanel()
     CreateToolBar(frame, -y, "attack_type", {
         ["tank_aoe"] = {
             icon = "tank_assist",
-            command = { [0] = "#a nc -dps assist,+tank assist,?", [1] = "#a co -dps assist,+tank assist,?" },
+            command = { [0] = "nc -dps assist,+tank assist,?", [1] = "co -dps assist,+tank assist,?" },
             strategy = "tank assist",
             tooltip = "Grab all aggro or attack Raid Mark",
             index = 0
         },
         ["dps_assist"] = {
             icon = "dps_assist",
-            command = { [0] = "#a nc -tank assist,+dps assist,?", [1] = "#a co -tank assist,+dps assist,?" },
+            command = { [0] = "nc -tank assist,+dps assist,?", [1] = "co -tank assist,+dps assist,?" },
             strategy = "dps assist",
             tooltip = "Attack least hp target or Raid Mark",
             index = 1
         },
         ["close"] = {
             icon = "close",
-            command = { [0] = "#a co ~close,?" },
+            command = { [0] = "co ~close,?" },
             strategy = "close",
             tooltip = "Melee combat",
             index = 2
         },
         ["ranged"] = {
             icon = "ranged",
-            command = { [0] = "#a co ~ranged,?" },
+            command = { [0] = "co ~ranged,?" },
             strategy = "ranged",
             tooltip = "Ranged combat",
             index = 3
         },
         ["threat"] = {
             icon = "threat",
-            command = { [0] = "#a co ~threat,?" },
+            command = { [0] = "co ~threat,?" },
             strategy = "threat",
             tooltip = "Keep threat level low",
             index = 4
         },
         ["wait_for_attack"] = {
             icon = "wait_for_attack",
-            command = { [0] = "#a co ~wait for attack,?" },
+            command = { [0] = "co ~wait for attack,?" },
             strategy = "wait for attack",
             tooltip = "Wait X seconds before attacking. To change the amount of seconds use 'wait for attack time X'",
             index = 5
         },
         ["pull"] = {
             icon = "pull",
-            command = { [0] = "#a co ~pull,?" },
+            command = { [0] = "co ~pull,?" },
             strategy = "pull",
             tooltip =
             "Set this bot to pull using the 'pull command'. Recommended to only have one bot with pull enabled.",
@@ -1540,7 +1461,7 @@ function CreateSelectedBotPanel()
         },
         ["pull back"] = {
             icon = "pull_back",
-            command = { [0] = "#a co ~pull back,?" },
+            command = { [0] = "co ~pull back,?" },
             strategy = "pull back",
             tooltip = "Pull back monsters back to the location where the 'pull command' was given.",
             index = 7
@@ -1564,7 +1485,7 @@ function CreateSelectedBotPanel()
         ["bear"] = {
             icon = "bear",
             icon_native = "ability_racial_bearform",
-            command = { [0] = "#a co +tank feral,+close,+pull,+tank assist,-ranged,-stealth,-behind,?", [1] = "#a nc +tank feral,+tank assist,-stealth,?", [2] = "#a de +tank feral,?", [3] = "#a react +tank feral,?" },
+            command = { [0] = "co +tank feral,+close,+pull,+tank assist,-ranged,-stealth,-behind,?", [1] = "nc +tank feral,+tank assist,-stealth,?", [2] = "de +tank feral,?", [3] = "react +tank feral,?" },
             strategy = "tank feral",
             tooltip = "Bear mode (tank)",
             index = 0
@@ -1572,7 +1493,7 @@ function CreateSelectedBotPanel()
         ["cat"] = {
             icon = "cat",
             icon_native = "ability_druid_catform",
-            command = { [0] = "#a co +dps feral,+dps assist,+close,+stealth,+behind,-ranged,-pull,?", [1] = "#a nc +dps feral,+dps assist,+stealth,?", [2] = "#a de +dps feral,?", [3] = "#a react +dps feral,?" },
+            command = { [0] = "co +dps feral,+dps assist,+close,+stealth,+behind,-ranged,-pull,?", [1] = "nc +dps feral,+dps assist,+stealth,?", [2] = "de +dps feral,?", [3] = "react +dps feral,?" },
             strategy = "dps feral",
             tooltip = "Cat mode (melee)",
             index = 1
@@ -1580,7 +1501,7 @@ function CreateSelectedBotPanel()
         ["caster"] = {
             icon = "caster",
             icon_native = "spell_nature_starfall",
-            command = { [0] = "#a co +balance,+dps assist,+ranged,-close,-pull,-stealth,?", [1] = "#a nc +balance,+dps assist,-stealth,?", [2] = "#a de +balance,?", [3] = "#a react +balance,?" },
+            command = { [0] = "co +balance,+dps assist,+ranged,-close,-pull,-stealth,?", [1] = "nc +balance,+dps assist,-stealth,?", [2] = "de +balance,?", [3] = "react +balance,?" },
             strategy = "balance",
             tooltip = "Balance mode (caster)",
             index = 2
@@ -1588,42 +1509,42 @@ function CreateSelectedBotPanel()
         ["heal"] = {
             icon = "heal",
             icon_native = "spell_nature_healingtouch",
-            command = { [0] = "#a co +restoration,+dps assist,+ranged,-close,-pull,-stealth,?", [1] = "#a nc +restoration,+dps assist,-stealth,?", [2] = "#a de +restoration,?", [3] = "#a react +restoration,?" },
+            command = { [0] = "co +restoration,+dps assist,+ranged,-close,-pull,-stealth,?", [1] = "nc +restoration,+dps assist,-stealth,?", [2] = "de +restoration,?", [3] = "react +restoration,?" },
             strategy = "restoration",
             tooltip = "Restoration mode (healer)",
             index = 3
         },
         ["aoe"] = {
             icon = "caster_aoe",
-            command = { [0] = "#a co ~aoe,?", [1] = "#a nc ~aoe,?" },
+            command = { [0] = "co ~aoe,?", [1] = "nc ~aoe,?" },
             strategy = "aoe",
             tooltip = "Use AOE abilities",
             index = 4
         },
         ["bdps"] = {
             icon = "boost",
-            command = { [0] = "#a co ~buff,?", [1] = "#a nc ~buff,?" },
+            command = { [0] = "co ~buff,?", [1] = "nc ~buff,?" },
             strategy = "buff",
             tooltip = "Use buff abilities",
             index = 5
         },
         ["boost"] = {
             icon = "boost",
-            command = { [0] = "#a co ~boost,?", [1] = "#a nc ~boost,?" },
+            command = { [0] = "co ~boost,?", [1] = "nc ~boost,?" },
             strategy = "boost",
             tooltip = "Use boost abilities (cooldowns, trinkets)",
             index = 6
         },
         ["cure"] = {
             icon = "cure",
-            command = { [0] = "#a co ~cure,?", [1] = "#a nc ~cure,?" },
+            command = { [0] = "co ~cure,?", [1] = "nc ~cure,?" },
             strategy = "cure",
             tooltip = "Use cure abilities (poisons and curses)",
             index = 7
         },
         ["offheal"] = {
             icon = "heal",
-            command = { [0] = "#a co ~offheal,?", [1] = "#a nc ~offheal,?" },
+            command = { [0] = "co ~offheal,?", [1] = "nc ~offheal,?" },
             strategy = "offheal",
             tooltip = "Use healing abilities to heal other party members while being in dps mode",
             index = 8
@@ -1631,14 +1552,14 @@ function CreateSelectedBotPanel()
         ["stealth"] = {
             icon = "caster",
             icon_native = "ability_ambush",
-            command = { [0] = "#a co ~stealth,?", [1] = "#a nc ~stealth,?" },
+            command = { [0] = "co ~stealth,?", [1] = "nc ~stealth,?" },
             strategy = "stealth",
             tooltip = "Use stealth abilities",
             index = 9
         },
         ["preheal"] = {
             icon = "heal",
-            command = { [0] = "#a co ~preheal,?" },
+            command = { [0] = "co ~preheal,?" },
             strategy = "preheal",
             tooltip = "Heal the party before receiving melee damage",
             index = 10
@@ -1648,7 +1569,7 @@ function CreateSelectedBotPanel()
         ["bm"] = {
             icon = "bear",
             icon_native = "ability_hunter_beasttaming",
-            command = { [0] = "#a co +beast mastery,?", [1] = "#a nc +beast mastery,?", [2] = "#a de +beast mastery,?", [3] = "#a react +beast mastery,?" },
+            command = { [0] = "co +beast mastery,?", [1] = "nc +beast mastery,?", [2] = "de +beast mastery,?", [3] = "react +beast mastery,?" },
             strategy = "beast mastery",
             tooltip = "Beast mastery mode (dps)",
             index = 0
@@ -1656,7 +1577,7 @@ function CreateSelectedBotPanel()
         ["ms"] = {
             icon = "dps",
             icon_native = "ability_marksmanship",
-            command = { [0] = "#a co +marksmanship,?", [1] = "#a nc +marksmanship,?", [2] = "#a de +marksmanship,?", [3] = "#a react +marksmanship,?" },
+            command = { [0] = "co +marksmanship,?", [1] = "nc +marksmanship,?", [2] = "de +marksmanship,?", [3] = "react +marksmanship,?" },
             strategy = "marksmanship",
             tooltip = "Marksmanship mode (dps)",
             index = 1
@@ -1664,28 +1585,28 @@ function CreateSelectedBotPanel()
         ["caster"] = {
             icon = "caster",
             icon_native = "ability_hunter_swiftstrike",
-            command = { [0] = "#a co +survival,?", [1] = "#a nc +survival,?", [2] = "#a de +survival,?", [3] = "#a react +survival,?" },
+            command = { [0] = "co +survival,?", [1] = "nc +survival,?", [2] = "de +survival,?", [3] = "react +survival,?" },
             strategy = "survival",
             tooltip = "Survival mode (dps)",
             index = 2
         },
         ["aoe"] = {
             icon = "aoe",
-            command = { [0] = "#a co ~aoe,?" },
+            command = { [0] = "co ~aoe,?" },
             strategy = "aoe",
             tooltip = "Use AOE abilities",
             index = 3
         },
         ["bdps"] = {
             icon = "boost",
-            command = { [0] = "#a co ~buff,?", [1] = "#a nc ~buff,?" },
+            command = { [0] = "co ~buff,?", [1] = "nc ~buff,?" },
             strategy = "buff",
             tooltip = "Use buff abilities",
             index = 4
         },
         ["boost"] = {
             icon = "boost",
-            command = { [0] = "#a co ~boost,?", [1] = "#a nc ~boost,?" },
+            command = { [0] = "co ~boost,?", [1] = "nc ~boost,?" },
             strategy = "boost",
             tooltip = "Use boost abilities (cooldowns, trinkets)",
             index = 5
@@ -1693,7 +1614,7 @@ function CreateSelectedBotPanel()
         ["stings"] = {
             icon = "dps_debuff",
             icon_native = "trade_brewpoison",
-            command = { [0] = "#a co ~sting,?" },
+            command = { [0] = "co ~sting,?" },
             strategy = "sting",
             tooltip = "Auto pick stings",
             index = 6
@@ -1701,7 +1622,7 @@ function CreateSelectedBotPanel()
         ["aspects"] = {
             icon = "arcane",
             icon_native = "spell_nature_ravenform",
-            command = { [0] = "#a co ~aspect,?", [1] = "#a nc ~aspect,?" },
+            command = { [0] = "co ~aspect,?", [1] = "nc ~aspect,?" },
             strategy = "aspect",
             tooltip = "Auto pick aspects",
             index = 7
@@ -1709,7 +1630,7 @@ function CreateSelectedBotPanel()
         ["pet"] = {
             icon = "pet",
             icon_native = "ability_hunter_pet_cat",
-            command = { [0] = "#a co ~pet,?", [1] = "#a nc ~pet,?" },
+            command = { [0] = "co ~pet,?", [1] = "nc ~pet,?" },
             strategy = "pet",
             tooltip = "Use pet",
             index = 8
@@ -1719,7 +1640,7 @@ function CreateSelectedBotPanel()
         ["arcane"] = {
             icon = "arcane",
             icon_native = "spell_holy_magicalsentry",
-            command = { [0] = "#a co +arcane,?", [1] = "#a nc +arcane,?", [2] = "#a de +arcane,?", [3] = "#a react +arcane,?" },
+            command = { [0] = "co +arcane,?", [1] = "nc +arcane,?", [2] = "de +arcane,?", [3] = "react +arcane,?" },
             strategy = "arcane",
             tooltip = "Arcane mode (caster)",
             index = 0
@@ -1727,7 +1648,7 @@ function CreateSelectedBotPanel()
         ["fire"] = {
             icon = "fire",
             icon_native = "spell_fire_flamebolt",
-            command = { [0] = "#a co +fire,?", [1] = "#a nc +fire,?", [2] = "#a de +fire,?", [3] = "#a react +fire,?" },
+            command = { [0] = "co +fire,?", [1] = "nc +fire,?", [2] = "de +fire,?", [3] = "react +fire,?" },
             strategy = "fire",
             tooltip = "Fire mode (caster)",
             index = 1
@@ -1735,35 +1656,35 @@ function CreateSelectedBotPanel()
         ["frost"] = {
             icon = "frost",
             icon_native = "spell_frost_frostbolt02",
-            command = { [0] = "#a co +frost,?", [1] = "#a nc +frost,?", [2] = "#a de +frost,?", [3] = "#a react +frost,?" },
+            command = { [0] = "co +frost,?", [1] = "nc +frost,?", [2] = "de +frost,?", [3] = "react +frost,?" },
             strategy = "frost",
             tooltip = "Frost mode (caster)",
             index = 2
         },
         ["aoe"] = {
             icon = "caster_aoe",
-            command = { [0] = "#a co ~aoe,?", [1] = "#a nc ~aoe,?" },
+            command = { [0] = "co ~aoe,?", [1] = "nc ~aoe,?" },
             strategy = "aoe",
             tooltip = "Use AOE abilities",
             index = 3
         },
         ["bdps"] = {
             icon = "boost",
-            command = { [0] = "#a co ~buff,?", [1] = "#a nc ~buff,?" },
+            command = { [0] = "co ~buff,?", [1] = "nc ~buff,?" },
             strategy = "buff",
             tooltip = "Use buff abilities (cooldowns, trinkets, buffs)",
             index = 4
         },
         ["boost"] = {
             icon = "boost",
-            command = { [0] = "#a co ~boost,?", [1] = "#a nc ~boost,?" },
+            command = { [0] = "co ~boost,?", [1] = "nc ~boost,?" },
             strategy = "boost",
             tooltip = "Use boost abilities (cooldowns, trinkets)",
             index = 5
         },
         ["cure"] = {
             icon = "cure",
-            command = { [0] = "#a co ~cure,?", [1] = "#a nc ~cure,?" },
+            command = { [0] = "co ~cure,?", [1] = "nc ~cure,?" },
             strategy = "cure",
             tooltip = "Use cure abilities (curses)",
             index = 6
@@ -1773,7 +1694,7 @@ function CreateSelectedBotPanel()
         ["retribution"] = {
             icon = "dps",
             icon_native = "spell_holy_auraoflight",
-            command = { [0] = "#a co +retribution,+dps assist,+close,-ranged,-pull,?", [1] = "#a nc +retribution,+dps assist,?", [2] = "#a de +retribution,?", [3] = "#a react +retribution,?" },
+            command = { [0] = "co +retribution,+dps assist,+close,-ranged,-pull,?", [1] = "nc +retribution,+dps assist,?", [2] = "de +retribution,?", [3] = "react +retribution,?" },
             strategy = "retribution",
             tooltip = "Retribution mode (melee)",
             index = 0
@@ -1781,7 +1702,7 @@ function CreateSelectedBotPanel()
         ["protection"] = {
             icon = "tank",
             icon_native = "spell_holy_devotionaura",
-            command = { [0] = "#a co +protection,+close,+pull,+tank assist,-ranged,?", [1] = "#a nc +protection,+tank assist,?", [2] = "#a de +protection,?", [3] = "#a react +protection,?" },
+            command = { [0] = "co +protection,+close,+pull,+tank assist,-ranged,?", [1] = "nc +protection,+tank assist,?", [2] = "de +protection,?", [3] = "react +protection,?" },
             strategy = "protection",
             tooltip = "Protection mode (tank)",
             index = 1
@@ -1789,42 +1710,42 @@ function CreateSelectedBotPanel()
         ["holy"] = {
             icon = "heal",
             icon_native = "spell_holy_holybolt",
-            command = { [0] = "#a co +holy,+ranged,+dps assist,-close,-pull,?", [1] = "#a nc +holy,+dps assist,?", [2] = "#a de +holy,?", [3] = "#a react +holy,?" },
+            command = { [0] = "co +holy,+ranged,+dps assist,-close,-pull,?", [1] = "nc +holy,+dps assist,?", [2] = "de +holy,?", [3] = "react +holy,?" },
             strategy = "holy",
             tooltip = "Holy mode (healer)",
             index = 2
         },
         ["aoe"] = {
             icon = "caster_aoe",
-            command = { [0] = "#a co ~aoe,?", [1] = "#a nc ~aoe,?" },
+            command = { [0] = "co ~aoe,?", [1] = "nc ~aoe,?" },
             strategy = "aoe",
             tooltip = "Use AOE abilities",
             index = 3
         },
         ["bdps"] = {
             icon = "boost",
-            command = { [0] = "#a co ~buff,?", [1] = "#a nc ~buff,?" },
+            command = { [0] = "co ~buff,?", [1] = "nc ~buff,?" },
             strategy = "buff",
             tooltip = "Use buff abilities (cooldowns, trinkets, buffs)",
             index = 4
         },
         ["boost"] = {
             icon = "boost",
-            command = { [0] = "#a co ~boost,?", [1] = "#a nc ~boost,?" },
+            command = { [0] = "co ~boost,?", [1] = "nc ~boost,?" },
             strategy = "boost",
             tooltip = "Use boost abilities (cooldowns, trinkets)",
             index = 5
         },
         ["cure"] = {
             icon = "cure",
-            command = { [0] = "#a co ~cure,?", [1] = "#a nc ~cure,?" },
+            command = { [0] = "co ~cure,?", [1] = "nc ~cure,?" },
             strategy = "cure",
             tooltip = "Use cure abilities (curses)",
             index = 6
         },
         ["offheal"] = {
             icon = "heal",
-            command = { [0] = "#a co ~offheal,?", [1] = "#a nc ~offheal,?" },
+            command = { [0] = "co ~offheal,?", [1] = "nc ~offheal,?" },
             strategy = "offheal",
             tooltip = "Use healing abilities to heal other party members while being in dps mode",
             index = 7
@@ -1832,7 +1753,7 @@ function CreateSelectedBotPanel()
         ["aura"] = {
             icon = "bmana",
             icon_native = "spell_holy_holyprotection",
-            command = { [0] = "#a co ~aura,?", [1] = "#a nc ~aura,?" },
+            command = { [0] = "co ~aura,?", [1] = "nc ~aura,?" },
             strategy = "aura",
             tooltip = "Auto pick aura",
             index = 8
@@ -1840,14 +1761,14 @@ function CreateSelectedBotPanel()
         ["blessing"] = {
             icon = "bspeed",
             icon_native = "spell_magic_greaterblessingofkings",
-            command = { [0] = "#a co ~blessing,?", [1] = "#a nc ~blessing,?" },
+            command = { [0] = "co ~blessing,?", [1] = "nc ~blessing,?" },
             strategy = "blessing",
             tooltip = "Auto pick blessings",
             index = 9
         },
         ["preheal"] = {
             icon = "heal",
-            command = { [0] = "#a co ~preheal,?" },
+            command = { [0] = "co ~preheal,?" },
             strategy = "preheal",
             tooltip = "Heal the party before receiving melee damage",
             index = 10
@@ -1857,7 +1778,7 @@ function CreateSelectedBotPanel()
         ["discipline"] = {
             icon = "heal",
             icon_native = "spell_holy_wordfortitude",
-            command = { [0] = "#a co +discipline,?", [1] = "#a nc +discipline,?", [2] = "#a de +discipline,?", [3] = "#a react +discipline,?" },
+            command = { [0] = "co +discipline,?", [1] = "nc +discipline,?", [2] = "de +discipline,?", [3] = "react +discipline,?" },
             strategy = "discipline",
             tooltip = "Discipline mode (healer)",
             index = 0
@@ -1865,7 +1786,7 @@ function CreateSelectedBotPanel()
         ["holy"] = {
             icon = "holy",
             icon_native = "spell_holy_holybolt",
-            command = { [0] = "#a co +holy,?", [1] = "#a nc +holy,?", [2] = "#a de +holy,?", [3] = "#a react +holy,?" },
+            command = { [0] = "co +holy,?", [1] = "nc +holy,?", [2] = "de +holy,?", [3] = "react +holy,?" },
             strategy = "holy",
             tooltip = "Holy mode (healer)",
             index = 1
@@ -1873,56 +1794,56 @@ function CreateSelectedBotPanel()
         ["shadow"] = {
             icon = "shadow",
             icon_native = "spell_shadow_shadowwordpain",
-            command = { [0] = "#a co +shadow,?", [1] = "#a nc +shadow,?", [2] = "#a de +shadow,?", [3] = "#a react +shadow,?" },
+            command = { [0] = "co +shadow,?", [1] = "nc +shadow,?", [2] = "de +shadow,?", [3] = "react +shadow,?" },
             strategy = "shadow",
             tooltip = "Shadow mode (dps)",
             index = 2
         },
         ["aoe"] = {
             icon = "caster_aoe",
-            command = { [0] = "#a co ~aoe,?", [1] = "#a nc ~aoe,?" },
+            command = { [0] = "co ~aoe,?", [1] = "nc ~aoe,?" },
             strategy = "aoe",
             tooltip = "Use AOE abilities",
             index = 3
         },
         ["bdps"] = {
             icon = "boost",
-            command = { [0] = "#a co ~buff,?", [1] = "#a nc ~buff,?" },
+            command = { [0] = "co ~buff,?", [1] = "nc ~buff,?" },
             strategy = "buff",
             tooltip = "Use buff abilities (cooldowns, trinkets, buffs)",
             index = 4
         },
         ["boost"] = {
             icon = "boost",
-            command = { [0] = "#a co ~boost,?", [1] = "#a nc ~boost,?" },
+            command = { [0] = "co ~boost,?", [1] = "nc ~boost,?" },
             strategy = "boost",
             tooltip = "Use boost abilities (cooldowns, trinkets)",
             index = 5
         },
         ["cure"] = {
             icon = "cure",
-            command = { [0] = "#a co ~cure,?", [1] = "#a nc ~cure,?" },
+            command = { [0] = "co ~cure,?", [1] = "nc ~cure,?" },
             strategy = "cure",
             tooltip = "Use cure abilities (curses)",
             index = 6
         },
         ["offheal"] = {
             icon = "heal",
-            command = { [0] = "#a co ~offheal,?", [1] = "#a nc ~offheal,?" },
+            command = { [0] = "co ~offheal,?", [1] = "nc ~offheal,?" },
             strategy = "offheal",
             tooltip = "Use healing abilities to heal other party members while being in dps mode",
             index = 7
         },
         ["offdps"] = {
             icon = "dps",
-            command = { [0] = "#a co ~offdps,?", [1] = "#a nc ~offdps,?" },
+            command = { [0] = "co ~offdps,?", [1] = "nc ~offdps,?" },
             strategy = "offdps",
             tooltip = "Use dps abilities to attack enemies while being on healer mode",
             index = 8
         },
         ["preheal"] = {
             icon = "heal",
-            command = { [0] = "#a co ~preheal,?" },
+            command = { [0] = "co ~preheal,?" },
             strategy = "preheal",
             tooltip = "Heal the party before receiving melee damage",
             index = 9
@@ -1932,7 +1853,7 @@ function CreateSelectedBotPanel()
         ["combat"] = {
             icon = "dps",
             icon_native = "ability_backstab",
-            command = { [0] = "#a co +combat,?", [1] = "#a nc +combat,?", [2] = "#a de +combat,?", [3] = "#a react +combat,?" },
+            command = { [0] = "co +combat,?", [1] = "nc +combat,?", [2] = "de +combat,?", [3] = "react +combat,?" },
             strategy = "combat",
             tooltip = "Combat mode (melee)",
             index = 0
@@ -1940,7 +1861,7 @@ function CreateSelectedBotPanel()
         ["assassination"] = {
             icon = "dps",
             icon_native = "ability_rogue_eviscerate",
-            command = { [0] = "#a co +assassination,?", [1] = "#a nc +assassination,?", [2] = "#a de +assassination,?", [3] = "#a react +assassination,?" },
+            command = { [0] = "co +assassination,?", [1] = "nc +assassination,?", [2] = "de +assassination,?", [3] = "react +assassination,?" },
             strategy = "assassination",
             tooltip = "Assassination mode (melee)",
             index = 1
@@ -1948,28 +1869,28 @@ function CreateSelectedBotPanel()
         ["subtlety"] = {
             icon = "dps",
             icon_native = "ability_stealth",
-            command = { [0] = "#a co +subtlety,?", [1] = "#a nc +subtlety,?", [2] = "#a de +subtlety,?", [3] = "#a react +subtlety,?" },
+            command = { [0] = "co +subtlety,?", [1] = "nc +subtlety,?", [2] = "de +subtlety,?", [3] = "react +subtlety,?" },
             strategy = "subtlety",
             tooltip = "Subtlety mode (melee)",
             index = 2
         },
         ["aoe"] = {
             icon = "aoe",
-            command = { [0] = "#a co ~aoe,?", [1] = "#a nc ~aoe,?" },
+            command = { [0] = "co ~aoe,?", [1] = "nc ~aoe,?" },
             strategy = "aoe",
             tooltip = "Use AOE abilities",
             index = 3
         },
         ["bdps"] = {
             icon = "boost",
-            command = { [0] = "#a co ~buff,?", [1] = "#a nc ~buff,?" },
+            command = { [0] = "co ~buff,?", [1] = "nc ~buff,?" },
             strategy = "buff",
             tooltip = "Use buff abilities (cooldowns, trinkets, buffs)",
             index = 4
         },
         ["boost"] = {
             icon = "boost",
-            command = { [0] = "#a co ~boost,?", [1] = "#a nc ~boost,?" },
+            command = { [0] = "co ~boost,?", [1] = "nc ~boost,?" },
             strategy = "boost",
             tooltip = "Use boost abilities (cooldowns, trinkets)",
             index = 5
@@ -1977,7 +1898,7 @@ function CreateSelectedBotPanel()
         ["poisons"] = {
             icon = "caster_aoe",
             icon_native = "trade_brewpoison",
-            command = { [0] = "#a co ~poisons,?", [1] = "#a nc ~poisons,?" },
+            command = { [0] = "co ~poisons,?", [1] = "nc ~poisons,?" },
             strategy = "poisons",
             tooltip = "Auto pick poisons",
             index = 6
@@ -1985,7 +1906,7 @@ function CreateSelectedBotPanel()
         ["stealth"] = {
             icon = "caster",
             icon_native = "ability_ambush",
-            command = { [0] = "#a co ~stealth,?", [1] = "#a nc ~stealth,?" },
+            command = { [0] = "co ~stealth,?", [1] = "nc ~stealth,?" },
             strategy = "stealth",
             tooltip = "Use stealth abilities",
             index = 7
@@ -1995,7 +1916,7 @@ function CreateSelectedBotPanel()
         ["caster"] = {
             icon = "caster",
             icon_native = "spell_nature_lightning",
-            command = { [0] = "#a co +elemental,+ranged,-close,?", [1] = "#a nc +elemental,?", [2] = "#a de +elemental,?", [3] = "#a react +elemental,?" },
+            command = { [0] = "co +elemental,+ranged,-close,?", [1] = "nc +elemental,?", [2] = "de +elemental,?", [3] = "react +elemental,?" },
             strategy = "elemental",
             tooltip = "Elemental mode (caster)",
             index = 0
@@ -2003,7 +1924,7 @@ function CreateSelectedBotPanel()
         ["heal"] = {
             icon = "heal",
             icon_native = "spell_nature_magicimmunity",
-            command = { [0] = "#a co +restoration,+threat,+ranged,-close,?", [1] = "#a nc +restoration,?", [2] = "#a de +restoration,?", [3] = "#a react +restoration,?" },
+            command = { [0] = "co +restoration,+threat,+ranged,-close,?", [1] = "nc +restoration,?", [2] = "de +restoration,?", [3] = "react +restoration,?" },
             strategy = "restoration",
             tooltip = "Restoration mode (healer)",
             index = 1
@@ -2011,42 +1932,42 @@ function CreateSelectedBotPanel()
         ["melee"] = {
             icon = "dps",
             icon_native = "spell_nature_lightningshield",
-            command = { [0] = "#a co +enhancement,-ranged,+close,?", [1] = "#a nc +enhancement,?", [2] = "#a de +enhancement,?", [3] = "#a react +enhancement,?" },
+            command = { [0] = "co +enhancement,-ranged,+close,?", [1] = "nc +enhancement,?", [2] = "de +enhancement,?", [3] = "react +enhancement,?" },
             strategy = "enhancement",
             tooltip = "Enhancement mode (melee)",
             index = 2
         },
         ["aoe"] = {
             icon = "caster_aoe",
-            command = { [0] = "#a co ~aoe,?", [1] = "#a nc ~aoe,?" },
+            command = { [0] = "co ~aoe,?", [1] = "nc ~aoe,?" },
             strategy = "aoe",
             tooltip = "Use AOE abilities",
             index = 3
         },
         ["bdps"] = {
             icon = "boost",
-            command = { [0] = "#a co ~buff,?", [1] = "#a nc ~buff,?" },
+            command = { [0] = "co ~buff,?", [1] = "nc ~buff,?" },
             strategy = "buff",
             tooltip = "Use buff abilities (cooldowns, trinkets, buffs)",
             index = 4
         },
         ["boost"] = {
             icon = "boost",
-            command = { [0] = "#a co ~boost,?", [1] = "#a nc ~boost,?" },
+            command = { [0] = "co ~boost,?", [1] = "nc ~boost,?" },
             strategy = "boost",
             tooltip = "Use boost abilities (cooldowns, trinkets)",
             index = 5
         },
         ["cure"] = {
             icon = "cure",
-            command = { [0] = "#a co ~cure,?", [1] = "#a nc ~cure,?" },
+            command = { [0] = "co ~cure,?", [1] = "nc ~cure,?" },
             strategy = "cure",
             tooltip = "Use cure abilities (poison and disease)",
             index = 6
         },
         ["offheal"] = {
             icon = "heal",
-            command = { [0] = "#a co ~offheal,?", [1] = "#a nc ~offheal,?" },
+            command = { [0] = "co ~offheal,?", [1] = "nc ~offheal,?" },
             strategy = "offheal",
             tooltip = "Use healing abilities to heal other party members while being in dps mode",
             index = 7
@@ -2054,14 +1975,14 @@ function CreateSelectedBotPanel()
         ["totems"] = {
             icon = "totems",
             icon_native = "spell_totem_wardofdraining",
-            command = { [0] = "#a co ~totems,?", [1] = "#a nc ~totems,?" },
+            command = { [0] = "co ~totems,?", [1] = "nc ~totems,?" },
             strategy = "totems",
             tooltip = "Auto pick totems",
             index = 8
         },
         ["preheal"] = {
             icon = "heal",
-            command = { [0] = "#a co ~preheal,?" },
+            command = { [0] = "co ~preheal,?" },
             strategy = "preheal",
             tooltip = "Heal the party before receiving melee damage",
             index = 9
@@ -2071,7 +1992,7 @@ function CreateSelectedBotPanel()
         ["affliction"] = {
             icon = "dps",
             icon_native = "spell_shadow_deathcoil",
-            command = { [0] = "#a co +affliction,?", [1] = "#a nc +affliction,?", [2] = "#a de +affliction,?", [3] = "#a react +affliction,?" },
+            command = { [0] = "co +affliction,?", [1] = "nc +affliction,?", [2] = "de +affliction,?", [3] = "react +affliction,?" },
             strategy = "affliction",
             tooltip = "Affliction mode (caster)",
             index = 0
@@ -2079,7 +2000,7 @@ function CreateSelectedBotPanel()
         ["demonology"] = {
             icon = "dps",
             icon_native = "spell_shadow_metamorphosis",
-            command = { [0] = "#a co +demonology,?", [1] = "#a nc +demonology,?", [2] = "#a de +demonology,?", [3] = "#a react +demonology,?" },
+            command = { [0] = "co +demonology,?", [1] = "nc +demonology,?", [2] = "de +demonology,?", [3] = "react +demonology,?" },
             strategy = "demonology",
             tooltip = "Demonology mode (caster)",
             index = 1
@@ -2087,28 +2008,28 @@ function CreateSelectedBotPanel()
         ["destruction"] = {
             icon = "dps",
             icon_native = "spell_shadow_rainoffire",
-            command = { [0] = "#a co +destruction,?", [1] = "#a nc +destruction,?", [2] = "#a de +destruction,?", [3] = "#a react +destruction,?" },
+            command = { [0] = "co +destruction,?", [1] = "nc +destruction,?", [2] = "de +destruction,?", [3] = "react +destruction,?" },
             strategy = "destruction",
             tooltip = "Destruction mode (caster)",
             index = 2
         },
         ["aoe"] = {
             icon = "aoe",
-            command = { [0] = "#a co ~aoe,?", [1] = "#a nc ~aoe,?" },
+            command = { [0] = "co ~aoe,?", [1] = "nc ~aoe,?" },
             strategy = "aoe",
             tooltip = "Use AOE abilities",
             index = 3
         },
         ["bdps"] = {
             icon = "boost",
-            command = { [0] = "#a co ~buff,?", [1] = "#a nc ~buff,?" },
+            command = { [0] = "co ~buff,?", [1] = "nc ~buff,?" },
             strategy = "buff",
             tooltip = "Use buff abilities (cooldowns, trinkets, buffs)",
             index = 4
         },
         ["boost"] = {
             icon = "boost",
-            command = { [0] = "#a co ~boost,?", [1] = "#a nc ~boost,?" },
+            command = { [0] = "co ~boost,?", [1] = "nc ~boost,?" },
             strategy = "boost",
             tooltip = "Use boost abilities (cooldowns, trinkets)",
             index = 5
@@ -2116,7 +2037,7 @@ function CreateSelectedBotPanel()
         ["dps_debuff"] = {
             icon = "dps_debuff",
             icon_native = "spell_shadow_curseofsargeras",
-            command = { [0] = "#a co ~curse,?" },
+            command = { [0] = "co ~curse,?" },
             strategy = "curse",
             tooltip = "Auto pick curses",
             index = 6
@@ -2124,7 +2045,7 @@ function CreateSelectedBotPanel()
         ["pet"] = {
             icon = "pet",
             icon_native = "spell_shadow_enslavedemon",
-            command = { [0] = "#a co ~pet,?", [1] = "#a nc ~pet,?" },
+            command = { [0] = "co ~pet,?", [1] = "nc ~pet,?" },
             strategy = "pet",
             tooltip = "Auto pick pets",
             index = 7
@@ -2134,7 +2055,7 @@ function CreateSelectedBotPanel()
         ["arms"] = {
             icon = "dps",
             icon_native = "ability_rogue_eviscerate",
-            command = { [0] = "#a co +arms,+dps assist,-pull,?", [1] = "#a nc +arms,+dps assist,?", [2] = "#a de +arms,?", [3] = "#a react +arms,?" },
+            command = { [0] = "co +arms,+dps assist,-pull,?", [1] = "nc +arms,+dps assist,?", [2] = "de +arms,?", [3] = "react +arms,?" },
             strategy = "arms",
             tooltip = "Arms mode (melee)",
             index = 0
@@ -2142,7 +2063,7 @@ function CreateSelectedBotPanel()
         ["fury"] = {
             icon = "grind",
             icon_native = "ability_warrior_innerrage",
-            command = { [0] = "#a co +fury,+dps assist,-pull,?", [1] = "#a nc +fury,+dps assist,?", [2] = "#a de +fury,?", [3] = "#a react +fury,?" },
+            command = { [0] = "co +fury,+dps assist,-pull,?", [1] = "nc +fury,+dps assist,?", [2] = "de +fury,?", [3] = "react +fury,?" },
             strategy = "fury",
             tooltip = "Fury mode (melee)",
             index = 1
@@ -2150,28 +2071,28 @@ function CreateSelectedBotPanel()
         ["protection"] = {
             icon = "tank",
             icon_native = "inv_shield_06",
-            command = { [0] = "#a co +protection,+tank assist,+pull,?", [1] = "#a nc +protection,+tank assist,?", [2] = "#a de +protection,?", [3] = "#a react +protection,?" },
+            command = { [0] = "co +protection,+tank assist,+pull,?", [1] = "nc +protection,+tank assist,?", [2] = "de +protection,?", [3] = "react +protection,?" },
             strategy = "protection",
             tooltip = "Protection mode (tank)",
             index = 2
         },
         ["aoe"] = {
             icon = "caster_aoe",
-            command = { [0] = "#a co ~aoe,?", [1] = "#a nc ~aoe,?" },
+            command = { [0] = "co ~aoe,?", [1] = "nc ~aoe,?" },
             strategy = "aoe",
             tooltip = "Use AOE abilities",
             index = 3
         },
         ["bdps"] = {
             icon = "boost",
-            command = { [0] = "#a co ~buff,?", [1] = "#a nc ~buff,?" },
+            command = { [0] = "co ~buff,?", [1] = "nc ~buff,?" },
             strategy = "buff",
             tooltip = "Use buff abilities (cooldowns, trinkets, buffs)",
             index = 4
         },
         ["boost"] = {
             icon = "boost",
-            command = { [0] = "#a co ~boost,?", [1] = "#a nc ~boost,?" },
+            command = { [0] = "co ~boost,?", [1] = "nc ~boost,?" },
             strategy = "boost",
             tooltip = "Use boost abilities (cooldowns, trinkets)",
             index = 5
@@ -2183,48 +2104,48 @@ function CreateSelectedBotPanel()
         ["bmana"] = {
             icon = "bmana",
             icon_native = "spell_holy_fistofjustice",
-            command = { [0] = "#a co +blessing might,?", [1] = "#a nc +blessing might,?" },
-            strategy = "blessing might",
+            command = { [0] = "blessing might" },
+            pref_key = "blessing", pref_value = "might",
             tooltip = "Blessing of Might",
             index = 0
         },
         ["bhealth"] = {
             icon = "bhealth",
             icon_native = "spell_holy_sealofwisdom",
-            command = { [0] = "#a co +blessing wisdom,?", [1] = "#a nc +blessing wisdom,?" },
-            strategy = "blessing wisdom",
+            command = { [0] = "blessing wisdom" },
+            pref_key = "blessing", pref_value = "wisdom",
             tooltip = "Blessing of Wisdom",
             index = 1
         },
         ["bdps"] = {
             icon = "bdps",
             icon_native = "spell_magic_magearmor",
-            command = { [0] = "#a co +blessing kings,?", [1] = "#a nc +blessing kings,?" },
-            strategy = "blessing kings",
+            command = { [0] = "blessing kings" },
+            pref_key = "blessing", pref_value = "kings",
             tooltip = "Blessing of Kings",
             index = 2
         },
         ["barmor"] = {
             icon = "barmor",
             icon_native = "spell_nature_lightningshield",
-            command = { [0] = "#a co +blessing sanctuary,?", [1] = "#a nc +blessing sanctuary,?" },
-            strategy = "blessing sanctuary",
+            command = { [0] = "blessing sanctuary" },
+            pref_key = "blessing", pref_value = "sanctuary",
             tooltip = "Blessing of Sanctuary",
             index = 3
         },
         ["blight"] = {
             icon = "bmana",
             icon_native = "spell_holy_prayerofhealing02",
-            command = { [0] = "#a co +blessing light,?", [1] = "#a nc +blessing light,?" },
-            strategy = "blessing light",
+            command = { [0] = "blessing light" },
+            pref_key = "blessing", pref_value = "light",
             tooltip = "Blessing of Light",
             index = 4
         },
         ["bstats"] = {
             icon = "bhealth",
             icon_native = "spell_holy_sealofsalvation",
-            command = { [0] = "#a co +blessing salvation,?", [1] = "#a nc +blessing salvation,?" },
-            strategy = "blessing salvation",
+            command = { [0] = "blessing salvation" },
+            pref_key = "blessing", pref_value = "salvation",
             tooltip = "Blessing of salvation",
             index = 5
         }
@@ -2233,40 +2154,40 @@ function CreateSelectedBotPanel()
         ["stoneclaw"] = {
             icon = "totems",
             icon_native = "spell_nature_stoneclawtotem",
-            command = { [0] = "#a co +totem earth stoneclaw,?", [1] = "#a nc +totem earth stoneclaw,?" },
-            strategy = "totem earth stoneclaw",
+            command = { [0] = "totem earth stoneclaw" },
+            pref_key = "totem_earth", pref_value = "stoneclaw",
             tooltip = "Stoneclaw totem (earth)",
             index = 0
         },
         ["stoneskin"] = {
             icon = "totems",
             icon_native = "spell_nature_stoneskintotem",
-            command = { [0] = "#a co +totem earth stoneskin,?", [1] = "#a nc +totem earth stoneskin,?" },
-            strategy = "totem earth stoneskin",
+            command = { [0] = "totem earth stoneskin" },
+            pref_key = "totem_earth", pref_value = "stoneskin",
             tooltip = "Stoneskin totem (earth)",
             index = 1
         },
         ["earthbind"] = {
             icon = "totems",
             icon_native = "spell_nature_strengthofearthtotem02",
-            command = { [0] = "#a co +totem earth earthbind,?", [1] = "#a nc +totem earth earthbind,?" },
-            strategy = "totem earth earthbind",
+            command = { [0] = "totem earth earthbind" },
+            pref_key = "totem_earth", pref_value = "earthbind",
             tooltip = "Earthbind totem (earth)",
             index = 2
         },
         ["strength"] = {
             icon = "totems",
             icon_native = "spell_nature_earthbindtotem",
-            command = { [0] = "#a co +totem earth strength,?", [1] = "#a nc +totem earth strength,?" },
-            strategy = "totem earth strength",
+            command = { [0] = "totem earth strength" },
+            pref_key = "totem_earth", pref_value = "strength",
             tooltip = "Strength of Earth totem (earth)",
             index = 3
         },
         ["tremor"] = {
             icon = "totems",
             icon_native = "spell_nature_tremortotem",
-            command = { [0] = "#a co +totem earth tremor,?", [1] = "#a nc +totem earth tremor,?" },
-            strategy = "totem earth tremor",
+            command = { [0] = "totem earth tremor" },
+            pref_key = "totem_earth", pref_value = "tremor",
             tooltip = "Tremor totem (earth)",
             index = 4
         }
@@ -2275,47 +2196,47 @@ function CreateSelectedBotPanel()
         ["deadly"] = {
             icon = "caster_aoe",
             icon_native = "ability_rogue_dualweild",
-            command = { [0] = "#a co +poison main deadly,?", [1] = "#a nc +poison main deadly,?" },
-            strategy = "poison main deadly",
+            command = { [0] = "poison mh deadly" },
+            pref_key = "poison_mh", pref_value = "deadly",
             tooltip = "Deadly Poison (main hand)",
             index = 0
         },
         ["crippling"] = {
             icon = "caster_aoe",
             icon_native = "ability_poisonsting",
-            command = { [0] = "#a co +poison main crippling,?", [1] = "#a nc +poison main crippling,?" },
-            strategy = "poison main crippling",
+            command = { [0] = "poison mh crippling" },
+            pref_key = "poison_mh", pref_value = "crippling",
             tooltip = "Crippling Poison (main hand)",
             index = 1
         },
         ["mind"] = {
             icon = "caster_aoe",
             icon_native = "spell_nature_nullifydisease",
-            command = { [0] = "#a co +poison main mind,?", [1] = "#a nc +poison main mind,?" },
-            strategy = "poison main mind",
+            command = { [0] = "poison mh mind-numbing" },
+            pref_key = "poison_mh", pref_value = "mind-numbing",
             tooltip = "Mind-Numbing Poison (main hand)",
             index = 2
         },
         ["instant"] = {
             icon = "caster_aoe",
             icon_native = "ability_poisons",
-            command = { [0] = "#a co +poison main instant,?", [1] = "#a nc +poison main instant,?" },
-            strategy = "poison main instant",
+            command = { [0] = "poison mh instant" },
+            pref_key = "poison_mh", pref_value = "instant",
             tooltip = "Instant Poison (main hand)",
             index = 3
         },
         ["wound"] = {
             icon = "caster_aoe",
             icon_native = "inv_misc_herb_16",
-            command = { [0] = "#a co +poison main wound,?", [1] = "#a nc +poison main wound,?" },
-            strategy = "poison main wound",
+            command = { [0] = "poison mh wound" },
+            pref_key = "poison_mh", pref_value = "wound",
             tooltip = "Wound Poison (main hand)",
             index = 4
         },
         ["anesthetic"] = {
             icon = "caster_aoe",
-            command = { [0] = "#a co +poison main anesthetic,?", [1] = "#a nc +poison main anesthetic,?" },
-            strategy = "poison main anesthetic",
+            command = { [0] = "poison mh anesthetic" },
+            pref_key = "poison_mh", pref_value = "anesthetic",
             tooltip = "Anesthetic Poison (main hand)",
             index = 5
         }
@@ -2324,56 +2245,56 @@ function CreateSelectedBotPanel()
         ["agony"] = {
             icon = "caster_aoe",
             icon_native = "spell_shadow_curseofsargeras",
-            command = { [0] = "#a co +curse agony,?" },
-            strategy = "curse agony",
+            command = { [0] = "curse agony" },
+            pref_key = "curse", pref_value = "agony",
             tooltip = "Curse of Agony",
             index = 0
         },
         ["doom"] = {
             icon = "caster_aoe",
             icon_native = "spell_shadow_auraofdarkness",
-            command = { [0] = "#a co +curse doom,?" },
-            strategy = "curse doom",
+            command = { [0] = "curse doom" },
+            pref_key = "curse", pref_value = "doom",
             tooltip = "Curse of Doom",
             index = 1
         },
         ["elements"] = {
             icon = "caster_aoe",
             icon_native = "spell_shadow_chilltouch",
-            command = { [0] = "#a co +curse elements,?" },
-            strategy = "curse elements",
+            command = { [0] = "curse elements" },
+            pref_key = "curse", pref_value = "elements",
             tooltip = "Curse of the Elements",
             index = 2
         },
         ["recklessness"] = {
             icon = "caster_aoe",
             icon_native = "spell_shadow_unholystrength",
-            command = { [0] = "#a co +curse recklessness,?" },
-            strategy = "curse recklessness",
+            command = { [0] = "curse recklessness" },
+            pref_key = "curse", pref_value = "recklessness",
             tooltip = "Curse of Recklessness",
             index = 3
         },
         ["weakness"] = {
             icon = "caster_aoe",
             icon_native = "spell_shadow_curseofmannoroth",
-            command = { [0] = "#a co +curse weakness,?" },
-            strategy = "curse weakness",
+            command = { [0] = "curse weakness" },
+            pref_key = "curse", pref_value = "weakness",
             tooltip = "Curse of Weakness",
             index = 4
         },
         ["tongues"] = {
             icon = "caster_aoe",
             icon_native = "spell_shadow_curseoftounges",
-            command = { [0] = "#a co +curse tongues,?" },
-            strategy = "curse tongues",
+            command = { [0] = "curse tongues" },
+            pref_key = "curse", pref_value = "tongues",
             tooltip = "Curse of Tongues",
             index = 5
         },
         ["shadow"] = {
             icon = "caster_aoe",
             icon_native = "spell_shadow_curseofachimonde",
-            command = { [0] = "#a co +curse shadow,?" },
-            strategy = "curse shadow",
+            command = { [0] = "curse shadow" },
+            pref_key = "curse", pref_value = "shadow",
             tooltip = "Curse of Shadow",
             index = 6
         }
@@ -2382,24 +2303,24 @@ function CreateSelectedBotPanel()
         ["serpent"] = {
             icon = "caster_aoe",
             icon_native = "ability_hunter_quickshot",
-            command = { [0] = "#a co +sting serpent,?" },
-            strategy = "sting serpent",
+            command = { [0] = "sting serpent" },
+            pref_key = "sting", pref_value = "serpent",
             tooltip = "Serpent Sting",
             index = 0
         },
         ["viper"] = {
             icon = "caster_aoe",
             icon_native = "ability_hunter_aimedshot",
-            command = { [0] = "#a co +sting viper,?" },
-            strategy = "sting viper",
+            command = { [0] = "sting viper" },
+            pref_key = "sting", pref_value = "viper",
             tooltip = "Viper Sting",
             index = 1
         },
         ["scorpid"] = {
             icon = "caster_aoe",
             icon_native = "ability_hunter_criticalshot",
-            command = { [0] = "#a co +sting scorpid,?" },
-            strategy = "sting scorpid",
+            command = { [0] = "sting scorpid" },
+            pref_key = "sting", pref_value = "scorpid",
             tooltip = "Scorpid Sting",
             index = 2
         }
@@ -2410,64 +2331,64 @@ function CreateSelectedBotPanel()
         ["barmor"] = {
             icon = "barmor",
             icon_native = "spell_holy_devotionaura",
-            command = { [0] = "#a co +aura devotion,?", [1] = "#a nc +aura devotion,?" },
-            strategy = "aura devotion",
+            command = { [0] = "aura devotion" },
+            pref_key = "aura", pref_value = "devotion",
             tooltip = "Devotion aura",
             index = 0
         },
         ["baoe"] = {
             icon = "aoe",
             icon_native = "spell_holy_auraoflight",
-            command = { [0] = "#a co +aura retribution,?", [1] = "#a nc +aura retribution,?" },
-            strategy = "aura retribution",
+            command = { [0] = "aura retribution" },
+            pref_key = "aura", pref_value = "retribution",
             tooltip = "Retribution aura",
             index = 1
         },
         ["concentration"] = {
             icon = "bmana",
             icon_native = "spell_holy_mindsooth",
-            command = { [0] = "#a co +aura concentration,?", [1] = "#a nc +aura concentration,?" },
-            strategy = "aura concentration",
+            command = { [0] = "aura concentration" },
+            pref_key = "aura", pref_value = "concentration",
             tooltip = "Concentration aura",
             index = 2
         },
         ["rshadow"] = {
             icon = "rshadow",
             icon_native = "spell_shadow_sealofkings",
-            command = { [0] = "#a co +aura shadow,?", [1] = "#a nc +aura shadow,?" },
-            strategy = "aura shadow",
+            command = { [0] = "aura shadow" },
+            pref_key = "aura", pref_value = "shadow",
             tooltip = "Shadow resistance aura",
             index = 3
         },
         ["rfrost"] = {
             icon = "frost",
             icon_native = "spell_frost_wizardmark",
-            command = { [0] = "#a co +aura frost,?", [1] = "#a nc +aura frost,?" },
-            strategy = "aura frost",
+            command = { [0] = "aura frost" },
+            pref_key = "aura", pref_value = "frost",
             tooltip = "Frost resistance aura",
             index = 4
         },
         ["rfire"] = {
             icon = "fire",
             icon_native = "spell_fire_sealoffire",
-            command = { [0] = "#a co +aura fire,?", [1] = "#a nc +aura fire,?" },
-            strategy = "aura fire",
+            command = { [0] = "aura fire" },
+            pref_key = "aura", pref_value = "fire",
             tooltip = "Fire resistance aura",
             index = 5
         },
         ["crusader"] = {
             icon = "bspeed",
             icon_native = "spell_holy_crusaderaura",
-            command = { [0] = "#a co +aura crusader,?", [1] = "#a nc +aura crusader,?" },
-            strategy = "aura crusader",
+            command = { [0] = "aura crusader" },
+            pref_key = "aura", pref_value = "crusader",
             tooltip = "Crusader aura",
             index = 6
         },
         ["sanctity"] = {
             icon = "bdps",
             icon_native = "spell_holy_mindvision",
-            command = { [0] = "#a co +aura sanctity,?", [1] = "#a nc +aura sanctity,?" },
-            strategy = "aura sanctity",
+            command = { [0] = "aura sanctity" },
+            pref_key = "aura", pref_value = "sanctity",
             tooltip = "Sanctity aura",
             index = 7
         }
@@ -2475,36 +2396,36 @@ function CreateSelectedBotPanel()
     CreateToolBar(frame, -y, "CLASS_SHAMAN_TOTEM_FIRE", {
         ["nova"] = {
             icon = "totems",
-            command = { [0] = "#a co +totem fire nova,?", [1] = "#a nc +totem fire nova,?" },
-            strategy = "totem fire nova",
+            command = { [0] = "totem fire nova" },
+            pref_key = "totem_fire", pref_value = "nova",
             tooltip = "Fire Nova totem (fire)",
             index = 0
         },
         ["flametongue"] = {
             icon = "totems",
-            command = { [0] = "#a co +totem fire flametongue,?", [1] = "#a nc +totem fire flametongue,?" },
-            strategy = "totem fire flametongue",
+            command = { [0] = "totem fire flametongue" },
+            pref_key = "totem_fire", pref_value = "flametongue",
             tooltip = "Flametongue totem (fire)",
             index = 1
         },
         ["resistance"] = {
             icon = "totems",
-            command = { [0] = "#a co +totem fire resistance,?", [1] = "#a nc +totem fire resistance,?" },
-            strategy = "totem fire resistance",
+            command = { [0] = "totem fire resistance" },
+            pref_key = "totem_fire", pref_value = "resistance",
             tooltip = "Frost Resistance totem (fire)",
             index = 2
         },
         ["magma"] = {
             icon = "totems",
-            command = { [0] = "#a co +totem fire magma,?", [1] = "#a nc +totem fire magma,?" },
-            strategy = "totem fire magma",
+            command = { [0] = "totem fire magma" },
+            pref_key = "totem_fire", pref_value = "magma",
             tooltip = "Magma totem (fire)",
             index = 3
         },
         ["searing"] = {
             icon = "totems",
-            command = { [0] = "#a co +totem fire searing,?", [1] = "#a nc +totem fire searing,?" },
-            strategy = "totem fire searing",
+            command = { [0] = "totem fire searing" },
+            pref_key = "totem_fire", pref_value = "searing",
             tooltip = "Searing totem (fire)",
             index = 4
         }
@@ -2513,47 +2434,47 @@ function CreateSelectedBotPanel()
         ["deadly"] = {
             icon = "caster_aoe",
             icon_native = "ability_rogue_dualweild",
-            command = { [0] = "#a co +poison off deadly,?", [1] = "#a nc +poison off deadly,?" },
-            strategy = "poison off deadly",
+            command = { [0] = "poison oh deadly" },
+            pref_key = "poison_oh", pref_value = "deadly",
             tooltip = "Deadly Poison (off hand)",
             index = 0
         },
         ["crippling"] = {
             icon = "caster_aoe",
             icon_native = "ability_poisonsting",
-            command = { [0] = "#a co +poison off crippling,?", [1] = "#a nc +poison off crippling,?" },
-            strategy = "poison off crippling",
+            command = { [0] = "poison oh crippling" },
+            pref_key = "poison_oh", pref_value = "crippling",
             tooltip = "Crippling Poison (off hand)",
             index = 1
         },
         ["mind"] = {
             icon = "caster_aoe",
             icon_native = "spell_nature_nullifydisease",
-            command = { [0] = "#a co +poison off mind,?", [1] = "#a nc +poison off mind,?" },
-            strategy = "poison off mind",
+            command = { [0] = "poison oh mind-numbing" },
+            pref_key = "poison_oh", pref_value = "mind-numbing",
             tooltip = "Mind-Numbing Poison (off hand)",
             index = 2
         },
         ["instant"] = {
             icon = "caster_aoe",
             icon_native = "ability_poisons",
-            command = { [0] = "#a co +poison off instant,?", [1] = "#a nc +poison off instant,?" },
-            strategy = "poison off instant",
+            command = { [0] = "poison oh instant" },
+            pref_key = "poison_oh", pref_value = "instant",
             tooltip = "Instant Poison (off hand)",
             index = 3
         },
         ["wound"] = {
             icon = "caster_aoe",
             icon_native = "inv_misc_herb_16",
-            command = { [0] = "#a co +poison off wound,?", [1] = "#a nc +poison off wound,?" },
-            strategy = "poison off wound",
+            command = { [0] = "poison oh wound" },
+            pref_key = "poison_oh", pref_value = "wound",
             tooltip = "Wound Poison (off hand)",
             index = 4
         },
         ["anesthetic"] = {
             icon = "caster_aoe",
-            command = { [0] = "#a co +poison off anesthetic,?", [1] = "#a nc +poison off anesthetic,?" },
-            strategy = "poison off anesthetic",
+            command = { [0] = "poison oh anesthetic" },
+            pref_key = "poison_oh", pref_value = "anesthetic",
             tooltip = "Anesthetic Poison (off hand)",
             index = 5
         }
@@ -2562,40 +2483,40 @@ function CreateSelectedBotPanel()
         ["imp"] = {
             icon = "pet",
             icon_native = "spell_shadow_summonimp",
-            command = { [0] = "#a co +pet imp,?", [1] = "#a nc +pet imp,?" },
-            strategy = "pet imp",
+            command = { [0] = "pet imp" },
+            pref_key = "pet", pref_value = "imp",
             tooltip = "Use Imp",
             index = 0
         },
         ["voidwalker"] = {
             icon = "pet",
             icon_native = "spell_shadow_summonvoidwalker",
-            command = { [0] = "#a co +pet voidwalker,?", [1] = "#a nc +pet voidwalker,?" },
-            strategy = "pet voidwalker",
+            command = { [0] = "pet voidwalker" },
+            pref_key = "pet", pref_value = "voidwalker",
             tooltip = "Use Voidwalker",
             index = 1
         },
         ["succubus"] = {
             icon = "pet",
             icon_native = "spell_shadow_summonsuccubus",
-            command = { [0] = "#a co +pet succubus,?", [1] = "#a nc +pet succubus,?" },
-            strategy = "pet succubus",
+            command = { [0] = "pet succubus" },
+            pref_key = "pet", pref_value = "succubus",
             tooltip = "Use Succubus",
             index = 2
         },
         ["felhunter"] = {
             icon = "pet",
             icon_native = "spell_shadow_summonfelhunter",
-            command = { [0] = "#a co +pet felhunter,?", [1] = "#a nc +pet felhunter,?" },
-            strategy = "pet felhunter",
+            command = { [0] = "pet felhunter" },
+            pref_key = "pet", pref_value = "felhunter",
             tooltip = "Use Felhunter",
             index = 3
         },
         ["felguard"] = {
             icon = "pet",
             icon_native = "spell_shadow_summonfelguard",
-            command = { [0] = "#a co +pet felguard,?", [1] = "#a nc +pet felguard,?" },
-            strategy = "pet felguard",
+            command = { [0] = "pet felguard" },
+            pref_key = "pet", pref_value = "felguard",
             tooltip = "Use Felguard",
             index = 4
         }
@@ -2604,64 +2525,64 @@ function CreateSelectedBotPanel()
         ["hawk"] = {
             icon = "totems",
             icon_native = "spell_nature_ravenform",
-            command = { [0] = "#a co +aspect hawk,?", [1] = "#a nc +aspect hawk,?" },
-            strategy = "aspect hawk",
+            command = { [0] = "aspect hawk" },
+            pref_key = "aspect", pref_value = "hawk",
             tooltip = "Aspect of the Hawk",
             index = 0
         },
         ["monkey"] = {
             icon = "totems",
             icon_native = "ability_hunter_aspectofthemonkey",
-            command = { [0] = "#a co +aspect monkey,?", [1] = "#a nc +aspect monkey,?" },
-            strategy = "aspect monkey",
+            command = { [0] = "aspect monkey" },
+            pref_key = "aspect", pref_value = "monkey",
             tooltip = "Aspect of the Monkey",
             index = 1
         },
         ["cheetah"] = {
             icon = "totems",
             icon_native = "ability_mount_jungletiger",
-            command = { [0] = "#a co +aspect cheetah,?", [1] = "#a nc +aspect cheetah,?" },
-            strategy = "aspect cheetah",
+            command = { [0] = "aspect cheetah" },
+            pref_key = "aspect", pref_value = "cheetah",
             tooltip = "Aspect of the Cheetah",
             index = 2
         },
         ["pack"] = {
             icon = "totems",
             icon_native = "ability_mount_whitetiger",
-            command = { [0] = "#a co +aspect pack,?", [1] = "#a nc +aspect pack,?" },
-            strategy = "aspect pack",
+            command = { [0] = "aspect pack" },
+            pref_key = "aspect", pref_value = "pack",
             tooltip = "Aspect of the Pack",
             index = 3
         },
         ["beast"] = {
             icon = "totems",
             icon_native = "ability_mount_pinktiger",
-            command = { [0] = "#a co +aspect beast,?", [1] = "#a nc +aspect beast,?" },
-            strategy = "aspect beast",
+            command = { [0] = "aspect beast" },
+            pref_key = "aspect", pref_value = "beast",
             tooltip = "Aspect of the Beast",
             index = 4
         },
         ["wild"] = {
             icon = "totems",
             icon_native = "spell_nature_protectionformnature",
-            command = { [0] = "#a co +aspect wild,?", [1] = "#a nc +aspect wild,?" },
-            strategy = "aspect wild",
+            command = { [0] = "aspect wild" },
+            pref_key = "aspect", pref_value = "wild",
             tooltip = "Aspect of the Wild",
             index = 5
         },
         ["viper"] = {
             icon = "totems",
             icon_native = " ability_hunter_aspectoftheviper",
-            command = { [0] = "#a co +aspect viper,?", [1] = "#a nc +aspect viper,?" },
-            strategy = "aspect viper",
+            command = { [0] = "aspect viper" },
+            pref_key = "aspect", pref_value = "viper",
             tooltip = "Aspect of the Viper",
             index = 6
         },
         ["dragonhawk"] = {
             icon = "totems",
             icon_native = " ability_hunter_pet_dragonhawk",
-            command = { [0] = "#a co +aspect dragonhawk,?", [1] = "#a nc +aspect dragonhawk,?" },
-            strategy = "aspect dragonhawk",
+            command = { [0] = "aspect dragonhawk" },
+            pref_key = "aspect", pref_value = "dragonhawk",
             tooltip = "Aspect of the Dragonhawk",
             index = 7
         }
@@ -2671,36 +2592,36 @@ function CreateSelectedBotPanel()
     CreateToolBar(frame, -y, "CLASS_SHAMAN_TOTEM_WATER", {
         ["cleansing"] = {
             icon = "totems",
-            command = { [0] = "#a co +totem water cleansing,?", [1] = "#a nc +totem water cleansing,?" },
-            strategy = "totem water cleansing",
+            command = { [0] = "totem water cleansing" },
+            pref_key = "totem_water", pref_value = "cleansing",
             tooltip = "Cleansing totem (water)",
             index = 0
         },
         ["resistance"] = {
             icon = "totems",
-            command = { [0] = "#a co +totem water resistance,?", [1] = "#a nc +totem water resistance,?" },
-            strategy = "totem water resistance",
+            command = { [0] = "totem water resistance" },
+            pref_key = "totem_water", pref_value = "resistance",
             tooltip = "Fire Resistance totem (water)",
             index = 1
         },
         ["healing"] = {
             icon = "totems",
-            command = { [0] = "#a co +totem water healing,?", [1] = "#a nc +totem water healing,?" },
-            strategy = "totem water healing",
+            command = { [0] = "totem water healing" },
+            pref_key = "totem_water", pref_value = "healing",
             tooltip = "Healing Stream totem (water)",
             index = 2
         },
         ["mana"] = {
             icon = "totems",
-            command = { [0] = "#a co +totem water mana,?", [1] = "#a nc +totem water mana,?" },
-            strategy = "totem water mana",
+            command = { [0] = "totem water mana" },
+            pref_key = "totem_water", pref_value = "mana",
             tooltip = "Mana Spring totem (water)",
             index = 3
         },
         ["poison"] = {
             icon = "totems",
-            command = { [0] = "#a co +totem water poison,?", [1] = "#a nc +totem water poison,?" },
-            strategy = "totem water poison",
+            command = { [0] = "totem water poison" },
+            pref_key = "totem_water", pref_value = "poison",
             tooltip = "Poison Cleansing totem (water)",
             index = 4
         }
@@ -2710,50 +2631,50 @@ function CreateSelectedBotPanel()
     CreateToolBar(frame, -y, "CLASS_SHAMAN_TOTEM_AIR", {
         ["grace"] = {
             icon = "totems",
-            command = { [0] = "#a co +totem air grace,?", [1] = "#a nc +totem air grace,?" },
-            strategy = "totem air grace",
+            command = { [0] = "totem air grace" },
+            pref_key = "totem_air", pref_value = "grace",
             tooltip = "Grace of Air totem (air)",
             index = 0
         },
         ["grounding"] = {
             icon = "totems",
-            command = { [0] = "#a co +totem air grounding,?", [1] = "#a nc +totem air grounding,?" },
-            strategy = "totem air grounding",
+            command = { [0] = "totem air grounding" },
+            pref_key = "totem_air", pref_value = "grounding",
             tooltip = "Grounding totem (air)",
             index = 1
         },
         ["resistance"] = {
             icon = "totems",
-            command = { [0] = "#a co +totem air resistance,?", [1] = "#a nc +totem air resistance,?" },
-            strategy = "totem air resistance",
+            command = { [0] = "totem air resistance" },
+            pref_key = "totem_air", pref_value = "resistance",
             tooltip = "Nature Resistance totem (air)",
             index = 2
         },
         ["tranquil"] = {
             icon = "totems",
-            command = { [0] = "#a co +totem air tranquil,?", [1] = "#a nc +totem air tranquil,?" },
-            strategy = "totem air tranquil",
+            command = { [0] = "totem air tranquil" },
+            pref_key = "totem_air", pref_value = "tranquil",
             tooltip = "Tranquil Air totem (air)",
             index = 3
         },
         ["windfury"] = {
             icon = "totems",
-            command = { [0] = "#a co +totem air windfury,?", [1] = "#a nc +totem air windfury,?" },
-            strategy = "totem air windfury",
+            command = { [0] = "totem air windfury" },
+            pref_key = "totem_air", pref_value = "windfury",
             tooltip = "Windfury totem (air)",
             index = 4
         },
         ["windwall"] = {
             icon = "totems",
-            command = { [0] = "#a co +totem air windwall,?", [1] = "#a nc +totem air windwall,?" },
-            strategy = "totem air windwall",
+            command = { [0] = "totem air windwall" },
+            pref_key = "totem_air", pref_value = "windwall",
             tooltip = "Windwall totem (air)",
             index = 5
         },
         ["wrath"] = {
             icon = "totems",
-            command = { [0] = "#a co +totem air wrath,?", [1] = "#a nc +totem air wrath,?" },
-            strategy = "totem air wrath",
+            command = { [0] = "totem air wrath" },
+            pref_key = "totem_air", pref_value = "wrath",
             tooltip = "Wrath of Air totem (air)",
             index = 6
         }
@@ -3009,6 +2930,32 @@ function QueryBotParty()
     end)
 end
 
+--- Query class-specific preferences for a bot.
+--- Sends the bare command name (e.g. "poison") which triggers the Show* handler.
+function QueryClassPrefs(name)
+    local bot = botTable[name]
+    if (bot == nil) then return end
+    local cls = bot["class"]
+    if (cls == nil) then return end
+    local cmds = {}
+    if (cls == "ROGUE") then
+        cmds = { "poison" }
+    elseif (cls == "SHAMAN") then
+        cmds = { "totem", "imbue" }
+    elseif (cls == "PALADIN") then
+        cmds = { "aura", "blessing" }
+    elseif (cls == "HUNTER") then
+        cmds = { "aspect", "sting" }
+    elseif (cls == "WARLOCK") then
+        cmds = { "curse", "pet" }
+    elseif (cls == "WARRIOR") then
+        cmds = { "forcestance" }
+    end
+    if (tablelength(cmds) > 0) then
+        SendPB(cmds, "WHISPER", name)
+    end
+end
+
 function QuerySelectedBot(name)
     wait(0.1, function()
         SendPB({
@@ -3017,6 +2964,7 @@ function QuerySelectedBot(name)
             "rti:?", "react:?", "tank:?", "cc:?"
         }, "WHISPER", name)
     end)
+    wait(0.3, function() QueryClassPrefs(name) end)
 end
 
 function UpdateBotList(delay)
@@ -3399,7 +3347,10 @@ Mangosbot_EventFrame:SetScript("OnEvent", function(self)
 
             local width = 0
             local height = 0
-            for toolbarName, toolbar in pairs(ToolBars) do
+            local yOff = 25  -- starting y after header
+            for _, toolbarName in ipairs(ToolBarOrder) do
+                local toolbar = ToolBars[toolbarName]
+                if (toolbar == nil) then break end
                 local panelVisible = true
                 if (string.find(toolbarName, "CLASS_") == 1) then
                     if (string.find(string.sub(toolbarName, 7), class) == 1) then
@@ -3490,10 +3441,19 @@ Mangosbot_EventFrame:SetScript("OnEvent", function(self)
                             end
                         end
                     end
+                    -- Class pref toggle (poison, totem, aura, blessing, aspect, sting, curse, pet).
+                    if (button["pref_key"] ~= nil and bot[button["pref_key"]] ~= nil) then
+                        if (bot[button["pref_key"]] == button["pref_value"]) then
+                            toggle = true
+                        end
+                    end
                     ToggleButton(SelectedBotPanel, toolbarName, buttonName, toggle)
                     numButtons = numButtons + 1
                 end
+                -- Reposition visible toolbars dynamically to eliminate gaps.
                 if (panelVisible) then
+                    SelectedBotPanel.toolbar[toolbarName]:SetPoint("TOPLEFT", SelectedBotPanel, "TOPLEFT", 5, -yOff)
+                    yOff = yOff + 25
                     height = height + 1
                     if (width < numButtons) then width = numButtons end
                 end
@@ -3710,6 +3670,95 @@ function OnWhisper(message, sender)
     end
     if (string.find(message, 'CC assignment removed') == 1) then
         wait(0.1, function(s) SendPB("cc:?", "WHISPER", s) end, sender)
+    end
+
+    -- Class pref query responses.
+    -- "poisons: mh=deadly oh=instant"
+    if (string.find(message, 'poisons: ') == 1) then
+        local rest = string.sub(message, 10)
+        for k, v in string.gfind(rest, '(%w+)=(%S+)') do
+            if (k == 'mh') then bot['poison_mh'] = (v ~= 'none') and v or nil end
+            if (k == 'oh') then bot['poison_oh'] = (v ~= 'none') and v or nil end
+        end
+    end
+    -- "totems: earth=strength fire=searing water=healing air=windfury"
+    if (string.find(message, 'totems: ') == 1) then
+        local rest = string.sub(message, 9)
+        for k, v in string.gfind(rest, '(%w+)=(%S+)') do
+            local key = 'totem_' .. k
+            bot[key] = (v ~= 'none') and v or nil
+        end
+    end
+    -- "imbues: mh=flametongue oh=none"
+    if (string.find(message, 'imbues: ') == 1) then
+        local rest = string.sub(message, 9)
+        for k, v in string.gfind(rest, '(%w+)=(%S+)') do
+            if (k == 'mh') then bot['imbue_mh'] = (v ~= 'none') and v or nil end
+            if (k == 'oh') then bot['imbue_oh'] = (v ~= 'none') and v or nil end
+        end
+    end
+    -- "paladin: aura=devotion blessing=might greater=on"
+    if (string.find(message, 'paladin: ') == 1) then
+        local rest = string.sub(message, 10)
+        for k, v in string.gfind(rest, '(%w+)=(%S+)') do
+            if (k == 'aura') then bot['aura'] = (v ~= 'none') and v or nil end
+            if (k == 'blessing') then bot['blessing'] = (v ~= 'none') and v or nil end
+        end
+    end
+    -- "hunter: aspect=hawk trap=none sting=serpent"
+    if (string.find(message, 'hunter: ') == 1) then
+        local rest = string.sub(message, 9)
+        for k, v in string.gfind(rest, '(%w+)=(%S+)') do
+            if (k == 'aspect') then bot['aspect'] = (v ~= 'none') and v or nil end
+            if (k == 'sting') then bot['sting'] = (v ~= 'none') and v or nil end
+        end
+    end
+    -- "warlock: curse=agony, pet=imp"
+    if (string.find(message, 'warlock: ') == 1) then
+        local rest = string.sub(message, 10)
+        for k, v in string.gfind(rest, '(%w+)=(%S+)') do
+            -- strip trailing comma from "agony,"
+            v = string.gsub(v, ',', '')
+            if (k == 'curse') then bot['curse'] = (v ~= 'none') and v or nil end
+            if (k == 'pet') then bot['pet'] = (v ~= 'none') and v or nil end
+        end
+    end
+    -- "warrior: forcestance=none"
+    if (string.find(message, 'warrior: ') == 1) then
+        local rest = string.sub(message, 10)
+        for k, v in string.gfind(rest, '(%w+)=(%S+)') do
+            if (k == 'forcestance') then bot['forcestance'] = (v ~= 'none') and v or nil end
+        end
+    end
+
+    -- Individual set confirmations trigger a requery.
+    -- "poison mh: deadly", "totem earth: strength", "aura: devotion", etc.
+    if (string.find(message, 'poison ') == 1 and string.find(message, 'poisons:') == nil) then
+        wait(0.1, function(s) SendPB("poison", "WHISPER", s) end, sender)
+    end
+    if (string.find(message, 'totem ') == 1 and string.find(message, 'totems:') == nil) then
+        wait(0.1, function(s) SendPB("totem", "WHISPER", s) end, sender)
+    end
+    if (string.find(message, 'aura: ') == 1) then
+        wait(0.1, function(s) SendPB("aura", "WHISPER", s) end, sender)
+    end
+    if (string.find(message, 'blessing: ') == 1) then
+        wait(0.1, function(s) SendPB("blessing", "WHISPER", s) end, sender)
+    end
+    if (string.find(message, 'aspect: ') == 1) then
+        wait(0.1, function(s) SendPB("aspect", "WHISPER", s) end, sender)
+    end
+    if (string.find(message, 'sting: ') == 1) then
+        wait(0.1, function(s) SendPB("sting", "WHISPER", s) end, sender)
+    end
+    if (string.find(message, 'curse: ') == 1) then
+        wait(0.1, function(s) SendPB("curse", "WHISPER", s) end, sender)
+    end
+    if (string.find(message, 'pet: ') == 1) then
+        wait(0.1, function(s) SendPB("pet", "WHISPER", s) end, sender)
+    end
+    if (string.find(message, 'forcestance: ') == 1) then
+        wait(0.1, function(s) SendPB("forcestance", "WHISPER", s) end, sender)
     end
 end
 

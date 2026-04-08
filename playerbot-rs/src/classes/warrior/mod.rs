@@ -11,6 +11,7 @@ use crate::{
         BATTLE_SHOUT, BERSERKER_RAGE, BLOODRAGE, DEATH_WISH, RECKLESSNESS,
     },
     engine::{
+        aura_helpers::BATTLE_SHOUT_RANKS,
         bt::Bt::{self, CastOnSelf, InCombat, StrategyEnabled},
         macro_fsm::ActiveFsm,
     },
@@ -18,7 +19,7 @@ use crate::{
 };
 
 /// All warrior specs maintain Battle Shout.
-const BUFFS: &[GroupBuff] = &[GroupBuff::on_party(BATTLE_SHOUT)];
+const BUFFS: &[GroupBuff] = &[GroupBuff::on_party(BATTLE_SHOUT, BATTLE_SHOUT_RANKS)];
 
 /// `co +boost` burst subtree — warrior offensive cooldowns, off-GCD. Fires
 /// once per combat; each `CastOnSelf` fails on cooldown so subsequent ticks

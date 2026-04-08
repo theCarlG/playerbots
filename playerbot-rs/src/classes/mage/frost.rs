@@ -6,9 +6,9 @@ use crate::{Sel, Seq};
 use crate::{
     data::spells::vanilla::mage::*,
     engine::bt::{
-        Bt::{self, MaintainRange, Cmp, CastOnSelf, InCombat, TargetIsCasting, CastOnTarget},
-        Op::Below,
-        Resource::{SelfHealthPct, SelfManaPct, TargetDistance, TargetHealthPct},
+        Bt::{self, Cmp, CastOnSelf, CastAoEOnTarget, InCombat, TargetIsCasting, CastOnTarget},
+        Op::{Below, AtLeast},
+        Resource::{SelfHealthPct, SelfManaPct, TargetDistance, TargetHealthPct, AttackerCount},
     },
     engine::macro_fsm::ActiveFsm,
     ffi::SpellId,
@@ -30,12 +30,17 @@ fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (mage-wide list).
         super::boost(),
-        MaintainRange(10.0),
+        // Positioning handled by reactive::ranged_subtree().
         Seq!(Cmp(SelfHealthPct, Below(20)), CastOnSelf(ICE_BLOCK)),
-        Seq!(Cmp(SelfManaPct, Below(15)), CastOnSelf(EVOCATION)),
         Seq!(
             InCombat,
             Sel!(
+                // Evocation: low mana, channeled — only when not moving.
+                Seq!(
+                    Cmp(SelfManaPct, Below(15)),
+                    Bt::IsMoving.not(),
+                    CastOnSelf(EVOCATION),
+                ),
                 // Interrupt.
                 Seq!(TargetIsCasting, CastOnTarget(COUNTERSPELL)),
                 // Enemy in melee — Frost Nova then Blink away.
@@ -51,6 +56,8 @@ fn combat_tree() -> Bt {
                     ),
                     CastOnSelf(CONE_OF_COLD),
                 ),
+                // AoE: Blizzard when 3+ attackers.
+                Seq!(Cmp(AttackerCount, AtLeast(3)), CastAoEOnTarget(BLIZZARD)),
                 // Instant execute.
                 Seq!(Cmp(TargetHealthPct, Below(20)), CastOnTarget(FIRE_BLAST)),
                 // Main nuke.

@@ -43,7 +43,7 @@ pub fn build_tree(fsm: ActiveFsm) -> Bt {
 #[cfg(feature = "wotlk")]
 fn combat_tree() -> Bt {
     Sel!(
-        StickToTarget(5.0),
+        // Melee approach handled by combat_wrapper's close_subtree.
         // Self-buff.
         Seq!(Bt::self_missing(BONE_SHIELD), CastOnSelf(BONE_SHIELD)),
         // Pull.

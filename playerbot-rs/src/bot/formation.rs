@@ -56,6 +56,7 @@ pub struct FormationMember {
     pub handle: u64,
     pub is_tank: bool,
     pub is_heal: bool,
+    pub is_melee: bool,
     pub is_alive: bool,
 }
 
@@ -421,22 +422,53 @@ fn shield(ctx: &FormationContext<'_>) -> FormationOutput {
     .unwrap_or_else(|| near(ctx))
 }
 
-/// `ArrowFormation::GetLocationInternal` — Arrow.cpp. PB2 lays bots in
-/// concentric arrow rings behind the leader. We implement a simplified
-/// version: single V where index 0 is behind, and each subsequent bot
-/// alternates left/right of the spine at `unit_spacing` yards.
-///
-/// Full rings with depth offset are in PB2's `MultiLineUnitPlacer`;
-/// porting that verbatim is tracked in Step 8 notes. Until then, the
-/// single-V approximation behaves correctly for parties up to ~5 bots,
-/// which is the common case.
+// ── Role-aware layer classification (arrow + raid) ─────────────────────────
+
+/// Which layer a bot belongs to in the arrow/raid formation.
+enum FormationLayer {
+    Front,  // tanks
+    Middle, // melee DPS
+    Back,   // ranged DPS + healers
+}
+
+/// Classify the bot into a layer and return the roster for that layer.
+/// Tanks → Front, melee non-tank non-heal → Middle, everyone else → Back.
+fn arrow_raid_layer(ctx: &FormationContext<'_>) -> (FormationLayer, Vec<u64>) {
+    let me = ctx.group.iter().find(|m| m.handle == ctx.self_handle);
+    let layer = match me {
+        Some(m) if m.is_tank => FormationLayer::Front,
+        Some(m) if !m.is_heal && m.is_melee => FormationLayer::Middle,
+        _ => FormationLayer::Back,
+    };
+    let roster: Vec<u64> = ctx
+        .group
+        .iter()
+        .filter(|m| {
+            m.is_alive
+                && match layer {
+                    FormationLayer::Front => m.is_tank,
+                    FormationLayer::Middle => !m.is_tank && !m.is_heal && m.is_melee,
+                    FormationLayer::Back => !m.is_tank && (m.is_heal || !m.is_melee),
+                }
+        })
+        .map(|m| m.handle)
+        .collect();
+    (layer, roster)
+}
+
+/// `ArrowFormation::GetLocationInternal` — Arrow.cpp. Three layers:
+/// tanks in front, melee DPS in the middle (around the leader), ranged
+/// DPS and healers in the back. Each layer spreads members in a V
+/// alternating left/right.
 fn arrow(ctx: &FormationContext<'_>) -> FormationOutput {
     const UNIT_SPACING: f32 = 0.2 + 1.0; // Arrow.cpp UNIT_SPACING 0.2 + bot width ~1y
-    let roster = alive_handles_except(ctx, None);
+
+    let (layer, roster) = arrow_raid_layer(ctx);
     let idx = roster
         .iter()
         .position(|&h| h == ctx.self_handle)
         .unwrap_or(0) as i32;
+
     // Alternate left/right: 0 → 0, 1 → +1, 2 → -1, 3 → +2, 4 → -2 …
     let signed = if idx % 2 == 0 {
         idx / 2
@@ -444,12 +476,33 @@ fn arrow(ctx: &FormationContext<'_>) -> FormationOutput {
         -((idx + 1) / 2)
     };
     let signed = signed as f32;
-    // Spine: directly behind leader at follow_range + |signed| * depth.
+
     let depth = ctx.follow_range * (1.0 + signed.abs() * 0.5);
-    let spine_angle = ctx.follow_target.o + PI;
-    let spine_x = ctx.follow_target.x + spine_angle.cos() * depth;
-    let spine_y = ctx.follow_target.y + spine_angle.sin() * depth;
-    // Side offset perpendicular to leader's facing.
+    let (spine_x, spine_y) = match layer {
+        FormationLayer::Front => {
+            let a = ctx.follow_target.o; // forward
+            (
+                ctx.follow_target.x + a.cos() * depth,
+                ctx.follow_target.y + a.sin() * depth,
+            )
+        }
+        FormationLayer::Middle => {
+            // Around the leader, slight offset behind.
+            let a = ctx.follow_target.o + PI;
+            (
+                ctx.follow_target.x + a.cos() * (ctx.follow_range * 0.5),
+                ctx.follow_target.y + a.sin() * (ctx.follow_range * 0.5),
+            )
+        }
+        FormationLayer::Back => {
+            let a = ctx.follow_target.o + PI; // behind
+            (
+                ctx.follow_target.x + a.cos() * depth,
+                ctx.follow_target.y + a.sin() * depth,
+            )
+        }
+    };
+
     let perp_angle = ctx.follow_target.o - PI / 2.0;
     let x = spine_x + perp_angle.cos() * (signed * UNIT_SPACING);
     let y = spine_y + perp_angle.sin() * (signed * UNIT_SPACING);
@@ -461,31 +514,53 @@ fn arrow(ctx: &FormationContext<'_>) -> FormationOutput {
 }
 
 /// `RaidFormation::GetLocationInternal` — Arrow.cpp `RaidUnitPlacer`.
-/// Lines of 5 with depth offset between blocks. Each bot finds its
-/// slot (index % 5 gives the lane, index / 5 gives the depth block).
+/// Three layers: tanks in front, melee in the middle, ranged/healers
+/// in the back. Each layer uses blocks of 5 with depth offset.
 fn raid(ctx: &FormationContext<'_>) -> FormationOutput {
     const UNITS_PER_LINE: i32 = 5;
     const LINE_SPACING: f32 = 0.2; // Arrow.cpp LINE_SPACING
     const UNIT_SPACING: f32 = 0.2; // Arrow.cpp UNIT_SPACING
     const GROUP_SPACING: f32 = 0.5; // Arrow.cpp GROUP_SPACING
 
-    let roster = alive_handles_except(ctx, None);
+    let (layer, roster) = arrow_raid_layer(ctx);
     let idx = roster
         .iter()
         .position(|&h| h == ctx.self_handle)
         .unwrap_or(0) as i32;
 
     let lane = idx % UNITS_PER_LINE;
-    let depth = idx / UNITS_PER_LINE;
+    let depth_block = idx / UNITS_PER_LINE;
+    let count = roster.len().max(1) as i32;
 
-    // Lane: symmetric placement around the spine.
-    let lane_offset = (lane - UNITS_PER_LINE / 2) as f32 * (ctx.follow_range + UNIT_SPACING);
-    // Depth: behind the leader.
-    let depth_offset = (depth as f32) * (ctx.follow_range + LINE_SPACING + GROUP_SPACING);
+    let lane_offset =
+        (lane - (count.min(UNITS_PER_LINE)) / 2) as f32 * (ctx.follow_range + UNIT_SPACING);
+    let depth_offset =
+        (depth_block as f32) * (ctx.follow_range + LINE_SPACING + GROUP_SPACING);
 
-    let spine_angle = ctx.follow_target.o + PI;
-    let spine_x = ctx.follow_target.x + spine_angle.cos() * (ctx.follow_range + depth_offset);
-    let spine_y = ctx.follow_target.y + spine_angle.sin() * (ctx.follow_range + depth_offset);
+    let (spine_x, spine_y) = match layer {
+        FormationLayer::Front => {
+            let a = ctx.follow_target.o;
+            (
+                ctx.follow_target.x + a.cos() * (ctx.follow_range + depth_offset),
+                ctx.follow_target.y + a.sin() * (ctx.follow_range + depth_offset),
+            )
+        }
+        FormationLayer::Middle => {
+            // Melee cluster around the leader, slightly behind.
+            let a = ctx.follow_target.o + PI;
+            (
+                ctx.follow_target.x + a.cos() * (ctx.follow_range * 0.5 + depth_offset),
+                ctx.follow_target.y + a.sin() * (ctx.follow_range * 0.5 + depth_offset),
+            )
+        }
+        FormationLayer::Back => {
+            let a = ctx.follow_target.o + PI;
+            (
+                ctx.follow_target.x + a.cos() * (ctx.follow_range + depth_offset),
+                ctx.follow_target.y + a.sin() * (ctx.follow_range + depth_offset),
+            )
+        }
+    };
 
     let perp_angle = ctx.follow_target.o - PI / 2.0;
     let x = spine_x + perp_angle.cos() * lane_offset;
@@ -717,6 +792,7 @@ mod tests {
                 handle: h,
                 is_tank: false,
                 is_heal: false,
+                is_melee: false,
                 is_alive: true,
             })
             .collect();
@@ -748,18 +824,21 @@ mod tests {
                 handle: 2,
                 is_tank: false,
                 is_heal: false,
+                is_melee: false,
                 is_alive: true,
             },
             FormationMember {
                 handle: 3,
                 is_tank: false,
                 is_heal: false,
+                is_melee: false,
                 is_alive: true,
             },
             FormationMember {
                 handle: 4,
                 is_tank: false,
                 is_heal: false,
+                is_melee: false,
                 is_alive: true,
             },
         ];

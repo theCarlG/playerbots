@@ -61,6 +61,10 @@ pub enum Key {
     ActiveFsmState, // u32: ActiveFsm discriminant (0=World, 1=Combat, 2=Dead)
     WorldSubState,  // u32: WorldSub discriminant (Follow/Grind/Quest/Stay/...)
 
+    // ── Tank rotation ────────────────────────────────────────────────
+    TankRotationIdx,      // u32: index into this bot's tank_focus_targets list
+    TankRotationSwitchMs, // u64: server_time_ms when we last switched rotation target
+
     // Add new keys above this line. Keep count accurate.
     _Count,
 }

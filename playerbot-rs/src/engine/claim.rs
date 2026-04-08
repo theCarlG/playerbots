@@ -27,6 +27,9 @@ pub enum ClaimData {
     AddPickup(UnitHandle),
     /// A tank-swap target — the bot claiming this will taunt next.
     TankSwapTarget(UnitHandle),
+    /// A buff target — only one bot should cast a given buff on this target.
+    /// Payload is (target_handle, spell_id) to differentiate MotW vs Fort etc.
+    BuffTarget(UnitHandle, u32),
     /// Generic claim with a u32 kind tag and u64 payload.
     Custom(u32, u64),
 }
@@ -41,7 +44,8 @@ impl ClaimData {
             ClaimData::DouseRune(id) => (2, id as u64),
             ClaimData::AddPickup(h) => (3, h),
             ClaimData::TankSwapTarget(h) => (4, h),
-            ClaimData::Custom(kind, payload) => (5 + kind as u8, payload),
+            ClaimData::BuffTarget(h, spell) => (5, h ^ (spell as u64) << 32),
+            ClaimData::Custom(kind, payload) => (6 + kind as u8, payload),
         }
     }
 }

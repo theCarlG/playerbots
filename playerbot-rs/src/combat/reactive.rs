@@ -10,7 +10,7 @@
 /// selector containing both `Bt` enum nodes and the class rotation.
 use crate::bot::settings::StrategyFlags;
 use crate::bot::state::PlayerClass;
-use crate::engine::bt::Bt::{self, ShouldFlee, FleeToSafe, TargetCastingInterruptible, Interrupt, IsClass, DispelParty, ResurrectParty, IsTank, InCombat, PullingAggro, ThreatDump, StrategyEnabled, PullBack, PreHeal, HealInterrupt, KiteFromTarget, CloseToTarget, MaintainRange, MoveBehind, MarkRtiPreferred, HasFocusTarget, FocusAttack, TankPickupAdds, AssistLeader, ProtectAttacker, ReactivityIs, AttackNearest, HasAttackers};
+use crate::engine::bt::Bt::{self, ShouldFlee, FleeToSafe, TargetCastingInterruptible, Interrupt, IsClass, DispelParty, ResurrectParty, IsTank, InCombat, PullingAggro, ThreatDump, StrategyEnabled, PullBack, PreHeal, HealInterrupt, KiteFromTarget, CloseToTarget, MaintainRange, MoveBehind, MarkRtiPreferred, HasFocusTarget, FocusAttack, TankRotateTargets, TankPickupAdds, AssistLeader, ProtectAttacker, ReactivityIs, AttackNearest, HasAttackers};
 use crate::{Sel, Seq};
 
 /// Flee on an explicit `flee` command or when HP drops below the bot's
@@ -125,8 +125,12 @@ pub fn mark_rti_subtree() -> Bt {
 /// Target selection based on combat order and settings.
 pub fn targeting_subtree() -> Bt {
     Sel!(
-        // Focus target override.
+        // Focus target override — explicit "attack this" command.
         Seq!(HasFocusTarget, FocusAttack),
+        // Tank: rotate between assigned RTI focus targets.
+        // Reactivity gate upstream (ShouldEngage) already prevents
+        // tanks from pulling when passive/defensive with no attackers.
+        Seq!(StrategyEnabled(StrategyFlags::TANK), TankRotateTargets),
         // Tank: pick up loose adds.
         Seq!(
             StrategyEnabled(StrategyFlags::TANK),

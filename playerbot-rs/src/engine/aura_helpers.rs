@@ -128,6 +128,118 @@ pub const DEMO_ROAR_RANKS: &[SpellId] = &[
     SpellId(26998),
 ];
 
+// ── Group buff rank tables ──────────────────────────────────────────────
+// Used by the maintenance buff system so that any rank of a buff counts
+// as "already present" and prevents infinite rebuffing.
+
+/// Mark of the Wild (Druid): ranks 1-7
+pub const MARK_OF_THE_WILD_RANKS: &[SpellId] = &[
+    SpellId(1126),
+    SpellId(5232),
+    SpellId(6756),
+    SpellId(5234),
+    SpellId(8907),
+    SpellId(9884),
+    SpellId(9885),
+];
+
+/// Power Word: Fortitude (Priest): ranks 1-7
+pub const PW_FORTITUDE_RANKS: &[SpellId] = &[
+    SpellId(1243),
+    SpellId(1244),
+    SpellId(1245),
+    SpellId(2791),
+    SpellId(10937),
+    SpellId(10938),
+    SpellId(21562),
+];
+
+/// Inner Fire (Priest): ranks 1-6
+pub const INNER_FIRE_RANKS: &[SpellId] = &[
+    SpellId(588),
+    SpellId(7128),
+    SpellId(602),
+    SpellId(1006),
+    SpellId(10951),
+    SpellId(10952),
+];
+
+/// Arcane Intellect (Mage): ranks 1-5 + Arcane Brilliance rank 1
+pub const ARCANE_INTELLECT_RANKS: &[SpellId] = &[
+    SpellId(1459),
+    SpellId(1460),
+    SpellId(1461),
+    SpellId(10156),
+    SpellId(10157),
+    SpellId(23028), // Arcane Brilliance
+];
+
+/// Demon Armor (Warlock): ranks 1-5 + Demon Skin ranks 1-2
+pub const DEMON_ARMOR_RANKS: &[SpellId] = &[
+    SpellId(687),   // Demon Skin rank 1
+    SpellId(696),   // Demon Skin rank 2
+    SpellId(706),   // Demon Armor rank 1
+    SpellId(1086),  // rank 2
+    SpellId(11733), // rank 3
+    SpellId(11734), // rank 4
+    SpellId(11735), // rank 5
+];
+
+/// Lightning Shield (Shaman): ranks 1-7
+pub const LIGHTNING_SHIELD_RANKS: &[SpellId] = &[
+    SpellId(324),
+    SpellId(325),
+    SpellId(905),
+    SpellId(945),
+    SpellId(8134),
+    SpellId(10431),
+    SpellId(10432),
+];
+
+/// Blessing of Might (Paladin): ranks 1-7
+pub const BLESSING_OF_MIGHT_RANKS: &[SpellId] = &[
+    SpellId(19740),
+    SpellId(19834),
+    SpellId(19835),
+    SpellId(19836),
+    SpellId(19837),
+    SpellId(19838),
+    SpellId(25291),
+];
+
+/// Blessing of Wisdom (Paladin): ranks 1-6
+pub const BLESSING_OF_WISDOM_RANKS: &[SpellId] = &[
+    SpellId(19742),
+    SpellId(19850),
+    SpellId(19852),
+    SpellId(19853),
+    SpellId(19854),
+    SpellId(25290),
+];
+
+/// Blessing of Kings (Paladin): rank 1
+pub const BLESSING_OF_KINGS_RANKS: &[SpellId] = &[SpellId(20217)];
+
+/// Devotion Aura (Paladin): ranks 1-7
+pub const DEVOTION_AURA_RANKS: &[SpellId] = &[
+    SpellId(465),
+    SpellId(10290),
+    SpellId(643),
+    SpellId(10291),
+    SpellId(1032),
+    SpellId(10292),
+    SpellId(10293),
+];
+
+/// Retribution Aura (Paladin): ranks 1-5
+pub const RETRIBUTION_AURA_RANKS: &[SpellId] = &[
+    SpellId(7294),
+    SpellId(10298),
+    SpellId(10299),
+    SpellId(10300),
+    SpellId(10301),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;

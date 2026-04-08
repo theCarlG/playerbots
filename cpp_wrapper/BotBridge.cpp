@@ -7,8 +7,9 @@
  *   3. Returns a plain-data result (no pointers into CMaNGOS memory).
  *
  * Threading: these are called on the map worker thread that owns the bot's Player.
- * No additional locking is needed — CMaNGOS guarantees single-threaded access
- * to each Player's UpdateAI.
+ * CMaNGOS guarantees single-threaded access to each Player's UpdateAI, but
+ * bots on different maps run on different threads. Any shared mutable state
+ * (like s_moveState) must be thread_local or mutex-protected.
  */
 
 #include "botpch.h"
@@ -952,9 +953,12 @@ UnitHandle* BotBridge::CB_GetNearbyUnits(BotHandle bot, float range, bool hostil
     {
         if (!u || u == b || !u->IsAlive())
             continue;
-        bool isHostile = b->IsHostileTo(u);
-        if (hostile == isHostile)
-            handles.push_back(u->GetObjectGuid().GetRawValue());
+        // When hostile=true, return only hostile units. When hostile=false,
+        // return ALL units (hostile + friendly) — the Rust side uses this
+        // list as "nearby_units" for the full neighbourhood.
+        if (hostile && !b->IsHostileTo(u))
+            continue;
+        handles.push_back(u->GetObjectGuid().GetRawValue());
     }
 
     if (handles.empty())
@@ -1059,7 +1063,9 @@ struct MoveState
     Kind kind = NONE;
 };
 
-static std::unordered_map<BotHandle, MoveState> s_moveState;
+// Thread-local: each map-update worker thread gets its own map so there is no
+// data race when bots on different maps tick concurrently.
+static thread_local std::unordered_map<BotHandle, MoveState> s_moveState;
 
 // ── Commands ──────────────────────────────────────────────────────────────
 
@@ -1269,8 +1275,7 @@ bool BotBridge::CB_Attack(BotHandle bot, UnitHandle target)
     if (!b || !t)
         return false;
 
-    b->Attack(t, true);
-    return true;
+    return b->Attack(t, true);
 }
 
 bool BotBridge::CB_AutoAttack(BotHandle bot, bool enable)

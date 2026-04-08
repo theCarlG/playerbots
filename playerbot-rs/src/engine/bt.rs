@@ -560,6 +560,10 @@ pub enum Bt {
     MoveAwayFromRaid(f32),
     /// Keep at least this distance from current target.
     MaintainRange(f32),
+    /// Stay within a distance band from current target (min, max).
+    /// If too close (< min), backpedal away. If too far (> max), approach.
+    /// Returns Failure when already in band (lets tree continue to casts).
+    MaintainRangeBand(f32, f32),
     /// Move behind current target (avoid cleave/tail).
     MoveBehind(f32),
     /// Stop all movement.
@@ -580,6 +584,9 @@ pub enum Bt {
     CastOnSelf(SpellId),
     /// Cast a spell on current target (GCD + cooldown gated).
     CastOnTarget(SpellId),
+    /// Cast a ground-targeted AoE at the current target's position.
+    /// Used for channeled/placed AoEs like Blizzard, Flamestrike, Rain of Fire.
+    CastAoEOnTarget(SpellId),
     /// Cast a heal on the lowest-HP group member (including self) below threshold.
     HealLowest(SpellId, f32),
     /// Cast a heal on the lowest-HP party member (not self) below threshold.
@@ -604,6 +611,9 @@ pub enum Bt {
     ThreatDump,
     /// Attack the focus target.
     FocusAttack,
+    /// Tank: rotate between assigned RTI focus targets to maintain threat.
+    /// Cycles to the next assigned target every ~4 seconds.
+    TankRotateTargets,
     /// Tank: taunt loose adds not targeting us.
     TankPickupAdds,
     /// Assist: attack leader/tank's target.
@@ -684,6 +694,18 @@ pub enum Bt {
     /// melee swings. Always returns Success so it doesn't block the
     /// combat pipeline Seq.
     EngageTarget,
+    /// Face the current target. After move_to-based positioning (retreat,
+    /// kite, etc.) the bot faces the movement direction, not its target.
+    /// This leaf issues a chase(target, current_dist, 0) so the server's
+    /// MoveChase generator rotates the bot toward the target. Always
+    /// returns Success (fire-and-forget) so it doesn't block the pipeline.
+    FaceTarget,
+    /// Stop auto-attack and disengage. Used when entering Passive mode
+    /// so previously-engaged auto-attack doesn't keep swinging.
+    Disengage,
+    /// Auto CC: look up the class CC spell and cast on the RTI CC target
+    /// or nearest non-current-target mob. Gated on `StrategyFlags::CC`.
+    AutoCc,
     /// Initiate combat with the current target via the best available
     /// pull path. Dispatches in this order:
     ///   1. `auto_shoot` — wand/bow/gun/crossbow ranged auto-attack.
@@ -1346,22 +1368,15 @@ impl BtNode for Bt {
             Bt::PetUnhappy => ok(ctx.interface.pet_happiness() < 2),
             Bt::ShouldEngage => {
                 let result = match ctx.settings.reactivity {
+                    // Passive: only attack on explicit command (focus_target).
                     Reactivity::Passive => false,
-                    Reactivity::Defensive => {
-                        if !ctx.attackers.is_empty() {
-                            true
-                        } else {
-                            // Enter combat when any group member is fighting.
-                            let size = ctx.snap.group_size as usize;
-                            (0..size).any(|i| {
-                                let h = ctx.snap.group_members[i];
-                                h != 0
-                                    && h != ctx.bot_handle
-                                    && ctx.interface.get_unit_snapshot(h).in_combat
-                            })
-                        }
+                    // Defensive: only fight back when the bot itself is attacked.
+                    Reactivity::Defensive => !ctx.attackers.is_empty(),
+                    // Aggressive: attack anything nearby — seek out hostiles
+                    // even if nothing is hitting the bot yet.
+                    Reactivity::Aggressive => {
+                        !ctx.attackers.is_empty() || !ctx.nearby.is_empty()
                     }
-                    Reactivity::Aggressive => !ctx.attackers.is_empty() || !ctx.nearby.is_empty(),
                 };
                 if !result {
                     ctx.monitor(format_args!(
@@ -1496,19 +1511,65 @@ impl BtNode for Bt {
             Bt::FleeToSafe(radius) => move_to_safe(ctx, *radius),
             Bt::MoveAwayFromRaid(dist) => move_to_safe(ctx, *dist),
             Bt::MaintainRange(min_range) => {
-                let (too_close, dist) = ctx
-                    .current_target()
-                    .map_or((false, 0.0), |t| {
-                        let d = ctx.interface.unit_distance(t);
-                        (d < *min_range, d)
-                    });
-                if !too_close {
+                let target = match ctx.current_target() {
+                    Some(t) => t,
+                    None => return BtResult::Failure,
+                };
+                let dist = ctx.interface.unit_distance(target);
+                if dist >= *min_range {
                     return BtResult::Failure;
                 }
                 ctx.monitor(format_args!(
-                    "MOVE: MaintainRange({min_range}) dist={dist:.1}y -> flee",
+                    "MOVE: MaintainRange({min_range}) dist={dist:.1}y -> retreat",
                 ));
-                move_to_safe(ctx, *min_range * 2.0)
+                // Retreat to min_range + 8 so the bot gets well clear of the
+                // threshold before the mob can close the gap again. Without
+                // this buffer, the bot and mob jitter at the threshold.
+                match retreat_dest(ctx, target, *min_range + 8.0) {
+                    Some((x, y, z)) if ctx.interface.move_to(x, y, z) => BtResult::Running,
+                    _ => move_to_safe(ctx, *min_range * 2.0),
+                }
+            }
+            Bt::MaintainRangeBand(min_range, max_range) => {
+                let target = match ctx.current_target() {
+                    Some(t) => t,
+                    None => return BtResult::Failure,
+                };
+                let dist = ctx.interface.unit_distance(target);
+                if dist >= *min_range && dist <= *max_range {
+                    return BtResult::Failure;
+                }
+                if dist < *min_range {
+                    ctx.monitor(format_args!(
+                        "MOVE: RangeBand({min_range}-{max_range}) dist={dist:.1}y -> retreat",
+                    ));
+                    match retreat_dest(ctx, target, *min_range + 2.0) {
+                        Some((x, y, z)) if ctx.interface.move_to(x, y, z) => BtResult::Running,
+                        _ => move_to_safe(ctx, *min_range * 2.0),
+                    }
+                } else {
+                    // Too far — approach to max_range.
+                    ctx.monitor(format_args!(
+                        "MOVE: RangeBand({min_range}-{max_range}) dist={dist:.1}y -> approach",
+                    ));
+                    let tgt = ctx.interface.get_unit_snapshot(target);
+                    let bot = ctx.snap.self_.pos;
+                    let dx = bot.x - tgt.pos.x;
+                    let dy = bot.y - tgt.pos.y;
+                    let len_sq = dx * dx + dy * dy;
+                    let desired = *max_range - 2.0;
+                    if len_sq < 0.000_1 {
+                        return BtResult::Failure;
+                    }
+                    let inv = desired / len_sq.sqrt();
+                    let destx = tgt.pos.x + dx * inv;
+                    let desty = tgt.pos.y + dy * inv;
+                    if ctx.interface.move_to(destx, desty, bot.z) {
+                        BtResult::Running
+                    } else {
+                        BtResult::Failure
+                    }
+                }
             }
             Bt::MoveBehind(distance) => {
                 let target = match ctx.current_target() {
@@ -1548,6 +1609,29 @@ impl BtNode for Bt {
                 Some(t) => cast(ctx, *spell, t),
                 None => BtResult::Failure,
             },
+            Bt::CastAoEOnTarget(spell) => match ctx.current_target() {
+                Some(t) => {
+                    if ctx.snap.self_.is_casting || ctx.snap.self_.is_channeling {
+                        return BtResult::Failure;
+                    }
+                    if ctx.timers.gcd_active(ctx.server_time_ms) {
+                        return BtResult::Failure;
+                    }
+                    if ctx.timers.spell_on_cooldown(*spell, ctx.server_time_ms) {
+                        return BtResult::Failure;
+                    }
+                    let tgt = ctx.interface.get_unit_snapshot(t);
+                    if ctx.interface.cast_spell_pos(*spell, tgt.pos.x, tgt.pos.y, tgt.pos.z) {
+                        ctx.timers.on_spell_cast(*spell, ctx.server_time_ms);
+                        let name = ctx.spell_name(*spell);
+                        ctx.monitor(format_args!("CAST AoE {name}({}) at target pos", spell.raw()));
+                        BtResult::Success
+                    } else {
+                        BtResult::Failure
+                    }
+                }
+                None => BtResult::Failure,
+            },
             Bt::HealLowest(spell, threshold) => {
                 match crate::combat::targeting::find_heal_target(ctx, *threshold) {
                     Some(t) => {
@@ -1570,10 +1654,10 @@ impl BtNode for Bt {
                 }
             }
             Bt::StickToTarget(range) => {
-                if ctx.snap.self_.is_casting {
-                    ctx.monitor(format_args!("MOVE: StickToTarget({range}) SKIP (casting)"));
-                    return BtResult::Failure;
-                }
+                // No `is_casting` guard — the server handles pausing
+                // MoveChase during cast-time spells. Instant melee
+                // abilities don't prevent movement, and we need the bot
+                // to always be tracking its target.
                 if ctx.settings.mode == BehaviorMode::Stay {
                     return BtResult::Failure;
                 }
@@ -1600,6 +1684,7 @@ impl BtNode for Bt {
                 let current = ctx.current_target().unwrap_or(0);
                 let victim = ctx.nearby.iter().copied().find(|&u| {
                     u != current
+                        && ctx.interface.is_attackable(u)
                         && !ctx.interface.has_aura(u, *spell)
                         && !ctx.is_cc_claimed_by_other(u)
                         && ctx.interface.can_cast(*spell, u)
@@ -1614,7 +1699,9 @@ impl BtNode for Bt {
                 }
             }
             Bt::AttackNearest => {
-                let target = ctx.attackers.first().or_else(|| ctx.nearby.first());
+                // Only pick from hostile attackers — `nearby` includes
+                // friendlies and we must never auto-attack them.
+                let target = ctx.attackers.first();
                 match target {
                     Some(&unit) if ctx.current_target() == Some(unit) => {
                         ctx.pending_target.set(Some(unit));
@@ -1635,6 +1722,7 @@ impl BtNode for Bt {
             Bt::ResurrectParty => tick_resurrect(ctx),
             Bt::ThreatDump => tick_threat_dump(ctx),
             Bt::FocusAttack => tick_focus_attack(ctx),
+            Bt::TankRotateTargets => tick_tank_rotate_targets(ctx),
             Bt::TankPickupAdds => tick_tank_pickup(ctx),
             Bt::AssistLeader => tick_assist_leader(ctx),
             Bt::ProtectAttacker => tick_protect(ctx),
@@ -1753,6 +1841,22 @@ impl BtNode for Bt {
             Bt::KiteFromTarget(dist) => tick_kite_from_target(ctx, *dist),
             Bt::CloseToTarget(dist) => tick_close_to_target(ctx, *dist),
             Bt::EngageTarget => tick_engage_target(ctx),
+            Bt::FaceTarget => {
+                // Face current target after movement. Chase with the
+                // current distance so the bot doesn't move, just rotates.
+                if let Some(target) = ctx.current_target() {
+                    let dist = ctx.interface.unit_distance(target);
+                    ctx.interface.chase(target, dist.max(0.5), 0.0);
+                }
+                BtResult::Success
+            }
+            Bt::Disengage => {
+                ctx.interface.auto_attack(false);
+                ctx.interface.stop_moving();
+                ctx.monitor(format_args!("PASSIVE: disengage"));
+                BtResult::Success
+            }
+            Bt::AutoCc => tick_auto_cc(ctx),
             Bt::PullTarget => tick_pull_target(ctx),
 
             // ── Actions — 11g ────────────────────────────────────────
@@ -2021,6 +2125,45 @@ fn move_to_safe(ctx: &mut TickContext<'_>, radius: f32) -> BtResult {
     }
 }
 
+/// Compute a retreat destination when the bot needs to back away from a target.
+///
+/// When a master (group leader) exists, the bot retreats **toward the master**
+/// at the given `desired_dist` from the target. This keeps ranged bots
+/// converging toward the same point instead of scattering in random
+/// directions (which would pull additional mobs).
+///
+/// Falls back to a direct target→bot backpedal when no master is set.
+fn retreat_dest(
+    ctx: &TickContext<'_>,
+    target_handle: u64,
+    desired_dist: f32,
+) -> Option<(f32, f32, f32)> {
+    let tgt = ctx.interface.get_unit_snapshot(target_handle);
+    let bot = ctx.snap.self_.pos;
+
+    // Prefer retreating toward the master/leader position.
+    if let Some(master) = ctx.master_guid {
+        let master_pos = ctx.interface.get_unit_snapshot(master).pos;
+        let dx = master_pos.x - tgt.pos.x;
+        let dy = master_pos.y - tgt.pos.y;
+        let len_sq = dx * dx + dy * dy;
+        if len_sq > 0.000_1 {
+            let inv = desired_dist / len_sq.sqrt();
+            return Some((tgt.pos.x + dx * inv, tgt.pos.y + dy * inv, bot.z));
+        }
+    }
+
+    // Fallback: backpedal directly away from target along target→bot line.
+    let dx = bot.x - tgt.pos.x;
+    let dy = bot.y - tgt.pos.y;
+    let len_sq = dx * dx + dy * dy;
+    if len_sq < 0.000_1 {
+        return None;
+    }
+    let inv = desired_dist / len_sq.sqrt();
+    Some((tgt.pos.x + dx * inv, tgt.pos.y + dy * inv, bot.z))
+}
+
 fn cast(ctx: &mut TickContext<'_>, spell: SpellId, target: u64) -> BtResult {
     // Don't interrupt an in-progress cast (e.g. Summon Demon, Hearthstone).
     if ctx.snap.self_.is_casting {
@@ -2152,6 +2295,13 @@ fn eval_random_chance(ctx: &TickContext<'_>, pct: u8) -> bool {
     ((seed >> 33) as u32 % 100) < u32::from(pct)
 }
 
+/// Classify a WoW class_id as melee or ranged for formation positioning.
+/// Warrior(1), Paladin(2), Rogue(4), Shaman(7), Druid(11) → melee.
+/// Hunter(3), Priest(5), Mage(8), Warlock(9) → ranged.
+fn is_melee_class(class_id: u8) -> bool {
+    matches!(class_id, 1 | 2 | 4 | 7 | 11)
+}
+
 fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
     // Follow-target priority order, mirroring PB2:
     //   1. The designated group tank.
@@ -2265,15 +2415,13 @@ fn apply_formation_follow(ctx: &mut TickContext<'_>, target: UnitHandle) {
             continue;
         }
         let role = ctx.interface.group_get_role(h);
+        let unit_snap = ctx.interface.get_unit_snapshot(h);
+        let is_melee = is_melee_class(unit_snap.class_id);
         roster.push(FormationMember {
             handle: h,
             is_tank: role.is_tank(),
             is_heal: role.is_heal(),
-            // No dedicated "is alive" flag on `BotRole`; dead bots stop
-            // following anyway (Dead state engine takes over). Treat
-            // every roster entry as alive — mirrors PB2's behavior where
-            // Formation::GetFollowAngle only walks living members via
-            // `GroupReference::next()`.
+            is_melee,
             is_alive: true,
         });
     }
@@ -2385,23 +2533,43 @@ fn tick_consumables(ctx: &mut TickContext<'_>) -> BtResult {
 
 fn tick_buff(ctx: &mut TickContext<'_>, buffs: &[GroupBuff]) -> BtResult {
     for buff in buffs {
-        if let Some(target_handle) = find_buff_target(ctx, buff)
-            && ctx.interface.cast_spell(buff.spell_id, target_handle)
-        {
-            ctx.timers.on_spell_cast(buff.spell_id, ctx.server_time_ms);
-            return BtResult::Success;
+        if let Some(target_handle) = find_buff_target(ctx, buff) {
+            // Claim the buff target via group state so other bots with the
+            // same buff skip this target. TTL 10s covers cast + GCD.
+            if let Some(ref gh) = ctx.group_handle {
+                let claim = crate::engine::claim::ClaimData::BuffTarget(
+                    target_handle,
+                    buff.spell_id.raw(),
+                );
+                if let Ok(mut gs) = gh.state().try_write() {
+                    if !gs.encounter.claims.try_claim(
+                        ctx.bot_handle,
+                        claim,
+                        10_000,
+                        ctx.server_time_ms,
+                    ) {
+                        // Another bot already claimed this buff target — skip.
+                        continue;
+                    }
+                }
+            }
+            if ctx.interface.cast_spell(buff.spell_id, target_handle) {
+                ctx.timers.on_spell_cast(buff.spell_id, ctx.server_time_ms);
+                return BtResult::Success;
+            }
         }
     }
     BtResult::Failure
 }
 
 fn find_buff_target(ctx: &mut TickContext<'_>, buff: &GroupBuff) -> Option<u64> {
+    use crate::engine::aura_helpers::has_any_rank;
     use crate::noncombat::buffing::BuffTarget;
 
     let me = ctx.bot_handle;
     match buff.target {
         BuffTarget::Me => {
-            if !ctx.interface.has_aura(me, buff.aura_id) {
+            if !has_any_rank(ctx.interface, me, buff.aura_ranks) {
                 Some(me)
             } else {
                 None
@@ -2410,11 +2578,11 @@ fn find_buff_target(ctx: &mut TickContext<'_>, buff: &GroupBuff) -> Option<u64> 
         BuffTarget::Tank => ctx
             .interface
             .group_get_tank()
-            .filter(|&t| !ctx.interface.has_aura(t, buff.aura_id)),
+            .filter(|&t| !has_any_rank(ctx.interface, t, buff.aura_ranks)),
         BuffTarget::Healer => ctx
             .interface
             .group_get_healer()
-            .filter(|&h| !ctx.interface.has_aura(h, buff.aura_id)),
+            .filter(|&h| !has_any_rank(ctx.interface, h, buff.aura_ranks)),
         BuffTarget::AnyMember => std::iter::once(me)
             .chain(
                 ctx.snap.group_members[..ctx.snap.group_size as usize]
@@ -2422,7 +2590,7 @@ fn find_buff_target(ctx: &mut TickContext<'_>, buff: &GroupBuff) -> Option<u64> 
                     .copied()
                     .filter(|&h| h != 0 && h != me),
             )
-            .find(|&h| !ctx.interface.has_aura(h, buff.aura_id)),
+            .find(|&h| !has_any_rank(ctx.interface, h, buff.aura_ranks)),
     }
 }
 
@@ -2565,6 +2733,18 @@ fn tick_threat_dump(ctx: &mut TickContext<'_>) -> BtResult {
 
 fn tick_focus_attack(ctx: &mut TickContext<'_>) -> BtResult {
     if let Some(focus) = ctx.settings.focus_target {
+        // Validate the focus target is actually attackable — a stale or
+        // incorrectly-set focus (e.g. friendly player from "focus heal")
+        // should not block the targeting pipeline every tick.
+        if !ctx.interface.is_attackable(focus) {
+            ctx.monitor(format_args!(
+                "TARGET: FocusAttack -> 0x{focus:X} not attackable, clearing",
+            ));
+            // Can't mutate settings from ctx, but the FSM exit handler
+            // will clean up focus_target when combat drops. Return
+            // Failure so targeting falls through to other subtrees.
+            return BtResult::Failure;
+        }
         if ctx.current_target() == Some(focus) {
             ctx.pending_target.set(Some(focus));
             return BtResult::Success;
@@ -2577,6 +2757,101 @@ fn tick_focus_attack(ctx: &mut TickContext<'_>) -> BtResult {
             "TARGET: FocusAttack -> attack(0x{focus:X}) REFUSED",
         ));
     }
+    BtResult::Failure
+}
+
+/// Tank multi-target rotation: cycle between assigned RTI focus targets
+/// every ~4 seconds. Resolves RTI icons to live unit handles, picks the
+/// next one in round-robin order, and attacks + taunts if the mob isn't
+/// targeting us. This keeps threat on all assigned mobs.
+fn tick_tank_rotate_targets(ctx: &mut TickContext<'_>) -> BtResult {
+    use crate::engine::blackboard::Key;
+
+    const ROTATION_INTERVAL_MS: u64 = 4_000;
+
+    let gs = match ctx.group_state {
+        Some(gs) => gs,
+        None => return BtResult::Failure,
+    };
+
+    // Collect this bot's assigned RTI icons.
+    let mut icons = [0u8; 8];
+    let count = gs.coordination.tank_target_icons(ctx.bot_handle, &mut icons);
+    if count == 0 {
+        return BtResult::Failure;
+    }
+
+    // Resolve icons to live unit handles, filtering out dead/despawned mobs.
+    let mut targets: [(u64, u8); 8] = [(0, 0); 8];
+    let mut n_targets = 0;
+    for i in 0..count {
+        let icon = icons[i];
+        // RTI icons in tank_focus_targets are stored 1-based (1..=8),
+        // matching get_unit_with_raid_icon's convention.
+        if let Some(unit) = ctx.interface.get_unit_with_raid_icon(icon) {
+            if ctx.interface.is_attackable(unit) {
+                targets[n_targets] = (unit, icon);
+                n_targets += 1;
+            }
+        }
+    }
+
+    if n_targets == 0 {
+        return BtResult::Failure;
+    }
+
+    // Read rotation state from blackboard.
+    let cur_idx = ctx.blackboard.get_u32(Key::TankRotationIdx).unwrap_or(0) as usize;
+    let last_switch = ctx.blackboard.get_u64(Key::TankRotationSwitchMs).unwrap_or(0);
+
+    // Decide which target to focus this tick.
+    let elapsed_since_switch = ctx.server_time_ms.saturating_sub(last_switch);
+    let idx = if elapsed_since_switch >= ROTATION_INTERVAL_MS || last_switch == 0 {
+        // Time to rotate to the next target.
+        let next = if cur_idx + 1 >= n_targets { 0 } else { cur_idx + 1 };
+        ctx.blackboard.set(Key::TankRotationIdx, crate::engine::blackboard::Value::U32(next as u32));
+        ctx.blackboard.set(Key::TankRotationSwitchMs, crate::engine::blackboard::Value::U64(ctx.server_time_ms));
+        next
+    } else {
+        // Stay on the current target (clamped to valid range).
+        cur_idx.min(n_targets - 1)
+    };
+
+    let (target, icon) = targets[idx];
+
+    // Check if the mob is targeting us already.
+    let snap = ctx.interface.get_unit_snapshot(target);
+    if snap.current_target != ctx.bot_handle {
+        // Not on us — try to taunt first.
+        if ctx.interface.taunt(target) {
+            ctx.monitor(format_args!(
+                "TARGET: TankRotate -> taunt 0x{target:X} (icon={icon}, was on 0x{:X})",
+                snap.current_target,
+            ));
+        }
+    }
+
+    // Attack / switch to this target regardless of taunt result.
+    if ctx.current_target() == Some(target) {
+        ctx.pending_target.set(Some(target));
+        ctx.monitor(format_args!(
+            "TARGET: TankRotate -> stay on 0x{target:X} (icon={icon}, {}/{n_targets})",
+            idx + 1,
+        ));
+        return BtResult::Success;
+    }
+
+    if ctx.attack(target) {
+        ctx.monitor(format_args!(
+            "TARGET: TankRotate -> switch to 0x{target:X} (icon={icon}, {}/{n_targets})",
+            idx + 1,
+        ));
+        return BtResult::Success;
+    }
+
+    ctx.monitor(format_args!(
+        "TARGET: TankRotate -> attack(0x{target:X}) REFUSED",
+    ));
     BtResult::Failure
 }
 
@@ -3334,24 +3609,9 @@ fn tick_kite_from_target(ctx: &mut TickContext<'_>, dist: f32) -> BtResult {
     if ctx.interface.unit_distance(target) >= dist {
         return BtResult::Failure;
     }
-    let tgt = ctx.interface.get_unit_snapshot(target);
-    let bot = ctx.snap.self_.pos;
-    let dx = bot.x - tgt.pos.x;
-    let dy = bot.y - tgt.pos.y;
-    let len_sq = dx * dx + dy * dy;
-    if len_sq < 0.000_1 {
-        // Bot is essentially on top of the target — we have no direction
-        // to kite in. Strategies that care should pair this with
-        // `AttackerCountAbove(0)` / a melee-range check first.
-        return BtResult::Failure;
-    }
-    let inv = (dist * 2.0) / len_sq.sqrt();
-    let destx = tgt.pos.x + dx * inv;
-    let desty = tgt.pos.y + dy * inv;
-    if ctx.interface.move_to(destx, desty, bot.z) {
-        BtResult::Running
-    } else {
-        BtResult::Failure
+    match retreat_dest(ctx, target, dist * 2.0) {
+        Some((x, y, z)) if ctx.interface.move_to(x, y, z) => BtResult::Running,
+        _ => BtResult::Failure,
     }
 }
 
@@ -3360,9 +3620,8 @@ fn tick_kite_from_target(ctx: &mut TickContext<'_>, dist: f32) -> BtResult {
 /// but kept as its own helper so future divergence (e.g. a "close
 /// with leap" variant for classes with a gap closer) lands cleanly.
 fn tick_close_to_target(ctx: &mut TickContext<'_>, dist: f32) -> BtResult {
-    if ctx.snap.self_.is_casting {
-        return BtResult::Failure;
-    }
+    // No `is_casting` guard — the server handles pausing MoveChase
+    // during cast-time spells. We need melee bots to always track.
     let target = match ctx.current_target() {
         Some(t) => t,
         None => return BtResult::Failure,
@@ -3472,14 +3731,31 @@ fn tick_wait_for_attack(ctx: &mut TickContext<'_>) -> BtResult {
     }
 }
 
-/// `Bt::PreHeal`. Cross-class preheal fallback — returns Failure.
-/// Actual preheal logic is class-specific (each healer spec knows its
-/// fast heal spell) and is layered via the class file's reaction
-/// leaves. This variant exists so strategies can reference it
-/// generically; class files override by inserting a `HealLowest`
-/// or `CastOnLowestAlly` leaf at higher priority.
-fn tick_preheal(_ctx: &mut TickContext<'_>) -> BtResult {
-    BtResult::Failure
+/// `Bt::PreHeal`. Generic cross-class preheal — find the most injured
+/// group member and cast the bot's best known heal on them. This runs
+/// in the reactive layer so healers respond to damage immediately.
+/// Non-healer classes return Failure (no heal spell known).
+fn tick_preheal(ctx: &mut TickContext<'_>) -> BtResult {
+    use crate::bot::state::PlayerClass;
+    use crate::data::spells::vanilla::{druid, paladin, priest, shaman};
+
+    // Pick the class's fastest/cheapest single-target heal.
+    let heal_spell = match ctx.class {
+        PlayerClass::Priest => priest::FLASH_HEAL,
+        PlayerClass::Paladin => paladin::FLASH_OF_LIGHT,
+        PlayerClass::Druid => druid::REGROWTH,
+        PlayerClass::Shaman => shaman::LESSER_HEALING_WAVE,
+        _ => return BtResult::Failure,
+    };
+
+    let target = crate::combat::targeting::find_heal_target(ctx, 0.85);
+    match target {
+        Some(t) => {
+            ctx.try_claim_heal(t, 3000);
+            cast(ctx, heal_spell, t)
+        }
+        None => BtResult::Failure,
+    }
 }
 
 /// `Bt::HealInterrupt`. Cancel the bot's own cast if the heal target
@@ -3536,12 +3812,39 @@ fn tick_cc_cast_on_rti(ctx: &mut TickContext<'_>, spell: SpellId) -> BtResult {
 fn tick_cc_cast_on_nearest(ctx: &mut TickContext<'_>, spell: SpellId) -> BtResult {
     let current = ctx.current_target().unwrap_or(0);
     let victim = ctx.nearby.iter().copied().find(|&u| {
-        u != current && !ctx.interface.has_aura(u, spell) && ctx.interface.can_cast(spell, u)
+        u != current
+            && ctx.interface.is_attackable(u)
+            && !ctx.interface.has_aura(u, spell)
+            && ctx.interface.can_cast(spell, u)
     });
     match victim {
         Some(t) => cast(ctx, spell, t),
         None => BtResult::Failure,
     }
+}
+
+/// Auto CC: look up the class CC spell and try RTI-marked target first,
+/// then nearest non-current-target mob. Gated on `StrategyFlags::CC`.
+fn tick_auto_cc(ctx: &mut TickContext<'_>) -> BtResult {
+    if !ctx.settings.strategies.has_any(StrategyFlags::CC) {
+        return BtResult::Failure;
+    }
+    let spell = match ctx.class {
+        PlayerClass::Mage => SpellId(118),       // Polymorph
+        PlayerClass::Warlock => SpellId(710),     // Banish
+        PlayerClass::Priest => SpellId(10955),    // Shackle Undead
+        PlayerClass::Druid => SpellId(2637),      // Hibernate
+        PlayerClass::Hunter => SpellId(1499),     // Freezing Trap
+        PlayerClass::Paladin => SpellId(20066),   // Repentance
+        PlayerClass::Rogue => SpellId(6770),      // Sap
+        _ => return BtResult::Failure,
+    };
+    // Try RTI-marked CC target first, then nearest add.
+    let result = tick_cc_cast_on_rti(ctx, spell);
+    if result != BtResult::Failure {
+        return result;
+    }
+    tick_cc_cast_on_nearest(ctx, spell)
 }
 
 /// Switch the bot's focus to the unit wearing `icon_0to7` and start
@@ -4386,6 +4689,9 @@ mod tests {
         }
         fn unit_kind(&self, _: UnitHandle) -> u8 {
             self.target_kind
+        }
+        fn is_attackable(&self, _: UnitHandle) -> bool {
+            true
         }
         fn find_dispellable_target(&self, dispel_mask: u8) -> Option<(UnitHandle, SpellId)> {
             // Parity with the C++ side: `0` = any school. Otherwise only
@@ -5664,6 +5970,77 @@ mod tests {
         let mut owned = TestCtxOwned::new();
         assert_eq!(Bt::PreHeal.tick(&mut owned.ctx()), BtResult::Failure);
         assert_eq!(Bt::HealInterrupt.tick(&mut owned.ctx()), BtResult::Failure);
+    }
+
+    #[test]
+    fn tank_rotate_targets_cycles_between_assigned_icons() {
+        use crate::engine::group_state::{GroupCoordination, GroupState};
+
+        let mut mock = Mock11a::new();
+        // Two mobs marked skull (8) and cross (7).
+        let mob_skull: UnitHandle = 0xA000;
+        let mob_cross: UnitHandle = 0xB000;
+        mock.raid_icon_units.insert(8, mob_skull);
+        mock.raid_icon_units.insert(7, mob_cross);
+
+        let mut owned = TestCtxOwned::new();
+        let bot_handle: UnitHandle = 0x1234;
+
+        // Set up group state with tank focus targets for this bot.
+        let mut gs = GroupState::default();
+        gs.coordination.assign_tank_target(bot_handle, 8); // skull
+        gs.coordination.assign_tank_target(bot_handle, 7); // cross
+
+        // First tick: should pick a target (idx wraps from 0 → 1 since
+        // last_switch==0 triggers rotation).
+        owned.time_ms = 10_000;
+        let mut ctx = ctx_with_iface(&mut owned, &mock);
+        ctx.bot_handle = bot_handle;
+        ctx.group_state = Some(&gs);
+        let r1 = tick_tank_rotate_targets(&mut ctx);
+        assert_eq!(r1, BtResult::Success);
+        let first_target = ctx.pending_target.get();
+
+        // Second tick within rotation interval: should stay on same target.
+        owned.time_ms = 12_000;
+        let mut ctx = ctx_with_iface(&mut owned, &mock);
+        ctx.bot_handle = bot_handle;
+        ctx.group_state = Some(&gs);
+        let r2 = tick_tank_rotate_targets(&mut ctx);
+        assert_eq!(r2, BtResult::Success);
+        let second_target = ctx.pending_target.get();
+        assert_eq!(first_target, second_target, "should stay on same target within interval");
+
+        // Third tick after interval: should switch to next target.
+        owned.time_ms = 15_000; // 5s after first switch > 4s interval
+        let mut ctx = ctx_with_iface(&mut owned, &mock);
+        ctx.bot_handle = bot_handle;
+        ctx.group_state = Some(&gs);
+        let r3 = tick_tank_rotate_targets(&mut ctx);
+        assert_eq!(r3, BtResult::Success);
+        let third_target = ctx.pending_target.get();
+        assert_ne!(first_target, third_target, "should have rotated to the other target");
+    }
+
+    #[test]
+    fn tank_rotate_targets_fails_without_group_state() {
+        let mock = Mock11a::new();
+        let mut owned = TestCtxOwned::new();
+        let mut ctx = ctx_with_iface(&mut owned, &mock);
+        assert_eq!(tick_tank_rotate_targets(&mut ctx), BtResult::Failure);
+    }
+
+    #[test]
+    fn tank_rotate_targets_fails_without_assignments() {
+        use crate::engine::group_state::GroupState;
+
+        let mock = Mock11a::new();
+        let mut owned = TestCtxOwned::new();
+        let gs = GroupState::default(); // no tank_focus_targets
+        let mut ctx = ctx_with_iface(&mut owned, &mock);
+        ctx.bot_handle = 0x1234;
+        ctx.group_state = Some(&gs);
+        assert_eq!(tick_tank_rotate_targets(&mut ctx), BtResult::Failure);
     }
 
     #[test]

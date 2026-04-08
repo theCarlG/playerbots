@@ -1,7 +1,7 @@
 use crate::{Sel, Seq};
 /// Bot initialization — builds per-FSM behavior trees from (class, spec).
 use crate::{
-    bot::settings::{BehaviorMode, BotStateKind, StrategyFlags, StrategySet},
+    bot::settings::{BehaviorMode, BotStateKind, Reactivity, StrategyFlags, StrategySet},
     bot::state::{BotState, BotTrees, PlayerClass, PlayerSpec},
     classes,
     combat::reactive,
@@ -193,10 +193,11 @@ fn class_buffs(class: PlayerClass, spec: PlayerSpec) -> &'static [GroupBuff] {
 /// with encounter override checked first (at tick-time, not in the tree).
 fn build_bot_trees(class: PlayerClass, spec: PlayerSpec) -> BotTrees {
     let buffs = class_buffs(class, spec);
+    let class_combat = class_bt(class, ActiveFsm::Combat, spec);
 
     BotTrees {
-        combat: build_combat_tree(class_bt(class, ActiveFsm::Combat, spec)),
-        world: build_world_tree(),
+        combat: build_combat_tree(class_combat.clone()),
+        world: build_world_tree(class_combat),
         dead: world::death::death_subtree(),
         maintenance: maintenance_subtree(buffs),
     }
@@ -210,8 +211,17 @@ fn build_combat_tree(class_rotation: Bt) -> Bt {
     use Bt::{ModeIs, ShouldEngage};
 
     Sel!(
-        // Passive mode — do nothing even in combat.
-        ModeIs(BehaviorMode::Passive),
+        // Passive — actively disengage: stop auto-attack and movement
+        // so previously-engaged combat doesn't keep swinging. Checks
+        // both BehaviorMode::Passive (addon strategy toggle) and
+        // Reactivity::Passive (`react passive` command).
+        Seq!(
+            Sel!(
+                ModeIs(BehaviorMode::Passive),
+                Bt::ReactivityIs(Reactivity::Passive),
+            ),
+            Bt::Disengage,
+        ),
         // Duel request handling.
         Seq!(
             Bt::DuelRequested,
@@ -241,12 +251,28 @@ fn build_combat_tree(class_rotation: Bt) -> Bt {
 }
 
 /// Build the world (out-of-combat) FSM tree: eat/drink + mode dispatch.
-fn build_world_tree() -> Bt {
+///
+/// `class_rotation` is the same class combat rotation used in the combat
+/// tree. In the world tree it's gated behind `GroupMembersBelow` so healer
+/// specs can top off injured party members OOC. Non-healer rotations
+/// (which only have damage nodes) will simply return Failure when no
+/// enemy target exists, falling through harmlessly.
+fn build_world_tree(class_rotation: Bt) -> Bt {
     use Bt::Consumables;
 
     Sel!(
         // On taxi — do nothing.
         Seq!(Bt::OnTaxi, Bt::Noop),
+        // Apply missing world buffs (configured in server config).
+        crate::strategies::wbuff::build(),
+        // Resurrect dead party members before eating/drinking.
+        reactive::resurrect_subtree(),
+        // OOC healing — healers top off injured group members.
+        // Runs before Consumables so the healer heals first, then drinks.
+        Seq!(
+            Bt::GroupMembersBelow(1, 0.90),
+            Bt::throttle(1_000, class_rotation),
+        ),
         // Eat/drink to recover HP/mana.
         Consumables,
         // Duel request handling (can happen OOC too).
@@ -281,7 +307,7 @@ fn build_world_tree() -> Bt {
 ///      the bot still proceeds to the rotation for healing, buffing, etc.
 fn combat_wrapper(class_rotation: Bt) -> Bt {
     use BehaviorMode;
-    use Bt::{InCombat, MaintainConfiguredCurse, ModeIs};
+    use Bt::{IsTank, MaintainConfiguredCurse, ModeIs};
     Sel!(
         // ── A) Reactive — any one short-circuits the rest ────────────
         reactive::flee_subtree(),
@@ -292,6 +318,9 @@ fn combat_wrapper(class_rotation: Bt) -> Bt {
         reactive::threat_subtree(),
         reactive::pull_back_subtree(),
         reactive::preheal_subtree(),
+        // CC adds: cast crowd control on RTI CC target or nearest add.
+        // Throttled inside AutoCc to prevent spam.
+        Bt::throttle(2_000, Bt::AutoCc),
         // ── B) Combat pipeline ───────────────────────────────────────
         //
         // Three-step Seq: target → position → act. Each step uses
@@ -303,35 +332,64 @@ fn combat_wrapper(class_rotation: Bt) -> Bt {
         // rotation will naturally fail when out of range (melee at 30y)
         // but succeeds once the bot arrives.
         Seq!(
-            // B.1–B.3 — Offensive steps: targeting, engage, mark, position.
-            // Gated on actually being in combat, having attackers, or having
-            // been commanded to attack (focus_target). When the combat tree
-            // is entered only via GroupMembersBelow (healers topping off OOC),
-            // these steps are skipped so the bot doesn't auto-attack the
-            // master's UI selection.
+            // B.1 — Targeting + engage. Gated on ShouldEngage (which
+            //        respects Reactivity for ALL roles) or an explicit focus
+            //        command. Healers entering via GroupMembersBelow skip
+            //        this so they don't auto-attack.
             Bt::Optional(Box::new(Seq!(
-                Sel!(InCombat, Bt::ShouldEngage, Bt::HasFocusTarget),
-                // B.1 — Targeting (optional — healers may have no enemy)
+                Sel!(Bt::ShouldEngage, Bt::HasFocusTarget),
                 Sel!(reactive::targeting_subtree(), Bt::Noop),
-                // B.1b — Engage auto-attack / auto-shoot on the resolved target.
                 Bt::EngageTarget,
-                // B.2 — Mark RTI (optional, tank only)
                 Sel!(reactive::mark_rti_subtree(), Bt::Noop),
-                // B.3 — Positioning (optional, fire-and-forget).
-                //        Suppressed in Stay mode.
-                Bt::Optional(Box::new(Seq!(
-                    ModeIs(BehaviorMode::Stay).not(),
-                    Sel!(
-                        reactive::behind_subtree(),
-                        reactive::ranged_subtree(),
-                        reactive::close_subtree(),
-                        reactive::kite_subtree(),
+            ))),
+            // B.2 — Positioning (fire-and-forget). ONE movement system per
+            //        bot type to avoid conflicting chase commands.
+            //
+            //        BEHIND: chase(target, 2, PI) via MoveBehind — handles
+            //          both approach AND behind positioning in one command.
+            //        CLOSE (not BEHIND): chase(target, 5, 0) via
+            //          StickToTarget — melee approach + facing.
+            //        RANGED: MaintainRange retreat + CloseToTarget chase.
+            //        NONE of the above: FaceTarget for casters/healers.
+            //
+            //        Only ONE of these fires per tick. Suppressed in Stay.
+            Bt::Optional(Box::new(Seq!(
+                ModeIs(BehaviorMode::Stay).not(),
+                Sel!(
+                    // BEHIND melee (rogues, feral cat): position behind.
+                    // MoveBehind returns Running while moving, Failure
+                    // when already behind + in range. Noop catches the
+                    // in-range case so the Sel arm always succeeds and
+                    // we never fall through to CLOSE or FaceTarget.
+                    Seq!(
+                        Bt::StrategyEnabled(StrategyFlags::BEHIND),
+                        Sel!(reactive::behind_subtree(), Bt::StickToTarget(5.0), Bt::Noop),
                     ),
-                ))),
+                    // CLOSE melee (warriors, paladins, enh shaman, feral
+                    // bear): approach from front. Re-issued every tick so
+                    // the bot keeps tracking after spell casts.
+                    Seq!(
+                        Bt::StrategyEnabled(StrategyFlags::CLOSE),
+                        Sel!(Bt::StickToTarget(5.0), Bt::Noop),
+                    ),
+                    // RANGED: keep distance + close if too far.
+                    Seq!(
+                        Bt::StrategyEnabled(StrategyFlags::RANGED),
+                        Sel!(reactive::ranged_subtree(), Bt::Noop),
+                    ),
+                    // Fallback (healers etc): just face the target.
+                    Bt::FaceTarget,
+                ),
             ))),
             // B.4 — Class rotation (the main event). Always runs so healers
             //        can heal OOC and DPS can use their rotation in combat.
+            //        Non-tank DPS pause when about to pull aggro (>90% of
+            //        tank threat) — the reactive threat_subtree handles
+            //        classes with dumps (Fade, Feign, Vanish); for everyone
+            //        else, skipping the rotation for one tick lets natural
+            //        threat decay work.
             Sel!(
+                Seq!(IsTank.not(), Bt::PullingAggro, Bt::Noop),
                 Bt::throttle(2_000, MaintainConfiguredCurse),
                 class_rotation,
                 Bt::Noop,

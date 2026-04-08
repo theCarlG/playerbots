@@ -1,0 +1,327 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/">
+
+    <Frame name="RaidControlFrame" parent="UIParent" toplevel="true" movable="true" enableMouse="true" hidden="false">
+        <Size><AbsDimension x="400" y="500"/></Size>
+        <Anchors><Anchor point="CENTER"/></Anchors>
+        
+        <Layers>
+            <Layer level="OVERLAY">
+                <FontString name="RaidControlTitle" inherits="GameFontNormal" text="Raid Control">
+                    <Anchors>
+                        <Anchor point="TOP" relativeTo="RaidControlFrame" relativePoint="TOP">
+                            <Offset><AbsDimension x="0" y="-8"/></Offset>
+                        </Anchor>
+                    </Anchors>
+                </FontString>
+            </Layer>
+        </Layers>
+        
+        <Frames>
+            <!-- Close button -->
+            <Button name="RaidControlCloseButton" inherits="UIPanelCloseButton">
+                <Size><AbsDimension x="24" y="24"/></Size>
+                <Anchors>
+                    <Anchor point="TOPRIGHT" relativeTo="RaidControlFrame" relativePoint="TOPRIGHT">
+                        <Offset><AbsDimension x="-4" y="-4"/></Offset>
+                    </Anchor>
+                </Anchors>
+            </Button>
+            
+            <!-- Minimize button -->
+            <Button name="RaidControlMinButton">
+                <Size><AbsDimension x="24" y="24"/></Size>
+                <Anchors>
+                    <Anchor point="RIGHT" relativeTo="RaidControlCloseButton" relativePoint="LEFT">
+                        <Offset><AbsDimension x="-2" y="0"/></Offset>
+                    </Anchor>
+                </Anchors>
+                <NormalTexture file="Interface\Buttons\WHITE8x8">
+                    <Color r="0.25" g="0.25" b="0.25" a="0.8"/>
+                </NormalTexture>
+                <HighlightTexture file="Interface\Buttons\WHITE8x8" alphaMode="ADD">
+                    <Color r="0.4" g="0.4" b="0.4" a="0.5"/>
+                </HighlightTexture>
+                <NormalFont style="GameFontNormal"/>
+                <Scripts>
+                    <OnClick>RaidControl:ToggleMinimize()</OnClick>
+                </Scripts>
+            </Button>
+            
+            <!-- Tab Buttons -->
+            <Button name="RaidControlTabAssignments">
+                <Size><AbsDimension x="110" y="26"/></Size>
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="RaidControlFrame" relativePoint="TOPLEFT">
+                        <Offset><AbsDimension x="15" y="-35"/></Offset>
+                    </Anchor>
+                </Anchors>
+                <NormalTexture file="Interface\Buttons\WHITE8x8">
+                    <Color r="0.2" g="0.2" b="0.2" a="0.9"/>
+                </NormalTexture>
+                <HighlightTexture file="Interface\Buttons\WHITE8x8" alphaMode="ADD">
+                    <Color r="0.3" g="0.3" b="0.3" a="0.4"/>
+                </HighlightTexture>
+                <NormalFont style="GameFontNormal"/>
+                <HighlightFont style="GameFontHighlight"/>
+                <Scripts>
+                    <OnClick>RaidControl:ShowTab("assignments")</OnClick>
+                </Scripts>
+            </Button>
+            
+            <Button name="RaidControlTabControls">
+                <Size><AbsDimension x="110" y="26"/></Size>
+                <Anchors>
+                    <Anchor point="LEFT" relativeTo="RaidControlTabAssignments" relativePoint="RIGHT">
+                        <Offset><AbsDimension x="4" y="0"/></Offset>
+                    </Anchor>
+                </Anchors>
+                <NormalTexture file="Interface\Buttons\WHITE8x8">
+                    <Color r="0.2" g="0.2" b="0.2" a="0.9"/>
+                </NormalTexture>
+                <HighlightTexture file="Interface\Buttons\WHITE8x8" alphaMode="ADD">
+                    <Color r="0.3" g="0.3" b="0.3" a="0.4"/>
+                </HighlightTexture>
+                <NormalFont style="GameFontNormal"/>
+                <HighlightFont style="GameFontHighlight"/>
+                <Scripts>
+                    <OnClick>RaidControl:ShowTab("controls")</OnClick>
+                </Scripts>
+            </Button>
+            
+            <!-- Main Content -->
+            <Frame name="RaidControlContent">
+                <Size><AbsDimension x="380" y="420"/></Size>
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="RaidControlTabAssignments" relativePoint="BOTTOMLEFT">
+                        <Offset><AbsDimension x="0" y="-8"/></Offset>
+                    </Anchor>
+                </Anchors>
+                
+                <Frames>
+                    <!-- ============ ASSIGNMENTS TAB ============ -->
+                    <Frame name="RaidControlAssignmentsTab">
+                        <Size><AbsDimension x="380" y="400"/></Size>
+                        <Anchors>
+                            <Anchor point="TOPLEFT"/>
+                        </Anchors>
+                        
+                        <Frames>
+                            <!-- Row 1: Tanks -->
+                            <Frame name="RaidControlTankRow">
+                                <Size><AbsDimension x="380" y="50"/></Size>
+                                <Anchors>
+                                    <Anchor point="TOPLEFT">
+                                        <Offset><AbsDimension x="0" y="0"/></Offset>
+                                    </Anchor>
+                                </Anchors>
+                                <Layers>
+                                    <Layer level="ARTWORK">
+                                        <FontString inherits="GameFontNormalSmall" text="|cff69ccf0MT|r">
+                                            <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="5" y="0"/></Offset></Anchor></Anchors>
+                                        </FontString>
+                                        <FontString inherits="GameFontNormalSmall" text="|cff69ccf0OT1|r">
+                                            <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="130" y="0"/></Offset></Anchor></Anchors>
+                                        </FontString>
+                                        <FontString inherits="GameFontNormalSmall" text="|cff69ccf0OT2|r">
+                                            <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="255" y="0"/></Offset></Anchor></Anchors>
+                                        </FontString>
+                                    </Layer>
+                                </Layers>
+                                <Frames>
+                                    <Frame name="RaidControlMTDropdown" inherits="UIDropDownMenuTemplate">
+                                        <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="-12" y="-12"/></Offset></Anchor></Anchors>
+                                    </Frame>
+                                    <Frame name="RaidControlOT1Dropdown" inherits="UIDropDownMenuTemplate">
+                                        <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="113" y="-12"/></Offset></Anchor></Anchors>
+                                    </Frame>
+                                    <Frame name="RaidControlOT2Dropdown" inherits="UIDropDownMenuTemplate">
+                                        <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="238" y="-12"/></Offset></Anchor></Anchors>
+                                    </Frame>
+                                </Frames>
+                            </Frame>
+                            
+                            <!-- Row 2: Tank Healers -->
+                            <Frame name="RaidControlHealerRow">
+                                <Size><AbsDimension x="380" y="50"/></Size>
+                                <Anchors>
+                                    <Anchor point="TOPLEFT" relativeTo="RaidControlTankRow" relativePoint="BOTTOMLEFT"/>
+                                </Anchors>
+                                <Layers>
+                                    <Layer level="ARTWORK">
+                                        <FontString inherits="GameFontNormalSmall" text="|cff00ff00MT Healer|r">
+                                            <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="5" y="0"/></Offset></Anchor></Anchors>
+                                        </FontString>
+                                        <FontString inherits="GameFontNormalSmall" text="|cff00ff00OT1 Healer|r">
+                                            <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="130" y="0"/></Offset></Anchor></Anchors>
+                                        </FontString>
+                                        <FontString inherits="GameFontNormalSmall" text="|cff00ff00OT2 Healer|r">
+                                            <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="255" y="0"/></Offset></Anchor></Anchors>
+                                        </FontString>
+                                    </Layer>
+                                </Layers>
+                                <Frames>
+                                    <Frame name="RaidControlMTHDropdown" inherits="UIDropDownMenuTemplate">
+                                        <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="-12" y="-12"/></Offset></Anchor></Anchors>
+                                    </Frame>
+                                    <Frame name="RaidControlOT1HDropdown" inherits="UIDropDownMenuTemplate">
+                                        <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="113" y="-12"/></Offset></Anchor></Anchors>
+                                    </Frame>
+                                    <Frame name="RaidControlOT2HDropdown" inherits="UIDropDownMenuTemplate">
+                                        <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="238" y="-12"/></Offset></Anchor></Anchors>
+                                    </Frame>
+                                </Frames>
+                            </Frame>
+                            
+                            <!-- Row 3: Puller -->
+                            <Frame name="RaidControlOtherRow">
+                                <Size><AbsDimension x="380" y="50"/></Size>
+                                <Anchors>
+                                    <Anchor point="TOPLEFT" relativeTo="RaidControlHealerRow" relativePoint="BOTTOMLEFT"/>
+                                </Anchors>
+                                <Layers>
+                                    <Layer level="ARTWORK">
+                                        <FontString inherits="GameFontNormalSmall" text="|cffff8800Puller|r">
+                                            <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="5" y="0"/></Offset></Anchor></Anchors>
+                                        </FontString>
+                                    </Layer>
+                                </Layers>
+                                <Frames>
+                                    <Frame name="RaidControlPullerDropdown" inherits="UIDropDownMenuTemplate">
+                                        <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="-12" y="-12"/></Offset></Anchor></Anchors>
+                                    </Frame>
+                                </Frames>
+                            </Frame>
+                        </Frames>
+                    </Frame>
+                    
+                    <!-- ============ CONTROLS TAB WITH SCROLL ============ -->
+                    <Frame name="RaidControlControlsTab" hidden="true">
+                        <Size><AbsDimension x="380" y="420"/></Size>
+                        <Anchors>
+                            <Anchor point="TOPLEFT"/>
+                        </Anchors>
+                        
+                        <Frames>
+                            <!-- ScrollFrame Container -->
+                            <ScrollFrame name="RaidControlScrollFrame" enableMouse="true">
+                                <Size><AbsDimension x="365" y="420"/></Size>
+                                <Anchors>
+                                    <Anchor point="TOPLEFT"/>
+                                </Anchors>
+                                
+                                <ScrollChild>
+                                    <Frame name="RaidControlScrollChild" enableMouse="true">
+                                        <Size><AbsDimension x="365" y="800"/></Size>
+                                        <Scripts>
+                                            <OnMouseWheel>RaidControl:OnScrollWheel(RaidControlScrollFrame, delta)</OnMouseWheel>
+                                        </Scripts>
+                                        
+                                        <Frames>
+                                            <!-- Global Category Buttons -->
+                                            <Frame name="RaidControlCategoryFrame">
+                                                <Size><AbsDimension x="365" y="160"/></Size>
+                                                <Anchors>
+                                                    <Anchor point="TOPLEFT">
+                                                        <Offset><AbsDimension x="0" y="0"/></Offset>
+                                                    </Anchor>
+                                                </Anchors>
+                                            </Frame>
+                                            
+                                            <!-- Raid/Boss Selection -->
+                                            <Frame name="RaidControlRaidBossRow">
+                                                <Size><AbsDimension x="365" y="50"/></Size>
+                                                <Anchors>
+                                                    <Anchor point="TOPLEFT" relativeTo="RaidControlCategoryFrame" relativePoint="BOTTOMLEFT">
+                                                        <Offset><AbsDimension x="0" y="0"/></Offset>
+                                                    </Anchor>
+                                                </Anchors>
+                                                <Layers>
+                                                    <Layer level="ARTWORK">
+                                                        <FontString inherits="GameFontNormalSmall" text="|cffffff00Raid|r">
+                                                            <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="5" y="0"/></Offset></Anchor></Anchors>
+                                                        </FontString>
+                                                        <FontString inherits="GameFontNormalSmall" text="|cffffff00Boss|r">
+                                                            <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="150" y="0"/></Offset></Anchor></Anchors>
+                                                        </FontString>
+                                                    </Layer>
+                                                </Layers>
+                                                <Frames>
+                                                    <Frame name="RaidControlRaidDropdown" inherits="UIDropDownMenuTemplate">
+                                                        <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="-12" y="-12"/></Offset></Anchor></Anchors>
+                                                    </Frame>
+                                                    <Frame name="RaidControlBossDropdown" inherits="UIDropDownMenuTemplate">
+                                                        <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="133" y="-12"/></Offset></Anchor></Anchors>
+                                                    </Frame>
+                                                    <Button name="RaidControlSetupButton">
+                                                        <Size><AbsDimension x="60" y="22"/></Size>
+                                                        <Anchors>
+                                                            <Anchor point="LEFT" relativeTo="RaidControlBossDropdown" relativePoint="RIGHT">
+                                                                <Offset><AbsDimension x="5" y="2"/></Offset>
+                                                            </Anchor>
+                                                        </Anchors>
+                                                        <NormalTexture file="Interface\Buttons\WHITE8x8">
+                                                            <Color r="0.2" g="0.4" b="0.2" a="0.9"/>
+                                                        </NormalTexture>
+                                                        <HighlightTexture file="Interface\Buttons\WHITE8x8" alphaMode="ADD">
+                                                            <Color r="0.3" g="0.5" b="0.3" a="0.5"/>
+                                                        </HighlightTexture>
+                                                        <PushedTexture file="Interface\Buttons\WHITE8x8">
+                                                            <Color r="0.1" g="0.3" b="0.1" a="0.9"/>
+                                                        </PushedTexture>
+                                                        <NormalFont style="GameFontNormalSmall"/>
+                                                        <Scripts>
+                                                            <OnClick>RaidControl:RunRaidSetup()</OnClick>
+                                                            <OnEnter>RaidControl:SetupButtonEnter(self or this)</OnEnter>
+                                                            <OnLeave>GameTooltip:Hide()</OnLeave>
+                                                        </Scripts>
+                                                    </Button>
+                                                </Frames>
+                                            </Frame>
+                                            
+                                            <!-- Boss-Specific Buttons -->
+                                            <Frame name="RaidControlBossButtonFrame">
+                                                <Size><AbsDimension x="365" y="400"/></Size>
+                                                <Anchors>
+                                                    <Anchor point="TOPLEFT" relativeTo="RaidControlRaidBossRow" relativePoint="BOTTOMLEFT">
+                                                        <Offset><AbsDimension x="0" y="-5"/></Offset>
+                                                    </Anchor>
+                                                </Anchors>
+                                            </Frame>
+                                        </Frames>
+                                    </Frame>
+                                </ScrollChild>
+                                
+                                <Scripts>
+                                    <OnMouseWheel>RaidControl:OnScrollWheel(this, arg1)</OnMouseWheel>
+                                </Scripts>
+                            </ScrollFrame>
+                            
+                            <!-- Scrollbar -->
+                            <Slider name="RaidControlScrollBar" orientation="VERTICAL">
+                                <Size><AbsDimension x="12" y="420"/></Size>
+                                <Anchors>
+                                    <Anchor point="TOPRIGHT" relativeTo="RaidControlControlsTab" relativePoint="TOPRIGHT"/>
+                                </Anchors>
+                                <ThumbTexture name="$parentThumb" file="Interface\Buttons\WHITE8x8">
+                                    <Size><AbsDimension x="10" y="40"/></Size>
+                                    <Color r="0.5" g="0.5" b="0.5" a="0.9"/>
+                                </ThumbTexture>
+                                <Scripts>
+                                    <OnValueChanged>RaidControl:OnScrollValueChanged(self or this, value or arg1)</OnValueChanged>
+                                </Scripts>
+                            </Slider>
+                        </Frames>
+                    </Frame>
+                </Frames>
+            </Frame>
+        </Frames>
+        
+        <Scripts>
+            <OnLoad>RaidControl:OnLoad(self or this)</OnLoad>
+            <OnEvent>RaidControl:OnEvent(self or this, event, arg1)</OnEvent>
+            <OnDragStart>if this and this.StartMoving then this:StartMoving() end</OnDragStart>
+            <OnDragStop>if this and this.StopMovingOrSizing then this:StopMovingOrSizing() end</OnDragStop>
+        </Scripts>
+    </Frame>
+    
+</Ui>

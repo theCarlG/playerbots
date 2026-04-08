@@ -8,7 +8,7 @@ use crate::{
     engine::{
         aura_helpers::RUPTURE_RANKS,
         bt::{
-            Bt::{self, InCombat, ApplyPoisons, StickToTarget, Cmp, CastOnSelf, TargetIsCasting, CastOnTarget},
+            Bt::{self, InCombat, ApplyPoisons, Cmp, CastOnSelf, TargetIsCasting, CastOnTarget},
             Op::{Below, AtLeast, Above},
             Resource::{SelfHealthPct, NearbyCount, SelfComboPoints},
         },
@@ -23,18 +23,21 @@ const RIPOSTE: SpellId = SpellId(14251);
 pub fn build_tree(fsm: ActiveFsm) -> Bt {
     match fsm {
         ActiveFsm::Combat => combat_tree(),
-        ActiveFsm::World => Bt::Noop,
+        ActiveFsm::World => world_tree(),
         ActiveFsm::Dead => Bt::Noop,
     }
+}
+
+fn world_tree() -> Bt {
+    // Keep weapon poisons applied while out of combat.
+    Bt::throttle(30_000, ApplyPoisons)
 }
 
 fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (rogue-wide list).
         super::boost(),
-        // Out-of-combat: keep weapon poisons applied.
-        Seq!(InCombat.not(), Bt::throttle(30_000, ApplyPoisons),),
-        StickToTarget(5.0),
+        // Melee approach handled by combat_wrapper's close_subtree.
         Seq!(Cmp(SelfHealthPct, Below(15)), CastOnSelf(VANISH)),
         Seq!(Cmp(SelfHealthPct, Below(30)), CastOnSelf(EVASION)),
         Seq!(

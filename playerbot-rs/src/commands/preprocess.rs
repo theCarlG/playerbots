@@ -62,6 +62,12 @@ pub fn preprocess_and_enqueue(
 ) {
     let text = raw.trim_start_matches("BOT\t");
 
+    // Ignore addon noise — messages from third-party addons that leak into
+    // the bot command channel. Mirrors the C++ HandleCommand filter list.
+    if text.is_empty() || is_addon_noise(text) {
+        return;
+    }
+
     // New addon protocol: `PB:v1:[@sel]:cmd:arg|cmd2:arg`.
     // Intercept before the legacy pipeline so selectors and batching work.
     if let Some(payload) = text.strip_prefix("PB:") {
@@ -138,6 +144,26 @@ pub fn preprocess_and_enqueue(
         PendingCommand::external(sender_guid, security, origin, cmd)
     };
     bot.pending_commands.lock().unwrap().push_back(pc);
+}
+
+/// Non-command messages that arrive through the bot command channel —
+/// WoW client events and addon chatter that are not bot commands.
+/// Mirrors the C++ `HandleCommand` filter in `PlayerbotAI.cpp`.
+const IGNORED_PATTERNS: &[&str] = &[
+    "X-Perl",
+    "HealBot",
+    "HealComm",
+    "LOOT_OPENED",
+    "CTRA",
+];
+
+fn is_addon_noise(text: &str) -> bool {
+    if text.starts_with("GathX") {
+        return true;
+    }
+    IGNORED_PATTERNS
+        .iter()
+        .any(|pattern| text.contains(pattern))
 }
 
 fn split_once_sep<'a>(text: &'a str, sep: &str) -> Option<(&'a str, &'a str)> {

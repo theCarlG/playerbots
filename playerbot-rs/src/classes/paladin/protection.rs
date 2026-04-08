@@ -7,7 +7,7 @@ use crate::{Sel, Seq};
 use crate::{
     data::spells::vanilla::paladin::*,
     engine::bt::{
-        Bt::{self, CastOnSelf, Cmp, StickToTarget, InCombat, CastOnTarget},
+        Bt::{self, CastOnSelf, Cmp, InCombat, CastOnTarget},
         Op::Below,
         Resource::{SelfHealthPct, TargetHealthPct},
     },
@@ -49,8 +49,7 @@ fn combat_tree() -> Bt {
         Seq!(Bt::self_missing(RIGHTEOUS_FURY), CastOnSelf(RIGHTEOUS_FURY),),
         // Emergency bubble.
         Seq!(Cmp(SelfHealthPct, Below(15)), CastOnSelf(DIVINE_SHIELD)),
-        // Close gap.
-        StickToTarget(5.0),
+        // Melee approach handled by combat_wrapper's close_subtree.
         Seq!(
             InCombat,
             Sel!(

@@ -9,9 +9,9 @@ use crate::{
     engine::{
         aura_helpers::{HUNTERS_MARK_RANKS, SERPENT_STING_RANKS},
         bt::{
-            Bt::{self, Cmp, CastOnSelf, MaintainRange, InCombat, CastOnTarget},
-            Op::Below,
-            Resource::SelfHealthPct,
+            Bt::{self, Cmp, CastOnSelf, CastAoEOnTarget, InCombat, CastOnTarget},
+            Op::{Below, AtLeast},
+            Resource::{SelfHealthPct, AttackerCount, TargetDistance},
         },
         macro_fsm::ActiveFsm,
     },
@@ -36,8 +36,6 @@ fn combat_tree() -> Bt {
             Bt::self_missing(ASPECT_OF_THE_HAWK),
             CastOnSelf(ASPECT_OF_THE_HAWK),
         ),
-        // Kite melee attackers (MaintainRange only fires when too close).
-        MaintainRange(8.0),
         Seq!(
             InCombat,
             Sel!(
@@ -45,7 +43,14 @@ fn combat_tree() -> Bt {
                     Bt::target_missing_any_rank(HUNTERS_MARK_RANKS),
                     CastOnTarget(HUNTERS_MARK),
                 ),
+                // Dead zone fallback (< 9y): melee while kiting.
+                Seq!(
+                    Cmp(TargetDistance, Below(9)),
+                    Sel!(CastOnTarget(WING_CLIP), CastOnTarget(RAPTOR_STRIKE)),
+                ),
                 CastOnTarget(BESTIAL_WRATH),
+                // AoE: Volley when 3+ attackers.
+                Seq!(Cmp(AttackerCount, AtLeast(3)), CastAoEOnTarget(VOLLEY)),
                 CastOnTarget(AIMED_SHOT),
                 CastOnTarget(MULTI_SHOT),
                 CastOnTarget(ARCANE_SHOT),
@@ -53,8 +58,6 @@ fn combat_tree() -> Bt {
                     Bt::target_missing_any_rank(SERPENT_STING_RANKS),
                     CastOnTarget(SERPENT_STING),
                 ),
-                // Melee fallback.
-                CastOnTarget(RAPTOR_STRIKE),
             ),
         ),
     )

@@ -8,9 +8,9 @@ use crate::{
     engine::{
         aura_helpers::{FAERIE_FIRE_RANKS, INSECT_SWARM_RANKS, MOONFIRE_RANKS},
         bt::{
-            Bt::{self, Cmp, CastOnSelf, InCombat, CastOnTarget},
-            Op::Below,
-            Resource::SelfHealthPct,
+            Bt::{self, Cmp, CastOnSelf, CastAoEOnTarget, InCombat, CastOnTarget},
+            Op::{Below, AtLeast},
+            Resource::{SelfHealthPct, AttackerCount},
         },
         macro_fsm::ActiveFsm,
     },
@@ -49,6 +49,8 @@ fn combat_tree() -> Bt {
                     Bt::target_missing_any_rank(MOONFIRE_RANKS),
                     CastOnTarget(MOONFIRE),
                 ),
+                // AoE: Hurricane when 3+ attackers.
+                Seq!(Cmp(AttackerCount, AtLeast(3)), CastAoEOnTarget(HURRICANE)),
                 // Nukes.
                 CastOnTarget(STARFIRE),
                 CastOnTarget(WRATH),

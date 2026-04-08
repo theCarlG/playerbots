@@ -41,7 +41,7 @@ pub fn build_tree(fsm: ActiveFsm) -> Bt {
 #[cfg(feature = "wotlk")]
 fn combat_tree() -> Bt {
     Sel!(
-        StickToTarget(5.0),
+        // Melee approach handled by combat_wrapper's close_subtree.
         Seq!(Cmp(TargetDistance, Above(15)), CastOnTarget(DEATH_GRIP)),
         Seq!(
             InCombat,

@@ -25,35 +25,40 @@ pub enum BuffTarget {
 /// One buff the bot knows how to apply.
 #[derive(Debug, Clone)]
 pub struct GroupBuff {
-    /// Spell ID to cast.
+    /// Spell ID to cast (highest rank — C++ auto-downranks).
     pub spell_id: SpellId,
-    /// Aura ID to check (often == `spell_id`; use the buff's spell effect ID when different).
-    pub aura_id: SpellId,
+    /// All ranks of the aura to check. The buff is considered present if ANY
+    /// rank is found. This prevents infinite rebuffing when a lower-level bot
+    /// applies a lower rank (aura ID differs from the cast spell ID).
+    pub aura_ranks: &'static [SpellId],
     /// Who should receive the buff.
     pub target: BuffTarget,
 }
 
 impl GroupBuff {
-    pub const fn on_self(spell_id: SpellId) -> Self {
+    pub const fn on_self(spell_id: SpellId, aura_ranks: &'static [SpellId]) -> Self {
         Self {
             spell_id,
-            aura_id: spell_id,
+            aura_ranks,
             target: BuffTarget::Me,
         }
     }
 
-    pub const fn on_party(spell_id: SpellId) -> Self {
+    pub const fn on_party(spell_id: SpellId, aura_ranks: &'static [SpellId]) -> Self {
         Self {
             spell_id,
-            aura_id: spell_id,
+            aura_ranks,
             target: BuffTarget::AnyMember,
         }
     }
 
-    pub const fn on_party_aura(spell_id: SpellId, aura_id: SpellId) -> Self {
+    pub const fn on_party_aura(
+        spell_id: SpellId,
+        aura_ranks: &'static [SpellId],
+    ) -> Self {
         Self {
             spell_id,
-            aura_id,
+            aura_ranks,
             target: BuffTarget::AnyMember,
         }
     }
@@ -85,11 +90,12 @@ pub fn build_buff_subtree(buffs: Vec<GroupBuff>) -> Box<dyn BtNode> {
 }
 
 /// Find the first unit that needs this buff.  Returns None when all eligible
-/// targets already have the aura.
+/// targets already have the aura (any rank).
 fn find_buff_target(
     ctx: &mut crate::engine::context::TickContext<'_>,
     buff: &GroupBuff,
 ) -> Option<u64> {
+    use crate::engine::aura_helpers::has_any_rank;
     use crate::ffi::UnitHandle;
     use BuffTarget::{AnyMember, Healer, Me, Tank};
 
@@ -97,7 +103,7 @@ fn find_buff_target(
 
     match buff.target {
         Me => {
-            if !ctx.interface.has_aura(me, buff.aura_id) {
+            if !has_any_rank(ctx.interface, me, buff.aura_ranks) {
                 Some(me)
             } else {
                 None
@@ -107,12 +113,12 @@ fn find_buff_target(
         Tank => ctx
             .interface
             .group_get_tank()
-            .filter(|&t| !ctx.interface.has_aura(t, buff.aura_id)),
+            .filter(|&t| !has_any_rank(ctx.interface, t, buff.aura_ranks)),
 
         Healer => ctx
             .interface
             .group_get_healer()
-            .filter(|&h| !ctx.interface.has_aura(h, buff.aura_id)),
+            .filter(|&h| !has_any_rank(ctx.interface, h, buff.aura_ranks)),
 
         AnyMember => {
             // Check self first, then all group members.
@@ -127,7 +133,7 @@ fn find_buff_target(
 
             candidates
                 .into_iter()
-                .find(|&h| !ctx.interface.has_aura(h, buff.aura_id))
+                .find(|&h| !has_any_rank(ctx.interface, h, buff.aura_ranks))
         }
     }
 }

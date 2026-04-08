@@ -6,7 +6,7 @@ use crate::{Sel, Seq};
 use crate::{
     data::spells::vanilla::paladin::*,
     engine::bt::{
-        Bt::{self, StickToTarget, Cmp, CastOnSelf, InCombat, CastOnTarget},
+        Bt::{self, Cmp, CastOnSelf, InCombat, CastOnTarget},
         Op::Below,
         Resource::{SelfHealthPct, TargetHealthPct},
     },
@@ -41,8 +41,7 @@ fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (paladin-wide list).
         super::boost(),
-        // Close gap.
-        StickToTarget(5.0),
+        // Melee approach handled by combat_wrapper's close_subtree.
         // Emergency bubble.
         Seq!(Cmp(SelfHealthPct, Below(20)), CastOnSelf(DIVINE_SHIELD)),
         // Self-heal on serious damage.

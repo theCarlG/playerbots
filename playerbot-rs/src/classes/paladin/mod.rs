@@ -12,6 +12,10 @@ use crate::{
         RETRIBUTION_AURA,
     },
     engine::{
+        aura_helpers::{
+            BLESSING_OF_KINGS_RANKS, BLESSING_OF_MIGHT_RANKS, BLESSING_OF_WISDOM_RANKS,
+            DEVOTION_AURA_RANKS, RETRIBUTION_AURA_RANKS,
+        },
         bt::Bt::{self, CastOnSelf, InCombat, StrategyEnabled},
         macro_fsm::ActiveFsm,
     },
@@ -28,18 +32,18 @@ pub fn boost() -> Bt {
 }
 
 const HOLY_BUFFS: &[GroupBuff] = &[
-    GroupBuff::on_party(BLESSING_OF_WISDOM),
-    GroupBuff::on_self(DEVOTION_AURA),
+    GroupBuff::on_party(BLESSING_OF_WISDOM, BLESSING_OF_WISDOM_RANKS),
+    GroupBuff::on_self(DEVOTION_AURA, DEVOTION_AURA_RANKS),
 ];
 
 const PROT_BUFFS: &[GroupBuff] = &[
-    GroupBuff::on_party(BLESSING_OF_KINGS),
-    GroupBuff::on_self(DEVOTION_AURA),
+    GroupBuff::on_party(BLESSING_OF_KINGS, BLESSING_OF_KINGS_RANKS),
+    GroupBuff::on_self(DEVOTION_AURA, DEVOTION_AURA_RANKS),
 ];
 
 const RET_BUFFS: &[GroupBuff] = &[
-    GroupBuff::on_party(BLESSING_OF_MIGHT),
-    GroupBuff::on_self(RETRIBUTION_AURA),
+    GroupBuff::on_party(BLESSING_OF_MIGHT, BLESSING_OF_MIGHT_RANKS),
+    GroupBuff::on_self(RETRIBUTION_AURA, RETRIBUTION_AURA_RANKS),
 ];
 
 pub fn build_tree(fsm: ActiveFsm, spec: PlayerSpec) -> Bt {

@@ -8,9 +8,9 @@ use crate::{
     engine::{
         aura_helpers::{HUNTERS_MARK_RANKS, SERPENT_STING_RANKS},
         bt::{
-            Bt::{self, MaintainRange, Cmp, CastOnSelf, InCombat, CastOnTarget, TargetIsCasting},
-            Op::Below,
-            Resource::{SelfHealthPct, TargetDistance},
+            Bt::{self, Cmp, CastOnSelf, CastAoEOnTarget, InCombat, CastOnTarget, TargetIsCasting},
+            Op::{Below, AtLeast},
+            Resource::{SelfHealthPct, TargetDistance, AttackerCount},
         },
         macro_fsm::ActiveFsm,
     },
@@ -31,8 +31,6 @@ fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (hunter-wide list).
         super::boost(),
-        // Maintain ranged positioning (deadzone at 8y).
-        MaintainRange(8.0),
         // Emergency FD.
         Seq!(Cmp(SelfHealthPct, Below(15)), CastOnSelf(FEIGN_DEATH)),
         Seq!(
@@ -45,9 +43,17 @@ fn combat_tree() -> Bt {
                 CastOnTarget(COUNTERATTACK),
                 // Interrupt.
                 Seq!(TargetIsCasting, CastOnTarget(SCATTER_SHOT)),
-                // Melee escapes/AoE.
-                Seq!(Cmp(TargetDistance, Below(5)), CastOnSelf(EXPLOSIVE_TRAP)),
-                Seq!(Cmp(TargetDistance, Below(5)), CastOnTarget(WING_CLIP)),
+                // Dead zone fallback (< 9y): trap/snare while kiting.
+                Seq!(
+                    Cmp(TargetDistance, Below(9)),
+                    Sel!(
+                        CastOnSelf(EXPLOSIVE_TRAP),
+                        CastOnTarget(WING_CLIP),
+                        CastOnTarget(RAPTOR_STRIKE),
+                    ),
+                ),
+                // AoE: Volley when 3+ attackers.
+                Seq!(Cmp(AttackerCount, AtLeast(3)), CastAoEOnTarget(VOLLEY)),
                 // Ranged rotation.
                 CastOnTarget(AIMED_SHOT),
                 CastOnTarget(MULTI_SHOT),

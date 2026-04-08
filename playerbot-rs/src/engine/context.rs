@@ -19,8 +19,8 @@ use crate::{
 pub struct TickContext<'a> {
     // ── Immutable game state (read-only, refreshed at tick start) ──────
     pub snap: &'a BotWorldSnapshot,
-    pub nearby: &'a [UnitHandle], // hostile nearby units (refreshed every 500ms)
-    pub attackers: &'a [UnitHandle], // units attacking this bot (refreshed every 500ms)
+    pub nearby: &'a [UnitHandle], // all nearby units, hostile + friendly (refreshed every 1000ms)
+    pub attackers: &'a [UnitHandle], // hostile nearby units (refreshed every 500ms)
     pub group_state: Option<&'a GroupState>,
 
     /// Handle to the shared group state. Provides write access for claims.

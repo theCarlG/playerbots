@@ -7,7 +7,7 @@ use crate::{
     engine::{
         aura_helpers::BATTLE_SHOUT_RANKS,
         bt::{
-            Bt::{self, InShapeshift, CastOnTarget, StickToTarget, InCombat, Not, CastOnSelf, Cmp},
+            Bt::{self, InShapeshift, CastOnTarget, InCombat, Not, CastOnSelf, Cmp},
             Op::{Below, AtLeast},
             Resource::{SelfHealthPct, TargetHealthPct, SelfRage, NearbyCount},
         },
@@ -27,10 +27,10 @@ fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (warrior-wide list).
         super::boost(),
-        // Close gap: Intercept (Berserker), Charge (Battle), then stick.
+        // Gap closers: Intercept (Berserker), Charge (Battle). Melee
+        // approach handled by combat_wrapper's close_subtree.
         Seq!(InShapeshift(19), CastOnTarget(INTERCEPT)),
         Seq!(InShapeshift(17), CastOnTarget(CHARGE)),
-        StickToTarget(5.0),
         Seq!(
             InCombat,
             Sel!(
@@ -57,6 +57,8 @@ fn combat_tree() -> Bt {
                     Bt::self_missing_any_rank(BATTLE_SHOUT_RANKS),
                     CastOnSelf(BATTLE_SHOUT)
                 ),
+                // Sunder Armor debuff — stacks to 5, low priority.
+                CastOnTarget(SUNDER_ARMOR),
                 // Rage dumps — only when pooled enough to not starve BT/WW.
                 Seq!(
                     Cmp(SelfRage, AtLeast(50)),

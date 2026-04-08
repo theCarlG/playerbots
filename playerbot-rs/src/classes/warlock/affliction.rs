@@ -6,9 +6,9 @@ use crate::{Sel, Seq};
 use crate::{
     data::spells::vanilla::warlock::*,
     engine::bt::{
-        Bt::{self, MaintainRange, CastOnSelf, Cmp, Not, InCombat, CastOnTarget},
-        Op::Below,
-        Resource::{SelfManaPct, SelfHealthPct},
+        Bt::{self, CastOnSelf, CastAoEOnTarget, Cmp, Not, InCombat, CastOnTarget},
+        Op::{Below, AtLeast},
+        Resource::{SelfManaPct, SelfHealthPct, AttackerCount},
     },
     engine::macro_fsm::ActiveFsm,
     ffi::SpellId,
@@ -28,7 +28,7 @@ fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (warlock-wide list).
         super::boost(),
-        MaintainRange(25.0),
+        // Positioning handled by reactive::ranged_subtree().
         // Self buff.
         Seq!(Bt::self_missing(DEMON_ARMOR), CastOnSelf(DEMON_ARMOR)),
         // Life tap for mana.
@@ -47,6 +47,8 @@ fn combat_tree() -> Bt {
                 ),
                 Seq!(Bt::target_missing(CORRUPTION), CastOnTarget(CORRUPTION),),
                 Seq!(Bt::target_missing(IMMOLATE), CastOnTarget(IMMOLATE)),
+                // AoE: Rain of Fire when 3+ attackers.
+                Seq!(Cmp(AttackerCount, AtLeast(3)), CastAoEOnTarget(RAIN_OF_FIRE)),
                 // Self sustain.
                 Seq!(Cmp(SelfHealthPct, Below(60)), CastOnTarget(DRAIN_LIFE)),
                 // Filler nuke.

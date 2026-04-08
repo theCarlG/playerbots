@@ -9,13 +9,14 @@ use crate::{
     bot::state::PlayerSpec,
     data::spells::vanilla::warlock::{DARK_PACT, DEMON_ARMOR},
     engine::{
+        aura_helpers::DEMON_ARMOR_RANKS,
         bt::Bt::{self, CastOnSelf, InCombat, StrategyEnabled},
         macro_fsm::ActiveFsm,
     },
     noncombat::GroupBuff,
 };
 
-const BUFFS: &[GroupBuff] = &[GroupBuff::on_self(DEMON_ARMOR)];
+const BUFFS: &[GroupBuff] = &[GroupBuff::on_self(DEMON_ARMOR, DEMON_ARMOR_RANKS)];
 
 /// `co +boost` burst subtree — warlock offensive cooldowns.
 pub fn boost() -> Bt {
