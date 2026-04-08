@@ -4130,6 +4130,7 @@ mod tests {
             minimal: false,
             bot_handle: 0,
             master_guid: None,
+            active_fsm: crate::engine::macro_fsm::ActiveFsm::World,
             encounter: None,
             class: PlayerClass::Warrior,
             role: BotRole::DPS,

@@ -10,8 +10,8 @@ use crate::{
     bot::state::PlayerClass,
     encounters::EncounterFsm,
     engine::{
-        blackboard::Blackboard, group_state::GroupState, snapshot::WorldSnapshotExt,
-        throttles::Throttles, timers::BotTimers,
+        blackboard::Blackboard, group_state::GroupState, macro_fsm::ActiveFsm,
+        snapshot::WorldSnapshotExt, throttles::Throttles, timers::BotTimers,
     },
     ffi::{BotRole, BotWorldSnapshot, UnitHandle, interface::BotInterface},
 };
@@ -45,6 +45,10 @@ pub struct TickContext<'a> {
     /// behaviour, and stranger whispers get the `INVITE` security tier so
     /// that RaidControl commands can still claim the bot.
     pub master_guid: Option<UnitHandle>,
+
+    // ── FSM state ──────────────────────────────────────────────────────
+    /// Current top-level FSM state (World / Combat / Dead).
+    pub active_fsm: ActiveFsm,
 
     // ── Encounter ──────────────────────────────────────────────────────
     /// Active encounter FSM, if inside a known raid/dungeon.
@@ -317,6 +321,7 @@ pub mod tests {
             minimal: false,
             bot_handle: 0,
             master_guid: None,
+            active_fsm: ActiveFsm::World,
             encounter: None,
             class: PlayerClass::Warrior,
             role: BotRole::DPS,
@@ -374,6 +379,7 @@ pub mod tests {
                 minimal: false,
                 bot_handle: 0,
                 master_guid: None,
+                active_fsm: ActiveFsm::World,
                 encounter: None,
                 class: PlayerClass::Warrior,
                 role: BotRole::DPS,

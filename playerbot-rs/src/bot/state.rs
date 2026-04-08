@@ -15,6 +15,7 @@ use crate::{
         blackboard::Blackboard,
         bt::Bt,
         group_registry::{self, GroupHandle},
+        macro_fsm::ActiveFsm,
         throttles::Throttles,
         timers::BotTimers,
     },
@@ -138,6 +139,10 @@ pub struct BotState {
     /// behaviour mode is treated as `Rpg` rather than `Follow` in that case.
     pub master_guid: Option<u64>,
 
+    /// Current top-level FSM state (World / Combat / Dead).
+    /// Computed at the start of each tick before the BT runs.
+    pub active_fsm: ActiveFsm,
+
     /// Active raid/dungeon encounter FSM. None outside of known instances.
     /// Created by `encounters::coordinator::encounter_for_zone` when the bot
     /// enters a known zone; updated each tick before the BT runs.
@@ -206,6 +211,7 @@ impl BotState {
             blackboard: Blackboard::default(),
             group_state: None,
             master_guid: None,
+            active_fsm: ActiveFsm::World,
             encounter: None,
             root_tree,
             class,

@@ -57,6 +57,9 @@ pub enum Key {
     RtscMoveY,
     RtscMoveZ,
 
+    // ── FSM state ─────────────────────────────────────────────────────
+    ActiveFsmState, // u8: ActiveFsm discriminant (0=World, 1=Combat, 2=Dead)
+
     // Add new keys above this line. Keep count accurate.
     _Count,
 }

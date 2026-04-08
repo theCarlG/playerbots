@@ -11,7 +11,7 @@
 use crate::{
     bot::state::BotState,
     encounters::{EncounterEvent, coordinator},
-    engine::{bt_nodes::BtNode, context::TickContext},
+    engine::{bt_nodes::BtNode, context::TickContext, macro_fsm::ActiveFsm},
 };
 
 pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
@@ -67,7 +67,21 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     // 4.6 Update travel target FSM — check status, sync to blackboard.
     update_travel_target(bot, now_ms);
 
-    // 5. Build TickContext and run BT
+    // 5. Determine ActiveFsm (Dead > Combat > World)
+    let active_fsm = ActiveFsm::determine(
+        bot.snap.self_.is_alive,
+        bot.snap.self_.in_combat,
+        !bot.attackers.is_empty(),
+    );
+    bot.active_fsm = active_fsm;
+
+    // Write to blackboard so BT nodes can read it.
+    bot.blackboard.set(
+        crate::engine::blackboard::Key::ActiveFsmState,
+        crate::engine::blackboard::Value::U32(active_fsm as u32),
+    );
+
+    // 6. Build TickContext and run BT
     //
     // Destructure bot so the borrow checker sees each field independently.
     // This avoids the raw pointer cast that was previously needed.
@@ -83,6 +97,7 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         ref mut throttles,
         ref group_state,
         master_guid,
+        active_fsm,
         ref encounter,
         ref root_tree,
         handle: bot_handle,
@@ -110,6 +125,7 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         minimal,
         bot_handle,
         master_guid,
+        active_fsm,
         encounter: encounter.as_deref(),
         class,
         role,
@@ -167,6 +183,11 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
                 crate::bot::monitor::monitor_log(bot, ">>> COMBAT LEFT <<<");
             }
         }
+        // Log FSM state transitions.
+        crate::bot::monitor::monitor_log(
+            bot,
+            &format!("FSM: {:?}", bot.active_fsm),
+        );
         // Periodic tick summary (every 2s for detailed debugging).
         if now_ms.saturating_sub(bot.last_monitor_summary_ms) >= 2000 {
             crate::bot::monitor::monitor_tick_summary(bot);

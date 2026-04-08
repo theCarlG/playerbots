@@ -5,6 +5,7 @@ pub mod bt_nodes;
 pub mod context;
 pub mod group_registry;
 pub mod group_state;
+pub mod macro_fsm;
 pub mod snapshot;
 pub mod throttles;
 pub mod timers;
