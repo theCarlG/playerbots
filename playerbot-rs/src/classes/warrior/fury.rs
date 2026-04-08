@@ -3,7 +3,10 @@
 /// Priority: close gap → emergency fear → execute → bloodthirst → whirlwind → cleave/heroic strike
 use crate::{
     data::spells::vanilla::warrior::*,
-    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::{
+        aura_helpers::BATTLE_SHOUT_RANKS,
+        bt::{Bt::{self, *}, Op::*, Resource::*},
+    },
 };
 use crate::{Seq, Sel};
 
@@ -30,9 +33,13 @@ pub fn build_tree() -> Bt {
                 CastOnTarget(WHIRLWIND),
                 // Berserker Rage for fear immunity + rage generation.
                 CastOnSelf(BERSERKER_RAGE),
-                // Rage dumps (same swing slot).
-                CastOnTarget(HEROIC_STRIKE),
-                Seq!(Cmp(NearbyCount, AtLeast(2)), CastOnTarget(CLEAVE)),
+                // Battle Shout upkeep — big AP buff for entire melee group.
+                Seq!(Bt::self_missing_any_rank(BATTLE_SHOUT_RANKS), CastOnSelf(BATTLE_SHOUT)),
+                // Rage dumps — only when pooled enough to not starve BT/WW.
+                Seq!(Cmp(SelfRage, AtLeast(50)), Sel!(
+                    Seq!(Cmp(NearbyCount, AtLeast(2)), CastOnTarget(CLEAVE)),
+                    CastOnTarget(HEROIC_STRIKE),
+                )),
             ),
         ),
     )

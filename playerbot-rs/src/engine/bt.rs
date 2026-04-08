@@ -1354,7 +1354,20 @@ impl BtNode for Bt {
             Bt::ShouldEngage => {
                 let result = match ctx.settings.reactivity {
                     Reactivity::Passive => false,
-                    Reactivity::Defensive => !ctx.attackers.is_empty(),
+                    Reactivity::Defensive => {
+                        if !ctx.attackers.is_empty() {
+                            true
+                        } else {
+                            // Enter combat when any group member is fighting.
+                            let size = ctx.snap.group_size as usize;
+                            (0..size).any(|i| {
+                                let h = ctx.snap.group_members[i];
+                                h != 0
+                                    && h != ctx.bot_handle
+                                    && ctx.interface.get_unit_snapshot(h).in_combat
+                            })
+                        }
+                    }
                     Reactivity::Aggressive => !ctx.attackers.is_empty() || !ctx.nearby.is_empty(),
                 };
                 if !result {
@@ -2596,17 +2609,34 @@ fn tick_tank_pickup(ctx: &mut TickContext<'_>) -> BtResult {
 
 fn tick_assist_leader(ctx: &mut TickContext<'_>) -> BtResult {
     let tank = ctx.interface.group_get_tank();
-    let leader = tank.or_else(|| {
-        ctx.snap.group_members[..ctx.snap.group_size as usize]
-            .iter()
-            .copied()
-            .find(|&h| h != 0 && h != ctx.bot_handle)
-    });
+    // Find the best leader to assist: explicit tank > master > any group
+    // member that is in combat and has a target.
+    let members = &ctx.snap.group_members[..ctx.snap.group_size as usize];
+    let leader = tank
+        .or_else(|| {
+            // Prefer the master if they have a target.
+            ctx.master_guid.filter(|&m| {
+                let s = ctx.interface.get_unit_snapshot(m);
+                s.current_target != 0
+            })
+        })
+        .or_else(|| {
+            // Any group member in combat with a target.
+            members.iter().copied().find(|&h| {
+                h != 0 && h != ctx.bot_handle && {
+                    let s = ctx.interface.get_unit_snapshot(h);
+                    s.in_combat && s.current_target != 0
+                }
+            })
+        });
 
     let leader_target = leader.and_then(|l| {
         let snap = ctx.interface.get_unit_snapshot(l);
-        if snap.current_target != 0 {
-            Some(snap.current_target)
+        let t = snap.current_target;
+        // Only assist on hostile targets — don't attack friendly units the
+        // leader happens to have selected in their UI.
+        if t != 0 && ctx.interface.is_attackable(t) {
+            Some(t)
         } else {
             None
         }
@@ -3360,6 +3390,11 @@ fn tick_engage_target(ctx: &mut TickContext<'_>) -> BtResult {
         ctx.monitor(format_args!("ENGAGE: no target — pass-through"));
         return BtResult::Success; // no target yet — don't block
     };
+    // Don't start auto-shoot/auto-attack while casting — it would
+    // interrupt the current spell (especially wand Shoot on mages/priests).
+    if ctx.snap.self_.is_casting {
+        return BtResult::Success;
+    }
     // Try ranged auto-shoot first (idempotent if already firing).
     if ctx.interface.auto_shoot(target) {
         ctx.monitor(format_args!("ENGAGE: auto_shoot on 0x{target:X}"));
@@ -3392,8 +3427,10 @@ fn tick_pull_target(ctx: &mut TickContext<'_>) -> BtResult {
 
 /// `Bt::PullBack`. After pulling a mob, return to the group's position.
 /// Uses `follow(master)` to move back toward the master/leader. Returns
-/// Running while the bot is far from the master, Success once close
-/// enough, Failure when there is no master to return to.
+/// Running while the bot is moving back, Failure once close enough or
+/// when there is no master to return to. Returns Failure (not Success)
+/// when already close so the parent Selector falls through to the
+/// combat pipeline.
 fn tick_pull_back(ctx: &mut TickContext<'_>) -> BtResult {
     // Pull back to the master/tank/group member, reusing the same
     // priority order as the Follow leaf.
@@ -3403,7 +3440,8 @@ fn tick_pull_back(ctx: &mut TickContext<'_>) -> BtResult {
     };
     let dist = ctx.interface.unit_distance(target);
     if dist <= 5.0 {
-        return BtResult::Success;
+        // Already close — pull-back complete, let combat pipeline run.
+        return BtResult::Failure;
     }
     if ctx.interface.follow(target, 2.0, 0.0) {
         BtResult::Running

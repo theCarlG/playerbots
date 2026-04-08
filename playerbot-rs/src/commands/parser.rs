@@ -6,8 +6,8 @@
 /// Design: ~20 clean commands replace the old 70+ redundant C++ commands.
 /// Each command maps to exactly one `BotCommand` variant.
 use crate::bot::class_prefs::{
-    HunterAspect, HunterTrap, PaladinAura, PaladinBlessing, PoisonKind, ShamanImbue, TotemRole,
-    TotemSlot, WarlockCurse, WarriorStance, WeaponHand,
+    HunterAspect, HunterSting, HunterTrap, PaladinAura, PaladinBlessing, PoisonKind, ShamanImbue, TotemRole,
+    TotemSlot, WarlockCurse, WarlockPet, WarriorStance, WeaponHand,
 };
 use crate::bot::settings::{
     BehaviorMode, BotStateKind, ChatChannel, FollowFormation, LootPolicy,
@@ -54,7 +54,7 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec { names: &["save"], parse: |_, a| parse_save(a) },
     // -- Targeting --
     CommandSpec { names: &["focus"], parse: |_, _| Some(BotCommand::Focus(None)) },
-    CommandSpec { names: &["attack"], parse: |_, a| parse_attack(a) },
+    CommandSpec { names: &["attack", "attack my target", "queue attack"], parse: |_, a| parse_attack(a) },
     CommandSpec { names: &["pull"], parse: |_, a| parse_pull(a) },
     CommandSpec { names: &["cc"], parse: |_, a| parse_cc(a) },
     // -- Movement --
@@ -350,6 +350,7 @@ fn parse_combat_order(args: &[&str]) -> Option<BotCommand> {
     let mut remove = StrategyFlags::NONE;
     let mut toggle = StrategyFlags::NONE;
     let mut query = false;
+    let mut side_effects: Vec<BotCommand> = Vec::new();
 
     let mut i = 0;
     while i < tokens.len() {
@@ -394,19 +395,39 @@ fn parse_combat_order(args: &[&str]) -> Option<BotCommand> {
                 matched = true;
                 break;
             }
+            // Try class-pref strategy pattern (e.g. "poison main deadly").
+            if let Some((flag, cmd)) = try_parse_class_pref_strategy(&candidate) {
+                match sign {
+                    1 => add.insert(flag),
+                    -1 => remove.insert(flag),
+                    _ => toggle.insert(flag),
+                }
+                if let Some(c) = cmd {
+                    side_effects.push(c);
+                }
+                i += window_len;
+                matched = true;
+                break;
+            }
         }
         if !matched {
             i += 1; // skip unknown
         }
     }
 
-    Some(BotCommand::ApplyStrategies {
+    let strat_cmd = BotCommand::ApplyStrategies {
         state: BotStateKind::Combat,
         add,
         remove,
         toggle,
         query,
-    })
+    };
+    if side_effects.is_empty() {
+        Some(strat_cmd)
+    } else {
+        side_effects.insert(0, strat_cmd);
+        Some(BotCommand::Batch(side_effects))
+    }
 }
 
 fn parse_reactivity(args: &[&str]) -> Option<BotCommand> {
@@ -672,18 +693,16 @@ fn parse_attack(args: &[&str]) -> Option<BotCommand> {
 
 fn parse_pull(args: &[&str]) -> Option<BotCommand> {
     match args.first().copied() {
+        Some("rti") => Some(BotCommand::PullRti(8)),
         Some(first) => {
-            if first == "rti" {
-                return Some(BotCommand::PullRti(8));
-            }
             if let Some(icon) = parse_rti(first) {
                 return Some(BotCommand::PullRti(icon));
             }
-            Some(BotCommand::Unknown(
-                "pull: need raid target (e.g. `pull skull`)".into(),
-            ))
+            // Unknown arg — treat as bare pull (master's target).
+            Some(BotCommand::Pull(None))
         }
-        None => Some(BotCommand::Unknown("pull: need raid target".into())),
+        // Bare `pull` — pull master's current target.
+        None => Some(BotCommand::Pull(None)),
     }
 }
 
@@ -711,7 +730,7 @@ fn parse_cc(args: &[&str]) -> Option<BotCommand> {
 /// shorthand — stripped here and surfaced as `query=true` on the emitted
 /// command so the handler whispers the new state after applying.
 fn parse_strategies(args: &[&str], state: BotStateKind) -> Option<BotCommand> {
-    let cmd_name = state.addon_command();
+    let _cmd_name = state.addon_command(); // kept for future error messages
     if args.is_empty() || args == ["?"] {
         return Some(BotCommand::QueryStrategies(state));
     }
@@ -720,6 +739,7 @@ fn parse_strategies(args: &[&str], state: BotStateKind) -> Option<BotCommand> {
     let mut remove = StrategyFlags::NONE;
     let mut toggle = StrategyFlags::NONE;
     let mut query = false;
+    let mut side_effects: Vec<BotCommand> = Vec::new();
 
     for chunk in joined.split(',') {
         let chunk = chunk.trim();
@@ -741,18 +761,34 @@ fn parse_strategies(args: &[&str], state: BotStateKind) -> Option<BotCommand> {
             }
         };
 
-        // PB2 silently ignores unknown strategy names — they are simply
-        // not added. No error is reported.
+        // Try standard strategy flags first.
         if let Some(flag) = StrategyFlags::parse_name(name) {
             match sign {
                 1 => add.insert(flag),
                 -1 => remove.insert(flag),
                 _ => toggle.insert(flag),
             }
+        } else if let Some((flag, cmd)) = try_parse_class_pref_strategy(name) {
+            // Class-pref strategy name (e.g. "poison main deadly", "totem earth strength").
+            // Add the base flag and queue the class-pref command as a side-effect.
+            match sign {
+                1 => add.insert(flag),
+                -1 => remove.insert(flag),
+                _ => toggle.insert(flag),
+            }
+            if let Some(c) = cmd {
+                side_effects.push(c);
+            }
         }
     }
 
-    Some(BotCommand::ApplyStrategies { state, add, remove, toggle, query })
+    let strat_cmd = BotCommand::ApplyStrategies { state, add, remove, toggle, query };
+    if side_effects.is_empty() {
+        Some(strat_cmd)
+    } else {
+        side_effects.insert(0, strat_cmd);
+        Some(BotCommand::Batch(side_effects))
+    }
 }
 
 /// `all +strat,-strat` — apply strategies to ALL four state engines.
@@ -1228,6 +1264,80 @@ fn parse_forcestance(args: &[&str]) -> Option<BotCommand> {
     match WarriorStance::from_token(tok) {
         Some(st) => Some(BotCommand::SetWarriorForcedStance(Some(st))),
         None => Some(BotCommand::Unknown(format!("forcestance: unknown '{tok}'"))),
+    }
+}
+
+/// Try to parse a PB2 compound strategy name as a class-pref side-effect
+/// command. The Mangosbot addon sends class preferences as strategy toggles
+/// (e.g. `co +poison main deadly,?`). PB2 had dedicated Strategy classes for
+/// each; the Rust port uses `ClassPrefs` + `StrategyFlags`. This bridge maps
+/// the compound name to both:
+///   - the base strategy flag (POISONS, TOTEMS, CURSE, etc.) — returned
+///   - an optional class-pref `BotCommand` (SetPoison, SetTotem, etc.) — returned
+///
+/// When the name matches, the caller should:
+///   1. Insert the flag into add/remove/toggle as appropriate.
+///   2. Emit the class-pref command alongside the `ApplyStrategies`.
+///
+/// Returns `None` when the name doesn't match any class-pref pattern.
+pub(super) fn try_parse_class_pref_strategy(name: &str) -> Option<(StrategyFlags, Option<BotCommand>)> {
+    let words: Vec<&str> = name.split_whitespace().collect();
+    if words.is_empty() {
+        return None;
+    }
+
+    match words[0] {
+        // `poison main deadly` → POISONS + SetPoison { MainHand, Deadly }
+        "poison" if words.len() == 3 => {
+            let hand = WeaponHand::from_token(words[1])?;
+            let kind = PoisonKind::from_token(words[2]);
+            Some((StrategyFlags::POISONS, Some(BotCommand::SetPoison { hand, kind })))
+        }
+
+        // `totem earth strength` → TOTEMS + SetTotem { Earth, StrengthOfEarth }
+        "totem" if words.len() == 3 => {
+            let slot = TotemSlot::from_token(words[1])?;
+            let role = TotemRole::from_token(words[2]);
+            Some((StrategyFlags::TOTEMS, Some(BotCommand::SetTotem { slot, role })))
+        }
+
+        // `curse agony` → CURSE + SetWarlockCurse(Agony)
+        "curse" if words.len() == 2 => {
+            let curse = WarlockCurse::from_token(words[1])?;
+            Some((StrategyFlags::CURSE, Some(BotCommand::SetWarlockCurse(Some(curse)))))
+        }
+
+        // `aura devotion` → AURA + SetPaladinAura(Devotion)
+        "aura" if words.len() == 2 => {
+            let aura = PaladinAura::from_token(words[1])?;
+            Some((StrategyFlags::AURA, Some(BotCommand::SetPaladinAura(Some(aura)))))
+        }
+
+        // `blessing might` → BLESSING + SetPaladinBlessing(Might)
+        "blessing" if words.len() == 2 => {
+            let bless = PaladinBlessing::from_token(words[1])?;
+            Some((StrategyFlags::BLESSING, Some(BotCommand::SetPaladinBlessing(Some(bless)))))
+        }
+
+        // `aspect hawk` → ASPECT + SetHunterAspect(Hawk)
+        "aspect" if words.len() == 2 => {
+            let aspect = HunterAspect::from_token(words[1])?;
+            Some((StrategyFlags::ASPECT, Some(BotCommand::SetHunterAspect(Some(aspect)))))
+        }
+
+        // `sting serpent` → STING + SetHunterSting(Serpent)
+        "sting" if words.len() == 2 => {
+            let sting = HunterSting::from_token(words[1])?;
+            Some((StrategyFlags::STING, Some(BotCommand::SetHunterSting(Some(sting)))))
+        }
+
+        // `pet imp` → PET + SetWarlockPet(Imp)
+        "pet" if words.len() == 2 => {
+            let pet = WarlockPet::from_token(words[1])?;
+            Some((StrategyFlags::PET, Some(BotCommand::SetWarlockPet(Some(pet)))))
+        }
+
+        _ => None,
     }
 }
 

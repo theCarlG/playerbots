@@ -6,8 +6,8 @@ pub mod parser;
 pub mod preprocess;
 
 use crate::bot::class_prefs::{
-    HunterAspect, HunterTrap, PaladinAura, PaladinBlessing, PoisonKind, ShamanImbue, TotemRole,
-    TotemSlot, WarlockCurse, WarriorStance, WeaponHand,
+    HunterAspect, HunterSting, HunterTrap, PaladinAura, PaladinBlessing, PoisonKind, ShamanImbue, TotemRole,
+    TotemSlot, WarlockCurse, WarlockPet, WarriorStance, WeaponHand,
 };
 use crate::bot::settings::{
     BehaviorMode, BotSettings, BotStateKind, ChatChannel, PositionStance, Reactivity,
@@ -40,6 +40,11 @@ pub enum BotCommand {
     // -- Targeting --
     Focus(Option<UnitHandle>),
     Attack(Option<UnitHandle>),
+    /// `pull` / `pull rti` — pull master's current target (or RTI mob).
+    /// Only executed when the bot has the PULL strategy flag.
+    /// If PULL_BACK is also enabled, the reactive BT subtree automatically
+    /// returns the bot to the group after pulling.
+    Pull(Option<UnitHandle>),
     /// Attack the unit marked with a raid target icon (1 = star … 8 = skull).
     AttackRti(u8),
     /// Pull (open combat on) the unit marked with a raid target icon.
@@ -285,12 +290,16 @@ pub enum BotCommand {
     SetHunterAspect(Option<HunterAspect>),
     /// `trap freezing` / `trap none` — set hunter default trap.
     SetHunterTrap(Option<HunterTrap>),
-    /// Reply with the current hunter aspect / trap loadout.
+    /// `sting serpent` / `sting none` — set hunter default sting.
+    SetHunterSting(Option<HunterSting>),
+    /// Reply with the current hunter aspect / trap / sting loadout.
     ShowHunterPrefs,
 
     /// `curse agony` / `curse none` — set warlock default curse.
     SetWarlockCurse(Option<WarlockCurse>),
-    /// Reply with the current warlock curse.
+    /// `pet imp` / `pet none` — set warlock preferred demon.
+    SetWarlockPet(Option<WarlockPet>),
+    /// Reply with the current warlock prefs (curse + pet).
     ShowWarlockPrefs,
 
     /// `forcestance berserker` / `forcestance none` — lock warrior into
@@ -404,6 +413,11 @@ pub enum BotCommand {
     /// `lfg` — looking for group toggle.
     Lfg,
 
+    /// Internal: a single parse result that carries multiple commands.
+    /// Used when a strategy toggle implies a class-pref side-effect (e.g.
+    /// `co +poison main deadly` → `ApplyStrategies{POISONS}` + `SetPoison`).
+    Batch(Vec<BotCommand>),
+
     // -- Unknown --
     Unknown(String),
 }
@@ -441,6 +455,7 @@ impl BotCommand {
             | SetReactivity(_)
             | Focus(_)
             | Attack(_)
+            | Pull(_)
             | AttackRti(_)
             | PullRti(_)
             | CcRti(_)
@@ -514,8 +529,10 @@ impl BotCommand {
             | ShowPaladinPrefs
             | SetHunterAspect(_)
             | SetHunterTrap(_)
+            | SetHunterSting(_)
             | ShowHunterPrefs
             | SetWarlockCurse(_)
+            | SetWarlockPet(_)
             | ShowWarlockPrefs
             | SetWarriorForcedStance(_)
             | ShowWarriorPrefs
@@ -566,7 +583,8 @@ impl BotCommand {
             | ShowFaction
             | SetValue(_)
             | AiProfile(_)
-            | Lfg => SecurityLevel::Invite,
+            | Lfg
+            | Batch(_) => SecurityLevel::Invite,
         }
     }
 }
@@ -827,6 +845,34 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
     match cmd {
         BotCommand::SetMode(mode) => {
             s.mode = *mode;
+            // Sync strategy flags in nc/co so the addon UI highlights the
+            // correct mode button. Only touch NonCombat and Combat — never
+            // pollute Reaction or Dead slots with mode flags.
+            let mode_flags = StrategyFlags::PASSIVE
+                | StrategyFlags::STAY
+                | StrategyFlags::GUARD
+                | StrategyFlags::GRIND
+                | StrategyFlags::QUEST
+                | StrategyFlags::RPG
+                | StrategyFlags::FOLLOW;
+            let new_flag = match mode {
+                BehaviorMode::Passive => StrategyFlags::PASSIVE,
+                BehaviorMode::Stay => StrategyFlags::STAY,
+                BehaviorMode::Guard => StrategyFlags::GUARD,
+                BehaviorMode::Grind => StrategyFlags::GRIND,
+                BehaviorMode::Quest => StrategyFlags::QUEST,
+                BehaviorMode::Rpg => StrategyFlags::RPG,
+                _ => StrategyFlags::FOLLOW,
+            };
+            for state in [BotStateKind::NonCombat, BotStateKind::Combat] {
+                let slot = s.strategies.get_mut(state);
+                slot.remove(mode_flags);
+                slot.insert(new_flag);
+            }
+            // Also clean mode flags from Reaction/Dead if they leaked.
+            for state in [BotStateKind::Reaction, BotStateKind::Dead] {
+                s.strategies.get_mut(state).remove(mode_flags);
+            }
             // Mangosbot's OnWhisper refresh hook (Mangosbot.lua:3149) finds
             // `Following` / `Staying` / `Fleeing` at string position 1 and
             // re-issues `nc ?` to refresh its non-combat strategy panel.
@@ -850,16 +896,76 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             slot.insert(*flags);
         }
         BotCommand::ApplyStrategies { state, add, remove, toggle, query } => {
-            let slot = s.strategies.get_mut(*state);
-            slot.remove(*remove);
-            slot.insert(*add);
-            // Toggle: xor each flag in the toggle set.
-            slot.0 ^= toggle.0;
-            slot.1 ^= toggle.1;
+            {
+                let slot = s.strategies.get_mut(*state);
+                slot.remove(*remove);
+                slot.insert(*add);
+                // Toggle: xor each flag in the toggle set.
+                slot.0 ^= toggle.0;
+                slot.1 ^= toggle.1;
+            }
             if *query {
-                let slot_val = s.strategies.get(*state);
-                let msg = format!("{}: {}", state.reply_prefix(), slot_val.describe());
+                let slot_val = bot.settings.strategies.get(*state);
+                let desc = describe_with_class_prefs(slot_val, &bot.settings.class_prefs);
+                let msg = format!("{}: {}", state.reply_prefix(), desc);
                 reply(bot, pc, &msg);
+            }
+            // Bridge strategy flags → BehaviorMode.
+            // The addon toggles mode names (passive, stay, guard, grind,
+            // quest, rpg, follow) as strategy flags, but the BT checks
+            // `ModeIs(BehaviorMode::…)` which reads `s.mode`.  Sync them.
+            // Mode flags are mutually exclusive — when one is set, clear
+            // all others so they don't accumulate from repeated toggles.
+            {
+                let mode_flags = StrategyFlags::PASSIVE
+                    | StrategyFlags::STAY
+                    | StrategyFlags::GUARD
+                    | StrategyFlags::GRIND
+                    | StrategyFlags::QUEST
+                    | StrategyFlags::RPG
+                    | StrategyFlags::FOLLOW;
+                let has = |f: StrategyFlags| {
+                    bot.settings.strategies.get(BotStateKind::Combat).contains(f)
+                    || bot.settings.strategies.get(BotStateKind::NonCombat).contains(f)
+                };
+                let (new_mode, active_flag) = if has(StrategyFlags::PASSIVE) {
+                    (BehaviorMode::Passive, StrategyFlags::PASSIVE)
+                } else if has(StrategyFlags::STAY) {
+                    (BehaviorMode::Stay, StrategyFlags::STAY)
+                } else if has(StrategyFlags::GUARD) {
+                    (BehaviorMode::Guard, StrategyFlags::GUARD)
+                } else if has(StrategyFlags::GRIND) {
+                    (BehaviorMode::Grind, StrategyFlags::GRIND)
+                } else if has(StrategyFlags::QUEST) {
+                    (BehaviorMode::Quest, StrategyFlags::QUEST)
+                } else if has(StrategyFlags::RPG) {
+                    (BehaviorMode::Rpg, StrategyFlags::RPG)
+                } else {
+                    (BehaviorMode::Follow, StrategyFlags::FOLLOW)
+                };
+                bot.settings.mode = new_mode;
+                // Clear conflicting mode flags from nc/co, then re-set the
+                // active one. Never touch Reaction or Dead slots.
+                for state in [BotStateKind::NonCombat, BotStateKind::Combat] {
+                    let slot = bot.settings.strategies.get_mut(state);
+                    slot.remove(mode_flags);
+                    slot.insert(active_flag);
+                }
+                // Clean mode flags from Reaction/Dead if they leaked.
+                for state in [BotStateKind::Reaction, BotStateKind::Dead] {
+                    bot.settings.strategies.get_mut(state).remove(mode_flags);
+                }
+            }
+            // Check if a spec flag was added — if so, rebuild the behavior
+            // tree for the new spec. This handles MangosBot addon spec
+            // selection (e.g. `co +protection` on a warrior).
+            if *state == BotStateKind::Combat {
+                let new_combat = bot.settings.strategies.get(BotStateKind::Combat);
+                if let Some(new_spec) = crate::bot::init::spec_from_strategy_flags(bot.class, new_combat) {
+                    if new_spec != bot.spec {
+                        crate::bot::init::rebuild_for_spec(bot, new_spec);
+                    }
+                }
             }
         }
         BotCommand::ResetStrategies => {
@@ -892,10 +998,45 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                     }
                 }
                 let t = bot.snap.self_.current_target;
-                if t != 0 { Some(t) } else { None }
+                if t != 0 { Some(t) } else {
+                    // Last resort: attack the first attacker.
+                    bot.attackers.first().copied()
+                }
             });
             if let Some(unit) = t {
                 bot.interface.attack(unit);
+                s.focus_target = Some(unit);
+            }
+        }
+        BotCommand::Pull(target) => {
+            // `pull` — resolve target same as attack, then engage via
+            // auto-shoot/taunt. The PULL_BACK reactive subtree handles
+            // returning to the group afterward.
+            if !s.strategies.get(BotStateKind::Combat).contains(StrategyFlags::PULL) {
+                reply(bot, pc, "pull: need pull strategy");
+                return;
+            }
+            let t = target.or_else(|| {
+                if let Some(master) = bot.master_guid.filter(|&g| g != 0) {
+                    let ms = bot.interface.get_unit_snapshot(master);
+                    if ms.current_target != 0 {
+                        return Some(ms.current_target);
+                    }
+                }
+                let t = bot.snap.self_.current_target;
+                if t != 0 { Some(t) } else {
+                    bot.attackers.first().copied()
+                }
+            });
+            if let Some(unit) = t {
+                s.focus_target = Some(unit);
+                // Try ranged pull first (auto-shot), fall back to taunt,
+                // then plain attack.
+                if !bot.interface.auto_shoot(unit)
+                    && !bot.interface.taunt(unit)
+                {
+                    bot.interface.attack(unit);
+                }
             }
         }
         BotCommand::AttackRti(icon) | BotCommand::PullRti(icon) => {
@@ -1162,7 +1303,11 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             let target = if *on_self {
                 bot.handle
             } else {
-                bot.snap.self_.current_target
+                let t = bot.snap.self_.current_target;
+                if t != 0 { t } else {
+                    // No current target — fall back to first attacker.
+                    bot.attackers.first().copied().unwrap_or(0)
+                }
             };
             try_commanded_cast(bot, pc, *spell, target);
         }
@@ -1174,7 +1319,10 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 let target = if *on_self {
                     bot.handle
                 } else {
-                    bot.snap.self_.current_target
+                    let t = bot.snap.self_.current_target;
+                    if t != 0 { t } else {
+                        bot.attackers.first().copied().unwrap_or(0)
+                    }
                 };
                 try_commanded_cast(bot, pc, SpellId(spell_id), target);
             }
@@ -1617,12 +1765,22 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 reply(bot, pc, "trap: not a hunter");
             }
         }
+        BotCommand::SetHunterSting(sting) => {
+            if let Some(h) = s.class_prefs.as_hunter_mut() {
+                h.sting = *sting;
+                let label = sting.map_or("cleared", |st| st.as_str());
+                reply(bot, pc, &format!("sting: {label}"));
+            } else {
+                reply(bot, pc, "sting: not a hunter");
+            }
+        }
         BotCommand::ShowHunterPrefs => {
             let msg = match s.class_prefs.as_hunter() {
                 Some(h) => format!(
-                    "hunter: aspect={} trap={}",
+                    "hunter: aspect={} trap={} sting={}",
                     h.aspect.map_or("none", |a| a.as_str()),
                     h.trap.map_or("none", |t| t.as_str()),
+                    h.sting.map_or("none", |st| st.as_str()),
                 ),
                 None => "hunter: not a hunter".into(),
             };
@@ -1638,9 +1796,22 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 reply(bot, pc, "curse: not a warlock");
             }
         }
+        BotCommand::SetWarlockPet(pet) => {
+            if let Some(w) = s.class_prefs.as_warlock_mut() {
+                w.pet = *pet;
+                let label = pet.map_or("cleared", |p| p.as_str());
+                reply(bot, pc, &format!("pet: {label}"));
+            } else {
+                reply(bot, pc, "pet: not a warlock");
+            }
+        }
         BotCommand::ShowWarlockPrefs => {
             let msg = match s.class_prefs.as_warlock() {
-                Some(w) => format!("warlock: curse={}", w.curse.map_or("none", |c| c.as_str())),
+                Some(w) => format!(
+                    "warlock: curse={}, pet={}",
+                    w.curse.map_or("none", |c| c.as_str()),
+                    w.pet.map_or("none", |p| p.as_str()),
+                ),
                 None => "warlock: not a warlock".into(),
             };
             reply(bot, pc, &msg);
@@ -1715,7 +1886,8 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             // trim=23) and `Combat Strategies: ...` (line 3358, trim=19)
             // — the reply prefix comes from `BotStateKind::reply_prefix`.
             let slot_val = s.strategies.get(*state);
-            let msg = format!("{}: {}", state.reply_prefix(), slot_val.describe());
+            let desc = describe_with_class_prefs(slot_val, &s.class_prefs);
+            let msg = format!("{}: {}", state.reply_prefix(), desc);
             reply(bot, pc, &msg);
         }
         BotCommand::QueryReactivity => {
@@ -2142,6 +2314,17 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             // In classic vanilla this is a simple chat flag, not a real system.
         }
 
+        BotCommand::Batch(cmds) => {
+            for sub in cmds {
+                let sub_pc = PendingCommand {
+                    sender: pc.sender,
+                    security: pc.security,
+                    origin: pc.origin,
+                    command: sub.clone(),
+                };
+                apply_command(bot, &sub_pc);
+            }
+        }
         BotCommand::Unknown(text) => {
             if bot.monitor_active {
                 crate::bot::monitor::monitor_log(bot, &format!("UNKNOWN COMMAND: {text}"));
@@ -2149,6 +2332,113 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             let msg = format!("Unknown command: {text}");
             reply(bot, pc, &msg);
         }
+    }
+}
+
+/// Build a strategy description that includes compound class-pref names.
+///
+/// The Mangosbot addon matches compound strategy names like `"poison main
+/// deadly"`, `"totem earth strength"`, `"curse agony"`, `"aura devotion"`,
+/// `"blessing might"`, `"aspect hawk"`, `"pet imp"` against the strategy
+/// list returned by `co ?` / `nc ?`. Plain `StrategyFlags::describe()`
+/// only emits the base flag name (e.g. `"poisons"`), so the addon never
+/// highlights the selection buttons. This function appends the compound
+/// names derived from the bot's `ClassPrefs`.
+fn describe_with_class_prefs(
+    flags: StrategyFlags,
+    prefs: &crate::bot::class_prefs::ClassPrefs,
+) -> String {
+    use crate::bot::class_prefs::ClassPrefs;
+
+    let mut desc = flags.describe();
+
+    // Helper: append a compound name to the description.
+    let mut append = |name: String| {
+        if desc.is_empty() || desc == "none" {
+            desc = name;
+        } else {
+            desc.push_str(", ");
+            desc.push_str(&name);
+        }
+    };
+
+    match prefs {
+        ClassPrefs::Rogue(r) => {
+            if flags.contains(StrategyFlags::POISONS) {
+                if let Some(pk) = r.mh {
+                    append(format!("poison main {}", pk.as_str()));
+                }
+                if let Some(pk) = r.oh {
+                    append(format!("poison off {}", pk.as_str()));
+                }
+            }
+        }
+        ClassPrefs::Shaman(sh) => {
+            if flags.contains(StrategyFlags::TOTEMS) {
+                if let Some(role) = sh.earth {
+                    append(format!("totem earth {}", totem_addon_name(role)));
+                }
+                if let Some(role) = sh.fire {
+                    append(format!("totem fire {}", totem_addon_name(role)));
+                }
+                if let Some(role) = sh.water {
+                    append(format!("totem water {}", totem_addon_name(role)));
+                }
+                if let Some(role) = sh.air {
+                    append(format!("totem air {}", totem_addon_name(role)));
+                }
+            }
+        }
+        ClassPrefs::Paladin(p) => {
+            if flags.contains(StrategyFlags::AURA) {
+                if let Some(aura) = p.aura {
+                    append(format!("aura {}", aura.as_str()));
+                }
+            }
+            if flags.contains(StrategyFlags::BLESSING) {
+                if let Some(bless) = p.blessing {
+                    append(format!("blessing {}", bless.as_str()));
+                }
+            }
+        }
+        ClassPrefs::Hunter(h) => {
+            if flags.contains(StrategyFlags::ASPECT) {
+                if let Some(aspect) = h.aspect {
+                    append(format!("aspect {}", aspect.as_str()));
+                }
+            }
+            if flags.contains(StrategyFlags::STING) {
+                if let Some(sting) = h.sting {
+                    append(format!("sting {}", sting.as_str()));
+                }
+            }
+        }
+        ClassPrefs::Warlock(w) => {
+            if flags.contains(StrategyFlags::CURSE) {
+                if let Some(curse) = w.curse {
+                    append(format!("curse {}", curse.as_str()));
+                }
+            }
+            if flags.contains(StrategyFlags::PET) {
+                if let Some(pet) = w.pet {
+                    append(format!("pet {}", pet.as_str()));
+                }
+            }
+        }
+        _ => {}
+    }
+
+    desc
+}
+
+/// Map a totem role to the addon-expected name. Resistance totems use the
+/// bare `"resistance"` token since the addon scopes them by slot (`totem
+/// fire resistance`).
+fn totem_addon_name(role: TotemRole) -> &'static str {
+    use TotemRole as R;
+    match role {
+        R::FireResistance | R::FrostResistance | R::NatureResistance => "resistance",
+        _ => role.as_str(),
     }
 }
 

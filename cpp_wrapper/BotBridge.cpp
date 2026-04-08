@@ -118,13 +118,15 @@ BotUnitSnapshot BotBridge::FillUnitSnapshot(Unit* unit)
         s.on_taxi  = p->IsTaxiFlying();
     }
     s.in_combat  = unit->IsInCombat();
-    s.is_casting = unit->IsNonMeleeSpellCasted(false);
+    s.is_casting = unit->IsNonMeleeSpellCasted(false, false, true);
     s.is_moving  = unit->IsMoving();
     s.is_channeling = unit->GetCurrentSpell(CURRENT_CHANNELED_SPELL) != nullptr;
 
-    if (s.is_casting && unit->GetCurrentSpell(CURRENT_GENERIC_SPELL))
+    if (s.is_casting)
     {
         Spell* spell = unit->GetCurrentSpell(CURRENT_GENERIC_SPELL);
+        if (!spell)
+            spell = unit->GetCurrentSpell(CURRENT_CHANNELED_SPELL);
         if (spell && spell->m_spellInfo)
             s.casting_spell_id = spell->m_spellInfo->Id;
     }
@@ -149,9 +151,13 @@ BotUnitSnapshot BotBridge::FillUnitSnapshot(Unit* unit)
     s.pos.o    = unit->GetOrientation();
     s.pos.map_id = unit->GetMapId();
 
-    // Target — GetTargetGuid() is protected in this fork; use the current
-    // combat victim as the effective target guid exposed to Rust.
-    s.current_target = unit->GetVictim() ? unit->GetVictim()->GetObjectGuid().GetRawValue() : uint64_t(0);
+    // Target — prefer combat victim, fall back to player's UI selection.
+    if (unit->GetVictim())
+        s.current_target = unit->GetVictim()->GetObjectGuid().GetRawValue();
+    else if (Player* p = unit->ToPlayer())
+        s.current_target = p->GetSelectionGuid().GetRawValue();
+    else
+        s.current_target = 0;
 
     // Aura state mask
     s.aura_state_mask = unit->GetUInt32Value(UNIT_FIELD_AURASTATE);

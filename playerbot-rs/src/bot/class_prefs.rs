@@ -636,11 +636,47 @@ impl HunterTrap {
     }
 }
 
+/// Hunter sting — only one sting can be active on a target at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HunterSting {
+    Serpent,
+    Viper,
+    Scorpid,
+}
+
+impl HunterSting {
+    pub fn ranks(self) -> &'static [SpellId] {
+        match self {
+            Self::Serpent => SERPENT_STING_RANKS,
+            Self::Viper => VIPER_STING_RANKS,
+            Self::Scorpid => SCORPID_STING_RANKS,
+        }
+    }
+
+    pub fn from_token(tok: &str) -> Option<Self> {
+        Some(match tok {
+            "serpent" => Self::Serpent,
+            "viper" => Self::Viper,
+            "scorpid" => Self::Scorpid,
+            _ => return None,
+        })
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Serpent => "serpent",
+            Self::Viper => "viper",
+            Self::Scorpid => "scorpid",
+        }
+    }
+}
+
 /// Hunter player preferences.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HunterPrefs {
     pub aspect: Option<HunterAspect>,
     pub trap: Option<HunterTrap>,
+    pub sting: Option<HunterSting>,
 }
 
 // ── Warlock ─────────────────────────────────────────────────────────────────
@@ -700,11 +736,47 @@ impl WarlockCurse {
     }
 }
 
+/// Warlock demon pet — the addon lets the player choose which demon the bot
+/// summons. Only one can be active at a time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WarlockPet {
+    Imp,
+    Voidwalker,
+    Succubus,
+    Felhunter,
+    Felguard,
+}
+
+impl WarlockPet {
+    pub fn from_token(tok: &str) -> Option<Self> {
+        Some(match tok {
+            "imp" => Self::Imp,
+            "voidwalker" | "void" => Self::Voidwalker,
+            "succubus" | "succ" => Self::Succubus,
+            "felhunter" | "fel" => Self::Felhunter,
+            "felguard" => Self::Felguard,
+            _ => return None,
+        })
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Imp => "imp",
+            Self::Voidwalker => "voidwalker",
+            Self::Succubus => "succubus",
+            Self::Felhunter => "felhunter",
+            Self::Felguard => "felguard",
+        }
+    }
+}
+
 /// Warlock player preferences.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WarlockPrefs {
     /// The curse the bot keeps up on its current target.
     pub curse: Option<WarlockCurse>,
+    /// Which demon pet to summon. `None` = no auto-summon.
+    pub pet: Option<WarlockPet>,
 }
 
 // ── Warrior ─────────────────────────────────────────────────────────────────
@@ -814,6 +886,7 @@ impl ClassPrefs {
             PlayerClass::Hunter => Self::Hunter(HunterPrefs {
                 aspect: Some(HunterAspect::Hawk),
                 trap: Some(HunterTrap::Freezing),
+                sting: Some(HunterSting::Serpent),
             }),
             PlayerClass::Warlock => {
                 let curse = match spec {
@@ -821,7 +894,12 @@ impl ClassPrefs {
                     S::WarlockDemonology => WarlockCurse::Weakness,
                     _ => WarlockCurse::Elements,
                 };
-                Self::Warlock(WarlockPrefs { curse: Some(curse) })
+                let pet = match spec {
+                    S::WarlockDemonology => Some(WarlockPet::Felguard),
+                    S::WarlockAffliction => Some(WarlockPet::Felhunter),
+                    _ => Some(WarlockPet::Imp),
+                };
+                Self::Warlock(WarlockPrefs { curse: Some(curse), pet })
             }
             PlayerClass::Warrior => Self::Warrior(WarriorPrefs { forced_stance: None }),
             _ => Self::None,
@@ -1265,6 +1343,18 @@ const IMMOLATION_TRAP_RANKS: &[SpellId] = &[
 const FROST_TRAP_RANKS: &[SpellId] = &[SpellId(13809)];
 const SNAKE_TRAP_RANKS: &[SpellId] = &[SpellId(34600)];
 
+// ── Hunter stings ──────────────────────────────────────────────────────────
+
+use crate::engine::aura_helpers::SERPENT_STING_RANKS;
+
+const VIPER_STING_RANKS: &[SpellId] = &[
+    SpellId(3034),  // r1
+    SpellId(14279), // r2
+    SpellId(14280), // r3
+];
+
+const SCORPID_STING_RANKS: &[SpellId] = &[SpellId(3043)];
+
 // ── Warlock curses ──────────────────────────────────────────────────────────
 
 const CURSE_OF_AGONY_RANKS: &[SpellId] = &[
@@ -1377,6 +1467,7 @@ mod tests {
         let h = prefs.as_hunter().expect("hunter variant");
         assert_eq!(h.aspect, Some(HunterAspect::Hawk));
         assert_eq!(h.trap, Some(HunterTrap::Freezing));
+        assert_eq!(h.sting, Some(HunterSting::Serpent));
     }
 
     #[test]

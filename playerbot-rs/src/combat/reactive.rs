@@ -58,13 +58,14 @@ pub fn threat_subtree() -> Bt {
     Seq!(IsTank.not(), InCombat, PullingAggro, ThreatDump)
 }
 
-/// Pull-back after pulling — return to the group, then wait for the
-/// mob to arrive. Gated on the PULL_BACK strategy flag (tanks only).
+/// Pull-back after pulling — return to the group. Gated on the
+/// PULL_BACK strategy flag (tanks only). Once the tank is back near
+/// the group, the subtree completes and the normal combat pipeline
+/// takes over (targeting, positioning, rotation).
 pub fn pull_back_subtree() -> Bt {
     Seq!(
         StrategyEnabled(StrategyFlags::PULL_BACK),
         PullBack,
-        WaitForAttack,
     )
 }
 
@@ -100,10 +101,14 @@ pub fn close_subtree() -> Bt {
 }
 
 /// Maintain ranged distance. Gated on the RANGED strategy flag.
+/// Two behaviors: flee when too close (< 8y), chase when too far (> 30y).
 pub fn ranged_subtree() -> Bt {
     Seq!(
         StrategyEnabled(StrategyFlags::RANGED),
-        MaintainRange(25.0),
+        Sel!(
+            MaintainRange(8.0),
+            CloseToTarget(30.0),
+        ),
     )
 }
 

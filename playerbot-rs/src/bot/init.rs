@@ -406,10 +406,93 @@ pub fn pb2_kit_strategies(class: PlayerClass, spec: PlayerSpec) -> StrategySet {
     set
 }
 
+/// Try to derive a `PlayerSpec` from a strategy flag set. Used when the
+/// MangosBot addon sends `co +protection,?` to override the bot's spec at
+/// runtime. Returns `None` when no spec flag is present or the flag doesn't
+/// match the bot's class.
+pub fn spec_from_strategy_flags(
+    class: PlayerClass,
+    flags: StrategyFlags,
+) -> Option<PlayerSpec> {
+    use PlayerClass::*;
+    use PlayerSpec::*;
+    use StrategyFlags as F;
+
+    // Check each spec flag against the bot's class.
+    let candidates: &[(StrategyFlags, PlayerClass, PlayerSpec)] = &[
+        // Warrior
+        (F::ARMS, Warrior, WarriorArms),
+        (F::FURY, Warrior, WarriorFury),
+        (F::PROTECTION, Warrior, WarriorProtection),
+        // Paladin — PROTECTION and HOLY overlap with other classes;
+        // PB2 resolves by checking the class too.
+        (F::PROTECTION, Paladin, PaladinProtection),
+        (F::HOLY, Paladin, PaladinHoly),
+        (F::RETRIBUTION, Paladin, PaladinRetribution),
+        // Priest
+        (F::DISCIPLINE, Priest, PriestDiscipline),
+        (F::HOLY, Priest, PriestHoly),
+        (F::SHADOW, Priest, PriestShadow),
+        // Hunter
+        (F::BEAST_MASTERY, Hunter, HunterBeastMastery),
+        (F::MARKSMANSHIP, Hunter, HunterMarksmanship),
+        (F::SURVIVAL, Hunter, HunterSurvival),
+        // Rogue
+        (F::ASSASSINATION, Rogue, RogueAssassination),
+        (F::ROGUE_COMBAT, Rogue, RogueCombat),
+        (F::SUBTLETY, Rogue, RogueSubtlety),
+        // Shaman
+        (F::ELEMENTAL, Shaman, ShamanElemental),
+        (F::ENHANCEMENT, Shaman, ShamanEnhancement),
+        (F::RESTORATION, Shaman, ShamanRestoration),
+        // Mage
+        (F::ARCANE, Mage, MageArcane),
+        (F::FIRE, Mage, MageFire),
+        (F::FROST, Mage, MageFrost),
+        // Warlock
+        (F::AFFLICTION, Warlock, WarlockAffliction),
+        (F::DEMONOLOGY, Warlock, WarlockDemonology),
+        (F::DESTRUCTION, Warlock, WarlockDestruction),
+        // Druid
+        (F::BALANCE, Druid, DruidBalance),
+        (F::TANK_FERAL, Druid, DruidFeral),
+        (F::DPS_FERAL, Druid, DruidFeral),
+        (F::RESTORATION, Druid, DruidRestoration),
+        // Death Knight
+        (F::BLOOD, DeathKnight, DeathKnightBlood),
+        (F::FROST, DeathKnight, DeathKnightFrost),
+        (F::UNHOLY, DeathKnight, DeathKnightUnholy),
+    ];
+
+    for &(flag, req_class, spec) in candidates {
+        if class == req_class && flags.contains(flag) {
+            return Some(spec);
+        }
+    }
+    None
+}
+
+/// Rebuild the bot's behavior tree and strategies for a new spec.
+/// Called when the MangosBot addon sends a spec strategy flag toggle
+/// (e.g. `co +protection` on a warrior).
+pub fn rebuild_for_spec(bot: &mut BotState, new_spec: PlayerSpec) {
+    if bot.spec == new_spec {
+        return;
+    }
+    bot.spec = new_spec;
+    bot.role = default_role_for_spec(&new_spec);
+    bot.root_tree = build_root_tree(bot.class, new_spec);
+    let kit = pb2_kit_strategies(bot.class, new_spec);
+    bot.settings.strategies = kit;
+    bot.settings.init_strategies = kit;
+    bot.settings.class_prefs = crate::bot::class_prefs::ClassPrefs::default_for(bot.class, new_spec);
+    bot.reset_strategies();
+}
+
 fn default_role_for_spec(spec: &PlayerSpec) -> BotRole {
-    use PlayerSpec::{WarriorProtection, PaladinProtection, DruidFeral, PriestHoly, PriestDiscipline, PaladinHoly, ShamanRestoration, DruidRestoration};
+    use PlayerSpec::{WarriorProtection, PaladinProtection, PriestHoly, PriestDiscipline, PaladinHoly, ShamanRestoration, DruidRestoration};
     match spec {
-        WarriorProtection | PaladinProtection | DruidFeral => BotRole::TANK,
+        WarriorProtection | PaladinProtection => BotRole::TANK,
         PriestHoly | PriestDiscipline | PaladinHoly | ShamanRestoration | DruidRestoration => {
             BotRole::HEAL
         }
@@ -497,8 +580,10 @@ fn build_root_tree(class: PlayerClass, spec: PlayerSpec) -> Bt {
                 // Encounter override.
                 EncounterOverride,
                 // In combat → reactive + rotation (duels use normal combat).
+                // Also run when group members are injured so healers can
+                // top off between pulls.
                 Seq!(
-                    Sel!(InCombat, ShouldEngage, Bt::InDuel),
+                    Sel!(InCombat, ShouldEngage, Bt::InDuel, Bt::GroupMembersBelow(1, 0.90), Bt::HasFocusTarget),
                     combat_wrapper(combat_tree),
                 ),
                 // Out-of-combat mode dispatch.
@@ -528,7 +613,7 @@ fn build_root_tree(class: PlayerClass, spec: PlayerSpec) -> Bt {
 ///      gets positioning (close/ranged/behind/kite). When it fails
 ///      the bot still proceeds to the rotation for healing, buffing, etc.
 fn combat_wrapper(class_rotation: Bt) -> Bt {
-    use Bt::{MaintainConfiguredCurse, ModeIs};
+    use Bt::{InCombat, MaintainConfiguredCurse, ModeIs};
     use BehaviorMode;
     Sel!(
         // ── A) Reactive — any one short-circuits the rest ────────────
@@ -551,30 +636,34 @@ fn combat_wrapper(class_rotation: Bt) -> Bt {
         // rotation will naturally fail when out of range (melee at 30y)
         // but succeeds once the bot arrives.
         Seq!(
-            // B.1 — Targeting (optional — healers may have no enemy)
-            Sel!(reactive::targeting_subtree(), Bt::Noop),
-            // B.1b — Engage auto-attack / auto-shoot on the resolved target.
-            //        Idempotent: re-calling auto_shoot / auto_attack when
-            //        already engaged is a no-op on the server side.
-            Bt::EngageTarget,
-            // B.2 — Mark RTI (optional, tank only)
-            Sel!(reactive::mark_rti_subtree(), Bt::Noop),
-            // B.3 — Positioning (optional, fire-and-forget). Wrapped in
-            //        `Optional` so Running from move commands doesn't
-            //        block the Seq from continuing to the rotation.
-            //        Suppressed in Stay mode — the bot fights from its
-            //        current position without chasing or repositioning.
+            // B.1–B.3 — Offensive steps: targeting, engage, mark, position.
+            // Gated on actually being in combat, having attackers, or having
+            // been commanded to attack (focus_target). When the combat tree
+            // is entered only via GroupMembersBelow (healers topping off OOC),
+            // these steps are skipped so the bot doesn't auto-attack the
+            // master's UI selection.
             Bt::Optional(Box::new(Seq!(
-                ModeIs(BehaviorMode::Stay).not(),
-                Sel!(
-                    reactive::behind_subtree(),
-                    reactive::ranged_subtree(),
-                    reactive::close_subtree(),
-                    reactive::kite_subtree(),
-                ),
+                Sel!(InCombat, Bt::ShouldEngage, Bt::HasFocusTarget),
+                // B.1 — Targeting (optional — healers may have no enemy)
+                Sel!(reactive::targeting_subtree(), Bt::Noop),
+                // B.1b — Engage auto-attack / auto-shoot on the resolved target.
+                Bt::EngageTarget,
+                // B.2 — Mark RTI (optional, tank only)
+                Sel!(reactive::mark_rti_subtree(), Bt::Noop),
+                // B.3 — Positioning (optional, fire-and-forget).
+                //        Suppressed in Stay mode.
+                Bt::Optional(Box::new(Seq!(
+                    ModeIs(BehaviorMode::Stay).not(),
+                    Sel!(
+                        reactive::behind_subtree(),
+                        reactive::ranged_subtree(),
+                        reactive::close_subtree(),
+                        reactive::kite_subtree(),
+                    ),
+                ))),
             ))),
-            // B.4 — Class rotation (the main event). Curse upkeep runs
-            //        first since it's cheap and class-filtered.
+            // B.4 — Class rotation (the main event). Always runs so healers
+            //        can heal OOC and DPS can use their rotation in combat.
             Sel!(
                 Bt::throttle(2_000, MaintainConfiguredCurse),
                 class_rotation,
