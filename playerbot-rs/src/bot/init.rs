@@ -1,10 +1,10 @@
-/// Bot initialization — builds the root behavior tree from (class, spec).
+/// Bot initialization — builds per-FSM behavior trees from (class, spec).
 use crate::{
     bot::settings::{BehaviorMode, BotStateKind, StrategyFlags, StrategySet},
-    bot::state::{BotState, PlayerClass, PlayerSpec},
+    bot::state::{BotState, BotTrees, PlayerClass, PlayerSpec},
     classes::{self, ClassKit},
     combat::reactive,
-    engine::bt::Bt,
+    engine::{bt::Bt, macro_fsm::ActiveFsm},
     ffi::{BotRole, interface::BotInterface},
     noncombat::GroupBuff,
     world,
@@ -19,9 +19,9 @@ pub fn create_bot(
     spec: PlayerSpec,
 ) -> Box<BotState> {
     let role = default_role_for_spec(&spec);
-    let root_tree = build_root_tree(class, spec);
+    let trees = build_bot_trees(class, spec);
     let mut state = BotState::new(
-        handle, interface, class, spec, role, root_tree,
+        handle, interface, class, spec, role, trees,
     );
     // Layer PB2's per-class default strategies on top of the global
     // `PlayerbotAIConfig.cpp` baseline (empty combat/react/dead slots +
@@ -481,7 +481,7 @@ pub fn rebuild_for_spec(bot: &mut BotState, new_spec: PlayerSpec) {
     }
     bot.spec = new_spec;
     bot.role = default_role_for_spec(&new_spec);
-    bot.root_tree = build_root_tree(bot.class, new_spec);
+    bot.trees = build_bot_trees(bot.class, new_spec);
     let kit = pb2_kit_strategies(bot.class, new_spec);
     bot.settings.strategies = kit;
     bot.settings.init_strategies = kit;
@@ -518,84 +518,77 @@ fn class_kit(class: PlayerClass, spec: PlayerSpec) -> ClassKit {
     }
 }
 
-/// Build the complete root behavior tree for a given class/spec.
+/// Build per-FSM behavior trees for a given class/spec.
 ///
-/// Root structure (priority order):
-///   1. Death handling (corpse run, accept rez)
-///   2. Passive mode — do nothing
-///   3. Eat/drink — recover HP/mana
-///   4. Encounter override — boss mechanics
-///   5. Combat wrapper (reactive + class rotation)
-///   6. Mode-specific out-of-combat behavior
-///   7. Maintenance (buff, loot, pet, mount, vendor, repair)
-fn build_root_tree(class: PlayerClass, spec: PlayerSpec) -> Bt {
-    use Bt::{ModeIs, InCombat, Consumables, EncounterOverride, ShouldEngage};
-
+/// Returns a `BotTrees` with separate trees for each `ActiveFsm` state.
+/// The tick loop selects which tree to run based on the current FSM state,
+/// with encounter override checked first (at tick-time, not in the tree).
+fn build_bot_trees(class: PlayerClass, spec: PlayerSpec) -> BotTrees {
     let ClassKit {
-        tree: combat_tree,
+        combat: class_combat,
+        world: _class_world,
         buffs,
     } = class_kit(class, spec);
 
-    // ── Root: top-level FSM dispatch ────────────────────────────────
-    //
-    // Fundamental states are mutually exclusive and fully contain the
-    // bot's behavior. A dead bot NEVER enters combat or movement trees.
-    // A bot on a taxi NEVER enters any other state. This prevents the
-    // "leaky state" bug where throttled death actions caused dead bots
-    // to fall through into combat/follow.
-    //
-    //   State priority (first match wins):
-    //     1. On taxi     → idle (wait for flight to end)
-    //     2. Dead/Ghost  → death handling only
-    //     3. Alive       → full behavior tree
-    //
+    BotTrees {
+        combat: build_combat_tree(class_combat),
+        world: build_world_tree(),
+        dead: world::death::death_subtree(),
+        maintenance: maintenance_subtree(buffs),
+    }
+}
+
+/// Build the combat FSM tree: reactive subtrees + class rotation.
+///
+/// Encounter override is NOT in this tree — it's handled at tick-level
+/// dispatch so encounters can inject behavior in any FSM state.
+fn build_combat_tree(class_rotation: Bt) -> Bt {
+    use Bt::{ModeIs, ShouldEngage};
+
     Sel!(
-        // ── STATE: Taxi ──────────────────────────────────────────────
-        // Bot is on a flight path. Do nothing until it lands.
-        Seq!(Bt::OnTaxi, Bt::Noop),
-
-        // ── STATE: Dead ──────────────────────────────────────────────
-        // Bot is dead (corpse on ground or ghost running). Only death
-        // handling runs — no combat, no follow, no buffs, no movement.
-        Seq!(Bt::IsAlive.not(), world::death::death_subtree()),
-
-        // ── STATE: Alive ─────────────────────────────────────────────
-        // Full behavior: two passes — primary action then maintenance.
+        // Passive mode — do nothing even in combat.
+        ModeIs(BehaviorMode::Passive),
+        // Duel request handling.
         Seq!(
-            Bt::IsAlive,
-            // Pass 1 — Primary behavior (exclusive Sel).
+            Bt::DuelRequested,
             Sel!(
-                // Passive mode — do nothing.
-                ModeIs(BehaviorMode::Passive),
-                // Eat/drink — out of combat only.
-                Seq!(InCombat.not(), Consumables),
-                // Duel request handling.
-                Seq!(
-                    Bt::DuelRequested,
-                    Sel!(
-                        Seq!(Bt::StrategyEnabled(StrategyFlags::DUEL), Bt::AcceptDuelRequest),
-                        Bt::DeclineDuelRequest,
-                    ),
-                ),
-                // Encounter override.
-                EncounterOverride,
-                // In combat → reactive + rotation (duels use normal combat).
-                // Also run when group members are injured so healers can
-                // top off between pulls.
-                Seq!(
-                    Sel!(InCombat, ShouldEngage, Bt::InDuel, Bt::GroupMembersBelow(1, 0.90), Bt::HasFocusTarget),
-                    combat_wrapper(combat_tree),
-                ),
-                // Out-of-combat mode dispatch.
-                mode_dispatch(),
-                // Fallback: always succeed so the Seq continues to maintenance.
-                Bt::Noop,
+                Seq!(Bt::StrategyEnabled(StrategyFlags::DUEL), Bt::AcceptDuelRequest),
+                Bt::DeclineDuelRequest,
             ),
-            // Pass 2 — Maintenance (buffing, mounting, looting, etc.).
-            //   Wrapped in Sel with Noop so a "nothing to maintain" Failure
-            //   doesn't fail the root Seq.
-            Sel!(maintenance_subtree(buffs), Bt::Noop),
         ),
+        // Combat wrapper: reactive + rotation.
+        // Also fires when group members are injured (healers top off OOC),
+        // when dueling, or when commanded to focus a target.
+        Seq!(
+            Sel!(Bt::InCombat, ShouldEngage, Bt::InDuel, Bt::GroupMembersBelow(1, 0.90), Bt::HasFocusTarget),
+            combat_wrapper(class_rotation),
+        ),
+        Bt::Noop,
+    )
+}
+
+/// Build the world (out-of-combat) FSM tree: eat/drink + mode dispatch.
+fn build_world_tree() -> Bt {
+    use Bt::{ModeIs, Consumables};
+
+    Sel!(
+        // On taxi — do nothing.
+        Seq!(Bt::OnTaxi, Bt::Noop),
+        // Passive mode — do nothing.
+        ModeIs(BehaviorMode::Passive),
+        // Eat/drink to recover HP/mana.
+        Consumables,
+        // Duel request handling (can happen OOC too).
+        Seq!(
+            Bt::DuelRequested,
+            Sel!(
+                Seq!(Bt::StrategyEnabled(StrategyFlags::DUEL), Bt::AcceptDuelRequest),
+                Bt::DeclineDuelRequest,
+            ),
+        ),
+        // Mode dispatch — follow, grind, quest, etc.
+        mode_dispatch(),
+        Bt::Noop,
     )
 }
 

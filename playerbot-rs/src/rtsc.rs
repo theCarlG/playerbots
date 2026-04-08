@@ -477,13 +477,20 @@ mod tests {
     }
 
     fn fake_bot() -> BotState {
+        use crate::bot::state::BotTrees;
+        use crate::engine::bt::Bt;
         BotState::new(
             1,
             Box::new(FakeInterface::default()),
             PlayerClass::Warrior,
             PlayerSpec::WarriorArms,
             BotRole::DPS,
-            Sel!(),
+            BotTrees {
+                combat: Bt::Noop,
+                world: Bt::Noop,
+                dead: Bt::Noop,
+                maintenance: Bt::Noop,
+            },
         )
     }
 

@@ -4,10 +4,19 @@
 use crate::{
     data::spells::vanilla::priest::*,
     engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::macro_fsm::ActiveFsm,
 };
 use crate::{Seq, Sel};
 
-pub fn build_tree() -> Bt {
+pub fn build_tree(fsm: ActiveFsm) -> Bt {
+    match fsm {
+        ActiveFsm::Combat => combat_tree(),
+        ActiveFsm::World => Bt::Noop,
+        ActiveFsm::Dead => Bt::Noop,
+    }
+}
+
+fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (priest-wide list).
         super::boost(),

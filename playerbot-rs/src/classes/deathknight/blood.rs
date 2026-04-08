@@ -4,6 +4,7 @@
 ///   → Heart Strike → Blood Strike → Death Coil → `AoE`
 #[allow(unused_imports)]
 use crate::engine::bt::{Bt::{self, *}, Op::*, Resource::*};
+use crate::engine::macro_fsm::ActiveFsm;
 #[allow(unused_imports)]
 use crate::{Seq, Sel};
 
@@ -11,8 +12,12 @@ use crate::{Seq, Sel};
 use crate::{data::spells::vanilla::deathknight::*, ffi::SpellId};
 
 #[cfg(not(feature = "wotlk"))]
-pub fn build_tree() -> Bt {
-    Sel!()
+pub fn build_tree(fsm: ActiveFsm) -> Bt {
+    match fsm {
+        ActiveFsm::Combat => Sel!(),
+        ActiveFsm::World => Bt::Noop,
+        ActiveFsm::Dead => Bt::Noop,
+    }
 }
 
 #[cfg(feature = "wotlk")]
@@ -21,7 +26,16 @@ const FROST_FEVER: SpellId = SpellId(55095);
 const BLOOD_PLAGUE: SpellId = SpellId(55078);
 
 #[cfg(feature = "wotlk")]
-pub fn build_tree() -> Bt {
+pub fn build_tree(fsm: ActiveFsm) -> Bt {
+    match fsm {
+        ActiveFsm::Combat => combat_tree(),
+        ActiveFsm::World => Bt::Noop,
+        ActiveFsm::Dead => Bt::Noop,
+    }
+}
+
+#[cfg(feature = "wotlk")]
+fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (DK-wide list).
         super::boost(),

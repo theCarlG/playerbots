@@ -10,7 +10,10 @@ use crate::{
     data::spells::vanilla::mage::{
         ARCANE_BRILLIANCE, ARCANE_INTELLECT, ARCANE_POWER, COMBUSTION, PRESENCE_OF_MIND,
     },
-    engine::bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+    engine::{
+        bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+        macro_fsm::ActiveFsm,
+    },
     noncombat::GroupBuff,
 };
 
@@ -35,11 +38,17 @@ pub fn boost() -> Bt {
 
 pub fn kit(spec: PlayerSpec) -> ClassKit {
     use PlayerSpec::{MageArcane, MageFire, MageFrost};
-    let tree = match spec {
-        MageArcane => arcane::build_tree(),
-        MageFire => fire::build_tree(),
-        MageFrost => frost::build_tree(),
+    let combat = match spec {
+        MageArcane => arcane::build_tree(ActiveFsm::Combat),
+        MageFire => fire::build_tree(ActiveFsm::Combat),
+        MageFrost => frost::build_tree(ActiveFsm::Combat),
         _ => unreachable!("non-mage spec passed to mage::kit"),
     };
-    ClassKit { tree, buffs: BUFFS }
+    let world = match spec {
+        MageArcane => arcane::build_tree(ActiveFsm::World),
+        MageFire => fire::build_tree(ActiveFsm::World),
+        MageFrost => frost::build_tree(ActiveFsm::World),
+        _ => unreachable!("non-mage spec passed to mage::kit"),
+    };
+    ClassKit { combat, world, buffs: BUFFS }
 }

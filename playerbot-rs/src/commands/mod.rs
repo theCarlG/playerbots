@@ -2447,11 +2447,21 @@ mod tests {
     use super::*;
     use crate::bot::state::BotState;
     use crate::bot::state::{PlayerClass, PlayerSpec};
-    use crate::Sel;
+    use crate::bot::state::BotTrees;
+    use crate::engine::bt::Bt;
     use crate::engine::context::tests::NullInterface;
     use crate::ffi::BotRole;
     use crate::ffi::interface::BotInterface;
     use std::sync::Mutex;
+
+    fn dummy_trees() -> BotTrees {
+        BotTrees {
+            combat: Bt::Noop,
+            world: Bt::Noop,
+            dead: Bt::Noop,
+            maintenance: Bt::Noop,
+        }
+    }
 
     fn test_bot() -> BotState {
         BotState::new(
@@ -2460,7 +2470,7 @@ mod tests {
             PlayerClass::Warrior,
             PlayerSpec::WarriorArms,
             BotRole::DPS,
-            Sel!(), // dummy empty tree
+            dummy_trees(),
         )
     }
 
@@ -2602,7 +2612,7 @@ mod tests {
             PlayerClass::Warrior,
             PlayerSpec::WarriorArms,
             BotRole::DPS,
-            Sel!(),
+            dummy_trees(),
         )
     }
 

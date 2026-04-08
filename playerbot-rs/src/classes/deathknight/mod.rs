@@ -6,7 +6,10 @@ use crate::{
     bot::settings::StrategyFlags,
     bot::state::PlayerSpec,
     classes::ClassKit,
-    engine::bt::Bt::{self, *},
+    engine::{
+        bt::Bt::{self, *},
+        macro_fsm::ActiveFsm,
+    },
     noncombat::GroupBuff,
 };
 use crate::{Seq, Sel};
@@ -31,11 +34,17 @@ pub fn boost() -> Bt {
 
 pub fn kit(spec: PlayerSpec) -> ClassKit {
     use PlayerSpec::{DeathKnightBlood, DeathKnightFrost, DeathKnightUnholy};
-    let tree = match spec {
-        DeathKnightBlood => blood::build_tree(),
-        DeathKnightFrost => frost::build_tree(),
-        DeathKnightUnholy => unholy::build_tree(),
+    let combat = match spec {
+        DeathKnightBlood => blood::build_tree(ActiveFsm::Combat),
+        DeathKnightFrost => frost::build_tree(ActiveFsm::Combat),
+        DeathKnightUnholy => unholy::build_tree(ActiveFsm::Combat),
         _ => unreachable!("non-deathknight spec passed to deathknight::kit"),
     };
-    ClassKit { tree, buffs: BUFFS }
+    let world = match spec {
+        DeathKnightBlood => blood::build_tree(ActiveFsm::World),
+        DeathKnightFrost => frost::build_tree(ActiveFsm::World),
+        DeathKnightUnholy => unholy::build_tree(ActiveFsm::World),
+        _ => unreachable!("non-deathknight spec passed to deathknight::kit"),
+    };
+    ClassKit { combat, world, buffs: BUFFS }
 }

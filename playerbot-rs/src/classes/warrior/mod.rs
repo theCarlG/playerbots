@@ -11,7 +11,10 @@ use crate::{
     data::spells::vanilla::warrior::{
         BATTLE_SHOUT, BERSERKER_RAGE, BLOODRAGE, DEATH_WISH, RECKLESSNESS,
     },
-    engine::bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+    engine::{
+        bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+        macro_fsm::ActiveFsm,
+    },
     noncombat::GroupBuff,
 };
 
@@ -36,11 +39,17 @@ pub fn boost() -> Bt {
 
 pub fn kit(spec: PlayerSpec) -> ClassKit {
     use PlayerSpec::{WarriorArms, WarriorFury, WarriorProtection};
-    let tree = match spec {
-        WarriorArms => arms::build_tree(),
-        WarriorFury => fury::build_tree(),
-        WarriorProtection => protection::build_tree(),
+    let combat = match spec {
+        WarriorArms => arms::build_tree(ActiveFsm::Combat),
+        WarriorFury => fury::build_tree(ActiveFsm::Combat),
+        WarriorProtection => protection::build_tree(ActiveFsm::Combat),
         _ => unreachable!("non-warrior spec passed to warrior::kit"),
     };
-    ClassKit { tree, buffs: BUFFS }
+    let world = match spec {
+        WarriorArms => arms::build_tree(ActiveFsm::World),
+        WarriorFury => fury::build_tree(ActiveFsm::World),
+        WarriorProtection => protection::build_tree(ActiveFsm::World),
+        _ => unreachable!("non-warrior spec passed to warrior::kit"),
+    };
+    ClassKit { combat, world, buffs: BUFFS }
 }

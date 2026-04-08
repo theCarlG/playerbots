@@ -7,11 +7,20 @@ use crate::{
     engine::{
         aura_helpers::{FAERIE_FIRE_RANKS, INSECT_SWARM_RANKS, MOONFIRE_RANKS},
         bt::{Bt::{self, *}, Op::*, Resource::*},
+        macro_fsm::ActiveFsm,
     },
 };
 use crate::{Seq, Sel};
 
-pub fn build_tree() -> Bt {
+pub fn build_tree(fsm: ActiveFsm) -> Bt {
+    match fsm {
+        ActiveFsm::Combat => combat_tree(),
+        ActiveFsm::World => Bt::Noop,
+        ActiveFsm::Dead => Bt::Noop,
+    }
+}
+
+fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (druid-wide list).
         super::boost(),

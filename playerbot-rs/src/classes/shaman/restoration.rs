@@ -6,9 +6,18 @@ use crate::{Sel, Seq};
 use crate::{
     data::spells::vanilla::shaman::*,
     engine::bt::Bt::{self, *},
+    engine::macro_fsm::ActiveFsm,
 };
 
-pub fn build_tree() -> Bt {
+pub fn build_tree(fsm: ActiveFsm) -> Bt {
+    match fsm {
+        ActiveFsm::Combat => combat_tree(),
+        ActiveFsm::World => Bt::Noop,
+        ActiveFsm::Dead => Bt::Noop,
+    }
+}
+
+fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (shaman-wide list).
         super::boost(),

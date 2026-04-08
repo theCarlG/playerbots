@@ -8,7 +8,10 @@ use crate::{
     bot::state::PlayerSpec,
     classes::ClassKit,
     data::spells::vanilla::druid::{NATURE_SWIFTNESS, TIGERS_FURY},
-    engine::bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+    engine::{
+        bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+        macro_fsm::ActiveFsm,
+    },
     ffi::SpellId,
     noncombat::GroupBuff,
 };
@@ -29,11 +32,17 @@ pub fn boost() -> Bt {
 
 pub fn kit(spec: PlayerSpec) -> ClassKit {
     use PlayerSpec::{DruidBalance, DruidFeral, DruidRestoration};
-    let tree = match spec {
-        DruidBalance => balance::build_tree(),
-        DruidFeral => feral::build_tree(),
-        DruidRestoration => restoration::build_tree(),
+    let combat = match spec {
+        DruidBalance => balance::build_tree(ActiveFsm::Combat),
+        DruidFeral => feral::build_tree(ActiveFsm::Combat),
+        DruidRestoration => restoration::build_tree(ActiveFsm::Combat),
         _ => unreachable!("non-druid spec passed to druid::kit"),
     };
-    ClassKit { tree, buffs: BUFFS }
+    let world = match spec {
+        DruidBalance => balance::build_tree(ActiveFsm::World),
+        DruidFeral => feral::build_tree(ActiveFsm::World),
+        DruidRestoration => restoration::build_tree(ActiveFsm::World),
+        _ => unreachable!("non-druid spec passed to druid::kit"),
+    };
+    ClassKit { combat, world, buffs: BUFFS }
 }

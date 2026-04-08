@@ -5,6 +5,7 @@
 use crate::{
     data::spells::vanilla::shaman::*,
     engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::macro_fsm::ActiveFsm,
     ffi::SpellId,
 };
 use crate::{Seq, Sel};
@@ -12,7 +13,15 @@ use crate::{Seq, Sel};
 // Higher-rank auras for self buffs.
 const LIGHTNING_SHIELD_RANKS: &[SpellId] = &[LIGHTNING_SHIELD, SpellId(10432)];
 
-pub fn build_tree() -> Bt {
+pub fn build_tree(fsm: ActiveFsm) -> Bt {
+    match fsm {
+        ActiveFsm::Combat => combat_tree(),
+        ActiveFsm::World => Bt::Noop,
+        ActiveFsm::Dead => Bt::Noop,
+    }
+}
+
+fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (shaman-wide list).
         super::boost(),

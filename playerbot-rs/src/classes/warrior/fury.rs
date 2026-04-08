@@ -6,11 +6,20 @@ use crate::{
     engine::{
         aura_helpers::BATTLE_SHOUT_RANKS,
         bt::{Bt::{self, *}, Op::*, Resource::*},
+        macro_fsm::ActiveFsm,
     },
 };
 use crate::{Seq, Sel};
 
-pub fn build_tree() -> Bt {
+pub fn build_tree(fsm: ActiveFsm) -> Bt {
+    match fsm {
+        ActiveFsm::Combat => combat_tree(),
+        ActiveFsm::World => Bt::Noop,
+        ActiveFsm::Dead => Bt::Noop,
+    }
+}
+
+fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (warrior-wide list).
         super::boost(),

@@ -99,7 +99,7 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         master_guid,
         active_fsm,
         ref encounter,
-        ref root_tree,
+        ref trees,
         handle: bot_handle,
         class,
         role,
@@ -110,6 +110,10 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     let ctx_group = group_state
         .as_ref()
         .and_then(|handle| handle.state().try_read().ok());
+
+    // Check for encounter override before building TickContext.
+    // The encounter's phase_bt() is dynamic (phase changes each tick).
+    let enc_override = encounter.as_ref().and_then(|enc| enc.phase_bt());
 
     let mut ctx = TickContext {
         snap,
@@ -138,7 +142,22 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         pending_target: std::cell::Cell::new(None),
     };
 
-    let _ = root_tree.tick(&mut ctx);
+    // FSM-based dispatch: encounter override first, then per-state tree.
+    if let Some(ref enc_bt) = enc_override {
+        let _ = enc_bt.tick(&mut ctx);
+    } else {
+        let primary = match active_fsm {
+            ActiveFsm::Dead => &trees.dead,
+            ActiveFsm::Combat => &trees.combat,
+            ActiveFsm::World => &trees.world,
+        };
+        let _ = primary.tick(&mut ctx);
+    }
+
+    // Maintenance runs after primary in all states except Dead.
+    if active_fsm != ActiveFsm::Dead {
+        let _ = trees.maintenance.tick(&mut ctx);
+    }
 
     // 6. Monitor: BT path tracing + throttled tick summary
     //

@@ -8,7 +8,10 @@ use crate::{
     bot::state::PlayerSpec,
     classes::ClassKit,
     data::spells::vanilla::priest::{INNER_FIRE, INNER_FOCUS, POWER_WORD_FORTITUDE},
-    engine::bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+    engine::{
+        bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+        macro_fsm::ActiveFsm,
+    },
     noncombat::GroupBuff,
 };
 
@@ -28,11 +31,17 @@ pub fn boost() -> Bt {
 
 pub fn kit(spec: PlayerSpec) -> ClassKit {
     use PlayerSpec::{PriestHoly, PriestDiscipline, PriestShadow};
-    let tree = match spec {
-        PriestHoly => holy::build_tree(),
-        PriestDiscipline => discipline::build_tree(),
-        PriestShadow => shadow::build_tree(),
+    let combat = match spec {
+        PriestHoly => holy::build_tree(ActiveFsm::Combat),
+        PriestDiscipline => discipline::build_tree(ActiveFsm::Combat),
+        PriestShadow => shadow::build_tree(ActiveFsm::Combat),
         _ => unreachable!("non-priest spec passed to priest::kit"),
     };
-    ClassKit { tree, buffs: BUFFS }
+    let world = match spec {
+        PriestHoly => holy::build_tree(ActiveFsm::World),
+        PriestDiscipline => discipline::build_tree(ActiveFsm::World),
+        PriestShadow => shadow::build_tree(ActiveFsm::World),
+        _ => unreachable!("non-priest spec passed to priest::kit"),
+    };
+    ClassKit { combat, world, buffs: BUFFS }
 }

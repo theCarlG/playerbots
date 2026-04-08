@@ -9,7 +9,10 @@ use crate::{
     bot::state::PlayerSpec,
     classes::ClassKit,
     data::spells::vanilla::hunter::{BESTIAL_WRATH, RAPID_FIRE},
-    engine::bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+    engine::{
+        bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+        macro_fsm::ActiveFsm,
+    },
     noncombat::GroupBuff,
 };
 
@@ -26,11 +29,17 @@ pub fn boost() -> Bt {
 
 pub fn kit(spec: PlayerSpec) -> ClassKit {
     use PlayerSpec::{HunterBeastMastery, HunterMarksmanship, HunterSurvival};
-    let tree = match spec {
-        HunterBeastMastery => beast_mastery::build_tree(),
-        HunterMarksmanship => marksmanship::build_tree(),
-        HunterSurvival => survival::build_tree(),
+    let combat = match spec {
+        HunterBeastMastery => beast_mastery::build_tree(ActiveFsm::Combat),
+        HunterMarksmanship => marksmanship::build_tree(ActiveFsm::Combat),
+        HunterSurvival => survival::build_tree(ActiveFsm::Combat),
         _ => unreachable!("non-hunter spec passed to hunter::kit"),
     };
-    ClassKit { tree, buffs: BUFFS }
+    let world = match spec {
+        HunterBeastMastery => beast_mastery::build_tree(ActiveFsm::World),
+        HunterMarksmanship => marksmanship::build_tree(ActiveFsm::World),
+        HunterSurvival => survival::build_tree(ActiveFsm::World),
+        _ => unreachable!("non-hunter spec passed to hunter::kit"),
+    };
+    ClassKit { combat, world, buffs: BUFFS }
 }

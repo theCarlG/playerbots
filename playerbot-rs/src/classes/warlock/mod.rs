@@ -9,7 +9,10 @@ use crate::{
     bot::state::PlayerSpec,
     classes::ClassKit,
     data::spells::vanilla::warlock::{DARK_PACT, DEMON_ARMOR},
-    engine::bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+    engine::{
+        bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+        macro_fsm::ActiveFsm,
+    },
     noncombat::GroupBuff,
 };
 
@@ -26,11 +29,17 @@ pub fn boost() -> Bt {
 
 pub fn kit(spec: PlayerSpec) -> ClassKit {
     use PlayerSpec::{WarlockAffliction, WarlockDemonology, WarlockDestruction};
-    let tree = match spec {
-        WarlockAffliction => affliction::build_tree(),
-        WarlockDemonology => demonology::build_tree(),
-        WarlockDestruction => destruction::build_tree(),
+    let combat = match spec {
+        WarlockAffliction => affliction::build_tree(ActiveFsm::Combat),
+        WarlockDemonology => demonology::build_tree(ActiveFsm::Combat),
+        WarlockDestruction => destruction::build_tree(ActiveFsm::Combat),
         _ => unreachable!("non-warlock spec passed to warlock::kit"),
     };
-    ClassKit { tree, buffs: BUFFS }
+    let world = match spec {
+        WarlockAffliction => affliction::build_tree(ActiveFsm::World),
+        WarlockDemonology => demonology::build_tree(ActiveFsm::World),
+        WarlockDestruction => destruction::build_tree(ActiveFsm::World),
+        _ => unreachable!("non-warlock spec passed to warlock::kit"),
+    };
+    ClassKit { combat, world, buffs: BUFFS }
 }

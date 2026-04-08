@@ -84,6 +84,20 @@ pub enum PlayerSpec {
     DeathKnightUnholy,
 }
 
+/// Per-FSM behavior trees. The tick loop selects which tree to run
+/// based on the current `ActiveFsm` state.
+pub struct BotTrees {
+    /// Combat rotation + reactive subtrees (flee, interrupt, etc.).
+    pub combat: Bt,
+    /// Out-of-combat behavior (follow, grind, quest, etc.).
+    pub world: Bt,
+    /// Death handling (corpse run, accept res, spirit healer).
+    pub dead: Bt,
+    /// Low-priority maintenance (buffing, looting, mounting, vendor, repair).
+    /// Runs after the primary tree in all FSM states except Dead.
+    pub maintenance: Bt,
+}
+
 /// The complete per-bot AI state.
 pub struct BotState {
     /// `CMaNGOS` `ObjectGuid` value for this bot's Player.
@@ -148,8 +162,9 @@ pub struct BotState {
     /// enters a known zone; updated each tick before the BT runs.
     pub encounter: Option<Box<dyn EncounterFsm>>,
 
-    /// The root behavior tree. Built once at bot init, never reallocated.
-    pub root_tree: Bt,
+    /// Per-FSM behavior trees. Built once at bot init (and on respec).
+    /// The tick loop selects which tree to run based on `active_fsm`.
+    pub trees: BotTrees,
 
     /// Bot's class and spec.
     pub class: PlayerClass,
@@ -193,7 +208,7 @@ impl BotState {
         class: PlayerClass,
         spec: PlayerSpec,
         role: BotRole,
-        root_tree: Bt,
+        trees: BotTrees,
     ) -> Self {
         let settings = BotSettings {
             class_prefs: ClassPrefs::default_for(class, spec),
@@ -213,7 +228,7 @@ impl BotState {
             master_guid: None,
             active_fsm: ActiveFsm::World,
             encounter: None,
-            root_tree,
+            trees,
             class,
             spec,
             role,

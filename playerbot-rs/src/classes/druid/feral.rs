@@ -8,6 +8,7 @@ use crate::{
     engine::{
         aura_helpers::{DEMO_ROAR_RANKS, FAERIE_FIRE_RANKS, RAKE_RANKS, RIP_RANKS},
         bt::{Bt::{self, *}, Op::*, Resource::*},
+        macro_fsm::ActiveFsm,
     },
     ffi::SpellId,
 };
@@ -16,7 +17,15 @@ use crate::{Seq, Sel};
 const GROWL: SpellId = SpellId(6795);
 const FRENZIED_REGENERATION: SpellId = SpellId(22842);
 
-pub fn build_tree() -> Bt {
+pub fn build_tree(fsm: ActiveFsm) -> Bt {
+    match fsm {
+        ActiveFsm::Combat => combat_tree(),
+        ActiveFsm::World => Bt::Noop,
+        ActiveFsm::Dead => Bt::Noop,
+    }
+}
+
+fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (druid-wide list).
         super::boost(),

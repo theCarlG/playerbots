@@ -5,6 +5,7 @@
 use crate::{
     data::spells::vanilla::mage::*,
     engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::macro_fsm::ActiveFsm,
     ffi::SpellId,
 };
 use crate::{Seq, Sel};
@@ -13,7 +14,15 @@ use crate::{Seq, Sel};
 const FIRE_VULNERABILITY: SpellId = SpellId(22959);
 const FIRE_VULN_MAX: u8 = 5;
 
-pub fn build_tree() -> Bt {
+pub fn build_tree(fsm: ActiveFsm) -> Bt {
+    match fsm {
+        ActiveFsm::Combat => combat_tree(),
+        ActiveFsm::World => Bt::Noop,
+        ActiveFsm::Dead => Bt::Noop,
+    }
+}
+
+fn combat_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (mage-wide list).
         super::boost(),

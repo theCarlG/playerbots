@@ -12,7 +12,10 @@ use crate::{
         BLESSING_OF_KINGS, BLESSING_OF_MIGHT, BLESSING_OF_WISDOM, DEVOTION_AURA, DIVINE_FAVOR,
         RETRIBUTION_AURA,
     },
-    engine::bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+    engine::{
+        bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+        macro_fsm::ActiveFsm,
+    },
     noncombat::GroupBuff,
 };
 
@@ -44,15 +47,18 @@ pub fn kit(spec: PlayerSpec) -> ClassKit {
     use PlayerSpec::{PaladinHoly, PaladinProtection, PaladinRetribution};
     match spec {
         PaladinHoly => ClassKit {
-            tree: holy::build_tree(),
+            combat: holy::build_tree(ActiveFsm::Combat),
+            world: holy::build_tree(ActiveFsm::World),
             buffs: HOLY_BUFFS,
         },
         PaladinProtection => ClassKit {
-            tree: protection::build_tree(),
+            combat: protection::build_tree(ActiveFsm::Combat),
+            world: protection::build_tree(ActiveFsm::World),
             buffs: PROT_BUFFS,
         },
         PaladinRetribution => ClassKit {
-            tree: retribution::build_tree(),
+            combat: retribution::build_tree(ActiveFsm::Combat),
+            world: retribution::build_tree(ActiveFsm::World),
             buffs: RET_BUFFS,
         },
         _ => unreachable!("non-paladin spec passed to paladin::kit"),
