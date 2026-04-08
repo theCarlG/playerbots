@@ -4,14 +4,15 @@
 /// queued on `BotState::pending_commands`, and applied here before each tick.
 pub mod parser;
 pub mod preprocess;
+pub mod protocol;
 
 use crate::bot::class_prefs::{
-    HunterAspect, HunterSting, HunterTrap, PaladinAura, PaladinBlessing, PoisonKind, ShamanImbue, TotemRole,
-    TotemSlot, WarlockCurse, WarlockPet, WarriorStance, WeaponHand,
+    HunterAspect, HunterSting, HunterTrap, PaladinAura, PaladinBlessing, PoisonKind, ShamanImbue,
+    TotemRole, TotemSlot, WarlockCurse, WarlockPet, WarriorStance, WeaponHand,
 };
 use crate::bot::settings::{
-    BehaviorMode, BotSettings, BotStateKind, ChatChannel, PositionStance, Reactivity,
-    RtscAction, StrategyFlags,
+    BehaviorMode, BotSettings, BotStateKind, ChatChannel, PositionStance, Reactivity, RtscAction,
+    StrategyFlags,
 };
 use crate::bot::state::BotState;
 use crate::ffi::{ItemId, SpellId, UnitHandle};
@@ -166,7 +167,10 @@ pub enum BotCommand {
     /// `range <N>` — override follow distance (legacy single-number form).
     SetRange(f32),
     /// `range <qualifier> <N>` — set a specific range value (PB2 range subcommands).
-    SetRangeQualified { qualifier: String, value: f32 },
+    SetRangeQualified {
+        qualifier: String,
+        value: f32,
+    },
     /// `range ?` — query all range values.
     QueryRange,
 
@@ -202,7 +206,10 @@ pub enum BotCommand {
     /// `unkeep <itemid>` — remove from do-not-sell list.
     UnkeepItem(ItemId),
     /// `chat <channel> on|off` — verbose reply toggle per channel.
-    SetChatChannel { channel: ChatChannel, on: bool },
+    SetChatChannel {
+        channel: ChatChannel,
+        on: bool,
+    },
     /// `rti <icon>` — set the bot's preferred raid-target-icon focus.
     /// `rti clear` sends `None`.
     SetPreferredRti(Option<u8>),
@@ -413,10 +420,59 @@ pub enum BotCommand {
     /// `lfg` — looking for group toggle.
     Lfg,
 
+    /// `preset <name>` — apply a named strategy profile.
+    Preset(String),
+
     /// Internal: a single parse result that carries multiple commands.
     /// Used when a strategy toggle implies a class-pref side-effect (e.g.
     /// `co +poison main deadly` → `ApplyStrategies{POISONS}` + `SetPoison`).
     Batch(Vec<BotCommand>),
+
+    // -- Group coordination --
+    /// `set mt` — assign this bot as main tank in GroupCoordination.
+    SetMainTank,
+    /// `set ot` — assign this bot as off-tank in GroupCoordination.
+    SetOffTank,
+    /// `unset mt` / `unset ot` — remove tank assignment.
+    UnsetTank,
+    /// `assist <target>` — set group-wide main assist target.
+    SetMainAssist(Option<UnitHandle>),
+    /// `assist <player_name>` — set MA by player name (resolved at apply time).
+    SetMainAssistByName(String),
+
+    /// `cc <rti_icon>` — assign this bot to CC the mob marked with `rti_icon`.
+    /// `cc <rti_icon> <spell_name>` — CC with a specific spell.
+    AssignCc {
+        icon: u8,
+        spell: Option<SpellId>,
+    },
+    /// `uncc` / `uncc <rti_icon>` — remove CC assignment.
+    UnassignCc(Option<u8>),
+    /// `tank <rti_icon>` — assign this bot to tank the mob marked with `rti_icon`.
+    /// Multiple icons can be assigned (call multiple times).
+    AssignTankTarget(u8),
+    /// `untank` / `untank <rti_icon>` — remove tank target assignment.
+    UnassignTankTarget(Option<u8>),
+
+    // -- Monitor --
+    /// `monitor on|off` — toggle the debug monitor for this bot.
+    SetMonitor(bool),
+
+    // -- Debug sub-commands --
+    /// `debug fsm` — show FSM state + WorldSub.
+    DebugFsm,
+    /// `debug claims` — show active claims in the shared ClaimTable.
+    DebugClaims,
+    /// `debug coord` — show GroupCoordination (tank order, MA, CC).
+    DebugCoord,
+    /// `debug bt` — show last BT path.
+    DebugBt,
+
+    // -- Addon subscriptions --
+    /// `subscribe <category>` — subscribe to state pushes for a category.
+    Subscribe(String),
+    /// `unsubscribe [category]` — unsubscribe from a category (or all).
+    Unsubscribe(Option<String>),
 
     // -- Unknown --
     Unknown(String),
@@ -442,7 +498,9 @@ impl BotCommand {
             | MailSummary
             // Addon probes — must be readable by anyone who can whisper.
             | QueryFormation | QueryStance | QueryStrategies(_)
-            | QueryReactivity | QueryRti | QueryCcRti | QuerySaveMana | QueryLootPolicy => SecurityLevel::Talk,
+            | QueryReactivity | QueryRti | QueryCcRti | QuerySaveMana | QueryLootPolicy
+            | DebugFsm | DebugClaims | DebugCoord | DebugBt
+            | Subscribe(_) | Unsubscribe(_) => SecurityLevel::Talk,
 
             // Destructive / account-level — master only.
             Reset | ResetStrategies | BlacklistSpell(_) | UnblacklistSpell(_)
@@ -584,6 +642,17 @@ impl BotCommand {
             | SetValue(_)
             | AiProfile(_)
             | Lfg
+            | SetMainTank
+            | SetOffTank
+            | UnsetTank
+            | SetMainAssist(_)
+            | SetMainAssistByName(_)
+            | AssignCc { .. }
+            | UnassignCc(_)
+            | AssignTankTarget(_)
+            | UnassignTankTarget(_)
+            | Preset(_)
+            | SetMonitor(_)
             | Batch(_) => SecurityLevel::Invite,
         }
     }
@@ -676,9 +745,23 @@ pub struct PendingCommand {
     pub security: SecurityLevel,
     pub origin: ChatOrigin,
     pub command: BotCommand,
+    /// Target selectors from the new protocol (`@warrior`, `@group1`, etc.).
+    /// Empty means "directly addressed to this bot" (no filtering needed).
+    /// Evaluated in `process_commands` against the bot's class/role/spec/group.
+    pub selectors: Vec<protocol::TargetSelector>,
 }
 
 impl PendingCommand {
+    /// Derive the `Transport` this command arrived on.
+    pub fn transport(&self) -> protocol::Transport {
+        protocol::Transport::from_chat_origin(&self.origin)
+    }
+
+    /// True if this command arrived on the addon channel.
+    pub fn is_addon(&self) -> bool {
+        self.origin.is_addon()
+    }
+
     /// Internal/system command — always allowed, no whisper reply possible.
     pub fn internal(command: BotCommand) -> Self {
         Self {
@@ -686,6 +769,7 @@ impl PendingCommand {
             security: SecurityLevel::AllowAll,
             origin: ChatOrigin::INTERNAL,
             command,
+            selectors: Vec::new(),
         }
     }
 
@@ -701,6 +785,24 @@ impl PendingCommand {
             security,
             origin,
             command,
+            selectors: Vec::new(),
+        }
+    }
+
+    /// Command with target selectors (from the new dual-command API).
+    pub fn with_selectors(
+        sender: u64,
+        security: SecurityLevel,
+        origin: ChatOrigin,
+        command: BotCommand,
+        selectors: Vec<protocol::TargetSelector>,
+    ) -> Self {
+        Self {
+            sender: Some(sender),
+            security,
+            origin,
+            command,
+            selectors,
         }
     }
 }
@@ -718,8 +820,36 @@ pub fn process_commands(bot: &mut BotState) {
             // would create a whisper-spam vector from strangers.
             continue;
         }
+        // Evaluate target selectors — skip if this bot doesn't match.
+        if !pc.selectors.is_empty() && !selectors_match(bot, &pc.selectors) {
+            continue;
+        }
         apply_command(bot, &pc);
     }
+}
+
+/// Check if the bot matches ALL selectors (AND logic).
+fn selectors_match(bot: &BotState, selectors: &[protocol::TargetSelector]) -> bool {
+    // Determine tank status from group coordination.
+    let (is_mt, is_ot) = bot
+        .group_state
+        .as_ref()
+        .and_then(|gh| gh.state().try_read().ok())
+        .map(|gs| {
+            let mt = gs.coordination.main_tank() == Some(bot.handle);
+            let ot = gs.coordination.off_tanks().any(|h| h == bot.handle);
+            (mt, ot)
+        })
+        .unwrap_or((false, false));
+
+    let subgroup = bot.snap.subgroup;
+
+    selectors.iter().all(|sel| {
+        sel.matches(
+            "", // name — not yet available in BotState
+            bot.class, bot.spec, bot.role, subgroup, is_mt, is_ot,
+        )
+    })
 }
 
 /// The crowd-control spell this class has available for `cc {icon}` commands.
@@ -729,7 +859,9 @@ pub fn process_commands(bot: &mut BotState) {
 /// with no direct single-target CC (warrior, DK, rogue uses stealth-only
 /// sap so it's conditional).
 fn class_cc_spell(class: crate::bot::state::PlayerClass) -> Option<SpellId> {
-    use crate::bot::state::PlayerClass::{Mage, Warlock, Priest, Druid, Hunter, Paladin, Shaman, Rogue, Warrior, DeathKnight};
+    use crate::bot::state::PlayerClass::{
+        DeathKnight, Druid, Hunter, Mage, Paladin, Priest, Rogue, Shaman, Warlock, Warrior,
+    };
     Some(match class {
         Mage => SpellId(118),      // polymorph
         Warlock => SpellId(710),   // banish (works on demons/elementals)
@@ -800,7 +932,11 @@ fn try_commanded_cast(bot: &BotState, pc: &PendingCommand, spell: SpellId, targe
         return;
     }
     if !bot.interface.knows_spell(spell) {
-        reply(bot, pc, &format!("Can't cast {name}: I don't know that spell"));
+        reply(
+            bot,
+            pc,
+            &format!("Can't cast {name}: I don't know that spell"),
+        );
         return;
     }
     let dist = bot.interface.unit_distance(target);
@@ -812,11 +948,19 @@ fn try_commanded_cast(bot: &BotState, pc: &PendingCommand, spell: SpellId, targe
         } else {
             "out of range, not enough resources, or wrong stance"
         };
-        reply(bot, pc, &format!("Can't cast {name}: {reason} (dist={dist:.0}y)"));
+        reply(
+            bot,
+            pc,
+            &format!("Can't cast {name}: {reason} (dist={dist:.0}y)"),
+        );
         return;
     }
     if !bot.interface.cast_spell(spell, target) {
-        reply(bot, pc, &format!("Can't cast {name}: server rejected (dist={dist:.0}y los={los})"));
+        reply(
+            bot,
+            pc,
+            &format!("Can't cast {name}: server rejected (dist={dist:.0}y los={los})"),
+        );
     }
 }
 
@@ -895,7 +1039,13 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             slot.remove(StrategyFlags::TARGETING_EXCLUSIVE);
             slot.insert(*flags);
         }
-        BotCommand::ApplyStrategies { state, add, remove, toggle, query } => {
+        BotCommand::ApplyStrategies {
+            state,
+            add,
+            remove,
+            toggle,
+            query,
+        } => {
             {
                 let slot = s.strategies.get_mut(*state);
                 slot.remove(*remove);
@@ -925,8 +1075,15 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                     | StrategyFlags::RPG
                     | StrategyFlags::FOLLOW;
                 let has = |f: StrategyFlags| {
-                    bot.settings.strategies.get(BotStateKind::Combat).contains(f)
-                    || bot.settings.strategies.get(BotStateKind::NonCombat).contains(f)
+                    bot.settings
+                        .strategies
+                        .get(BotStateKind::Combat)
+                        .contains(f)
+                        || bot
+                            .settings
+                            .strategies
+                            .get(BotStateKind::NonCombat)
+                            .contains(f)
                 };
                 let (new_mode, active_flag) = if has(StrategyFlags::PASSIVE) {
                     (BehaviorMode::Passive, StrategyFlags::PASSIVE)
@@ -961,7 +1118,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             // selection (e.g. `co +protection` on a warrior).
             if *state == BotStateKind::Combat {
                 let new_combat = bot.settings.strategies.get(BotStateKind::Combat);
-                if let Some(new_spec) = crate::bot::init::spec_from_strategy_flags(bot.class, new_combat) {
+                if let Some(new_spec) =
+                    crate::bot::init::spec_from_strategy_flags(bot.class, new_combat)
+                {
                     if new_spec != bot.spec {
                         crate::bot::init::rebuild_for_spec(bot, new_spec);
                     }
@@ -998,7 +1157,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                     }
                 }
                 let t = bot.snap.self_.current_target;
-                if t != 0 { Some(t) } else {
+                if t != 0 {
+                    Some(t)
+                } else {
                     // Last resort: attack the first attacker.
                     bot.attackers.first().copied()
                 }
@@ -1012,7 +1173,11 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             // `pull` — resolve target same as attack, then engage via
             // auto-shoot/taunt. The PULL_BACK reactive subtree handles
             // returning to the group afterward.
-            if !s.strategies.get(BotStateKind::Combat).contains(StrategyFlags::PULL) {
+            if !s
+                .strategies
+                .get(BotStateKind::Combat)
+                .contains(StrategyFlags::PULL)
+            {
                 reply(bot, pc, "pull: need pull strategy");
                 return;
             }
@@ -1024,7 +1189,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                     }
                 }
                 let t = bot.snap.self_.current_target;
-                if t != 0 { Some(t) } else {
+                if t != 0 {
+                    Some(t)
+                } else {
                     bot.attackers.first().copied()
                 }
             });
@@ -1032,9 +1199,7 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 s.focus_target = Some(unit);
                 // Try ranged pull first (auto-shot), fall back to taunt,
                 // then plain attack.
-                if !bot.interface.auto_shoot(unit)
-                    && !bot.interface.taunt(unit)
-                {
+                if !bot.interface.auto_shoot(unit) && !bot.interface.taunt(unit) {
                     bot.interface.attack(unit);
                 }
             }
@@ -1053,9 +1218,10 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             // cast if it can — uncastable/missing spells silently no-op.
             if let Some(unit) = bot.interface.get_unit_with_raid_icon(*icon)
                 && let Some(spell) = class_cc_spell(bot.class)
-                    && bot.interface.can_cast(spell, unit) {
-                        bot.interface.cast_spell(spell, unit);
-                    }
+                && bot.interface.can_cast(spell, unit)
+            {
+                bot.interface.cast_spell(spell, unit);
+            }
         }
         BotCommand::BlacklistSpell(spell) => {
             s.spell_blacklist.insert(*spell);
@@ -1304,7 +1470,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 bot.handle
             } else {
                 let t = bot.snap.self_.current_target;
-                if t != 0 { t } else {
+                if t != 0 {
+                    t
+                } else {
                     // No current target — fall back to first attacker.
                     bot.attackers.first().copied().unwrap_or(0)
                 }
@@ -1320,7 +1488,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                     bot.handle
                 } else {
                     let t = bot.snap.self_.current_target;
-                    if t != 0 { t } else {
+                    if t != 0 {
+                        t
+                    } else {
                         bot.attackers.first().copied().unwrap_or(0)
                     }
                 };
@@ -1501,17 +1671,202 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             bot.interface.emote(*id);
         }
         BotCommand::Debug => {
+            let fsm = bot.active_fsm;
+            let world_sub = bot
+                .blackboard
+                .get_u32(crate::engine::blackboard::Key::WorldSubState)
+                .and_then(|v| {
+                    use crate::engine::macro_fsm::WorldSub;
+                    match v {
+                        0 => Some(WorldSub::Follow),
+                        1 => Some(WorldSub::Grind),
+                        2 => Some(WorldSub::Quest),
+                        3 => Some(WorldSub::Rest),
+                        4 => Some(WorldSub::Guard),
+                        5 => Some(WorldSub::Rpg),
+                        6 => Some(WorldSub::Stay),
+                        7 => Some(WorldSub::Bg),
+                        8 => Some(WorldSub::Travel),
+                        _ => None,
+                    }
+                });
+            let enc_info = bot
+                .encounter
+                .as_ref()
+                .map(|enc| {
+                    format!(
+                        "enc=boss:{} phase:{} active:{}",
+                        enc.boss_entry(),
+                        enc.phase_id(),
+                        enc.is_active()
+                    )
+                })
+                .unwrap_or_else(|| "enc=none".to_string());
+            let group_info = bot
+                .group_state
+                .as_ref()
+                .and_then(|gh| gh.state().try_read().ok())
+                .map(|gs| {
+                    let mt = gs.coordination.main_tank().unwrap_or(0);
+                    let ma = gs.coordination.main_assist_target.unwrap_or(0);
+                    let claims = gs.encounter.claims.active_count(bot.snap.server_time_ms);
+                    format!("grp=mt:{:#x} ma:{:#x} claims:{}", mt, ma, claims)
+                })
+                .unwrap_or_else(|| "grp=none".to_string());
             let msg = format!(
-                "DBG mode={} react={:?} co-strats={:#x} nc-strats={:#x} react-strats={:#x} de-strats={:#x} cheat={:#x}",
+                "DBG fsm={:?}{} mode={} react={:?} {} {} co={:#x} nc={:#x}",
+                fsm,
+                world_sub.map(|ws| format!("/{:?}", ws)).unwrap_or_default(),
                 s.mode.as_str(),
                 s.reactivity,
+                enc_info,
+                group_info,
                 s.strategies.get(BotStateKind::Combat).0,
                 s.strategies.get(BotStateKind::NonCombat).0,
-                s.strategies.get(BotStateKind::Reaction).0,
-                s.strategies.get(BotStateKind::Dead).0,
-                s.cheat_flags,
             );
             reply(bot, pc, &msg);
+        }
+        BotCommand::DebugFsm => {
+            let fsm = bot.active_fsm;
+            let ws_raw = bot
+                .blackboard
+                .get_u32(crate::engine::blackboard::Key::WorldSubState);
+            let ws_name = ws_raw
+                .map(|v| match v {
+                    0 => "Follow",
+                    1 => "Grind",
+                    2 => "Quest",
+                    3 => "Rest",
+                    4 => "Guard",
+                    5 => "Rpg",
+                    6 => "Stay",
+                    7 => "Bg",
+                    8 => "Travel",
+                    _ => "?",
+                })
+                .unwrap_or("n/a");
+            let enc = bot
+                .encounter
+                .as_ref()
+                .map(|e| {
+                    format!(
+                        "boss={} phase={} active={}",
+                        e.boss_entry(),
+                        e.phase_id(),
+                        e.is_active()
+                    )
+                })
+                .unwrap_or_else(|| "none".to_string());
+            let msg = format!("FSM: {:?} sub={} enc={}", fsm, ws_name, enc);
+            reply(bot, pc, &msg);
+        }
+        BotCommand::DebugClaims => {
+            let info = bot
+                .group_state
+                .as_ref()
+                .and_then(|gh| gh.state().try_read().ok())
+                .map(|gs| {
+                    let count = gs.encounter.claims.active_count(bot.snap.server_time_ms);
+                    if count == 0 {
+                        "Claims: 0 active".to_string()
+                    } else {
+                        format!("Claims: {} active", count)
+                    }
+                })
+                .unwrap_or_else(|| "Claims: no group".to_string());
+            reply(bot, pc, &info);
+        }
+        BotCommand::DebugBt => {
+            let path = if bot.last_bt_path.is_empty() {
+                "BT: no path recorded".to_string()
+            } else {
+                format!("BT: {}", bot.last_bt_path)
+            };
+            reply(bot, pc, &path);
+        }
+        BotCommand::Subscribe(cat_name) => {
+            use crate::commands::protocol::StateCategory;
+            if let Some(cat) = StateCategory::from_name(cat_name) {
+                let guid = pc.sender.unwrap_or(0);
+                if guid != 0 {
+                    bot.addon_subs.subscribe(guid, cat);
+                    reply(bot, pc, &format!("Subscribed to {cat_name}."));
+                }
+            } else if cat_name == "all" {
+                let guid = pc.sender.unwrap_or(0);
+                if guid != 0 {
+                    for cat in [
+                        StateCategory::Fsm,
+                        StateCategory::Vitals,
+                        StateCategory::Encounter,
+                        StateCategory::Strategies,
+                        StateCategory::Coordination,
+                        StateCategory::BtPath,
+                    ] {
+                        bot.addon_subs.subscribe(guid, cat);
+                    }
+                    reply(bot, pc, "Subscribed to all categories.");
+                }
+            } else {
+                reply(
+                    bot,
+                    pc,
+                    &format!(
+                        "Unknown category: {cat_name}. Use: fsm, vitals, encounter, strategies, coordination, bt, all"
+                    ),
+                );
+            }
+        }
+        BotCommand::Unsubscribe(cat_name) => {
+            use crate::commands::protocol::StateCategory;
+            let guid = pc.sender.unwrap_or(0);
+            if guid != 0 {
+                match cat_name.as_deref() {
+                    None | Some("all") => {
+                        bot.addon_subs.unsubscribe_all(guid);
+                        reply(bot, pc, "Unsubscribed from all.");
+                    }
+                    Some(name) => {
+                        if let Some(cat) = StateCategory::from_name(name) {
+                            bot.addon_subs.unsubscribe(guid, cat);
+                            reply(bot, pc, &format!("Unsubscribed from {name}."));
+                        } else {
+                            reply(bot, pc, &format!("Unknown category: {name}."));
+                        }
+                    }
+                }
+            }
+        }
+        BotCommand::DebugCoord => {
+            let info = bot
+                .group_state
+                .as_ref()
+                .and_then(|gh| gh.state().try_read().ok())
+                .map(|gs| {
+                    let c = &gs.coordination;
+                    let mt = c
+                        .main_tank()
+                        .map(|h| format!("{:#x}", h))
+                        .unwrap_or_else(|| "-".into());
+                    let at = c
+                        .active_tank()
+                        .map(|h| format!("{:#x}", h))
+                        .unwrap_or_else(|| "-".into());
+                    let ots: Vec<String> = c.off_tanks().map(|h| format!("{:#x}", h)).collect();
+                    let ma = c
+                        .main_assist_target
+                        .map(|h| format!("{:#x}", h))
+                        .unwrap_or_else(|| "-".into());
+                    format!(
+                        "Coord: MT={} AT={} OT=[{}] MA={}",
+                        mt,
+                        at,
+                        ots.join(","),
+                        ma
+                    )
+                })
+                .unwrap_or_else(|| "Coord: no group".to_string());
+            reply(bot, pc, &info);
         }
         BotCommand::CheckLos => {
             let target = bot.snap.self_.current_target;
@@ -1564,8 +1919,14 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             let msg = format!(
                 "Rep: {} tracked (ex:{} rev:{} hon:{} fri:{} neu:{} unf:{} hos:{} hat:{})",
                 list.len(),
-                buckets[7], buckets[6], buckets[5], buckets[4],
-                buckets[3], buckets[2], buckets[1], buckets[0],
+                buckets[7],
+                buckets[6],
+                buckets[5],
+                buckets[4],
+                buckets[3],
+                buckets[2],
+                buckets[1],
+                buckets[0],
             );
             reply(bot, pc, &msg);
         }
@@ -1855,7 +2216,11 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             reply(bot, pc, &msg);
         }
 
-        BotCommand::ApplyLootPolicy { add, remove, toggle } => {
+        BotCommand::ApplyLootPolicy {
+            add,
+            remove,
+            toggle,
+        } => {
             s.loot_policy.remove(*remove);
             s.loot_policy.insert(*add);
             s.loot_policy.toggle(*toggle);
@@ -1901,7 +2266,10 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             reply(bot, pc, &msg);
         }
         BotCommand::QueryCcRti => {
-            let msg = format!("rti cc: |cff00ff00{}", rti_icon_name(s.preferred_cc_rti_icon));
+            let msg = format!(
+                "rti cc: |cff00ff00{}",
+                rti_icon_name(s.preferred_cc_rti_icon)
+            );
             reply(bot, pc, &msg);
         }
         BotCommand::QuerySaveMana => {
@@ -1930,7 +2298,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         BotCommand::Loot => {
             // Loot nearby lootable units/objects. PB2 "add all loot" picks up
             // everything in range. We scan, open, and take in one pass.
-            let lootables = bot.interface.get_nearby_lootable(crate::config::get().nearby_scan_range);
+            let lootables = bot
+                .interface
+                .get_nearby_lootable(crate::config::get().nearby_scan_range);
             for handle in &lootables {
                 if bot.interface.open_loot(*handle) {
                     bot.interface.take_all_loot();
@@ -1976,7 +2346,11 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 if ok {
                     reply(bot, pc, "Lead the way!");
                 } else if s.verbose {
-                    reply(bot, pc, "give leader: failed (not leader or target not in group)");
+                    reply(
+                        bot,
+                        pc,
+                        "give leader: failed (not leader or target not in group)",
+                    );
                 }
             }
         }
@@ -2011,7 +2385,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                     let msg = if !has {
                         "No pet".to_string()
                     } else {
-                        let state = if !alive { "dead" } else {
+                        let state = if !alive {
+                            "dead"
+                        } else {
                             match happy {
                                 3 => "happy",
                                 2 => "content",
@@ -2035,7 +2411,11 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             if guid != 0 {
                 s.focus_target = Some(guid);
             } else if s.verbose {
-                reply(bot, pc, &format!("buff target: player `{name_clean}` not found"));
+                reply(
+                    bot,
+                    pc,
+                    &format!("buff target: player `{name_clean}` not found"),
+                );
             }
         }
         BotCommand::BoostTarget(name) => {
@@ -2045,7 +2425,11 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             if guid != 0 {
                 s.focus_target = Some(guid);
             } else if s.verbose {
-                reply(bot, pc, &format!("boost target: player `{name_clean}` not found"));
+                reply(
+                    bot,
+                    pc,
+                    &format!("boost target: player `{name_clean}` not found"),
+                );
             }
         }
         BotCommand::ReviveTarget(name) => {
@@ -2057,7 +2441,11 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 // The BT will pick the appropriate class resurrect.
                 s.focus_target = Some(guid);
             } else if s.verbose {
-                reply(bot, pc, &format!("revive target: player `{name_clean}` not found"));
+                reply(
+                    bot,
+                    pc,
+                    &format!("revive target: player `{name_clean}` not found"),
+                );
             }
         }
         BotCommand::FollowTarget(name) => {
@@ -2066,9 +2454,14 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             let guid = bot.interface.resolve_player_by_name(name_clean);
             if guid != 0 {
                 use crate::engine::blackboard::{Key, Value};
-                bot.blackboard.set(Key::FollowTargetHandle, Value::Handle(guid));
+                bot.blackboard
+                    .set(Key::FollowTargetHandle, Value::Handle(guid));
             } else if s.verbose {
-                reply(bot, pc, &format!("follow target: player `{name_clean}` not found"));
+                reply(
+                    bot,
+                    pc,
+                    &format!("follow target: player `{name_clean}` not found"),
+                );
             }
         }
         BotCommand::FocusHeal(name) => {
@@ -2085,7 +2478,11 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                     s.focus_target = Some(guid);
                     s.protect_target = Some(guid);
                 } else if s.verbose {
-                    reply(bot, pc, &format!("focus heal: player `{name_clean}` not found"));
+                    reply(
+                        bot,
+                        pc,
+                        &format!("focus heal: player `{name_clean}` not found"),
+                    );
                 }
             }
         }
@@ -2102,14 +2499,18 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         BotCommand::Talk => {
             // PB2 "talk" — gossip with targeted NPC. Find nearest gossip NPC
             // and interact.
-            let npcs = bot.interface.get_nearby_gossip_npcs(crate::config::get().nearby_scan_range);
+            let npcs = bot
+                .interface
+                .get_nearby_gossip_npcs(crate::config::get().nearby_scan_range);
             if let Some(&npc) = npcs.first() {
                 bot.interface.interact_npc(npc);
             }
         }
         BotCommand::Trainer => {
             // PB2 "trainer" — visit nearby trainer. NPC flag 0x10 = TRAINER.
-            let npcs = bot.interface.get_nearby_npcs(crate::config::get().nearby_scan_range, 0x10);
+            let npcs = bot
+                .interface
+                .get_nearby_npcs(crate::config::get().nearby_scan_range, 0x10);
             if let Some(&npc) = npcs.first() {
                 bot.interface.interact_npc(npc);
                 // After interaction, the C++ side handles the trainer
@@ -2119,7 +2520,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         BotCommand::Taxi => {
             // PB2 "taxi" — interact with nearest flightmaster.
             // NPC flag 0x200 = FLIGHTMASTER.
-            let npcs = bot.interface.get_nearby_npcs(crate::config::get().nearby_scan_range, 0x200);
+            let npcs = bot
+                .interface
+                .get_nearby_npcs(crate::config::get().nearby_scan_range, 0x200);
             if let Some(&npc) = npcs.first() {
                 bot.interface.interact_npc(npc);
             }
@@ -2135,8 +2538,12 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         BotCommand::LogLevel(args) => {
             // PB2 "log <level>" — adjust bot verbosity.
             match args.as_str() {
-                "on" | "verbose" => { s.verbose = true; }
-                "off" | "quiet" => { s.verbose = false; }
+                "on" | "verbose" => {
+                    s.verbose = true;
+                }
+                "off" | "quiet" => {
+                    s.verbose = false;
+                }
                 _ => {}
             }
         }
@@ -2153,7 +2560,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         BotCommand::Bank => {
             // PB2 "bank"/"gb" — interact with nearest banker.
             // NPC flag 0x20 = BANKER.
-            let npcs = bot.interface.get_nearby_npcs(crate::config::get().nearby_scan_range, 0x20);
+            let npcs = bot
+                .interface
+                .get_nearby_npcs(crate::config::get().nearby_scan_range, 0x20);
             if let Some(&npc) = npcs.first() {
                 bot.interface.interact_npc(npc);
             }
@@ -2161,7 +2570,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         BotCommand::AuctionHouse(_args) => {
             // PB2 "ah" — interact with nearest auctioneer.
             // NPC flag 0x40000 = AUCTIONEER.
-            let npcs = bot.interface.get_nearby_npcs(crate::config::get().nearby_scan_range, 0x40000);
+            let npcs = bot
+                .interface
+                .get_nearby_npcs(crate::config::get().nearby_scan_range, 0x40000);
             if let Some(&npc) = npcs.first() {
                 bot.interface.interact_npc(npc);
             }
@@ -2205,14 +2616,18 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
 
         BotCommand::Buy => {
             // PB2 "b" — buy from targeted vendor. Interact with nearest vendor NPC.
-            let npcs = bot.interface.get_nearby_npcs(crate::config::get().nearby_scan_range, 0x80); // UNIT_NPC_FLAG_VENDOR
+            let npcs = bot
+                .interface
+                .get_nearby_npcs(crate::config::get().nearby_scan_range, 0x80); // UNIT_NPC_FLAG_VENDOR
             if let Some(&npc) = npcs.first() {
                 bot.interface.interact_npc(npc);
             }
         }
         BotCommand::Buyback => {
             // PB2 "bb" — buyback from vendor. Same NPC interaction as buy.
-            let npcs = bot.interface.get_nearby_npcs(crate::config::get().nearby_scan_range, 0x80);
+            let npcs = bot
+                .interface
+                .get_nearby_npcs(crate::config::get().nearby_scan_range, 0x80);
             if let Some(&npc) = npcs.first() {
                 bot.interface.interact_npc(npc);
             }
@@ -2248,7 +2663,15 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         BotCommand::WhatToSell => {
             // PB2 "wts" — show what items the bot would sell.
             let has = bot.interface.has_sellable_items();
-            reply(bot, pc, if has { "I have items to sell" } else { "Nothing to sell" });
+            reply(
+                bot,
+                pc,
+                if has {
+                    "I have items to sell"
+                } else {
+                    "Nothing to sell"
+                },
+            );
         }
         BotCommand::Teleport(dest) => {
             // PB2 "teleport" — teleport to a destination.
@@ -2314,6 +2737,151 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             // In classic vanilla this is a simple chat flag, not a real system.
         }
 
+        BotCommand::SetMainTank => {
+            if let Some(ref gh) = bot.group_state {
+                if let Ok(mut gs) = gh.state().try_write() {
+                    gs.coordination.set_main_tank(bot.handle);
+                    reply(bot, pc, "Main tank set.");
+                }
+            } else {
+                reply(bot, pc, "Not in a group.");
+            }
+        }
+        BotCommand::SetOffTank => {
+            if let Some(ref gh) = bot.group_state {
+                if let Ok(mut gs) = gh.state().try_write() {
+                    gs.coordination.add_off_tank(bot.handle);
+                    reply(bot, pc, "Off-tank set.");
+                }
+            } else {
+                reply(bot, pc, "Not in a group.");
+            }
+        }
+        BotCommand::UnsetTank => {
+            if let Some(ref gh) = bot.group_state {
+                if let Ok(mut gs) = gh.state().try_write() {
+                    gs.coordination.remove_tank(bot.handle);
+                    reply(bot, pc, "Tank role removed.");
+                }
+            } else {
+                reply(bot, pc, "Not in a group.");
+            }
+        }
+        BotCommand::SetMainAssist(target) => {
+            if let Some(ref gh) = bot.group_state {
+                if let Ok(mut gs) = gh.state().try_write() {
+                    gs.coordination.main_assist_target = *target;
+                    let msg = match target {
+                        Some(_) => "Main assist set.",
+                        None => "Main assist cleared.",
+                    };
+                    reply(bot, pc, msg);
+                }
+            } else {
+                reply(bot, pc, "Not in a group.");
+            }
+        }
+        BotCommand::SetMainAssistByName(name) => {
+            let guid = bot.interface.resolve_player_by_name(name);
+            if guid == 0 {
+                reply(bot, pc, &format!("Player '{}' not found.", name));
+            } else if let Some(ref gh) = bot.group_state {
+                if let Ok(mut gs) = gh.state().try_write() {
+                    gs.coordination.main_assist_target = Some(guid);
+                    reply(bot, pc, &format!("Main assist set to {}.", name));
+                }
+            } else {
+                reply(bot, pc, "Not in a group.");
+            }
+        }
+
+        BotCommand::AssignCc { icon, spell } => {
+            if let Some(ref gh) = bot.group_state {
+                if let Ok(mut gs) = gh.state().try_write() {
+                    gs.coordination.assign_cc(bot.handle, *icon, *spell);
+                    let spell_note = match spell {
+                        Some(s) => format!(" (spell {})", s.0),
+                        None => String::new(),
+                    };
+                    reply(
+                        bot,
+                        pc,
+                        &format!("CC assigned to icon {}{spell_note}.", icon),
+                    );
+                }
+            } else {
+                reply(bot, pc, "Not in a group.");
+            }
+        }
+        BotCommand::UnassignCc(icon) => {
+            if let Some(ref gh) = bot.group_state {
+                if let Ok(mut gs) = gh.state().try_write() {
+                    gs.coordination.unassign_cc(bot.handle, *icon);
+                    reply(bot, pc, "CC assignment removed.");
+                }
+            } else {
+                reply(bot, pc, "Not in a group.");
+            }
+        }
+        BotCommand::AssignTankTarget(icon) => {
+            if let Some(ref gh) = bot.group_state {
+                if let Ok(mut gs) = gh.state().try_write() {
+                    gs.coordination.assign_tank_target(bot.handle, *icon);
+                    reply(bot, pc, &format!("Tank target assigned to icon {}.", icon));
+                }
+            } else {
+                reply(bot, pc, "Not in a group.");
+            }
+        }
+        BotCommand::UnassignTankTarget(icon) => {
+            if let Some(ref gh) = bot.group_state {
+                if let Ok(mut gs) = gh.state().try_write() {
+                    gs.coordination.unassign_tank_target(bot.handle, *icon);
+                    reply(bot, pc, "Tank target assignment removed.");
+                }
+            } else {
+                reply(bot, pc, "Not in a group.");
+            }
+        }
+        BotCommand::SetMonitor(on) => {
+            bot.monitor_active = *on;
+            let msg = if *on { "Monitor ON." } else { "Monitor OFF." };
+            reply(bot, pc, msg);
+        }
+
+        BotCommand::Preset(name) => {
+            let (add, remove) = match name.as_str() {
+                "raid-clear" | "raid clear" => (
+                    StrategyFlags::ASSIST
+                        | StrategyFlags::AOE
+                        | StrategyFlags::CLOSE
+                        | StrategyFlags::THREAT,
+                    StrategyFlags::PASSIVE | StrategyFlags::STAY,
+                ),
+                "boss" => (
+                    StrategyFlags::ASSIST | StrategyFlags::THREAT | StrategyFlags::CLOSE,
+                    StrategyFlags::AOE | StrategyFlags::PASSIVE | StrategyFlags::STAY,
+                ),
+                "passive" | "safe" => (
+                    StrategyFlags::PASSIVE,
+                    StrategyFlags::AOE | StrategyFlags::CLOSE | StrategyFlags::ASSIST,
+                ),
+                "pvp" => (
+                    StrategyFlags::RANGED | StrategyFlags::FLEE | StrategyFlags::THREAT,
+                    StrategyFlags::PASSIVE | StrategyFlags::STAY,
+                ),
+                _ => {
+                    reply(bot, pc, &format!("Unknown preset: {name}"));
+                    return;
+                }
+            };
+            for state in [BotStateKind::Combat, BotStateKind::NonCombat] {
+                let slot = s.strategies.get_mut(state);
+                slot.remove(remove);
+                slot.insert(add);
+            }
+            reply(bot, pc, &format!("Preset '{name}' applied."));
+        }
         BotCommand::Batch(cmds) => {
             for sub in cmds {
                 let sub_pc = PendingCommand {
@@ -2321,6 +2889,7 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                     security: pc.security,
                     origin: pc.origin,
                     command: sub.clone(),
+                    selectors: pc.selectors.clone(),
                 };
                 apply_command(bot, &sub_pc);
             }
@@ -2446,8 +3015,8 @@ fn totem_addon_name(role: TotemRole) -> &'static str {
 mod tests {
     use super::*;
     use crate::bot::state::BotState;
-    use crate::bot::state::{PlayerClass, PlayerSpec};
     use crate::bot::state::BotTrees;
+    use crate::bot::state::{PlayerClass, PlayerSpec};
     use crate::engine::bt::Bt;
     use crate::engine::context::tests::NullInterface;
     use crate::ffi::BotRole;
@@ -2545,7 +3114,11 @@ mod tests {
         fn has_aura(&self, u: crate::ffi::UnitHandle, s: SpellId) -> bool {
             self.inner.has_aura(u, s)
         }
-        fn get_aura(&self, u: crate::ffi::UnitHandle, s: SpellId) -> Option<crate::ffi::BotAuraInfo> {
+        fn get_aura(
+            &self,
+            u: crate::ffi::UnitHandle,
+            s: SpellId,
+        ) -> Option<crate::ffi::BotAuraInfo> {
             self.inner.get_aura(u, s)
         }
         fn get_auras(&self, u: crate::ffi::UnitHandle) -> Vec<crate::ffi::BotAuraInfo> {
@@ -2572,7 +3145,11 @@ mod tests {
         fn get_nearby_units(&self, r: f32, h: bool) -> Vec<crate::ffi::UnitHandle> {
             self.inner.get_nearby_units(r, h)
         }
-        fn get_behind_position(&self, u: crate::ffi::UnitHandle, d: f32) -> crate::ffi::BotPosition {
+        fn get_behind_position(
+            &self,
+            u: crate::ffi::UnitHandle,
+            d: f32,
+        ) -> crate::ffi::BotPosition {
             self.inner.get_behind_position(u, d)
         }
         fn get_safe_position(&self, r: f32) -> Option<crate::ffi::BotPosition> {
@@ -2608,7 +3185,9 @@ mod tests {
     fn test_bot_with_recorder() -> BotState {
         BotState::new(
             1,
-            Box::new(ReplyRecorder { inner: NullInterface }),
+            Box::new(ReplyRecorder {
+                inner: NullInterface,
+            }),
             PlayerClass::Warrior,
             PlayerSpec::WarriorArms,
             BotRole::DPS,
@@ -2619,7 +3198,9 @@ mod tests {
     #[test]
     fn set_mode_via_command() {
         let mut bot = test_bot();
-        bot.pending_commands.lock().unwrap()
+        bot.pending_commands
+            .lock()
+            .unwrap()
             .push_back(PendingCommand::internal(BotCommand::SetMode(
                 BehaviorMode::Grind,
             )));
@@ -2631,12 +3212,16 @@ mod tests {
     fn blacklist_spell() {
         let mut bot = test_bot();
         let spell = SpellId(100);
-        bot.pending_commands.lock().unwrap()
+        bot.pending_commands
+            .lock()
+            .unwrap()
             .push_back(PendingCommand::internal(BotCommand::BlacklistSpell(spell)));
         process_commands(&mut bot);
         assert!(bot.settings.spell_blacklist.contains(&spell));
 
-        bot.pending_commands.lock().unwrap()
+        bot.pending_commands
+            .lock()
+            .unwrap()
             .push_back(PendingCommand::internal(BotCommand::UnblacklistSpell(
                 spell,
             )));
@@ -2650,7 +3235,9 @@ mod tests {
         bot.snap.self_.pos.x = 10.0;
         bot.snap.self_.pos.y = 20.0;
         bot.snap.self_.pos.z = 30.0;
-        bot.pending_commands.lock().unwrap()
+        bot.pending_commands
+            .lock()
+            .unwrap()
             .push_back(PendingCommand::internal(BotCommand::Guard));
         process_commands(&mut bot);
         assert_eq!(bot.settings.mode, BehaviorMode::Guard);
@@ -2662,7 +3249,9 @@ mod tests {
         let mut bot = test_bot();
         bot.settings.mode = BehaviorMode::Grind;
         bot.settings.flee_hp_pct = 0.5;
-        bot.pending_commands.lock().unwrap()
+        bot.pending_commands
+            .lock()
+            .unwrap()
             .push_back(PendingCommand::internal(BotCommand::Reset));
         process_commands(&mut bot);
         assert_eq!(bot.settings.mode, BehaviorMode::Follow);
@@ -2680,17 +3269,27 @@ mod tests {
             BotCommand::ToggleSelfRes,
             BotCommand::SetCheatFlags(0xF),
             BotCommand::KeepItem(ItemId(42)),
-            BotCommand::SetChatChannel { channel: ChatChannel::Party, on: true },
+            BotCommand::SetChatChannel {
+                channel: ChatChannel::Party,
+                on: true,
+            },
             BotCommand::SetPreferredRti(Some(8)),
         ] {
-            bot.pending_commands.lock().unwrap()
+            bot.pending_commands
+                .lock()
+                .unwrap()
                 .push_back(PendingCommand::internal(cmd));
         }
         process_commands(&mut bot);
 
         assert!((bot.settings.follow_distance - 7.5).abs() < f32::EPSILON);
         assert_eq!(bot.settings.stance, 2);
-        assert!(bot.settings.strategies.get(BotStateKind::Combat).contains(StrategyFlags::DPS));
+        assert!(
+            bot.settings
+                .strategies
+                .get(BotStateKind::Combat)
+                .contains(StrategyFlags::DPS)
+        );
         assert_eq!(bot.settings.reactivity, Reactivity::Aggressive);
         assert!(bot.settings.save_mana > 0);
         assert!(bot.settings.self_res);
@@ -2700,13 +3299,17 @@ mod tests {
         assert_eq!(bot.settings.preferred_rti_icon, Some(8));
 
         // Unkeep should remove from keep_items.
-        bot.pending_commands.lock().unwrap()
+        bot.pending_commands
+            .lock()
+            .unwrap()
             .push_back(PendingCommand::internal(BotCommand::UnkeepItem(ItemId(42))));
         process_commands(&mut bot);
         assert!(!bot.settings.keep_items.contains(&ItemId(42)));
 
         // Toggling chat channel off clears the bit.
-        bot.pending_commands.lock().unwrap()
+        bot.pending_commands
+            .lock()
+            .unwrap()
             .push_back(PendingCommand::internal(BotCommand::SetChatChannel {
                 channel: ChatChannel::Party,
                 on: false,
@@ -2726,39 +3329,49 @@ mod tests {
         let mut bot = test_bot_with_recorder();
 
         // Addon-origin query (`#a co ?`) — should land on the addon sink.
-        bot.pending_commands.lock().unwrap().push_back(PendingCommand::external(
-            0xABCD,
-            SecurityLevel::AllowAll,
-            ChatOrigin::new(2 /* CHAT_MSG_PARTY */, LANG_ADDON),
-            BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat,
-                add: StrategyFlags::NONE,
-                remove: StrategyFlags::NONE,
-                toggle: StrategyFlags::NONE,
-                query: true,
-            },
-        ));
+        bot.pending_commands
+            .lock()
+            .unwrap()
+            .push_back(PendingCommand::external(
+                0xABCD,
+                SecurityLevel::AllowAll,
+                ChatOrigin::new(2 /* CHAT_MSG_PARTY */, LANG_ADDON),
+                BotCommand::ApplyStrategies {
+                    state: BotStateKind::Combat,
+                    add: StrategyFlags::NONE,
+                    remove: StrategyFlags::NONE,
+                    toggle: StrategyFlags::NONE,
+                    query: true,
+                },
+            ));
 
         // Whisper-origin query — should land on the whisper sink.
-        bot.pending_commands.lock().unwrap().push_back(PendingCommand::external(
-            0x1234,
-            SecurityLevel::AllowAll,
-            ChatOrigin::new(6 /* CHAT_MSG_WHISPER */, 0 /* LANG_UNIVERSAL */),
-            BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat,
-                add: StrategyFlags::NONE,
-                remove: StrategyFlags::NONE,
-                toggle: StrategyFlags::NONE,
-                query: true,
-            },
-        ));
+        bot.pending_commands
+            .lock()
+            .unwrap()
+            .push_back(PendingCommand::external(
+                0x1234,
+                SecurityLevel::AllowAll,
+                ChatOrigin::new(6 /* CHAT_MSG_WHISPER */, 0 /* LANG_UNIVERSAL */),
+                BotCommand::ApplyStrategies {
+                    state: BotStateKind::Combat,
+                    add: StrategyFlags::NONE,
+                    remove: StrategyFlags::NONE,
+                    toggle: StrategyFlags::NONE,
+                    query: true,
+                },
+            ));
 
         process_commands(&mut bot);
 
         let addon = ADDONED.lock().unwrap().clone();
         let whispers = WHISPERED.lock().unwrap().clone();
 
-        assert_eq!(addon.len(), 1, "addon-origin query should reply on addon wire");
+        assert_eq!(
+            addon.len(),
+            1,
+            "addon-origin query should reply on addon wire"
+        );
         assert_eq!(addon[0].0, 0xABCD);
         assert!(
             addon[0].1.starts_with("Combat Strategies:"),
@@ -2774,7 +3387,9 @@ mod tests {
     #[test]
     fn heal_threshold_set() {
         let mut bot = test_bot();
-        bot.pending_commands.lock().unwrap()
+        bot.pending_commands
+            .lock()
+            .unwrap()
             .push_back(PendingCommand::internal(BotCommand::SetHealThreshold(0.70)));
         process_commands(&mut bot);
         assert!((bot.settings.heal_party_threshold - 0.70).abs() < f32::EPSILON);

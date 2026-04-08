@@ -135,7 +135,10 @@ pub struct FormationResult {
 ///
 /// Never panics. Formations whose math can't be satisfied (e.g. a raid
 /// formation with an empty roster) fall back to the `near` formation.
-pub fn resolve_formation(formation: FollowFormation, ctx: &FormationContext<'_>) -> FormationResult {
+pub fn resolve_formation(
+    formation: FollowFormation,
+    ctx: &FormationContext<'_>,
+) -> FormationResult {
     let chaos_state = ctx.chaos_state;
     let output = match formation {
         FollowFormation::Melee => melee(ctx),
@@ -314,8 +317,8 @@ fn near(ctx: &FormationContext<'_>) -> FormationOutput {
 fn chaos(ctx: &FormationContext<'_>) -> (FormationOutput, ChaosState) {
     const TOO_CLOSE: f32 = 2.0; // PB2 default sPlayerbotAIConfig.tooCloseDistance
     let mut state = ctx.chaos_state;
-    let should_reroll = state.last_change_secs == 0
-        || ctx.now_secs.saturating_sub(state.last_change_secs) >= 3;
+    let should_reroll =
+        state.last_change_secs == 0 || ctx.now_secs.saturating_sub(state.last_change_secs) >= 3;
     if should_reroll {
         // Deterministic-ish reroll so we don't need an RNG in this
         // pure module. The hash collapses `(handle, now_secs)` into a
@@ -383,7 +386,10 @@ fn line(ctx: &FormationContext<'_>) -> FormationOutput {
 /// and fall back to `near` for the cross-split cases — those need the
 /// leader's role classification, which our snapshot doesn't expose yet.
 fn shield(ctx: &FormationContext<'_>) -> FormationOutput {
-    let self_is_tank = ctx.group.iter().any(|m| m.handle == ctx.self_handle && m.is_tank);
+    let self_is_tank = ctx
+        .group
+        .iter()
+        .any(|m| m.handle == ctx.self_handle && m.is_tank);
 
     let mut tanks: Vec<u64> = Vec::new();
     let mut dps: Vec<u64> = Vec::new();
@@ -427,9 +433,16 @@ fn shield(ctx: &FormationContext<'_>) -> FormationOutput {
 fn arrow(ctx: &FormationContext<'_>) -> FormationOutput {
     const UNIT_SPACING: f32 = 0.2 + 1.0; // Arrow.cpp UNIT_SPACING 0.2 + bot width ~1y
     let roster = alive_handles_except(ctx, None);
-    let idx = roster.iter().position(|&h| h == ctx.self_handle).unwrap_or(0) as i32;
+    let idx = roster
+        .iter()
+        .position(|&h| h == ctx.self_handle)
+        .unwrap_or(0) as i32;
     // Alternate left/right: 0 → 0, 1 → +1, 2 → -1, 3 → +2, 4 → -2 …
-    let signed = if idx % 2 == 0 { idx / 2 } else { -((idx + 1) / 2) };
+    let signed = if idx % 2 == 0 {
+        idx / 2
+    } else {
+        -((idx + 1) / 2)
+    };
     let signed = signed as f32;
     // Spine: directly behind leader at follow_range + |signed| * depth.
     let depth = ctx.follow_range * (1.0 + signed.abs() * 0.5);
@@ -457,7 +470,10 @@ fn raid(ctx: &FormationContext<'_>) -> FormationOutput {
     const GROUP_SPACING: f32 = 0.5; // Arrow.cpp GROUP_SPACING
 
     let roster = alive_handles_except(ctx, None);
-    let idx = roster.iter().position(|&h| h == ctx.self_handle).unwrap_or(0) as i32;
+    let idx = roster
+        .iter()
+        .position(|&h| h == ctx.self_handle)
+        .unwrap_or(0) as i32;
 
     let lane = idx % UNITS_PER_LINE;
     let depth = idx / UNITS_PER_LINE;
@@ -687,7 +703,10 @@ mod tests {
         // 3s later → reroll.
         ctx.now_secs = 103;
         let third = resolve_formation(FollowFormation::Chaos, &ctx);
-        assert_ne!(first.chaos_state.last_change_secs, third.chaos_state.last_change_secs);
+        assert_ne!(
+            first.chaos_state.last_change_secs,
+            third.chaos_state.last_change_secs
+        );
     }
 
     #[test]

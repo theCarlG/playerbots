@@ -1,15 +1,15 @@
+use crate::{Sel, Seq};
 /// Bot initialization — builds per-FSM behavior trees from (class, spec).
 use crate::{
     bot::settings::{BehaviorMode, BotStateKind, StrategyFlags, StrategySet},
     bot::state::{BotState, BotTrees, PlayerClass, PlayerSpec},
-    classes::{self, ClassKit},
+    classes,
     combat::reactive,
     engine::{bt::Bt, macro_fsm::ActiveFsm},
-    ffi::{BotRole, interface::BotInterface},
+    ffi::interface::BotInterface,
     noncombat::GroupBuff,
     world,
 };
-use crate::{Seq, Sel};
 
 /// Build a `BotState` from its handle, interface, class, and spec.
 pub fn create_bot(
@@ -18,11 +18,9 @@ pub fn create_bot(
     class: PlayerClass,
     spec: PlayerSpec,
 ) -> Box<BotState> {
-    let role = default_role_for_spec(&spec);
+    let role = spec.default_role();
     let trees = build_bot_trees(class, spec);
-    let mut state = BotState::new(
-        handle, interface, class, spec, role, trees,
-    );
+    let mut state = BotState::new(handle, interface, class, spec, role, trees);
     // Layer PB2's per-class default strategies on top of the global
     // `PlayerbotAIConfig.cpp` baseline (empty combat/react/dead slots +
     // `+return,+delayed roll` in nonCombat). This matches PB2's
@@ -64,17 +62,6 @@ pub fn create_bot(
 /// directly.
 pub fn pb2_kit_strategies(class: PlayerClass, spec: PlayerSpec) -> StrategySet {
     use BotStateKind::{Combat, NonCombat};
-    use PlayerClass::{
-        DeathKnight, Druid, Hunter, Mage, Paladin, Priest, Rogue, Shaman, Warlock, Warrior,
-    };
-    use PlayerSpec::{
-        DeathKnightBlood, DeathKnightFrost, DeathKnightUnholy, DruidBalance, DruidFeral,
-        DruidRestoration, HunterBeastMastery, HunterMarksmanship, HunterSurvival, MageArcane,
-        MageFire, MageFrost, PaladinHoly, PaladinProtection, PaladinRetribution, PriestDiscipline,
-        PriestHoly, PriestShadow, RogueAssassination, RogueCombat, RogueSubtlety, ShamanElemental,
-        ShamanEnhancement, ShamanRestoration, WarlockAffliction, WarlockDemonology,
-        WarlockDestruction, WarriorArms, WarriorFury, WarriorProtection,
-    };
     use StrategyFlags as F;
 
     // Start from the global PB2 baseline (empty Combat/Reaction/Dead +
@@ -82,394 +69,56 @@ pub fn pb2_kit_strategies(class: PlayerClass, spec: PlayerSpec) -> StrategySet {
     let mut set = StrategySet::pb2_defaults();
 
     // ── All-bot combat base — PB2 `AiFactory::AddDefaultCombatStrategies`.
-    //    Adds: mount, avoid mobs, racials, default, duel, pvp (non-BG).
-    //    ASSIST is the default targeting mode (attack leader/tank's target);
-    //    tanks override by adding TANK which takes priority in the targeting
-    //    subtree's Sel ordering.
-    let combat_base = F::MOUNT | F::AVOID_MOBS | F::RACIALS | F::DEFAULT | F::DUEL | F::PVP | F::ASSIST;
+    let combat_base =
+        F::MOUNT | F::AVOID_MOBS | F::RACIALS | F::DEFAULT | F::DUEL | F::PVP | F::ASSIST;
     *set.get_mut(Combat) = set.get(Combat) | combat_base;
 
     // ── All-bot non-combat base — PB2 `AddDefaultNonCombatStrategies`.
-    //    Adds: avoid mobs, wbuff. (`ai chat` only when `llmEnabled == 2`
-    //    at runtime; skip until the LLM subsystem lands.)
     let noncombat_base = F::AVOID_MOBS | F::WBUFF;
     *set.get_mut(NonCombat) = set.get(NonCombat) | noncombat_base;
 
-    // ── Per-class/spec combat additions — PB2 `AiFactory.cpp` class branches.
-    //    The strings here match `AiFactory.cpp` verbatim (see PARITY_PLAN §3.2).
-    //    `enableOffSpecStrategies` is assumed true (PB2 default), so `offheal`/
-    //    `offdps` are added unconditionally.
-    let class_add: StrategyFlags = match (class, spec) {
-        // Warrior (tab-based in PB2 AiFactory.cpp).
-        (Warrior, WarriorProtection) => {
-            F::PROTECTION
-                | F::TANK
-                | F::TANK_ASSIST
-                | F::PULL
-                | F::PULL_BACK
-                | F::CLOSE
-                | F::AOE
-                | F::CC
-                | F::BUFF
-                | F::BOOST
-        }
-        (Warrior, WarriorArms) => {
-            F::ARMS | F::DPS_ASSIST | F::BEHIND | F::AOE | F::CC | F::BUFF | F::BOOST
-        }
-        (Warrior, WarriorFury) => {
-            F::FURY | F::DPS_ASSIST | F::BEHIND | F::AOE | F::CC | F::BUFF | F::BOOST
-        }
-
-        // Priest (all specs share dps assist/flee/cure/ranged/cc/buff/aoe/boost).
-        (Priest, PriestDiscipline) => {
-            F::DISCIPLINE
-                | F::OFFHEAL
-                | F::DPS_ASSIST
-                | F::FLEE
-                | F::CURE
-                | F::RANGED
-                | F::CC
-                | F::BUFF
-                | F::AOE
-                | F::BOOST
-        }
-        (Priest, PriestHoly) => {
-            F::HOLY
-                | F::OFFDPS
-                | F::DPS_ASSIST
-                | F::FLEE
-                | F::CURE
-                | F::RANGED
-                | F::CC
-                | F::BUFF
-                | F::AOE
-                | F::BOOST
-        }
-        (Priest, PriestShadow) => {
-            F::SHADOW
-                | F::OFFHEAL
-                | F::DPS_ASSIST
-                | F::FLEE
-                | F::CURE
-                | F::RANGED
-                | F::CC
-                | F::BUFF
-                | F::AOE
-                | F::BOOST
-        }
-
-        // Mage (all specs share dps assist/flee/cure/ranged/cc/buff/aoe/boost).
-        (Mage, spec_m) => {
-            let spec_flag = match spec_m {
-                MageArcane => F::ARCANE,
-                MageFire => F::FIRE,
-                MageFrost => F::FROST,
-                _ => F::NONE,
-            };
-            spec_flag
-                | F::DPS_ASSIST
-                | F::FLEE
-                | F::CURE
-                | F::RANGED
-                | F::CC
-                | F::BUFF
-                | F::AOE
-                | F::BOOST
-        }
-
-        // Warlock (all share dps assist/flee/ranged/cc/pet/aoe/buff/boost/curse).
-        (Warlock, spec_w) => {
-            let spec_flag = match spec_w {
-                WarlockAffliction => F::AFFLICTION,
-                WarlockDemonology => F::DEMONOLOGY,
-                WarlockDestruction => F::DESTRUCTION,
-                _ => F::NONE,
-            };
-            spec_flag
-                | F::DPS_ASSIST
-                | F::FLEE
-                | F::RANGED
-                | F::CC
-                | F::PET
-                | F::AOE
-                | F::BUFF
-                | F::BOOST
-                | F::CURSE
-        }
-
-        // Paladin (tab-based). All specs add cure/aoe/cc/buff/boost/aura/blessing.
-        (Paladin, PaladinProtection) => {
-            F::PROTECTION
-                | F::TANK
-                | F::TANK_ASSIST
-                | F::PULL
-                | F::PULL_BACK
-                | F::CLOSE
-                | F::CURE
-                | F::AOE
-                | F::CC
-                | F::BUFF
-                | F::BOOST
-                | F::AURA
-                | F::BLESSING
-        }
-        (Paladin, PaladinHoly) => {
-            F::HOLY
-                | F::OFFDPS
-                | F::DPS_ASSIST
-                | F::FLEE
-                | F::RANGED
-                | F::CURE
-                | F::AOE
-                | F::CC
-                | F::BUFF
-                | F::BOOST
-                | F::AURA
-                | F::BLESSING
-        }
-        (Paladin, PaladinRetribution) => {
-            F::RETRIBUTION
-                | F::OFFHEAL
-                | F::DPS_ASSIST
-                | F::CLOSE
-                | F::CURE
-                | F::AOE
-                | F::CC
-                | F::BUFF
-                | F::BOOST
-                | F::AURA
-                | F::BLESSING
-        }
-
-        // Shaman. All specs add dps assist/cure/totems/buff/boost.
-        (Shaman, ShamanElemental) => {
-            F::ELEMENTAL
-                | F::OFFHEAL
-                | F::AOE
-                | F::CC
-                | F::FLEE
-                | F::RANGED
-                | F::DPS_ASSIST
-                | F::CURE
-                | F::TOTEMS
-                | F::BUFF
-                | F::BOOST
-        }
-        (Shaman, ShamanEnhancement) => {
-            F::ENHANCEMENT
-                | F::OFFHEAL
-                | F::AOE
-                | F::CC
-                | F::CLOSE
-                | F::DPS_ASSIST
-                | F::CURE
-                | F::TOTEMS
-                | F::BUFF
-                | F::BOOST
-        }
-        (Shaman, ShamanRestoration) => {
-            F::RESTORATION
-                | F::OFFDPS
-                | F::FLEE
-                | F::RANGED
-                | F::DPS_ASSIST
-                | F::CURE
-                | F::TOTEMS
-                | F::BUFF
-                | F::BOOST
-        }
-
-        // Druid. All specs add cure/aoe/cc/buff/boost.
-        (Druid, DruidBalance) => {
-            F::BALANCE
-                | F::OFFHEAL
-                | F::DPS_ASSIST
-                | F::FLEE
-                | F::RANGED
-                | F::CURE
-                | F::AOE
-                | F::CC
-                | F::BUFF
-                | F::BOOST
-        }
-        (Druid, DruidFeral) => {
-            // PB2 has separate "tank feral" and "dps feral" branches. The
-            // Rust `PlayerSpec::DruidFeral` collapses them; default to the
-            // dps-feral kit (the more common use), matching the Rust bot's
-            // default role resolution. Tank-feral kits will be set once a
-            // `DruidFeralTank` spec variant or `co +tank feral` override
-            // lands.
-            F::DPS_FERAL
-                | F::OFFHEAL
-                | F::DPS_ASSIST
-                | F::CLOSE
-                | F::BEHIND
-                | F::CURE
-                | F::AOE
-                | F::CC
-                | F::BUFF
-                | F::BOOST
-        }
-        (Druid, DruidRestoration) => {
-            F::RESTORATION
-                | F::OFFDPS
-                | F::DPS_ASSIST
-                | F::FLEE
-                | F::RANGED
-                | F::CURE
-                | F::AOE
-                | F::CC
-                | F::BUFF
-                | F::BOOST
-        }
-
-        // Hunter. All specs add dps assist/ranged/cc/aoe/buff/boost/aspect/sting/pet.
-        (Hunter, spec_h) => {
-            let spec_flag = match spec_h {
-                HunterBeastMastery => F::BEAST_MASTERY,
-                HunterMarksmanship => F::MARKSMANSHIP,
-                HunterSurvival => F::SURVIVAL,
-                _ => F::NONE,
-            };
-            spec_flag
-                | F::DPS_ASSIST
-                | F::RANGED
-                | F::CC
-                | F::AOE
-                | F::BUFF
-                | F::BOOST
-                | F::ASPECT
-                | F::STING
-                | F::PET
-        }
-
-        // Rogue. All specs add dps assist/aoe/close/cc/behind/stealth/poisons/buff/boost.
-        (Rogue, spec_r) => {
-            let spec_flag = match spec_r {
-                RogueAssassination => F::ASSASSINATION,
-                RogueCombat => F::ROGUE_COMBAT,
-                RogueSubtlety => F::SUBTLETY,
-                _ => F::NONE,
-            };
-            spec_flag
-                | F::DPS_ASSIST
-                | F::AOE
-                | F::CLOSE
-                | F::CC
-                | F::BEHIND
-                | F::STEALTH
-                | F::POISONS
-                | F::BUFF
-                | F::BOOST
-        }
-
-        // Death Knight. All specs add dksquest/dps assist/flee/close/cc.
-        (DeathKnight, DeathKnightBlood) => {
-            F::BLOOD
-                | F::TANK
-                | F::TANK_ASSIST
-                | F::PULL
-                | F::PULL_BACK
-                | F::DKSQUEST
-                | F::DPS_ASSIST
-                | F::FLEE
-                | F::CLOSE
-                | F::CC
-        }
-        (DeathKnight, DeathKnightFrost) => {
-            F::FROST
-                | F::FROST_AOE
-                | F::DPS_ASSIST
-                | F::DKSQUEST
-                | F::FLEE
-                | F::CLOSE
-                | F::CC
-        }
-        (DeathKnight, DeathKnightUnholy) => {
-            F::UNHOLY
-                | F::UNHOLY_AOE
-                | F::DPS_ASSIST
-                | F::DKSQUEST
-                | F::FLEE
-                | F::CLOSE
-                | F::CC
-        }
-
-        // Defensive fall-through: class/spec combinations that PB2 does
-        // not kit (e.g. a mage spec passed with class=Warrior). Keep the
-        // baseline empty rather than panicking so fuzz/test inputs with
-        // mismatched (class, spec) tuples still produce a valid state.
-        _ => F::NONE,
-    };
-    *set.get_mut(Combat) = set.get(Combat) | class_add;
+    // ── Per-class/spec combat additions — delegated to class modules.
+    *set.get_mut(Combat) = set.get(Combat) | class_strategies(class, spec);
 
     set
+}
+
+/// Dispatch to the class module's `default_strategies` for class-specific
+/// combat flags. Returns `StrategyFlags::NONE` for mismatched (class, spec).
+fn class_strategies(class: PlayerClass, spec: PlayerSpec) -> StrategyFlags {
+    use PlayerClass::*;
+    match class {
+        Warrior => classes::warrior::default_strategies(spec),
+        Paladin => classes::paladin::default_strategies(spec),
+        Priest => classes::priest::default_strategies(spec),
+        Druid => classes::druid::default_strategies(spec),
+        Hunter => classes::hunter::default_strategies(spec),
+        Mage => classes::mage::default_strategies(spec),
+        Rogue => classes::rogue::default_strategies(spec),
+        Shaman => classes::shaman::default_strategies(spec),
+        Warlock => classes::warlock::default_strategies(spec),
+        DeathKnight => classes::deathknight::default_strategies(spec),
+    }
 }
 
 /// Try to derive a `PlayerSpec` from a strategy flag set. Used when the
 /// MangosBot addon sends `co +protection,?` to override the bot's spec at
 /// runtime. Returns `None` when no spec flag is present or the flag doesn't
 /// match the bot's class.
-pub fn spec_from_strategy_flags(
-    class: PlayerClass,
-    flags: StrategyFlags,
-) -> Option<PlayerSpec> {
+pub fn spec_from_strategy_flags(class: PlayerClass, flags: StrategyFlags) -> Option<PlayerSpec> {
     use PlayerClass::*;
-    use PlayerSpec::*;
-    use StrategyFlags as F;
-
-    // Check each spec flag against the bot's class.
-    let candidates: &[(StrategyFlags, PlayerClass, PlayerSpec)] = &[
-        // Warrior
-        (F::ARMS, Warrior, WarriorArms),
-        (F::FURY, Warrior, WarriorFury),
-        (F::PROTECTION, Warrior, WarriorProtection),
-        // Paladin — PROTECTION and HOLY overlap with other classes;
-        // PB2 resolves by checking the class too.
-        (F::PROTECTION, Paladin, PaladinProtection),
-        (F::HOLY, Paladin, PaladinHoly),
-        (F::RETRIBUTION, Paladin, PaladinRetribution),
-        // Priest
-        (F::DISCIPLINE, Priest, PriestDiscipline),
-        (F::HOLY, Priest, PriestHoly),
-        (F::SHADOW, Priest, PriestShadow),
-        // Hunter
-        (F::BEAST_MASTERY, Hunter, HunterBeastMastery),
-        (F::MARKSMANSHIP, Hunter, HunterMarksmanship),
-        (F::SURVIVAL, Hunter, HunterSurvival),
-        // Rogue
-        (F::ASSASSINATION, Rogue, RogueAssassination),
-        (F::ROGUE_COMBAT, Rogue, RogueCombat),
-        (F::SUBTLETY, Rogue, RogueSubtlety),
-        // Shaman
-        (F::ELEMENTAL, Shaman, ShamanElemental),
-        (F::ENHANCEMENT, Shaman, ShamanEnhancement),
-        (F::RESTORATION, Shaman, ShamanRestoration),
-        // Mage
-        (F::ARCANE, Mage, MageArcane),
-        (F::FIRE, Mage, MageFire),
-        (F::FROST, Mage, MageFrost),
-        // Warlock
-        (F::AFFLICTION, Warlock, WarlockAffliction),
-        (F::DEMONOLOGY, Warlock, WarlockDemonology),
-        (F::DESTRUCTION, Warlock, WarlockDestruction),
-        // Druid
-        (F::BALANCE, Druid, DruidBalance),
-        (F::TANK_FERAL, Druid, DruidFeral),
-        (F::DPS_FERAL, Druid, DruidFeral),
-        (F::RESTORATION, Druid, DruidRestoration),
-        // Death Knight
-        (F::BLOOD, DeathKnight, DeathKnightBlood),
-        (F::FROST, DeathKnight, DeathKnightFrost),
-        (F::UNHOLY, DeathKnight, DeathKnightUnholy),
-    ];
-
-    for &(flag, req_class, spec) in candidates {
-        if class == req_class && flags.contains(flag) {
-            return Some(spec);
-        }
+    match class {
+        Warrior => classes::warrior::spec_from_flags(flags),
+        Paladin => classes::paladin::spec_from_flags(flags),
+        Priest => classes::priest::spec_from_flags(flags),
+        Druid => classes::druid::spec_from_flags(flags),
+        Hunter => classes::hunter::spec_from_flags(flags),
+        Mage => classes::mage::spec_from_flags(flags),
+        Rogue => classes::rogue::spec_from_flags(flags),
+        Shaman => classes::shaman::spec_from_flags(flags),
+        Warlock => classes::warlock::spec_from_flags(flags),
+        DeathKnight => classes::deathknight::spec_from_flags(flags),
     }
-    None
 }
 
 /// Rebuild the bot's behavior tree and strategies for a new spec.
@@ -480,41 +129,56 @@ pub fn rebuild_for_spec(bot: &mut BotState, new_spec: PlayerSpec) {
         return;
     }
     bot.spec = new_spec;
-    bot.role = default_role_for_spec(&new_spec);
+    bot.role = new_spec.default_role();
     bot.trees = build_bot_trees(bot.class, new_spec);
     let kit = pb2_kit_strategies(bot.class, new_spec);
     bot.settings.strategies = kit;
     bot.settings.init_strategies = kit;
-    bot.settings.class_prefs = crate::bot::class_prefs::ClassPrefs::default_for(bot.class, new_spec);
+    bot.settings.class_prefs =
+        crate::bot::class_prefs::ClassPrefs::default_for(bot.class, new_spec);
     bot.reset_strategies();
 }
 
-fn default_role_for_spec(spec: &PlayerSpec) -> BotRole {
-    use PlayerSpec::{WarriorProtection, PaladinProtection, PriestHoly, PriestDiscipline, PaladinHoly, ShamanRestoration, DruidRestoration};
-    match spec {
-        WarriorProtection | PaladinProtection => BotRole::TANK,
-        PriestHoly | PriestDiscipline | PaladinHoly | ShamanRestoration | DruidRestoration => {
-            BotRole::HEAL
-        }
-        _ => BotRole::DPS,
+/// Build the class behavior tree for a given (class, fsm, spec).
+///
+/// `ActiveFsm` is a first-class parameter — each class module's
+/// `build_tree(fsm, spec)` receives it directly and dispatches to the
+/// appropriate spec tree. This is the `fn(state) -> Bt` pattern from the
+/// architecture plan.
+fn class_bt(class: PlayerClass, fsm: ActiveFsm, spec: PlayerSpec) -> Bt {
+    use PlayerClass::{
+        DeathKnight, Druid, Hunter, Mage, Paladin, Priest, Rogue, Shaman, Warlock, Warrior,
+    };
+    match class {
+        Warrior => classes::warrior::build_tree(fsm, spec),
+        Paladin => classes::paladin::build_tree(fsm, spec),
+        Priest => classes::priest::build_tree(fsm, spec),
+        Druid => classes::druid::build_tree(fsm, spec),
+        Hunter => classes::hunter::build_tree(fsm, spec),
+        Mage => classes::mage::build_tree(fsm, spec),
+        Rogue => classes::rogue::build_tree(fsm, spec),
+        Shaman => classes::shaman::build_tree(fsm, spec),
+        Warlock => classes::warlock::build_tree(fsm, spec),
+        DeathKnight => classes::deathknight::build_tree(fsm, spec),
     }
 }
 
-/// Look up the class rotation tree and buff list for this (class, spec).
-/// Each class owns its own dispatch; this function is a flat 10-arm switch.
-fn class_kit(class: PlayerClass, spec: PlayerSpec) -> ClassKit {
-    use PlayerClass::{Warrior, Paladin, Priest, Druid, Hunter, Mage, Rogue, Shaman, Warlock, DeathKnight};
+/// Look up the persistent group buffs for this (class, spec).
+fn class_buffs(class: PlayerClass, spec: PlayerSpec) -> &'static [GroupBuff] {
+    use PlayerClass::{
+        DeathKnight, Druid, Hunter, Mage, Paladin, Priest, Rogue, Shaman, Warlock, Warrior,
+    };
     match class {
-        Warrior => classes::warrior::kit(spec),
-        Paladin => classes::paladin::kit(spec),
-        Priest => classes::priest::kit(spec),
-        Druid => classes::druid::kit(spec),
-        Hunter => classes::hunter::kit(spec),
-        Mage => classes::mage::kit(spec),
-        Rogue => classes::rogue::kit(spec),
-        Shaman => classes::shaman::kit(spec),
-        Warlock => classes::warlock::kit(spec),
-        DeathKnight => classes::deathknight::kit(spec),
+        Warrior => classes::warrior::buffs(spec),
+        Paladin => classes::paladin::buffs(spec),
+        Priest => classes::priest::buffs(spec),
+        Druid => classes::druid::buffs(spec),
+        Hunter => classes::hunter::buffs(spec),
+        Mage => classes::mage::buffs(spec),
+        Rogue => classes::rogue::buffs(spec),
+        Shaman => classes::shaman::buffs(spec),
+        Warlock => classes::warlock::buffs(spec),
+        DeathKnight => classes::deathknight::buffs(spec),
     }
 }
 
@@ -524,14 +188,10 @@ fn class_kit(class: PlayerClass, spec: PlayerSpec) -> ClassKit {
 /// The tick loop selects which tree to run based on the current FSM state,
 /// with encounter override checked first (at tick-time, not in the tree).
 fn build_bot_trees(class: PlayerClass, spec: PlayerSpec) -> BotTrees {
-    let ClassKit {
-        combat: class_combat,
-        world: _class_world,
-        buffs,
-    } = class_kit(class, spec);
+    let buffs = class_buffs(class, spec);
 
     BotTrees {
-        combat: build_combat_tree(class_combat),
+        combat: build_combat_tree(class_bt(class, ActiveFsm::Combat, spec)),
         world: build_world_tree(),
         dead: world::death::death_subtree(),
         maintenance: maintenance_subtree(buffs),
@@ -552,7 +212,10 @@ fn build_combat_tree(class_rotation: Bt) -> Bt {
         Seq!(
             Bt::DuelRequested,
             Sel!(
-                Seq!(Bt::StrategyEnabled(StrategyFlags::DUEL), Bt::AcceptDuelRequest),
+                Seq!(
+                    Bt::StrategyEnabled(StrategyFlags::DUEL),
+                    Bt::AcceptDuelRequest
+                ),
                 Bt::DeclineDuelRequest,
             ),
         ),
@@ -560,7 +223,13 @@ fn build_combat_tree(class_rotation: Bt) -> Bt {
         // Also fires when group members are injured (healers top off OOC),
         // when dueling, or when commanded to focus a target.
         Seq!(
-            Sel!(Bt::InCombat, ShouldEngage, Bt::InDuel, Bt::GroupMembersBelow(1, 0.90), Bt::HasFocusTarget),
+            Sel!(
+                Bt::InCombat,
+                ShouldEngage,
+                Bt::InDuel,
+                Bt::GroupMembersBelow(1, 0.90),
+                Bt::HasFocusTarget
+            ),
             combat_wrapper(class_rotation),
         ),
         Bt::Noop,
@@ -569,20 +238,21 @@ fn build_combat_tree(class_rotation: Bt) -> Bt {
 
 /// Build the world (out-of-combat) FSM tree: eat/drink + mode dispatch.
 fn build_world_tree() -> Bt {
-    use Bt::{ModeIs, Consumables};
+    use Bt::Consumables;
 
     Sel!(
         // On taxi — do nothing.
         Seq!(Bt::OnTaxi, Bt::Noop),
-        // Passive mode — do nothing.
-        ModeIs(BehaviorMode::Passive),
         // Eat/drink to recover HP/mana.
         Consumables,
         // Duel request handling (can happen OOC too).
         Seq!(
             Bt::DuelRequested,
             Sel!(
-                Seq!(Bt::StrategyEnabled(StrategyFlags::DUEL), Bt::AcceptDuelRequest),
+                Seq!(
+                    Bt::StrategyEnabled(StrategyFlags::DUEL),
+                    Bt::AcceptDuelRequest
+                ),
                 Bt::DeclineDuelRequest,
             ),
         ),
@@ -606,8 +276,8 @@ fn build_world_tree() -> Bt {
 ///      gets positioning (close/ranged/behind/kite). When it fails
 ///      the bot still proceeds to the rotation for healing, buffing, etc.
 fn combat_wrapper(class_rotation: Bt) -> Bt {
-    use Bt::{InCombat, MaintainConfiguredCurse, ModeIs};
     use BehaviorMode;
+    use Bt::{InCombat, MaintainConfiguredCurse, ModeIs};
     Sel!(
         // ── A) Reactive — any one short-circuits the rest ────────────
         reactive::flee_subtree(),
@@ -668,7 +338,7 @@ fn combat_wrapper(class_rotation: Bt) -> Bt {
 
 /// Mode dispatch — each behavior mode gets its own subtree.
 fn mode_dispatch() -> Bt {
-    use Bt::{ModeIs, Follow, StrategyEnabled};
+    use Bt::{Follow, ModeIs, StrategyEnabled};
     Sel!(
         // Follow mode — try to follow (tank → master → group member).
         // `Follow` returns Success whenever a follow target exists, even
@@ -693,22 +363,10 @@ fn mode_dispatch() -> Bt {
                 world::grind::grind_subtree(),
             ),
         ),
-        Seq!(
-            ModeIs(BehaviorMode::Stay),
-            world::stay::stay_subtree(),
-        ),
-        Seq!(
-            ModeIs(BehaviorMode::Grind),
-            world::grind::grind_subtree(),
-        ),
-        Seq!(
-            ModeIs(BehaviorMode::Quest),
-            world::quest::quest_subtree(),
-        ),
-        Seq!(
-            ModeIs(BehaviorMode::Guard),
-            world::guard::guard_subtree(),
-        ),
+        Seq!(ModeIs(BehaviorMode::Stay), world::stay::stay_subtree(),),
+        Seq!(ModeIs(BehaviorMode::Grind), world::grind::grind_subtree(),),
+        Seq!(ModeIs(BehaviorMode::Quest), world::quest::quest_subtree(),),
+        Seq!(ModeIs(BehaviorMode::Guard), world::guard::guard_subtree(),),
         // RPG mode is only active if the RPG strategy flag is set; without
         // it, rpg-mode bots just idle-follow instead of wandering into NPCs.
         Seq!(
@@ -738,10 +396,7 @@ fn maintenance_subtree(buffs: &'static [GroupBuff]) -> Bt {
             InCombat.not(),
             Bt::throttle(5_000, ApplyConfiguredBlessings),
         ),
-        Seq!(
-            InCombat.not(),
-            Bt::throttle(30_000, ApplyShamanImbues),
-        ),
+        Seq!(InCombat.not(), Bt::throttle(30_000, ApplyShamanImbues),),
         // Auto-roll on pending loot items (delayed roll strategy).
         Bt::throttle(2_000, Bt::AutoLootRoll),
         // Check mail when near a mailbox.
@@ -814,8 +469,7 @@ mod tests {
             );
             // Non-combat base: avoid mobs + wbuff, plus PB2 defaults
             // (return + delayed roll).
-            let nc_base =
-                F::AVOID_MOBS | F::WBUFF | F::RETURN | F::DELAYED_ROLL;
+            let nc_base = F::AVOID_MOBS | F::WBUFF | F::RETURN | F::DELAYED_ROLL;
             assert!(
                 set.has(BotStateKind::NonCombat, nc_base),
                 "{:?}/{:?} missing non-combat base",
@@ -851,7 +505,15 @@ mod tests {
         }
 
         let arms = pb2_kit_strategies(PlayerClass::Warrior, PlayerSpec::WarriorArms);
-        for f in [F::ARMS, F::DPS_ASSIST, F::BEHIND, F::AOE, F::CC, F::BUFF, F::BOOST] {
+        for f in [
+            F::ARMS,
+            F::DPS_ASSIST,
+            F::BEHIND,
+            F::AOE,
+            F::CC,
+            F::BUFF,
+            F::BOOST,
+        ] {
             assert!(
                 arms.get(BotStateKind::Combat).contains(f),
                 "arms warrior missing {:?}",

@@ -1,3 +1,4 @@
+use crate::{Sel, Seq};
 /// Combat Rogue behavior tree (Classic / Vanilla).
 ///
 /// Priority: Vanish → Evasion → Kick interrupt → Riposte → Blade Flurry `AoE`
@@ -6,12 +7,15 @@ use crate::{
     data::spells::vanilla::rogue::*,
     engine::{
         aura_helpers::RUPTURE_RANKS,
-        bt::{Bt::{self, *}, Op::*, Resource::*},
+        bt::{
+            Bt::{self, *},
+            Op::*,
+            Resource::*,
+        },
         macro_fsm::ActiveFsm,
     },
     ffi::SpellId,
 };
-use crate::{Seq, Sel};
 
 // Riposte: proc after parry.
 const RIPOSTE: SpellId = SpellId(14251);
@@ -29,10 +33,7 @@ fn combat_tree() -> Bt {
         // `co +boost` burst cooldowns (rogue-wide list).
         super::boost(),
         // Out-of-combat: keep weapon poisons applied.
-        Seq!(
-            InCombat.not(),
-            Bt::throttle(30_000, ApplyPoisons),
-        ),
+        Seq!(InCombat.not(), Bt::throttle(30_000, ApplyPoisons),),
         StickToTarget(5.0),
         Seq!(Cmp(SelfHealthPct, Below(15)), CastOnSelf(VANISH)),
         Seq!(Cmp(SelfHealthPct, Below(30)), CastOnSelf(EVASION)),
@@ -52,10 +53,7 @@ fn combat_tree() -> Bt {
                     CastOnSelf(SLICE_AND_DICE),
                 ),
                 // Finisher when SnD is up (4+ CP for efficiency).
-                Seq!(
-                    Cmp(SelfComboPoints, Above(3)),
-                    CastOnTarget(EVISCERATE),
-                ),
+                Seq!(Cmp(SelfComboPoints, Above(3)), CastOnTarget(EVISCERATE),),
                 // Rupture DoT.
                 Seq!(
                     Bt::target_missing_any_rank(RUPTURE_RANKS),

@@ -82,10 +82,7 @@ impl TravelTarget {
     /// Is the travel target active (has a real destination in a non-terminal status)?
     pub fn is_active(&self) -> bool {
         !self.destination.is_null()
-            && !matches!(
-                self.status,
-                TravelStatus::None | TravelStatus::Expired
-            )
+            && !matches!(self.status, TravelStatus::None | TravelStatus::Expired)
     }
 
     /// Is the bot currently traveling toward the destination?

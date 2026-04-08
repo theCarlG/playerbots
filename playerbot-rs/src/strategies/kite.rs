@@ -1,6 +1,6 @@
-use crate::{Sel, Seq};
 use crate::bot::settings::StrategyFlags;
 use crate::engine::bt::{Bt, Op, Resource};
+use crate::{Sel, Seq};
 
 /// Kite strategy — move away from target when it's in melee range.
 /// Used by ranged DPS to maintain distance. The default kite distance

@@ -11,7 +11,11 @@
 use crate::{
     bot::state::BotState,
     encounters::{EncounterEvent, coordinator},
-    engine::{bt_nodes::BtNode, context::TickContext, macro_fsm::ActiveFsm},
+    engine::{
+        bt_nodes::BtNode,
+        context::TickContext,
+        macro_fsm::{ActiveFsm, WorldSub},
+    },
 };
 
 pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
@@ -56,7 +60,13 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     // 4. Process push events
     process_events(bot, now_ms);
 
-    // 4.1 Auto-respond to pending group invites (PB2 parity).
+    // 4.1 Sync local encounter FSM → shared GroupState.
+    // Every bot writes its local view; since all bots in the same zone see
+    // the same events, they converge on the same state. The write is cheap
+    // (try_write fails silently if another bot holds the lock).
+    sync_encounter_to_group(bot, now_ms);
+
+    // 4.2 Auto-respond to pending group invites (PB2 parity).
     // NOTE: Ready checks are handled C++-side (packet-driven, not polled)
     // to avoid spamming responses every tick.
     bot.interface.accept_group_invite();
@@ -75,11 +85,37 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     );
     bot.active_fsm = active_fsm;
 
-    // Write to blackboard so BT nodes can read it.
-    bot.blackboard.set(
-        crate::engine::blackboard::Key::ActiveFsmState,
-        crate::engine::blackboard::Value::U32(active_fsm as u32),
-    );
+    // 5.1 FSM transition detection — fire entry/exit actions on state change.
+    let prev_fsm = bot.prev_active_fsm;
+    if active_fsm != prev_fsm {
+        on_fsm_exit(bot, prev_fsm);
+        on_fsm_enter(bot, active_fsm);
+        bot.prev_active_fsm = active_fsm;
+    }
+
+    // Write FSM state to blackboard so BT nodes can read it.
+    use crate::engine::blackboard::{Key, Value};
+    bot.blackboard
+        .set(Key::ActiveFsmState, Value::U32(active_fsm as u32));
+
+    // 5a. Derive World sub-state when in World FSM.
+    if active_fsm == ActiveFsm::World {
+        let is_traveling = bot.travel_target.is_active();
+        let world_sub = if is_traveling {
+            WorldSub::Travel
+        } else {
+            WorldSub::derive(bot.settings.mode, false)
+        };
+        bot.blackboard
+            .set(Key::WorldSubState, Value::U32(world_sub as u32));
+
+        // 5b. WorldSub transition detection.
+        if world_sub != bot.prev_world_sub {
+            on_world_sub_exit(bot, bot.prev_world_sub);
+            on_world_sub_enter(bot, world_sub);
+            bot.prev_world_sub = world_sub;
+        }
+    }
 
     // 6. Build TickContext and run BT
     //
@@ -120,6 +156,7 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         nearby: nearby_units,
         attackers,
         group_state: ctx_group.as_deref(),
+        group_handle: group_state.as_ref(),
         interface: interface.as_ref(),
         blackboard,
         timers,
@@ -203,10 +240,7 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
             }
         }
         // Log FSM state transitions.
-        crate::bot::monitor::monitor_log(
-            bot,
-            &format!("FSM: {:?}", bot.active_fsm),
-        );
+        crate::bot::monitor::monitor_log(bot, &format!("FSM: {:?}", bot.active_fsm));
         // Periodic tick summary (every 2s for detailed debugging).
         if now_ms.saturating_sub(bot.last_monitor_summary_ms) >= 2000 {
             crate::bot::monitor::monitor_tick_summary(bot);
@@ -217,7 +251,13 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         }
     }
 
-    // 7. Advance timers
+    // 7. Addon state pushes — send structured updates to subscribed addons.
+    if !bot.addon_subs.is_empty() && now_ms.saturating_sub(bot.last_addon_push_ms) >= 2000 {
+        push_addon_state(bot, now_ms);
+        bot.last_addon_push_ms = now_ms;
+    }
+
+    // 8. Advance timers
     bot.timers.advance(now_ms);
 }
 
@@ -283,9 +323,10 @@ fn process_events(bot: &mut BotState, _now_ms: u64) {
         if let BotEvent::UnitDied { victim: _, .. } = &event {
             use crate::engine::blackboard::{Key, Value};
             if let Some(count) = bot.blackboard.get_u32(Key::AddCount)
-                && count > 0 {
-                    bot.blackboard.set(Key::AddCount, Value::U32(count - 1));
-                }
+                && count > 0
+            {
+                bot.blackboard.set(Key::AddCount, Value::U32(count - 1));
+            }
         }
     }
 
@@ -335,9 +376,10 @@ fn process_events(bot: &mut BotState, _now_ms: u64) {
     // If bot entered combat, notify encounter FSM.
     if bot.snap.self_.in_combat
         && let Some(enc) = &mut bot.encounter
-            && !enc.is_active() {
-                enc.update(&EncounterEvent::CombatStarted, boss_hp_pct, now_ms);
-            }
+        && !enc.is_active()
+    {
+        enc.update(&EncounterEvent::CombatStarted, boss_hp_pct, now_ms);
+    }
 }
 
 /// Update the travel target FSM and sync its destination to the blackboard.
@@ -349,8 +391,8 @@ fn process_events(bot: &mut BotState, _now_ms: u64) {
 /// - Clearing the blackboard when the target is no longer active.
 fn update_travel_target(bot: &mut BotState, now_ms: u64) {
     use crate::engine::blackboard::Key;
-    use crate::travel::planner;
     use crate::travel::destination::TravelStatus;
+    use crate::travel::planner;
 
     let pos = &bot.snap.self_.pos;
     let tt = &mut bot.travel_target;
@@ -387,6 +429,197 @@ fn update_travel_target(bot: &mut BotState, now_ms: u64) {
         }
         _ => {
             // Prepare/Ready — don't move yet.
+        }
+    }
+}
+
+/// Publish local encounter FSM state to the shared `GroupState`.
+///
+/// Every bot in the group writes its local encounter view. Since all bots
+/// process the same events, they converge. The shared state is the
+/// coordination surface — ClaimTable lives here, encounter phase is readable
+/// by any bot without polling the local FSM of others.
+///
+/// Also GCs expired claims every ~5 seconds (piggybacks on a write lock
+/// we're already taking).
+fn sync_encounter_to_group(bot: &mut BotState, now_ms: u64) {
+    let group_handle = match &bot.group_state {
+        Some(h) => h,
+        None => return,
+    };
+
+    // Only attempt a write lock — don't block the tick if someone else holds it.
+    let Ok(mut gs) = group_handle.state().try_write() else {
+        return;
+    };
+
+    // Sync encounter metadata.
+    if let Some(enc) = &bot.encounter {
+        gs.encounter.boss_entry = enc.boss_entry();
+        gs.encounter.phase_id = enc.phase_id();
+        gs.encounter.active = enc.is_active();
+        gs.encounter_active = enc.is_active();
+    } else {
+        gs.encounter.active = false;
+        gs.encounter_active = false;
+    }
+
+    // Sync paladin blessings to group coordination.
+    if bot.class == crate::bot::state::PlayerClass::Paladin {
+        if let crate::bot::class_prefs::ClassPrefs::Paladin(ref prefs) = bot.settings.class_prefs {
+            if let Some(blessing) = prefs.blessing {
+                let ranks = blessing.ranks();
+                if let Some(&spell_id) = ranks.first() {
+                    gs.coordination.set_paladin_blessing(bot.handle, spell_id);
+                }
+            }
+        }
+    }
+
+    // Sync heal priority — ensure main tank is always heal_priority[0].
+    if let Some(mt) = gs.coordination.main_tank() {
+        if gs.coordination.heal_priority[0] != mt {
+            gs.coordination.heal_priority.rotate_right(1);
+            gs.coordination.heal_priority[0] = mt;
+        }
+    }
+
+    // Periodic claim GC — every 5 seconds, sweep expired claims.
+    // Cheap: iterates a 32-element array.
+    if now_ms.saturating_sub(gs.last_computed_ms) >= 5000 {
+        gs.encounter.claims.gc(now_ms);
+        gs.last_computed_ms = now_ms;
+    }
+}
+
+/// Actions to perform when leaving an FSM state.
+fn on_fsm_exit(bot: &mut BotState, prev: ActiveFsm) {
+    if bot.monitor_active {
+        crate::bot::monitor::monitor_log(bot, &format!("FSM EXIT: {:?}", prev));
+    }
+    match prev {
+        ActiveFsm::Combat => {
+            // Leaving combat: clear combat-only blackboard keys.
+            use crate::engine::blackboard::Key;
+            bot.blackboard.clear(Key::LastAttackTarget);
+        }
+        ActiveFsm::Dead => {
+            // Revived: clear death-related state.
+        }
+        ActiveFsm::World => {}
+    }
+}
+
+/// Actions to perform when entering an FSM state.
+fn on_fsm_enter(bot: &mut BotState, new: ActiveFsm) {
+    if bot.monitor_active {
+        crate::bot::monitor::monitor_log(bot, &format!("FSM ENTER: {:?}", new));
+    }
+    match new {
+        ActiveFsm::Combat => {
+            // Entering combat: release any stale heal claims so we start fresh.
+            if let Some(ref gh) = bot.group_state {
+                if let Ok(mut gs) = gh.state().try_write() {
+                    gs.encounter.claims.release_all(bot.handle);
+                }
+            }
+        }
+        ActiveFsm::Dead => {}
+        ActiveFsm::World => {}
+    }
+}
+
+/// Actions when entering a World sub-state.
+fn on_world_sub_enter(bot: &mut BotState, sub: WorldSub) {
+    if bot.monitor_active {
+        crate::bot::monitor::monitor_log(bot, &format!("WORLD SUB ENTER: {:?}", sub));
+    }
+}
+
+/// Actions when leaving a World sub-state.
+fn on_world_sub_exit(bot: &mut BotState, prev: WorldSub) {
+    if bot.monitor_active {
+        crate::bot::monitor::monitor_log(bot, &format!("WORLD SUB EXIT: {:?}", prev));
+    }
+}
+
+/// Push structured state updates to subscribed addons.
+///
+/// Called every ~2 seconds when any subscriptions exist. Each category
+/// is only sent if at least one player is subscribed to it.
+fn push_addon_state(bot: &BotState, _now_ms: u64) {
+    use crate::commands::protocol::{StateCategory, format_state_update};
+
+    let subs = &bot.addon_subs;
+
+    // FSM state
+    if subs.has_subscribers(StateCategory::Fsm) {
+        let fsm_str = format!("{:?}", bot.active_fsm);
+        let sub_str = bot
+            .blackboard
+            .get_u32(crate::engine::blackboard::Key::WorldSubState)
+            .map(|v| match v {
+                0 => "Follow",
+                1 => "Grind",
+                2 => "Quest",
+                3 => "Rest",
+                4 => "Guard",
+                5 => "Rpg",
+                6 => "Stay",
+                7 => "Bg",
+                8 => "Travel",
+                _ => "?",
+            })
+            .unwrap_or("n/a");
+        let msg = format_state_update(StateCategory::Fsm, &[("state", &fsm_str), ("sub", sub_str)]);
+        for guid in subs.subscribers(StateCategory::Fsm) {
+            bot.interface.tell_addon(guid, &msg);
+        }
+    }
+
+    // Vitals
+    if subs.has_subscribers(StateCategory::Vitals) {
+        let hp = format!(
+            "{:.0}",
+            bot.snap.self_.health as f32 / bot.snap.self_.max_health.max(1) as f32 * 100.0
+        );
+        let mp = format!(
+            "{:.0}",
+            bot.snap.self_.mana as f32 / bot.snap.self_.max_mana.max(1) as f32 * 100.0
+        );
+        let msg = format_state_update(StateCategory::Vitals, &[("hp", &hp), ("mp", &mp)]);
+        for guid in subs.subscribers(StateCategory::Vitals) {
+            bot.interface.tell_addon(guid, &msg);
+        }
+    }
+
+    // Encounter
+    if subs.has_subscribers(StateCategory::Encounter) {
+        let (boss, phase, active) = bot
+            .encounter
+            .as_ref()
+            .map(|e| {
+                (
+                    e.boss_entry().to_string(),
+                    e.phase_id().to_string(),
+                    if e.is_active() { "1" } else { "0" },
+                )
+            })
+            .unwrap_or_else(|| ("0".to_string(), "0".to_string(), "0"));
+        let msg = format_state_update(
+            StateCategory::Encounter,
+            &[("boss", &boss), ("phase", &phase), ("active", active)],
+        );
+        for guid in subs.subscribers(StateCategory::Encounter) {
+            bot.interface.tell_addon(guid, &msg);
+        }
+    }
+
+    // BT path
+    if subs.has_subscribers(StateCategory::BtPath) && !bot.last_bt_path.is_empty() {
+        let msg = format_state_update(StateCategory::BtPath, &[("path", &bot.last_bt_path)]);
+        for guid in subs.subscribers(StateCategory::BtPath) {
+            bot.interface.tell_addon(guid, &msg);
         }
     }
 }

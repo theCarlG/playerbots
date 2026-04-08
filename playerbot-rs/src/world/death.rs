@@ -8,7 +8,7 @@
 /// - Spirit healer: only after many deaths, or dead > 10 min.
 /// - Accept pending resurrect immediately.
 use crate::engine::bt::Bt::{self, *};
-use crate::{Seq, Sel};
+use crate::{Sel, Seq};
 
 pub fn death_subtree() -> Bt {
     // Called from the root FSM's Dead state — IsAlive.not() is already
@@ -25,7 +25,7 @@ pub fn death_subtree() -> Bt {
             Seq!(
                 HasAliveGroupMember,
                 DeadForLessThan(30_000),
-                Bt::Noop,  // Consume the tick — do nothing, just wait
+                Bt::Noop, // Consume the tick — do nothing, just wait
             ),
             // 3. Corpse run — release spirit and move to corpse.
             Bt::throttle(3_000, CorpseRun),

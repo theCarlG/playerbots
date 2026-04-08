@@ -211,7 +211,11 @@ mod tests {
     fn mock(nodes: Vec<BotTaxiNode>) -> MockIface {
         // rand_fixed = 0 → all `random_u32 != 0` cross-map filters pass
         // (i.e. the cross-map filter never fires).
-        MockIface { nodes, rand_fixed: 0, flagged: RefCell::new(Vec::new()) }
+        MockIface {
+            nodes,
+            rand_fixed: 0,
+            flagged: RefCell::new(Vec::new()),
+        }
     }
 
     #[test]

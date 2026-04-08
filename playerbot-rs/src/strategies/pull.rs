@@ -1,6 +1,6 @@
-use crate::{Sel, Seq};
 use crate::bot::settings::StrategyFlags;
 use crate::engine::bt::Bt;
+use crate::{Sel, Seq};
 
 /// Pull strategy — initiate combat with the current target using the
 /// generic pull dispatch (auto-shoot → taunt → attack). Class-specific
@@ -9,8 +9,5 @@ use crate::engine::bt::Bt;
 ///
 /// PB2: `PullStrategy` — gated on the `pull` strategy flag.
 pub fn build() -> Bt {
-    Seq!(
-        Bt::StrategyEnabled(StrategyFlags::PULL),
-        Bt::PullTarget,
-    )
+    Seq!(Bt::StrategyEnabled(StrategyFlags::PULL), Bt::PullTarget,)
 }

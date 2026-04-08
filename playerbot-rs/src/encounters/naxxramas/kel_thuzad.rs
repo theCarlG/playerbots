@@ -17,8 +17,8 @@
 ///   - Adds + portal: non-tanks switch to adds, tanks stay on KT.
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::engine::bt::Bt::{self, *};
-use crate::{Sel, Seq};
 use crate::ffi::SpellId;
+use crate::{Sel, Seq};
 
 pub const AURA_FROST_BLAST: SpellId = SpellId(27808);
 pub const SPELL_CHAINS_OF_KT: SpellId = SpellId(28410);
@@ -163,7 +163,9 @@ mod tests {
         let mut fsm = KelThuzadFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
 
-        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).expect("add waves should have BT");
+        let bt = fsm
+            .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+            .expect("add waves should have BT");
         let iface = TestInterface::new();
         let mut owned = TestCtxOwned::new();
         owned.attackers = vec![77]; // an add
@@ -177,7 +179,9 @@ mod tests {
         let mut fsm = KelThuzadFsm::default();
         fsm.phase = KtPhase::KtActive;
 
-        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).expect("KT active should have BT");
+        let bt = fsm
+            .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+            .expect("KT active should have BT");
         let iface = TestInterface::new();
         let mut owned = TestCtxOwned::new();
         let mut ctx =

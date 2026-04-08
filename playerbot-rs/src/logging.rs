@@ -79,7 +79,9 @@ mod tests {
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     unsafe extern "C" fn capture_sink(level: u8, msg: *const std::os::raw::c_char) {
-        let s = unsafe { CStr::from_ptr(msg) }.to_string_lossy().into_owned();
+        let s = unsafe { CStr::from_ptr(msg) }
+            .to_string_lossy()
+            .into_owned();
         CAPTURE.lock().unwrap().push((level, s));
     }
 

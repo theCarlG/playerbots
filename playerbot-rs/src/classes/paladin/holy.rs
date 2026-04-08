@@ -1,14 +1,18 @@
+use crate::{Sel, Seq};
 /// Holy Paladin behavior tree (Classic / Vanilla).
 ///
 /// Priority: Lay on Hands (critical) → Divine Shield self → critical heals →
 ///   medium heals → light heals → maintain blessing.
 use crate::{
     data::spells::vanilla::paladin::*,
-    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::bt::{
+        Bt::{self, *},
+        Op::*,
+        Resource::*,
+    },
     engine::macro_fsm::ActiveFsm,
     ffi::SpellId,
 };
-use crate::{Seq, Sel};
 
 // Any blessing ID we can detect on self; if none present, reapply Wisdom.
 const BLESSING_RANKS: &[SpellId] = &[

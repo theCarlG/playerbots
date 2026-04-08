@@ -82,7 +82,11 @@ impl Default for ZulGurubFsm {
 
 impl EncounterFsm for ZulGurubFsm {
     fn set_boss_entry(&mut self, entry: u32) {
-        if !self.active_boss.as_ref().is_some_and(|b| b.boss_entry() == entry) {
+        if !self
+            .active_boss
+            .as_ref()
+            .is_some_and(|b| b.boss_entry() == entry)
+        {
             self.set_active_boss_by_entry(entry);
         }
     }

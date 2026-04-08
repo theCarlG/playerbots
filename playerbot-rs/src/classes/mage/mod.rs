@@ -3,15 +3,14 @@ pub mod fire;
 pub mod frost;
 
 use crate::{
-    Seq, Sel,
+    Sel, Seq,
     bot::settings::StrategyFlags,
     bot::state::PlayerSpec,
-    classes::ClassKit,
     data::spells::vanilla::mage::{
         ARCANE_BRILLIANCE, ARCANE_INTELLECT, ARCANE_POWER, COMBUSTION, PRESENCE_OF_MIND,
     },
     engine::{
-        bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+        bt::Bt::{self, CastOnSelf, InCombat, StrategyEnabled},
         macro_fsm::ActiveFsm,
     },
     noncombat::GroupBuff,
@@ -36,19 +35,46 @@ pub fn boost() -> Bt {
     )
 }
 
-pub fn kit(spec: PlayerSpec) -> ClassKit {
+pub fn build_tree(fsm: ActiveFsm, spec: PlayerSpec) -> Bt {
     use PlayerSpec::{MageArcane, MageFire, MageFrost};
-    let combat = match spec {
-        MageArcane => arcane::build_tree(ActiveFsm::Combat),
-        MageFire => fire::build_tree(ActiveFsm::Combat),
-        MageFrost => frost::build_tree(ActiveFsm::Combat),
-        _ => unreachable!("non-mage spec passed to mage::kit"),
-    };
-    let world = match spec {
-        MageArcane => arcane::build_tree(ActiveFsm::World),
-        MageFire => fire::build_tree(ActiveFsm::World),
-        MageFrost => frost::build_tree(ActiveFsm::World),
-        _ => unreachable!("non-mage spec passed to mage::kit"),
-    };
-    ClassKit { combat, world, buffs: BUFFS }
+    match spec {
+        MageArcane => arcane::build_tree(fsm),
+        MageFire => fire::build_tree(fsm),
+        MageFrost => frost::build_tree(fsm),
+        _ => unreachable!("non-mage spec passed to mage::build_tree"),
+    }
+}
+
+pub fn buffs(_spec: PlayerSpec) -> &'static [GroupBuff] {
+    BUFFS
+}
+
+/// Per-spec default combat strategy flags (PB2 `AiFactory.cpp` mage branch).
+pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
+    use PlayerSpec::*;
+    use StrategyFlags as F;
+    let common =
+        F::DPS_ASSIST | F::FLEE | F::CURE | F::RANGED | F::CC | F::BUFF | F::AOE | F::BOOST;
+    match spec {
+        MageArcane => F::ARCANE | common,
+        MageFire => F::FIRE | common,
+        MageFrost => F::FROST | common,
+        _ => F::NONE,
+    }
+}
+
+/// Reverse-map strategy flags to a mage `PlayerSpec`.
+pub fn spec_from_flags(flags: StrategyFlags) -> Option<PlayerSpec> {
+    use PlayerSpec::*;
+    use StrategyFlags as F;
+    if flags.contains(F::ARCANE) {
+        return Some(MageArcane);
+    }
+    if flags.contains(F::FIRE) {
+        return Some(MageFire);
+    }
+    if flags.contains(F::FROST) {
+        return Some(MageFrost);
+    }
+    None
 }

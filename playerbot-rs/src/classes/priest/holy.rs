@@ -1,14 +1,18 @@
+use crate::{Sel, Seq};
 /// Holy Priest behavior tree (Classic / Vanilla).
 ///
 /// Priority: Power Word: Shield → Fade (aggro) → PW:Shield on group →
 ///   Flash Heal (critical) → Greater Heal → Renew → Prayer of Healing (`AoE`)
 use crate::{
     data::spells::vanilla::priest::*,
-    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::bt::{
+        Bt::{self, *},
+        Op::*,
+        Resource::*,
+    },
     engine::macro_fsm::ActiveFsm,
     ffi::SpellId,
 };
-use crate::{Seq, Sel};
 
 const WEAKENED_SOUL: SpellId = SpellId(6788);
 

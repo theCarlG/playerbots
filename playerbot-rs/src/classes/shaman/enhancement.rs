@@ -1,14 +1,18 @@
+use crate::{Sel, Seq};
 /// Enhancement Shaman behavior tree (Classic / Vanilla).
 ///
 /// Priority: Lightning Shield + totem upkeep → panic heal → Stormstrike →
 ///   Earth Shock interrupt → Flame Shock `DoT` → Earth Shock filler
 use crate::{
     data::spells::vanilla::shaman::*,
-    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::bt::{
+        Bt::{self, *},
+        Op::*,
+        Resource::*,
+    },
     engine::macro_fsm::ActiveFsm,
     ffi::SpellId,
 };
-use crate::{Seq, Sel};
 
 // Higher-rank auras for self buffs.
 const LIGHTNING_SHIELD_RANKS: &[SpellId] = &[LIGHTNING_SHIELD, SpellId(10432)];
@@ -40,16 +44,16 @@ fn combat_tree() -> Bt {
             Sel!(
                 // Panic heal chain.
                 Seq!(Cmp(SelfHealthPct, Below(25)), CastOnSelf(NATURE_SWIFTNESS)),
-                Seq!(Cmp(SelfHealthPct, Below(35)), CastOnSelf(LESSER_HEALING_WAVE)),
+                Seq!(
+                    Cmp(SelfHealthPct, Below(35)),
+                    CastOnSelf(LESSER_HEALING_WAVE)
+                ),
                 // Primary damage.
                 CastOnTarget(STORMSTRIKE),
                 // Interrupt.
                 Seq!(TargetIsCasting, CastOnTarget(EARTH_SHOCK)),
                 // DoT.
-                Seq!(
-                    Bt::target_missing(FLAME_SHOCK),
-                    CastOnTarget(FLAME_SHOCK),
-                ),
+                Seq!(Bt::target_missing(FLAME_SHOCK), CastOnTarget(FLAME_SHOCK),),
                 // Filler instant.
                 CastOnTarget(EARTH_SHOCK),
             ),

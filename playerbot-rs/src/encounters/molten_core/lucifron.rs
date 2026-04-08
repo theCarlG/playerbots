@@ -7,8 +7,8 @@
 /// Dispellers (priest/mage/druid) hammer dispels on the raid.
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::encounters::bt::Bt::{self, *};
-use crate::{Seq, Sel};
 use crate::ffi::SpellId;
+use crate::{Sel, Seq};
 
 pub const AURA_IMPENDING_DOOM: SpellId = SpellId(18093);
 pub const AURA_LUCIFRONS_CURSE: SpellId = SpellId(19703);

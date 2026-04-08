@@ -13,8 +13,8 @@
 /// stay out of breath cones entirely in case of tank position slips.
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::encounters::bt::Bt::{self, *};
-use crate::{Seq, Sel};
 use crate::ffi::SpellId;
+use crate::{Sel, Seq};
 
 pub const AURA_BROOD_AFFLICTION_BLUE: SpellId = SpellId(23170);
 pub const AURA_BROOD_AFFLICTION_BLACK: SpellId = SpellId(23171);

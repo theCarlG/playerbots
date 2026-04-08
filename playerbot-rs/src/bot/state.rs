@@ -15,7 +15,7 @@ use crate::{
         blackboard::Blackboard,
         bt::Bt,
         group_registry::{self, GroupHandle},
-        macro_fsm::ActiveFsm,
+        macro_fsm::{ActiveFsm, WorldSub},
         throttles::Throttles,
         timers::BotTimers,
     },
@@ -82,6 +82,20 @@ pub enum PlayerSpec {
     DeathKnightBlood,
     DeathKnightFrost,
     DeathKnightUnholy,
+}
+
+impl PlayerSpec {
+    /// The default `BotRole` for this spec (TANK / HEAL / DPS).
+    pub fn default_role(self) -> BotRole {
+        use PlayerSpec::*;
+        match self {
+            WarriorProtection | PaladinProtection | DeathKnightBlood => BotRole::TANK,
+            PriestHoly | PriestDiscipline | PaladinHoly | ShamanRestoration | DruidRestoration => {
+                BotRole::HEAL
+            }
+            _ => BotRole::DPS,
+        }
+    }
 }
 
 /// Per-FSM behavior trees. The tick loop selects which tree to run
@@ -157,6 +171,12 @@ pub struct BotState {
     /// Computed at the start of each tick before the BT runs.
     pub active_fsm: ActiveFsm,
 
+    /// Previous tick's top-level FSM state (for transition detection).
+    pub prev_active_fsm: ActiveFsm,
+
+    /// Previous tick's World sub-state (for transition detection).
+    pub prev_world_sub: WorldSub,
+
     /// Active raid/dungeon encounter FSM. None outside of known instances.
     /// Created by `encounters::coordinator::encounter_for_zone` when the bot
     /// enters a known zone; updated each tick before the BT runs.
@@ -199,6 +219,12 @@ pub struct BotState {
     pub last_monitor_summary_ms: u64,
     /// Last known combat state (for transition logging).
     pub last_monitor_in_combat: bool,
+
+    // ── Addon subscriptions ─────────────────────────────────────────────
+    /// Per-subscriber addon state push subscriptions.
+    pub addon_subs: crate::commands::protocol::AddonSubscriptions,
+    /// Last time addon state pushes were sent (throttle to ~2s).
+    pub last_addon_push_ms: u64,
 }
 
 impl BotState {
@@ -227,6 +253,8 @@ impl BotState {
             group_state: None,
             master_guid: None,
             active_fsm: ActiveFsm::World,
+            prev_active_fsm: ActiveFsm::World,
+            prev_world_sub: WorldSub::default(),
             encounter: None,
             trees,
             class,
@@ -242,6 +270,8 @@ impl BotState {
             last_bt_path: String::new(),
             last_monitor_summary_ms: 0,
             last_monitor_in_combat: false,
+            addon_subs: Default::default(),
+            last_addon_push_ms: 0,
         }
     }
 
@@ -267,10 +297,7 @@ impl BotState {
                 // group; otherwise swap. Assignment drops the old handle
                 // first, which is exactly how we deregister from the old
                 // group before joining the new one.
-                let same = self
-                    .group_state
-                    .as_ref()
-                    .is_some_and(|h| h.key() == key);
+                let same = self.group_state.as_ref().is_some_and(|h| h.key() == key);
                 if !same {
                     self.group_state = Some(group_registry::acquire(key));
                 }

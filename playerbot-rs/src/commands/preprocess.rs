@@ -62,6 +62,29 @@ pub fn preprocess_and_enqueue(
 ) {
     let text = raw.trim_start_matches("BOT\t");
 
+    // New addon protocol: `PB:v1:[@sel]:cmd:arg|cmd2:arg`.
+    // Intercept before the legacy pipeline so selectors and batching work.
+    if let Some(payload) = text.strip_prefix("PB:") {
+        if let Some((selectors, cmd_strs)) = super::protocol::parse_addon_message(payload) {
+            let addon_origin = ChatOrigin::new(origin.chat_type, super::LANG_ADDON);
+            for cmd_str in cmd_strs {
+                // Colon-separated args → space-separated for the text parser.
+                let normalized = cmd_str.replace(':', " ");
+                if let Some(cmd) = parser::parse(&normalized) {
+                    let pc = PendingCommand::with_selectors(
+                        sender_guid,
+                        security,
+                        addon_origin,
+                        cmd,
+                        selectors.clone(),
+                    );
+                    bot.pending_commands.lock().unwrap().push_back(pc);
+                }
+            }
+        }
+        return;
+    }
+
     // Separator split: recurse into each command.
     if let Some((head, tail)) = split_once_sep(text, DEFAULT_SEPARATOR) {
         preprocess_and_enqueue(bot, sender_guid, security, origin, head);
@@ -501,10 +524,18 @@ fn group_filter(snap: &BotWorldSnapshot, msg: &str) -> String {
     // Order matters: check longer prefixes first so `@nogroup` isn't
     // consumed by `@group`.
     if msg.starts_with("@nogroup") {
-        return if in_group { msg.to_string() } else { strip_selector(msg) };
+        return if in_group {
+            msg.to_string()
+        } else {
+            strip_selector(msg)
+        };
     }
     if msg.starts_with("@noraid") {
-        return if snap.is_raid_group { msg.to_string() } else { strip_selector(msg) };
+        return if snap.is_raid_group {
+            msg.to_string()
+        } else {
+            strip_selector(msg)
+        };
     }
     if msg.starts_with("@rleader") {
         return if snap.is_raid_group && snap.is_leader {
@@ -521,14 +552,22 @@ fn group_filter(snap: &BotWorldSnapshot, msg: &str) -> String {
         };
     }
     if msg.starts_with("@raid") {
-        return if snap.is_raid_group { strip_selector(msg) } else { msg.to_string() };
+        return if snap.is_raid_group {
+            strip_selector(msg)
+        } else {
+            msg.to_string()
+        };
     }
     if msg.starts_with("@group") {
         // Extract the numeric tail of the tag for subgroup range.
         let tag = head_token(msg);
         let nums = &tag[6..]; // after "@group"
         if nums.is_empty() {
-            return if in_group { strip_selector(msg) } else { msg.to_string() };
+            return if in_group {
+                strip_selector(msg)
+            } else {
+                msg.to_string()
+            };
         }
         let (from, to) = if let Some((lo, hi)) = nums.split_once('-') {
             match (lo.parse::<u8>(), hi.parse::<u8>()) {
@@ -559,10 +598,18 @@ fn group_filter(snap: &BotWorldSnapshot, msg: &str) -> String {
 
 fn guild_filter(snap: &BotWorldSnapshot, msg: &str) -> String {
     if msg.starts_with("@gleader") {
-        return if snap.is_guild_leader { strip_selector(msg) } else { msg.to_string() };
+        return if snap.is_guild_leader {
+            strip_selector(msg)
+        } else {
+            msg.to_string()
+        };
     }
     if msg.starts_with("@noguild") {
-        return if snap.in_guild { msg.to_string() } else { strip_selector(msg) };
+        return if snap.in_guild {
+            msg.to_string()
+        } else {
+            strip_selector(msg)
+        };
     }
     if let Some(rest) = msg.strip_prefix("@guild=") {
         // Not in a guild → PB2 returns message unchanged (other filters
@@ -593,7 +640,11 @@ fn guild_filter(snap: &BotWorldSnapshot, msg: &str) -> String {
     if msg.starts_with("@guild") {
         let tag = head_token(msg);
         if !tag.contains('=') {
-            return if snap.in_guild { strip_selector(msg) } else { msg.to_string() };
+            return if snap.in_guild {
+                strip_selector(msg)
+            } else {
+                msg.to_string()
+            };
         }
     }
     if let Some(rest) = msg.strip_prefix("@rank=") {
@@ -824,19 +875,39 @@ fn extract_quest_link_ids(value: &str, out: &mut Vec<u32>) {
 
 fn state_filter(snap: &BotWorldSnapshot, msg: &str) -> String {
     if msg.starts_with("@needrepair") {
-        return if snap.durability_pct < 20 { strip_selector(msg) } else { msg.to_string() };
+        return if snap.durability_pct < 20 {
+            strip_selector(msg)
+        } else {
+            msg.to_string()
+        };
     }
     if msg.starts_with("@bagalmostfull") {
-        return if snap.bag_space_pct >= 80 { strip_selector(msg) } else { msg.to_string() };
+        return if snap.bag_space_pct >= 80 {
+            strip_selector(msg)
+        } else {
+            msg.to_string()
+        };
     }
     if msg.starts_with("@bagfull") {
-        return if snap.bag_space_pct >= 100 { strip_selector(msg) } else { msg.to_string() };
+        return if snap.bag_space_pct >= 100 {
+            strip_selector(msg)
+        } else {
+            msg.to_string()
+        };
     }
     if msg.starts_with("@outside") {
-        return if snap.is_overworld { strip_selector(msg) } else { msg.to_string() };
+        return if snap.is_overworld {
+            strip_selector(msg)
+        } else {
+            msg.to_string()
+        };
     }
     if msg.starts_with("@inside") {
-        return if !snap.is_overworld { strip_selector(msg) } else { msg.to_string() };
+        return if !snap.is_overworld {
+            strip_selector(msg)
+        } else {
+            msg.to_string()
+        };
     }
     msg.to_string()
 }
@@ -1137,9 +1208,7 @@ mod tests {
             combat_type_filter(PlayerClass::Warrior, BotRole::DPS, "@melee charge").unwrap(),
             "charge"
         );
-        assert!(
-            combat_type_filter(PlayerClass::Warrior, BotRole::DPS, "@ranged charge").is_none()
-        );
+        assert!(combat_type_filter(PlayerClass::Warrior, BotRole::DPS, "@ranged charge").is_none());
     }
 
     #[test]
@@ -1284,16 +1353,15 @@ mod tests {
         // by `AiFactory::kit` (priest/mage/hunter/etc.). Insert it
         // explicitly here so the filter matches.
         let mut set = StrategySet::pb2_defaults();
-        set.get_mut(BotStateKind::NonCombat).insert(StrategyFlags::FLEE);
+        set.get_mut(BotStateKind::NonCombat)
+            .insert(StrategyFlags::FLEE);
         assert!(set.has(BotStateKind::NonCombat, StrategyFlags::FLEE));
         assert_eq!(strategy_filter(&set, "@nc=flee wander"), "wander");
 
         // Remove flee → predicate fails → PB2 returns message unchanged.
-        set.get_mut(BotStateKind::NonCombat).remove(StrategyFlags::FLEE);
-        assert_eq!(
-            strategy_filter(&set, "@nc=flee wander"),
-            "@nc=flee wander"
-        );
+        set.get_mut(BotStateKind::NonCombat)
+            .remove(StrategyFlags::FLEE);
+        assert_eq!(strategy_filter(&set, "@nc=flee wander"), "@nc=flee wander");
     }
 
     #[test]
@@ -1302,15 +1370,13 @@ mod tests {
         // is layered in per-class by AiFactory. Add it manually so the
         // `@nonc=flee` path exercises a match.
         let mut set = StrategySet::pb2_defaults();
-        set.get_mut(BotStateKind::NonCombat).insert(StrategyFlags::FLEE);
+        set.get_mut(BotStateKind::NonCombat)
+            .insert(StrategyFlags::FLEE);
         // `grind` is NOT in the NonCombat default set.
         assert!(!set.has(BotStateKind::NonCombat, StrategyFlags::GRIND));
         assert_eq!(strategy_filter(&set, "@nonc=grind idle"), "idle");
         // `flee` IS in the NonCombat set → @nonc=flee must NOT strip.
-        assert_eq!(
-            strategy_filter(&set, "@nonc=flee idle"),
-            "@nonc=flee idle"
-        );
+        assert_eq!(strategy_filter(&set, "@nonc=flee idle"), "@nonc=flee idle");
     }
 
     #[test]
@@ -1353,10 +1419,7 @@ mod tests {
             "of Azeroth hail"
         );
         // "Heroe" does not start with "Heroes" → fail.
-        assert_eq!(
-            guild_filter(&s, "@guild=Heroe hail"),
-            "@guild=Heroe hail"
-        );
+        assert_eq!(guild_filter(&s, "@guild=Heroe hail"), "@guild=Heroe hail");
     }
 
     #[test]
@@ -1375,10 +1438,7 @@ mod tests {
     fn guild_filter_guild_eq_not_in_guild_is_passthrough() {
         let mut s = snap();
         s.in_guild = false;
-        assert_eq!(
-            guild_filter(&s, "@guild=Heroes hail"),
-            "@guild=Heroes hail"
-        );
+        assert_eq!(guild_filter(&s, "@guild=Heroes hail"), "@guild=Heroes hail");
     }
 
     #[test]
@@ -1425,10 +1485,7 @@ mod tests {
     fn location_filter_map_prefix() {
         let mut s = snap();
         write_cbuf(&mut s.map_name_lower, "azeroth");
-        assert_eq!(
-            location_filter(&s, "@azeroth travel"),
-            "travel"
-        );
+        assert_eq!(location_filter(&s, "@azeroth travel"), "travel");
         // Must not match the prefix of a longer word.
         assert_eq!(
             location_filter(&s, "@azerothian travel"),
@@ -1440,14 +1497,8 @@ mod tests {
     fn location_filter_area_prefix() {
         let mut s = snap();
         write_cbuf(&mut s.area_name_lower, "dun morogh");
-        assert_eq!(
-            location_filter(&s, "@dun morogh travel"),
-            "travel"
-        );
-        assert_eq!(
-            location_filter(&s, "@dun follow"),
-            "@dun follow"
-        );
+        assert_eq!(location_filter(&s, "@dun morogh travel"), "travel");
+        assert_eq!(location_filter(&s, "@dun follow"), "@dun follow");
     }
 
     #[test]
@@ -1463,10 +1514,7 @@ mod tests {
         s.current_quest_ids[0] = 523;
         s.current_quest_count = 1;
         assert_eq!(quest_filter(&s, "@quest=523 turn in"), "turn in");
-        assert_eq!(
-            quest_filter(&s, "@quest=999 turn in"),
-            "@quest=999 turn in"
-        );
+        assert_eq!(quest_filter(&s, "@quest=999 turn in"), "@quest=999 turn in");
     }
 
     #[test]
@@ -1483,19 +1531,13 @@ mod tests {
     fn quest_filter_no_match_passthrough() {
         let mut s = snap();
         s.current_quest_count = 0;
-        assert_eq!(
-            quest_filter(&s, "@quest=40 help"),
-            "@quest=40 help"
-        );
+        assert_eq!(quest_filter(&s, "@quest=40 help"), "@quest=40 help");
     }
 
     #[test]
     fn extract_quest_link_ids_handles_multiple() {
         let mut out = Vec::new();
-        extract_quest_link_ids(
-            "|Hquest:10:5|h[A]|h|r and |Hquest:20:10|h[B]|h|r",
-            &mut out,
-        );
+        extract_quest_link_ids("|Hquest:10:5|h[A]|h|r and |Hquest:20:10|h[B]|h|r", &mut out);
         assert_eq!(out, vec![10, 20]);
     }
 

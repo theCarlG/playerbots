@@ -1,5 +1,5 @@
-use crate::{Sel, Seq};
 use crate::engine::bt::Bt;
+use crate::{Sel, Seq};
 
 /// Consumables strategy — use buff/utility potions when available.
 /// Gates on the potion cooldown and bag availability checks so the
@@ -15,10 +15,7 @@ pub fn build() -> Bt {
                 Bt::PotionCooldownReady,
                 Bt::UseBuffPotion,
             ),
-            Seq!(
-                Bt::PotionCooldownReady,
-                Bt::UseUtilityPotion,
-            ),
+            Seq!(Bt::PotionCooldownReady, Bt::UseUtilityPotion,),
         ),
     )
 }

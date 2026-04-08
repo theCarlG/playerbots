@@ -43,7 +43,12 @@ pub fn monitor_dump_settings(bot: &BotState) {
     monitor_log(bot, &format!("MODE: {:?}", s.mode));
     {
         use crate::bot::settings::BotStateKind;
-        for kind in [BotStateKind::Combat, BotStateKind::NonCombat, BotStateKind::Reaction, BotStateKind::Dead] {
+        for kind in [
+            BotStateKind::Combat,
+            BotStateKind::NonCombat,
+            BotStateKind::Reaction,
+            BotStateKind::Dead,
+        ] {
             let slot = s.strategies.get(kind);
             let desc = slot.describe();
             if !desc.is_empty() {
@@ -65,16 +70,17 @@ pub fn monitor_dump_settings(bot: &BotState) {
     );
     monitor_log(
         bot,
-        &format!("RTI: {:?}  CC RTI: {:?}", s.preferred_rti_icon, s.preferred_cc_rti_icon),
+        &format!(
+            "RTI: {:?}  CC RTI: {:?}",
+            s.preferred_rti_icon, s.preferred_cc_rti_icon
+        ),
     );
     monitor_log(bot, &format!("VERBOSE: {}", s.verbose));
     monitor_log(
         bot,
         &format!(
             "MASTER: {:?}  ALIVE: {}  COMBAT: {}",
-            bot.master_guid,
-            bot.snap.self_.is_alive,
-            bot.snap.self_.in_combat
+            bot.master_guid, bot.snap.self_.is_alive, bot.snap.self_.in_combat
         ),
     );
     monitor_log(bot, "=== END SETTINGS DUMP ===");
@@ -93,9 +99,7 @@ pub fn monitor_command_received(bot: &BotState, raw: &str, sender_guid: u64, ori
     let addon = if origin.is_addon() { " [ADDON]" } else { "" };
     monitor_log(
         bot,
-        &format!(
-            "CMD RECV [{channel}{addon}] from 0x{sender_guid:X}: {raw}"
-        ),
+        &format!("CMD RECV [{channel}{addon}] from 0x{sender_guid:X}: {raw}"),
     );
 }
 
@@ -178,13 +182,21 @@ pub fn monitor_tick_summary(bot: &BotState) {
     }
     // Log attackers list when non-empty.
     if !bot.attackers.is_empty() {
-        let atk_str: Vec<String> = bot.attackers.iter().take(8).map(|a| format!("0x{a:X}")).collect();
+        let atk_str: Vec<String> = bot
+            .attackers
+            .iter()
+            .take(8)
+            .map(|a| format!("0x{a:X}"))
+            .collect();
         let suffix = if bot.attackers.len() > 8 {
             format!(" (+{})", bot.attackers.len() - 8)
         } else {
             String::new()
         };
-        monitor_log(bot, &format!("  ATTACKERS: [{}]{suffix}", atk_str.join(", ")));
+        monitor_log(
+            bot,
+            &format!("  ATTACKERS: [{}]{suffix}", atk_str.join(", ")),
+        );
     }
     // Log group members.
     if bot.snap.group_size > 0 {
@@ -208,12 +220,18 @@ pub fn monitor_tick_summary(bot: &BotState) {
             bot.settings.mode,
             bot.settings.reactivity,
             bot.role,
-            bot.master_guid.map_or("none".to_string(), |m| format!("0x{m:X}")),
+            bot.master_guid
+                .map_or("none".to_string(), |m| format!("0x{m:X}")),
         ),
     );
     // Log each strategy slot with human-readable names.
     use crate::bot::settings::BotStateKind;
-    for kind in [BotStateKind::Combat, BotStateKind::NonCombat, BotStateKind::Reaction, BotStateKind::Dead] {
+    for kind in [
+        BotStateKind::Combat,
+        BotStateKind::NonCombat,
+        BotStateKind::Reaction,
+        BotStateKind::Dead,
+    ] {
         let slot = bot.settings.strategies.get(kind);
         let desc = slot.describe();
         if !desc.is_empty() {

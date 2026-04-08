@@ -1,13 +1,17 @@
+use crate::{Sel, Seq};
 /// Elemental Shaman behavior tree (Classic / Vanilla).
 ///
 /// Priority: totem upkeep → Earth Shock interrupt → Flame Shock `DoT` →
 ///   Chain Lightning `AoE` → Lightning Bolt → Frost Shock filler
 use crate::{
     data::spells::vanilla::shaman::*,
-    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::bt::{
+        Bt::{self, *},
+        Op::*,
+        Resource::*,
+    },
     engine::macro_fsm::ActiveFsm,
 };
-use crate::{Seq, Sel};
 
 pub fn build_tree(fsm: ActiveFsm) -> Bt {
     match fsm {
@@ -31,10 +35,7 @@ fn combat_tree() -> Bt {
                 // Interrupt.
                 Seq!(TargetIsCasting, CastOnTarget(EARTH_SHOCK)),
                 // Flame Shock DoT.
-                Seq!(
-                    Bt::target_missing(FLAME_SHOCK),
-                    CastOnTarget(FLAME_SHOCK),
-                ),
+                Seq!(Bt::target_missing(FLAME_SHOCK), CastOnTarget(FLAME_SHOCK),),
                 // AoE.
                 Seq!(Cmp(NearbyCount, AtLeast(3)), CastOnTarget(CHAIN_LIGHTNING)),
                 // Main nuke.

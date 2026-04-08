@@ -200,9 +200,7 @@ fn weapon_skills_for_class(class_id: u8) -> &'static [u32] {
             SKILL_DAGGERS,
             SKILL_FIST_WEAPONS,
         ],
-        CLASS_MAGE | CLASS_WARLOCK => {
-            &[SKILL_SWORDS, SKILL_STAVES, SKILL_DAGGERS, SKILL_WANDS]
-        }
+        CLASS_MAGE | CLASS_WARLOCK => &[SKILL_SWORDS, SKILL_STAVES, SKILL_DAGGERS, SKILL_WANDS],
         CLASS_HUNTER => &[
             SKILL_SWORDS,
             SKILL_AXES,
@@ -289,11 +287,19 @@ fn skill_cap_for_level(level: u32) -> u32 {
     }
     #[cfg(feature = "tbc")]
     {
-        if level > 60 { (level + 5) * 5 } else { level * 5 }
+        if level > 60 {
+            (level + 5) * 5
+        } else {
+            level * 5
+        }
     }
     #[cfg(feature = "wotlk")]
     {
-        if level > 60 { (level + 10) * 5 } else { level * 5 }
+        if level > 60 {
+            (level + 10) * 5
+        } else {
+            level * 5
+        }
     }
     #[cfg(not(any(feature = "vanilla", feature = "tbc", feature = "wotlk")))]
     {
@@ -315,7 +321,7 @@ mod tests {
     struct MockIface {
         update_calls: RefCell<u32>,
         skills: RefCell<HashMap<u32, (u32, u32)>>, // id -> (value, max)
-        // Deterministic RNG: always return `min`.
+                                                   // Deterministic RNG: always return `min`.
     }
 
     unsafe impl Send for MockIface {}
@@ -517,9 +523,7 @@ mod tests {
     fn only_upgrades_weapon_skill_when_higher() {
         let m = MockIface::default();
         // Pre-seed a very high current value.
-        m.skills
-            .borrow_mut()
-            .insert(SKILL_SWORDS, (299, 300));
+        m.skills.borrow_mut().insert(SKILL_SWORDS, (299, 300));
         init_skills(&m, CLASS_WARRIOR, 60);
         // Rolled value is 240, which is not > 299, so untouched.
         let (value, _) = m.skills.borrow().get(&SKILL_SWORDS).copied().unwrap();

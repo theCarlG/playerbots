@@ -7,10 +7,9 @@ use crate::{
     Seq,
     bot::settings::StrategyFlags,
     bot::state::PlayerSpec,
-    classes::ClassKit,
     data::spells::vanilla::warlock::{DARK_PACT, DEMON_ARMOR},
     engine::{
-        bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+        bt::Bt::{self, CastOnSelf, InCombat, StrategyEnabled},
         macro_fsm::ActiveFsm,
     },
     noncombat::GroupBuff,
@@ -27,19 +26,53 @@ pub fn boost() -> Bt {
     )
 }
 
-pub fn kit(spec: PlayerSpec) -> ClassKit {
+pub fn build_tree(fsm: ActiveFsm, spec: PlayerSpec) -> Bt {
     use PlayerSpec::{WarlockAffliction, WarlockDemonology, WarlockDestruction};
-    let combat = match spec {
-        WarlockAffliction => affliction::build_tree(ActiveFsm::Combat),
-        WarlockDemonology => demonology::build_tree(ActiveFsm::Combat),
-        WarlockDestruction => destruction::build_tree(ActiveFsm::Combat),
-        _ => unreachable!("non-warlock spec passed to warlock::kit"),
-    };
-    let world = match spec {
-        WarlockAffliction => affliction::build_tree(ActiveFsm::World),
-        WarlockDemonology => demonology::build_tree(ActiveFsm::World),
-        WarlockDestruction => destruction::build_tree(ActiveFsm::World),
-        _ => unreachable!("non-warlock spec passed to warlock::kit"),
-    };
-    ClassKit { combat, world, buffs: BUFFS }
+    match spec {
+        WarlockAffliction => affliction::build_tree(fsm),
+        WarlockDemonology => demonology::build_tree(fsm),
+        WarlockDestruction => destruction::build_tree(fsm),
+        _ => unreachable!("non-warlock spec passed to warlock::build_tree"),
+    }
+}
+
+pub fn buffs(_spec: PlayerSpec) -> &'static [GroupBuff] {
+    BUFFS
+}
+
+/// Per-spec default combat strategy flags (PB2 `AiFactory.cpp` warlock branch).
+pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
+    use PlayerSpec::*;
+    use StrategyFlags as F;
+    let common = F::DPS_ASSIST
+        | F::FLEE
+        | F::RANGED
+        | F::CC
+        | F::PET
+        | F::AOE
+        | F::BUFF
+        | F::BOOST
+        | F::CURSE;
+    match spec {
+        WarlockAffliction => F::AFFLICTION | common,
+        WarlockDemonology => F::DEMONOLOGY | common,
+        WarlockDestruction => F::DESTRUCTION | common,
+        _ => F::NONE,
+    }
+}
+
+/// Reverse-map strategy flags to a warlock `PlayerSpec`.
+pub fn spec_from_flags(flags: StrategyFlags) -> Option<PlayerSpec> {
+    use PlayerSpec::*;
+    use StrategyFlags as F;
+    if flags.contains(F::AFFLICTION) {
+        return Some(WarlockAffliction);
+    }
+    if flags.contains(F::DEMONOLOGY) {
+        return Some(WarlockDemonology);
+    }
+    if flags.contains(F::DESTRUCTION) {
+        return Some(WarlockDestruction);
+    }
+    None
 }

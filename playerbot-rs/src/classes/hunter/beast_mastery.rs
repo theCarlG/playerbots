@@ -1,3 +1,4 @@
+use crate::{Sel, Seq};
 /// Beast Mastery Hunter behavior tree (Classic / Vanilla).
 ///
 /// BM relies heavily on pet damage.
@@ -7,11 +8,14 @@ use crate::{
     data::spells::vanilla::hunter::*,
     engine::{
         aura_helpers::{HUNTERS_MARK_RANKS, SERPENT_STING_RANKS},
-        bt::{Bt::{self, *}, Op::*, Resource::*},
+        bt::{
+            Bt::{self, *},
+            Op::*,
+            Resource::*,
+        },
         macro_fsm::ActiveFsm,
     },
 };
-use crate::{Seq, Sel};
 
 pub fn build_tree(fsm: ActiveFsm) -> Bt {
     match fsm {

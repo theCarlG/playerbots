@@ -301,8 +301,14 @@ mod tests {
         assert_eq!(lookup_spell_by_name("Volley"), Some(SpellId(14295)));
         assert_eq!(lookup_spell_by_name("Multishot"), Some(SpellId(14290)));
         assert_eq!(lookup_spell_by_name("Multi Shot"), Some(SpellId(14290)));
-        assert_eq!(lookup_spell_by_name("Tranquilizing Shot"), Some(SpellId(19801)));
-        assert_eq!(lookup_spell_by_name("Challenging Shout"), Some(SpellId(1161)));
+        assert_eq!(
+            lookup_spell_by_name("Tranquilizing Shot"),
+            Some(SpellId(19801))
+        );
+        assert_eq!(
+            lookup_spell_by_name("Challenging Shout"),
+            Some(SpellId(1161))
+        );
         // Falls through to CastByName at runtime (FFI resolution)
         assert_eq!(lookup_spell_by_name("nonsense"), None);
     }

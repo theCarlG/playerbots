@@ -11,8 +11,8 @@
 /// Firesworn crosses ~15% to avoid Eruption. Mages/shamans purge frenzy.
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::encounters::bt::Bt::{self, *};
-use crate::{Seq, Sel};
 use crate::ffi::SpellId;
+use crate::{Sel, Seq};
 
 pub const AURA_ANTIMAGIC_PULSE: SpellId = SpellId(19492);
 pub const AURA_MAGMA_SHACKLES: SpellId = SpellId(19496);

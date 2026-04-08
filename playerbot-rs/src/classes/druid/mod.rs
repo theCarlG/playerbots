@@ -3,13 +3,12 @@ pub mod feral;
 pub mod restoration;
 
 use crate::{
-    Seq, Sel,
+    Sel, Seq,
     bot::settings::StrategyFlags,
     bot::state::PlayerSpec,
-    classes::ClassKit,
     data::spells::vanilla::druid::{NATURE_SWIFTNESS, TIGERS_FURY},
     engine::{
-        bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+        bt::Bt::{self, CastOnSelf, InCombat, StrategyEnabled},
         macro_fsm::ActiveFsm,
     },
     ffi::SpellId,
@@ -30,19 +29,80 @@ pub fn boost() -> Bt {
     )
 }
 
-pub fn kit(spec: PlayerSpec) -> ClassKit {
+pub fn build_tree(fsm: ActiveFsm, spec: PlayerSpec) -> Bt {
     use PlayerSpec::{DruidBalance, DruidFeral, DruidRestoration};
-    let combat = match spec {
-        DruidBalance => balance::build_tree(ActiveFsm::Combat),
-        DruidFeral => feral::build_tree(ActiveFsm::Combat),
-        DruidRestoration => restoration::build_tree(ActiveFsm::Combat),
-        _ => unreachable!("non-druid spec passed to druid::kit"),
-    };
-    let world = match spec {
-        DruidBalance => balance::build_tree(ActiveFsm::World),
-        DruidFeral => feral::build_tree(ActiveFsm::World),
-        DruidRestoration => restoration::build_tree(ActiveFsm::World),
-        _ => unreachable!("non-druid spec passed to druid::kit"),
-    };
-    ClassKit { combat, world, buffs: BUFFS }
+    match spec {
+        DruidBalance => balance::build_tree(fsm),
+        DruidFeral => feral::build_tree(fsm),
+        DruidRestoration => restoration::build_tree(fsm),
+        _ => unreachable!("non-druid spec passed to druid::build_tree"),
+    }
+}
+
+pub fn buffs(_spec: PlayerSpec) -> &'static [GroupBuff] {
+    BUFFS
+}
+
+/// Per-spec default combat strategy flags (PB2 `AiFactory.cpp` druid branch).
+pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
+    use PlayerSpec::*;
+    use StrategyFlags as F;
+    match spec {
+        DruidBalance => {
+            F::BALANCE
+                | F::OFFHEAL
+                | F::DPS_ASSIST
+                | F::FLEE
+                | F::RANGED
+                | F::CURE
+                | F::AOE
+                | F::CC
+                | F::BUFF
+                | F::BOOST
+        }
+        DruidFeral => {
+            F::DPS_FERAL
+                | F::OFFHEAL
+                | F::DPS_ASSIST
+                | F::CLOSE
+                | F::BEHIND
+                | F::CURE
+                | F::AOE
+                | F::CC
+                | F::BUFF
+                | F::BOOST
+        }
+        DruidRestoration => {
+            F::RESTORATION
+                | F::OFFDPS
+                | F::DPS_ASSIST
+                | F::FLEE
+                | F::RANGED
+                | F::CURE
+                | F::AOE
+                | F::CC
+                | F::BUFF
+                | F::BOOST
+        }
+        _ => F::NONE,
+    }
+}
+
+/// Reverse-map strategy flags to a druid `PlayerSpec`.
+pub fn spec_from_flags(flags: StrategyFlags) -> Option<PlayerSpec> {
+    use PlayerSpec::*;
+    use StrategyFlags as F;
+    if flags.contains(F::BALANCE) {
+        return Some(DruidBalance);
+    }
+    if flags.contains(F::TANK_FERAL) {
+        return Some(DruidFeral);
+    }
+    if flags.contains(F::DPS_FERAL) {
+        return Some(DruidFeral);
+    }
+    if flags.contains(F::RESTORATION) {
+        return Some(DruidRestoration);
+    }
+    None
 }

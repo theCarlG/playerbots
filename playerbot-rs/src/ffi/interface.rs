@@ -1047,7 +1047,13 @@ pub trait BotInterface: Send {
     /// Get the position of a BG objective.
     /// `objective_type`: 0=defend, 1=assault, 2=flag, 3=return_flag.
     fn get_bg_objective_pos(&self, _objective_type: u8) -> BotPosition {
-        BotPosition { x: 0.0, y: 0.0, z: 0.0, o: 0.0, map_id: 0 }
+        BotPosition {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            o: 0.0,
+            map_id: 0,
+        }
     }
 
     /* ── LFG ─────────────────────────────────────────────────────────── */
@@ -1066,7 +1072,13 @@ pub trait BotInterface: Send {
 
     /// Get the tank's current position for stay-near-tank logic.
     fn get_tank_position(&self) -> BotPosition {
-        BotPosition { x: 0.0, y: 0.0, z: 0.0, o: 0.0, map_id: 0 }
+        BotPosition {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            o: 0.0,
+            map_id: 0,
+        }
     }
 
     /// Check if the given target has an active CC.
@@ -1329,9 +1341,8 @@ impl BotInterface for RealInterface {
 
     fn get_player_position(&self, player_guid: u64) -> Option<BotPosition> {
         let mut out: BotPosition = unsafe { std::mem::zeroed() };
-        let ok = unsafe {
-            (self.cbs.get_player_position.unwrap())(self.handle, player_guid, &mut out)
-        };
+        let ok =
+            unsafe { (self.cbs.get_player_position.unwrap())(self.handle, player_guid, &mut out) };
         if ok { Some(out) } else { None }
     }
 
@@ -1709,7 +1720,8 @@ impl BotInterface for RealInterface {
     }
 
     fn nearby_gameobject_by_entry(&self, entry: u32, range: f32) -> Option<u64> {
-        let h = unsafe { (self.cbs.nearby_gameobject_by_entry.unwrap())(self.handle, entry, range) };
+        let h =
+            unsafe { (self.cbs.nearby_gameobject_by_entry.unwrap())(self.handle, entry, range) };
         if h == 0 { None } else { Some(h) }
     }
 
@@ -1862,7 +1874,9 @@ impl BotInterface for RealInterface {
     }
 
     fn bot_store_new_in_best_slots(&self, item_id: ItemId, count: u32) -> bool {
-        unsafe { (self.cbs.bot_store_new_in_best_slots.unwrap())(self.handle, item_id.raw(), count) }
+        unsafe {
+            (self.cbs.bot_store_new_in_best_slots.unwrap())(self.handle, item_id.raw(), count)
+        }
     }
 
     fn bot_set_reputation(&self, faction_id: u32, value: i32) -> bool {
@@ -1878,7 +1892,9 @@ impl BotInterface for RealInterface {
     }
 
     fn factory_pick_ammo_for_level(&self, level: u32, ammo_subclass: u32) -> u32 {
-        unsafe { (self.cbs.factory_pick_ammo_for_level.unwrap())(self.handle, level, ammo_subclass) }
+        unsafe {
+            (self.cbs.factory_pick_ammo_for_level.unwrap())(self.handle, level, ammo_subclass)
+        }
     }
 
     fn bot_set_ammo(&self, item_id: u32) {
@@ -1907,8 +1923,7 @@ impl BotInterface for RealInterface {
 
     fn get_random_bot_spell_ids(&self) -> Vec<u32> {
         let mut count: u32 = 0;
-        let ptr =
-            unsafe { (self.cbs.get_random_bot_spell_ids.unwrap())(self.handle, &mut count) };
+        let ptr = unsafe { (self.cbs.get_random_bot_spell_ids.unwrap())(self.handle, &mut count) };
         if ptr.is_null() || count == 0 {
             return Vec::new();
         }

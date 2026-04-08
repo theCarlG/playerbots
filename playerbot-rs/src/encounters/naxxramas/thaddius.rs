@@ -14,8 +14,8 @@
 ///   - Normal (Thaddius, no shift): normal rotation.
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::engine::bt::Bt::{self, *};
-use crate::{Sel, Seq};
 use crate::ffi::SpellId;
+use crate::{Sel, Seq};
 
 pub const SPELL_POLARITY_SHIFT: SpellId = SpellId(28089);
 pub const AURA_POSITIVE_CHARGE: SpellId = SpellId(29659);
@@ -202,20 +202,29 @@ mod tests {
     fn adds_phase_has_bt() {
         let mut fsm = ThaddiusFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
-        assert!(fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).is_some());
+        assert!(
+            fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+                .is_some()
+        );
     }
 
     #[test]
     fn polarity_phase_has_bt() {
         let mut fsm = ThaddiusFsm::default();
         fsm.phase = ThaddiusPhase::PolarityReposition;
-        assert!(fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).is_some());
+        assert!(
+            fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+                .is_some()
+        );
     }
 
     #[test]
     fn normal_phase_no_bt() {
         let mut fsm = ThaddiusFsm::default();
         fsm.phase = ThaddiusPhase::Normal;
-        assert!(fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).is_none());
+        assert!(
+            fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+                .is_none()
+        );
     }
 }

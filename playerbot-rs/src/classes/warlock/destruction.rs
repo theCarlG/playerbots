@@ -1,14 +1,18 @@
+use crate::{Sel, Seq};
 /// Destruction Warlock behavior tree (Classic / Vanilla).
 ///
 /// Priority: Demon Armor → Life Tap → Curse of Elements → Immolate → Conflagrate
 ///   → Corruption → Curse of Agony → Shadowburn execute → Shadow Bolt
 use crate::{
     data::spells::vanilla::warlock::*,
-    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::bt::{
+        Bt::{self, *},
+        Op::*,
+        Resource::*,
+    },
     engine::macro_fsm::ActiveFsm,
     ffi::SpellId,
 };
-use crate::{Seq, Sel};
 
 const CURSE_OF_ELEMENTS: SpellId = SpellId(17937);
 const CURSE_OF_AGONY: SpellId = SpellId(11722);
@@ -44,10 +48,7 @@ fn combat_tree() -> Bt {
                 Seq!(Bt::target_missing(IMMOLATE), CastOnTarget(IMMOLATE)),
                 // Conflagrate burst — consumes Immolate (can_cast gates on it).
                 CastOnTarget(CONFLAGRATE),
-                Seq!(
-                    Bt::target_missing(CORRUPTION),
-                    CastOnTarget(CORRUPTION),
-                ),
+                Seq!(Bt::target_missing(CORRUPTION), CastOnTarget(CORRUPTION),),
                 Seq!(
                     Bt::target_missing(CURSE_OF_AGONY),
                     CastOnTarget(CURSE_OF_AGONY),

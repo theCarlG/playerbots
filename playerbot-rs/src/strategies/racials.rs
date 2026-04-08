@@ -1,7 +1,7 @@
-use crate::{Sel, Seq};
 use crate::bot::settings::StrategyFlags;
 use crate::engine::bt::Bt;
 use crate::ffi::SpellId;
+use crate::{Sel, Seq};
 
 // Well-known racial ability spell IDs (Classic).
 const STONEFORM: SpellId = SpellId(20594);

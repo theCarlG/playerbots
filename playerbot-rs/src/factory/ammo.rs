@@ -235,18 +235,30 @@ mod tests {
             *self.current_ammo.borrow_mut() = item_id;
         }
         fn item_count_in_bags(&self, item_id: ItemId) -> u32 {
-            self.inventory.borrow().get(&item_id.raw()).copied().unwrap_or(0)
+            self.inventory
+                .borrow()
+                .get(&item_id.raw())
+                .copied()
+                .unwrap_or(0)
         }
         fn inventory_add_item(&self, item_id: ItemId, count: u32) -> u32 {
             self.adds.borrow_mut().push((item_id.raw(), count));
-            *self.inventory.borrow_mut().entry(item_id.raw()).or_insert(0) += count;
+            *self
+                .inventory
+                .borrow_mut()
+                .entry(item_id.raw())
+                .or_insert(0) += count;
             count
         }
     }
 
     #[test]
     fn noop_for_non_ammo_class() {
-        let m = MockIface { ranged_subclass: WEAPON_BOW, pick_returns: 2512, ..Default::default() };
+        let m = MockIface {
+            ranged_subclass: WEAPON_BOW,
+            pick_returns: 2512,
+            ..Default::default()
+        };
         init_ammo(&m, 8 /* mage */, 60);
         assert!(m.adds.borrow().is_empty());
         assert!(m.set_ammo_calls.borrow().is_empty());
@@ -254,21 +266,33 @@ mod tests {
 
     #[test]
     fn noop_when_no_ranged_equipped() {
-        let m = MockIface { ranged_subclass: u32::MAX, pick_returns: 2512, ..Default::default() };
+        let m = MockIface {
+            ranged_subclass: u32::MAX,
+            pick_returns: 2512,
+            ..Default::default()
+        };
         init_ammo(&m, CLASS_HUNTER, 60);
         assert!(m.adds.borrow().is_empty());
     }
 
     #[test]
     fn hunter_with_thrown_weapon_is_noop() {
-        let m = MockIface { ranged_subclass: WEAPON_THROWN, pick_returns: 999, ..Default::default() };
+        let m = MockIface {
+            ranged_subclass: WEAPON_THROWN,
+            pick_returns: 999,
+            ..Default::default()
+        };
         init_ammo(&m, CLASS_HUNTER, 60);
         assert!(m.adds.borrow().is_empty());
     }
 
     #[test]
     fn rogue_with_thrown_weapon_gets_thrown_ammo() {
-        let m = MockIface { ranged_subclass: WEAPON_THROWN, pick_returns: 2512, ..Default::default() };
+        let m = MockIface {
+            ranged_subclass: WEAPON_THROWN,
+            pick_returns: 2512,
+            ..Default::default()
+        };
         init_ammo(&m, CLASS_ROGUE, 60);
         assert_eq!(*m.current_ammo.borrow(), 2512);
         // 5 + 60/10 = 11 stacks of 200
@@ -281,7 +305,11 @@ mod tests {
 
     #[test]
     fn bow_gets_arrows_level_scales_stack_count() {
-        let m = MockIface { ranged_subclass: WEAPON_BOW, pick_returns: 2516, ..Default::default() };
+        let m = MockIface {
+            ranged_subclass: WEAPON_BOW,
+            pick_returns: 2516,
+            ..Default::default()
+        };
         init_ammo(&m, CLASS_HUNTER, 40);
         // 5 + 40/10 = 9 stacks
         assert_eq!(m.adds.borrow().len(), 9);
@@ -289,7 +317,11 @@ mod tests {
 
     #[test]
     fn gun_gets_bullets() {
-        let m = MockIface { ranged_subclass: WEAPON_GUN, pick_returns: 2519, ..Default::default() };
+        let m = MockIface {
+            ranged_subclass: WEAPON_GUN,
+            pick_returns: 2519,
+            ..Default::default()
+        };
         init_ammo(&m, CLASS_WARRIOR, 20);
         // 5 + 20/10 = 7 stacks
         assert_eq!(m.adds.borrow().len(), 7);

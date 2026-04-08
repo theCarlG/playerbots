@@ -13,9 +13,9 @@
 ///    - Others: flee 30 yards.
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::bot::state::PlayerClass;
-use crate::{Seq, Sel};
 use crate::encounters::bt::Bt::{self, *};
 use crate::ffi::SpellId;
+use crate::{Sel, Seq};
 
 pub const AURA_LIVING_BOMB: SpellId = SpellId(20475);
 pub const AURA_INFERNO: SpellId = SpellId(19695);
@@ -41,10 +41,7 @@ impl BaronGeddonFsm {
             Bt::self_has(AURA_LIVING_BOMB),
             Sel!(
                 Seq!(IsClass(PlayerClass::Mage), CastOnSelf(ICE_BLOCK)),
-                Seq!(
-                    IsClass(PlayerClass::Paladin),
-                    CastOnSelf(DIVINE_SHIELD),
-                ),
+                Seq!(IsClass(PlayerClass::Paladin), CastOnSelf(DIVINE_SHIELD),),
                 MoveAwayFromRaid(40.0),
             ),
         )
@@ -105,7 +102,9 @@ mod tests {
     fn living_bomb_mage_ice_blocks() {
         let mut fsm = BaronGeddonFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
-        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).unwrap();
+        let bt = fsm
+            .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+            .unwrap();
         let iface = TestInterface::new().with_aura(AURA_LIVING_BOMB);
         let mut owned = TestCtxOwned::new();
         let mut ctx = make_encounter_ctx(&mut owned, &iface, &fsm, PlayerClass::Mage, BotRole::DPS);
@@ -116,7 +115,9 @@ mod tests {
     fn living_bomb_warrior_flees() {
         let mut fsm = BaronGeddonFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
-        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).unwrap();
+        let bt = fsm
+            .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+            .unwrap();
         let iface = TestInterface::new()
             .with_aura(AURA_LIVING_BOMB)
             .with_safe_pos();
@@ -130,7 +131,9 @@ mod tests {
     fn no_mechanic_returns_failure() {
         let mut fsm = BaronGeddonFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
-        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).unwrap();
+        let bt = fsm
+            .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+            .unwrap();
         let iface = TestInterface::new();
         let mut owned = TestCtxOwned::new();
         let mut ctx =
@@ -140,6 +143,10 @@ mod tests {
 
     #[test]
     fn no_bt_when_idle() {
-        assert!(BaronGeddonFsm::default().phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).is_none());
+        assert!(
+            BaronGeddonFsm::default()
+                .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+                .is_none()
+        );
     }
 }

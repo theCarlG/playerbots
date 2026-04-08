@@ -1,3 +1,4 @@
+use crate::{Sel, Seq};
 /// Survival Hunter behavior tree (Classic / Vanilla).
 ///
 /// Priority: Feign Death → Hunter's Mark → Counterattack → Explosive Trap / Wing Clip
@@ -6,12 +7,15 @@ use crate::{
     data::spells::vanilla::hunter::*,
     engine::{
         aura_helpers::{HUNTERS_MARK_RANKS, SERPENT_STING_RANKS},
-        bt::{Bt::{self, *}, Op::*, Resource::*},
+        bt::{
+            Bt::{self, *},
+            Op::*,
+            Resource::*,
+        },
         macro_fsm::ActiveFsm,
     },
     ffi::SpellId,
 };
-use crate::{Seq, Sel};
 
 const COUNTERATTACK: SpellId = SpellId(20910); // rank 3
 

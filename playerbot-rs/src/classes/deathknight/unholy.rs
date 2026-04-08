@@ -3,10 +3,14 @@
 /// Priority: Bone Shield → Death Grip → diseases → Scourge Strike →
 ///   `AoE` Blood Boil → Death Coil → Death and Decay
 #[allow(unused_imports)]
-use crate::engine::bt::{Bt::{self, *}, Op::*, Resource::*};
+use crate::engine::bt::{
+    Bt::{self, *},
+    Op::*,
+    Resource::*,
+};
 use crate::engine::macro_fsm::ActiveFsm;
 #[allow(unused_imports)]
-use crate::{Seq, Sel};
+use crate::{Sel, Seq};
 
 #[cfg(feature = "wotlk")]
 use crate::{data::spells::vanilla::deathknight::*, ffi::SpellId};
@@ -48,10 +52,7 @@ fn combat_tree() -> Bt {
             InCombat,
             Sel!(
                 // Diseases.
-                Seq!(
-                    Bt::target_missing(FROST_FEVER),
-                    CastOnTarget(ICY_TOUCH),
-                ),
+                Seq!(Bt::target_missing(FROST_FEVER), CastOnTarget(ICY_TOUCH),),
                 Seq!(
                     Bt::target_missing(BLOOD_PLAGUE),
                     CastOnTarget(PLAGUE_STRIKE),

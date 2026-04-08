@@ -11,8 +11,8 @@
 /// range to minimise knockback exposure.
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::encounters::bt::Bt::{self, *};
-use crate::{Seq, Sel};
 use crate::ffi::SpellId;
+use crate::{Sel, Seq};
 
 pub const SPELL_KNOCK_BACK: SpellId = SpellId(18670);
 pub const SPELL_MORTAL_STRIKE: SpellId = SpellId(24573);

@@ -53,12 +53,7 @@ pub enum BotStateKind {
 
 impl BotStateKind {
     /// The four slots in canonical order, used for per-state iteration.
-    pub const ALL: [Self; 4] = [
-        Self::Combat,
-        Self::NonCombat,
-        Self::Reaction,
-        Self::Dead,
-    ];
+    pub const ALL: [Self; 4] = [Self::Combat, Self::NonCombat, Self::Reaction, Self::Dead];
 
     /// Short name used in the addon command vocabulary.
     pub fn addon_command(self) -> &'static str {
@@ -523,8 +518,8 @@ impl StrategyFlags {
         // 1b. Aliases not in NAME_TABLE (kept out of describe() output).
         match trimmed {
             "i" => return Some(Self::BOOST),        // Mangosbot keybind alias
-            "threath" => return Some(Self::THREAT),  // RaidControl typo
-            "range" => return Some(Self::RANGED),    // short form
+            "threath" => return Some(Self::THREAT), // RaidControl typo
+            "range" => return Some(Self::RANGED),   // short form
             "resto" => return Some(Self::RESTORATION),
             "healer" => return Some(Self::HEAL),
             _ => {}
@@ -566,11 +561,7 @@ impl StrategyFlags {
             }
         }
 
-        if matched_any {
-            Some(combined)
-        } else {
-            None
-        }
+        if matched_any { Some(combined) } else { None }
     }
 
     /// Render as a comma-separated string for query responses.
@@ -1430,15 +1421,12 @@ mod tests {
         for i in 0..table.len() {
             for j in (i + 1)..table.len() {
                 assert!(
-                    table[i].0 .0 != table[j].0 .0 || table[i].0 .1 != table[j].0 .1,
+                    table[i].0.0 != table[j].0.0 || table[i].0.1 != table[j].0.1,
                     "duplicate bit between `{}` and `{}`",
-                    table[i].1, table[j].1
+                    table[i].1,
+                    table[j].1
                 );
-                assert_ne!(
-                    table[i].1, table[j].1,
-                    "duplicate name `{}`",
-                    table[i].1
-                );
+                assert_ne!(table[i].1, table[j].1, "duplicate name `{}`", table[i].1);
             }
         }
     }
@@ -1450,32 +1438,85 @@ mod tests {
         // that would silently drop chat-filter / query coverage.
         let names = [
             // All-bot.
-            "mount", "avoid mobs", "racials", "default", "duel", "pvp", "ai chat", "wbuff",
+            "mount",
+            "avoid mobs",
+            "racials",
+            "default",
+            "duel",
+            "pvp",
+            "ai chat",
+            "wbuff",
             // Combat-role hints.
-            "tank assist", "dps assist", "pull", "pull back", "close", "aoe", "ranged",
-            "behind", "buff", "cure", "boost", "cc", "flee",
+            "tank assist",
+            "dps assist",
+            "pull",
+            "pull back",
+            "close",
+            "aoe",
+            "ranged",
+            "behind",
+            "buff",
+            "cure",
+            "boost",
+            "cc",
+            "flee",
             // Class features.
-            "offheal", "offdps", "poisons", "stealth", "totems", "aura", "blessing",
-            "aspect", "sting", "pet", "curse", "dksquest", "tank feral", "dps feral",
+            "offheal",
+            "offdps",
+            "poisons",
+            "stealth",
+            "totems",
+            "aura",
+            "blessing",
+            "aspect",
+            "sting",
+            "pet",
+            "curse",
+            "dksquest",
+            "tank feral",
+            "dps feral",
             // Spec names (warrior, priest, mage, warlock, paladin, shaman, druid,
             // hunter, rogue, dk).
-            "arms", "fury", "protection", "discipline", "holy", "shadow", "arcane",
-            "fire", "frost", "affliction", "demonology", "destruction", "retribution",
-            "elemental", "enhancement", "restoration", "balance", "beast mastery",
-            "marksmanship", "survival", "assassination", "combat", "subtlety",
-            "blood", "unholy", "frost aoe", "unholy aoe",
+            "arms",
+            "fury",
+            "protection",
+            "discipline",
+            "holy",
+            "shadow",
+            "arcane",
+            "fire",
+            "frost",
+            "affliction",
+            "demonology",
+            "destruction",
+            "retribution",
+            "elemental",
+            "enhancement",
+            "restoration",
+            "balance",
+            "beast mastery",
+            "marksmanship",
+            "survival",
+            "assassination",
+            "combat",
+            "subtlety",
+            "blood",
+            "unholy",
+            "frost aoe",
+            "unholy aoe",
             // Pre-Step 6 set still resolves.
-            "return", "delayed roll", "rpg", "rtsc", "grind", "emote",
+            "return",
+            "delayed roll",
+            "rpg",
+            "rtsc",
+            "grind",
+            "emote",
         ];
         for n in names {
             let parsed = StrategyFlags::parse_name(n);
             assert!(parsed.is_some(), "parse_name({n:?}) returned None");
             let f = parsed.unwrap();
-            assert_eq!(
-                f.describe(),
-                n,
-                "describe round-trip mismatch for `{n}`"
-            );
+            assert_eq!(f.describe(), n, "describe round-trip mismatch for `{n}`");
         }
     }
 

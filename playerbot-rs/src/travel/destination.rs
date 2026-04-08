@@ -247,7 +247,10 @@ mod tests {
     fn purpose_short_names() {
         assert_eq!(TravelPurpose::VENDOR.short_name(), "vendor");
         assert_eq!(TravelPurpose::QUEST_GIVER.short_name(), "questgiver");
-        assert_eq!(TravelPurpose::QUEST_OBJECTIVE1.short_name(), "questobjective");
+        assert_eq!(
+            TravelPurpose::QUEST_OBJECTIVE1.short_name(),
+            "questobjective"
+        );
         assert_eq!(TravelPurpose::GATHER_FISHING.short_name(), "gather");
         assert_eq!(TravelPurpose::GRIND.short_name(), "grind");
     }

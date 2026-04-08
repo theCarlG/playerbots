@@ -14,8 +14,8 @@
 /// by reactive layer picking up a new MT target).
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::encounters::bt::Bt::{self, *};
-use crate::{Seq, Sel};
 use crate::ffi::SpellId;
+use crate::{Sel, Seq};
 
 pub const AURA_BURNING_ADRENALINE: SpellId = SpellId(18173);
 pub const AURA_ESSENCE_OF_THE_RED: SpellId = SpellId(23513);

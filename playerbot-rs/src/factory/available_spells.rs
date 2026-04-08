@@ -205,7 +205,9 @@ mod tests {
             *self.default_called.borrow_mut() += 1;
         }
         fn bot_learn_class_level_spells(&self, include_quest_rewards: bool) {
-            self.class_level_called.borrow_mut().push(include_quest_rewards);
+            self.class_level_called
+                .borrow_mut()
+                .push(include_quest_rewards);
         }
     }
 

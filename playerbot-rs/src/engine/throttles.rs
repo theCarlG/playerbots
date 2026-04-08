@@ -90,14 +90,20 @@ mod tests {
     #[test]
     fn unknown_key_returns_zero() {
         let t = Throttles::new();
-        let k = ThrottleKey { file: "a.rs", line: 1 };
+        let k = ThrottleKey {
+            file: "a.rs",
+            line: 1,
+        };
         assert_eq!(t.last_fire(k), 0);
     }
 
     #[test]
     fn mark_and_read() {
         let mut t = Throttles::new();
-        let k = ThrottleKey { file: "a.rs", line: 1 };
+        let k = ThrottleKey {
+            file: "a.rs",
+            line: 1,
+        };
         t.mark_fired(k, 1234);
         assert_eq!(t.last_fire(k), 1234);
     }
@@ -105,8 +111,14 @@ mod tests {
     #[test]
     fn distinct_keys_independent() {
         let mut t = Throttles::new();
-        let k1 = ThrottleKey { file: "a.rs", line: 1 };
-        let k2 = ThrottleKey { file: "a.rs", line: 2 };
+        let k1 = ThrottleKey {
+            file: "a.rs",
+            line: 1,
+        };
+        let k2 = ThrottleKey {
+            file: "a.rs",
+            line: 2,
+        };
         t.mark_fired(k1, 100);
         t.mark_fired(k2, 200);
         assert_eq!(t.last_fire(k1), 100);
@@ -116,7 +128,10 @@ mod tests {
     #[test]
     fn running_flag_set_and_cleared() {
         let mut t = Throttles::new();
-        let k = ThrottleKey { file: "a.rs", line: 1 };
+        let k = ThrottleKey {
+            file: "a.rs",
+            line: 1,
+        };
         assert!(!t.is_running(k));
         t.set_running(k, true);
         assert!(t.is_running(k));

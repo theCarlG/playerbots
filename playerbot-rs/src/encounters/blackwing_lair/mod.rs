@@ -37,12 +37,12 @@ use crate::engine::bt::{BehaviorLeaf, Bt};
 use crate::engine::bt_nodes::BtResult;
 use crate::engine::context::TickContext;
 pub use broodlord::BroodlordFsm;
-pub use razorgore::RazorgoreFsm;
 pub use chromaggus::ChromaggusFsm;
 pub use ebonroc::EbonrocFsm;
 pub use firemaw::FiremawFsm;
 pub use flamegor::FlamegorFsm;
 pub use nefarian::NefarianFsm;
+pub use razorgore::RazorgoreFsm;
 pub use vaelastrasz::VaelastraszFsm;
 
 // ── NPC entry IDs ─────────────────────────────────────────────────────────
@@ -177,7 +177,11 @@ impl Default for BlackwingLairFsm {
 
 impl EncounterFsm for BlackwingLairFsm {
     fn set_boss_entry(&mut self, entry: u32) {
-        if !self.active_boss.as_ref().is_some_and(|b| b.boss_entry() == entry) {
+        if !self
+            .active_boss
+            .as_ref()
+            .is_some_and(|b| b.boss_entry() == entry)
+        {
             self.set_active_boss_by_entry(entry);
         }
     }

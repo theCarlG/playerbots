@@ -1,5 +1,5 @@
-use crate::{Sel, Seq};
 use crate::engine::bt::Bt;
+use crate::{Sel, Seq};
 
 /// Maintenance strategy — vendor sell, repair, and loot on throttle.
 /// PB2: `MaintenanceStrategy` — low-priority upkeep.

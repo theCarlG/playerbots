@@ -42,9 +42,9 @@ pub enum Key {
     // Per-bot state for the `chaos` follow-formation jitter. Rerolled
     // every 3 seconds by `tick_follow`; other formations leave these
     // untouched. See `bot::formation::ChaosState`.
-    ChaosDx,              // f32
-    ChaosDy,              // f32
-    ChaosLastChangeSecs,  // u64
+    ChaosDx,             // f32
+    ChaosDy,             // f32
+    ChaosLastChangeSecs, // u64
 
     // ── Death behavior ───────────────────────────────────────────────
     DeathTimestampMs, // u64: server_time_ms when the bot died (0 = alive)
@@ -58,7 +58,8 @@ pub enum Key {
     RtscMoveZ,
 
     // ── FSM state ─────────────────────────────────────────────────────
-    ActiveFsmState, // u8: ActiveFsm discriminant (0=World, 1=Combat, 2=Dead)
+    ActiveFsmState, // u32: ActiveFsm discriminant (0=World, 1=Combat, 2=Dead)
+    WorldSubState,  // u32: WorldSub discriminant (Follow/Grind/Quest/Stay/...)
 
     // Add new keys above this line. Keep count accurate.
     _Count,

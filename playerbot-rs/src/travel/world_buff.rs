@@ -33,7 +33,14 @@ pub fn find_world_buff_location(buff_id: SpellId, map: u32) -> Option<TravelDest
         .iter()
         .find(|(spell, m, _, _, _)| *spell == buff_id.0 && *m == map)
         .map(|(_, m, x, y, z)| {
-            TravelDestination::new(TravelKind::WorldBuff(buff_id), TravelPurpose::NONE, *m, *x, *y, *z)
+            TravelDestination::new(
+                TravelKind::WorldBuff(buff_id),
+                TravelPurpose::NONE,
+                *m,
+                *x,
+                *y,
+                *z,
+            )
         })
 }
 
@@ -43,7 +50,14 @@ pub fn find_world_buff_any_map(buff_id: SpellId) -> Option<TravelDestination> {
         .iter()
         .find(|(spell, _, _, _, _)| *spell == buff_id.0)
         .map(|(_, m, x, y, z)| {
-            TravelDestination::new(TravelKind::WorldBuff(buff_id), TravelPurpose::NONE, *m, *x, *y, *z)
+            TravelDestination::new(
+                TravelKind::WorldBuff(buff_id),
+                TravelPurpose::NONE,
+                *m,
+                *x,
+                *y,
+                *z,
+            )
         })
 }
 

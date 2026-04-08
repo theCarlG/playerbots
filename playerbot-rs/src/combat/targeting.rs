@@ -9,11 +9,31 @@ use crate::{
 
 /// Find the group member (including self) with lowest HP% below `threshold`.
 /// Returns None if everyone is above threshold or no group.
+///
+/// Skips targets that another bot in the group has already claimed for
+/// healing (via the shared `ClaimTable`). This prevents double-heals in
+/// raids where multiple healers evaluate the same tick.
 pub fn find_heal_target(ctx: &TickContext<'_>, threshold: f32) -> Option<UnitHandle> {
     let mut best: Option<UnitHandle> = None;
     let mut best_pct = threshold;
 
-    // Check self
+    // Prioritize heal_priority[0] (main tank) — always heal tank first if injured.
+    if let Some(gs) = ctx.group_state {
+        let prio_target = gs.coordination.heal_priority[0];
+        if prio_target != 0 && prio_target != ctx.bot_handle {
+            if !ctx.is_heal_claimed_by_other(prio_target) {
+                let snap = ctx.interface.get_unit_snapshot(prio_target);
+                if snap.is_alive && snap.max_health > 0 {
+                    let pct = snap.health as f32 / snap.max_health as f32;
+                    if pct < threshold {
+                        return Some(prio_target);
+                    }
+                }
+            }
+        }
+    }
+
+    // Check self (never skip self — always allowed to heal yourself)
     let self_pct = ctx.self_hp_pct();
     if self_pct < best_pct && ctx.bot_handle != 0 {
         best_pct = self_pct;
@@ -25,6 +45,10 @@ pub fn find_heal_target(ctx: &TickContext<'_>, threshold: f32) -> Option<UnitHan
     for i in 0..size {
         let h = ctx.snap.group_members[i];
         if h == 0 || h == ctx.bot_handle {
+            continue;
+        }
+        // Skip targets already claimed by another healer.
+        if ctx.is_heal_claimed_by_other(h) {
             continue;
         }
         let snap = ctx.interface.get_unit_snapshot(h);
@@ -43,6 +67,8 @@ pub fn find_heal_target(ctx: &TickContext<'_>, threshold: f32) -> Option<UnitHan
 
 /// Find a group member (not self) below `threshold`. Prioritises lowest HP.
 /// Useful for "heal party member" when self is full.
+///
+/// Skips targets claimed by other healers (same as `find_heal_target`).
 pub fn find_injured_party_member(ctx: &TickContext<'_>, threshold: f32) -> Option<UnitHandle> {
     let mut best: Option<UnitHandle> = None;
     let mut best_pct = threshold;
@@ -51,6 +77,9 @@ pub fn find_injured_party_member(ctx: &TickContext<'_>, threshold: f32) -> Optio
     for i in 0..size {
         let h = ctx.snap.group_members[i];
         if h == 0 || h == ctx.bot_handle {
+            continue;
+        }
+        if ctx.is_heal_claimed_by_other(h) {
             continue;
         }
         let snap = ctx.interface.get_unit_snapshot(h);

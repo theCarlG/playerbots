@@ -4,13 +4,12 @@ pub mod poisons;
 pub mod subtlety;
 
 use crate::{
-    Seq, Sel,
+    Sel, Seq,
     bot::settings::StrategyFlags,
     bot::state::PlayerSpec,
-    classes::ClassKit,
     data::spells::vanilla::rogue::{ADRENALINE_RUSH, BLADE_FLURRY, COLD_BLOOD},
     engine::{
-        bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+        bt::Bt::{self, CastOnSelf, InCombat, StrategyEnabled},
         macro_fsm::ActiveFsm,
     },
     noncombat::GroupBuff,
@@ -31,19 +30,53 @@ pub fn boost() -> Bt {
     )
 }
 
-pub fn kit(spec: PlayerSpec) -> ClassKit {
+pub fn build_tree(fsm: ActiveFsm, spec: PlayerSpec) -> Bt {
     use PlayerSpec::{RogueAssassination, RogueCombat, RogueSubtlety};
-    let combat = match spec {
-        RogueAssassination => assassination::build_tree(ActiveFsm::Combat),
-        RogueCombat => combat::build_tree(ActiveFsm::Combat),
-        RogueSubtlety => subtlety::build_tree(ActiveFsm::Combat),
-        _ => unreachable!("non-rogue spec passed to rogue::kit"),
-    };
-    let world = match spec {
-        RogueAssassination => assassination::build_tree(ActiveFsm::World),
-        RogueCombat => combat::build_tree(ActiveFsm::World),
-        RogueSubtlety => subtlety::build_tree(ActiveFsm::World),
-        _ => unreachable!("non-rogue spec passed to rogue::kit"),
-    };
-    ClassKit { combat, world, buffs: BUFFS }
+    match spec {
+        RogueAssassination => assassination::build_tree(fsm),
+        RogueCombat => combat::build_tree(fsm),
+        RogueSubtlety => subtlety::build_tree(fsm),
+        _ => unreachable!("non-rogue spec passed to rogue::build_tree"),
+    }
+}
+
+pub fn buffs(_spec: PlayerSpec) -> &'static [GroupBuff] {
+    BUFFS
+}
+
+/// Per-spec default combat strategy flags (PB2 `AiFactory.cpp` rogue branch).
+pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
+    use PlayerSpec::*;
+    use StrategyFlags as F;
+    let common = F::DPS_ASSIST
+        | F::AOE
+        | F::CLOSE
+        | F::CC
+        | F::BEHIND
+        | F::STEALTH
+        | F::POISONS
+        | F::BUFF
+        | F::BOOST;
+    match spec {
+        RogueAssassination => F::ASSASSINATION | common,
+        RogueCombat => F::ROGUE_COMBAT | common,
+        RogueSubtlety => F::SUBTLETY | common,
+        _ => F::NONE,
+    }
+}
+
+/// Reverse-map strategy flags to a rogue `PlayerSpec`.
+pub fn spec_from_flags(flags: StrategyFlags) -> Option<PlayerSpec> {
+    use PlayerSpec::*;
+    use StrategyFlags as F;
+    if flags.contains(F::ASSASSINATION) {
+        return Some(RogueAssassination);
+    }
+    if flags.contains(F::ROGUE_COMBAT) {
+        return Some(RogueCombat);
+    }
+    if flags.contains(F::SUBTLETY) {
+        return Some(RogueSubtlety);
+    }
+    None
 }

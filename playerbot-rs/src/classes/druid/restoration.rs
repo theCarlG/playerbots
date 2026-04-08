@@ -1,13 +1,17 @@
+use crate::{Sel, Seq};
 /// Restoration Druid behavior tree (Classic / Vanilla).
 ///
 /// Priority: Innervate (OOM) → Barkskin (damaged) → critical heals →
 ///   Tranquility (`AoE` panic) → `HoT` maintenance
 use crate::{
     data::spells::vanilla::druid::*,
-    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::bt::{
+        Bt::{self, *},
+        Op::*,
+        Resource::*,
+    },
     engine::macro_fsm::ActiveFsm,
 };
-use crate::{Seq, Sel};
 
 pub fn build_tree(fsm: ActiveFsm) -> Bt {
     match fsm {
@@ -29,7 +33,10 @@ fn combat_tree() -> Bt {
         // subtree as a fallback, but placing it here first gives the
         // resto druid priority over lower heal nodes when a teammate
         // has just died.
-        Seq!(IsClass(crate::bot::state::PlayerClass::Druid), ResurrectParty),
+        Seq!(
+            IsClass(crate::bot::state::PlayerClass::Druid),
+            ResurrectParty
+        ),
         // Innervate self when very low mana.
         Seq!(Cmp(SelfManaPct, Below(10)), CastOnSelf(INNERVATE)),
         // Barkskin when taking damage.

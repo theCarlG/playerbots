@@ -83,9 +83,7 @@ impl EncounterFsm for RazorgoreFsm {
         match self.phase {
             RazorgorePhase::Idle => None,
             // Phase 1: tanks pick up adds, ranged stay at range for kiting.
-            RazorgorePhase::EggDestroy => Some(Sel!(
-                Seq!(IsRanged, MaintainRange(25.0)),
-            )),
+            RazorgorePhase::EggDestroy => Some(Sel!(Seq!(IsRanged, MaintainRange(25.0)),)),
             // Phase 2: standard burn. Melee behind to avoid War Stomp cleave.
             RazorgorePhase::Burn => Some(Sel!(
                 Seq!(IsMeleeDps, MoveBehind(5.0)),

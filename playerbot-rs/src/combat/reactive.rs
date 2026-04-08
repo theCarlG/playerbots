@@ -11,7 +11,7 @@
 use crate::bot::settings::StrategyFlags;
 use crate::bot::state::PlayerClass;
 use crate::engine::bt::Bt::{self, *};
-use crate::{Seq, Sel};
+use crate::{Sel, Seq};
 
 /// Flee on an explicit `flee` command or when HP drops below the bot's
 /// configured `flee_hp_pct` threshold (with `StrategyFlags::FLEE` enabled).
@@ -63,10 +63,7 @@ pub fn threat_subtree() -> Bt {
 /// the group, the subtree completes and the normal combat pipeline
 /// takes over (targeting, positioning, rotation).
 pub fn pull_back_subtree() -> Bt {
-    Seq!(
-        StrategyEnabled(StrategyFlags::PULL_BACK),
-        PullBack,
-    )
+    Seq!(StrategyEnabled(StrategyFlags::PULL_BACK), PullBack,)
 }
 
 /// Pre-heal: healers cast a heal on an injured party member as combat
@@ -94,10 +91,7 @@ pub fn kite_subtree() -> Bt {
 
 /// Close to melee range. Gated on the CLOSE strategy flag.
 pub fn close_subtree() -> Bt {
-    Seq!(
-        StrategyEnabled(StrategyFlags::CLOSE),
-        CloseToTarget(5.0),
-    )
+    Seq!(StrategyEnabled(StrategyFlags::CLOSE), CloseToTarget(5.0),)
 }
 
 /// Maintain ranged distance. Gated on the RANGED strategy flag.
@@ -105,10 +99,7 @@ pub fn close_subtree() -> Bt {
 pub fn ranged_subtree() -> Bt {
     Seq!(
         StrategyEnabled(StrategyFlags::RANGED),
-        Sel!(
-            MaintainRange(8.0),
-            CloseToTarget(30.0),
-        ),
+        Sel!(MaintainRange(8.0), CloseToTarget(30.0),),
     )
 }
 
@@ -142,15 +133,9 @@ pub fn targeting_subtree() -> Bt {
             Bt::throttle(1_000, TankPickupAdds),
         ),
         // Assist: attack leader/tank's target.
-        Seq!(
-            StrategyEnabled(StrategyFlags::ASSIST),
-            AssistLeader,
-        ),
+        Seq!(StrategyEnabled(StrategyFlags::ASSIST), AssistLeader,),
         // Protect: attack what attacks protect target.
-        Seq!(
-            StrategyEnabled(StrategyFlags::PROTECT),
-            ProtectAttacker,
-        ),
+        Seq!(StrategyEnabled(StrategyFlags::PROTECT), ProtectAttacker,),
         // Aggressive: attack nearest hostile (bot reaches out and grabs
         // the closest mob even if nothing is currently hitting it).
         Seq!(

@@ -115,8 +115,15 @@ pub fn save_here(bot: &mut BotState, name: String) {
     bot.settings
         .rtsc_waypoints
         .insert(name, (pos.x, pos.y, pos.z));
-    bot.interface
-        .bot_summon_marker_creature(MARKER_ENTRY, pos.x, pos.y, pos.z, pos.o, MARKER_DESPAWN_MS, MARKER_SCALE);
+    bot.interface.bot_summon_marker_creature(
+        MARKER_ENTRY,
+        pos.x,
+        pos.y,
+        pos.z,
+        pos.o,
+        MARKER_DESPAWN_MS,
+        MARKER_SCALE,
+    );
 }
 
 /// `rtsc show <name>` — summon the marker creature at a previously
@@ -131,8 +138,15 @@ pub fn show_named(bot: &BotState, name: &str) -> bool {
     // we pass the bot's current orientation so the marker at least
     // faces something sensible.
     let o = bot.snap.self_.pos.o;
-    bot.interface
-        .bot_summon_marker_creature(MARKER_ENTRY, x, y, z, o, MARKER_DESPAWN_MS, MARKER_SCALE);
+    bot.interface.bot_summon_marker_creature(
+        MARKER_ENTRY,
+        x,
+        y,
+        z,
+        o,
+        MARKER_DESPAWN_MS,
+        MARKER_SCALE,
+    );
     true
 }
 
@@ -270,7 +284,9 @@ pub fn serialize_waypoints(bot: &BotState, name_glob: &str) -> (String, usize) {
         if !glob_matches(name_glob, name) {
             continue;
         }
-        body.push_str(&format!("BOTNAME,{name},{x:.2},{y:.2},{z:.2},0.00,{map_id}\n"));
+        body.push_str(&format!(
+            "BOTNAME,{name},{x:.2},{y:.2},{z:.2},0.00,{map_id}\n"
+        ));
         count += 1;
     }
     (body, count)
@@ -370,7 +386,11 @@ mod tests {
         fn has_aura(&self, u: crate::ffi::UnitHandle, s: SpellId) -> bool {
             self.inner.has_aura(u, s)
         }
-        fn get_aura(&self, u: crate::ffi::UnitHandle, s: SpellId) -> Option<crate::ffi::BotAuraInfo> {
+        fn get_aura(
+            &self,
+            u: crate::ffi::UnitHandle,
+            s: SpellId,
+        ) -> Option<crate::ffi::BotAuraInfo> {
             self.inner.get_aura(u, s)
         }
         fn get_auras(&self, u: crate::ffi::UnitHandle) -> Vec<crate::ffi::BotAuraInfo> {
@@ -397,7 +417,11 @@ mod tests {
         fn get_nearby_units(&self, r: f32, h: bool) -> Vec<crate::ffi::UnitHandle> {
             self.inner.get_nearby_units(r, h)
         }
-        fn get_behind_position(&self, u: crate::ffi::UnitHandle, d: f32) -> crate::ffi::BotPosition {
+        fn get_behind_position(
+            &self,
+            u: crate::ffi::UnitHandle,
+            d: f32,
+        ) -> crate::ffi::BotPosition {
             self.inner.get_behind_position(u, d)
         }
         fn get_safe_position(&self, r: f32) -> Option<crate::ffi::BotPosition> {
@@ -611,10 +635,7 @@ mod tests {
         bot.settings
             .rtsc_waypoints
             .insert(JUMP_POINT_SLOT.into(), (4.0, 5.0, 6.0));
-        assert_eq!(
-            jump_command(&mut bot),
-            JumpCommandResult::AlreadyInProgress
-        );
+        assert_eq!(jump_command(&mut bot), JumpCommandResult::AlreadyInProgress);
     }
 
     #[test]

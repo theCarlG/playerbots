@@ -3,7 +3,7 @@
 /// Mount when traveling long distance out of combat.
 /// Dismount when entering combat or going indoors.
 use crate::engine::bt::Bt::{self, *};
-use crate::{Seq, Sel};
+use crate::{Sel, Seq};
 
 pub fn mount_subtree() -> Bt {
     Sel!(

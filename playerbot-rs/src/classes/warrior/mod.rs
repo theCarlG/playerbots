@@ -4,15 +4,14 @@ pub mod prefs;
 pub mod protection;
 
 use crate::{
-    Seq, Sel,
+    Sel, Seq,
     bot::settings::StrategyFlags,
     bot::state::PlayerSpec,
-    classes::ClassKit,
     data::spells::vanilla::warrior::{
         BATTLE_SHOUT, BERSERKER_RAGE, BLOODRAGE, DEATH_WISH, RECKLESSNESS,
     },
     engine::{
-        bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+        bt::Bt::{self, CastOnSelf, InCombat, StrategyEnabled},
         macro_fsm::ActiveFsm,
     },
     noncombat::GroupBuff,
@@ -37,19 +36,59 @@ pub fn boost() -> Bt {
     )
 }
 
-pub fn kit(spec: PlayerSpec) -> ClassKit {
+/// Build the behavior tree for the given FSM state and spec.
+///
+/// `ActiveFsm` is a first-class parameter — the caller (init.rs) invokes
+/// this once per FSM state to produce separate combat/world/dead trees.
+pub fn build_tree(fsm: ActiveFsm, spec: PlayerSpec) -> Bt {
     use PlayerSpec::{WarriorArms, WarriorFury, WarriorProtection};
-    let combat = match spec {
-        WarriorArms => arms::build_tree(ActiveFsm::Combat),
-        WarriorFury => fury::build_tree(ActiveFsm::Combat),
-        WarriorProtection => protection::build_tree(ActiveFsm::Combat),
-        _ => unreachable!("non-warrior spec passed to warrior::kit"),
-    };
-    let world = match spec {
-        WarriorArms => arms::build_tree(ActiveFsm::World),
-        WarriorFury => fury::build_tree(ActiveFsm::World),
-        WarriorProtection => protection::build_tree(ActiveFsm::World),
-        _ => unreachable!("non-warrior spec passed to warrior::kit"),
-    };
-    ClassKit { combat, world, buffs: BUFFS }
+    match spec {
+        WarriorArms => arms::build_tree(fsm),
+        WarriorFury => fury::build_tree(fsm),
+        WarriorProtection => protection::build_tree(fsm),
+        _ => unreachable!("non-warrior spec passed to warrior::build_tree"),
+    }
+}
+
+pub fn buffs(_spec: PlayerSpec) -> &'static [GroupBuff] {
+    BUFFS
+}
+
+/// Per-spec default combat strategy flags (PB2 `AiFactory.cpp` warrior branch).
+pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
+    use PlayerSpec::*;
+    use StrategyFlags as F;
+    match spec {
+        WarriorProtection => {
+            F::PROTECTION
+                | F::TANK
+                | F::TANK_ASSIST
+                | F::PULL
+                | F::PULL_BACK
+                | F::CLOSE
+                | F::AOE
+                | F::CC
+                | F::BUFF
+                | F::BOOST
+        }
+        WarriorArms => F::ARMS | F::DPS_ASSIST | F::BEHIND | F::AOE | F::CC | F::BUFF | F::BOOST,
+        WarriorFury => F::FURY | F::DPS_ASSIST | F::BEHIND | F::AOE | F::CC | F::BUFF | F::BOOST,
+        _ => F::NONE,
+    }
+}
+
+/// Reverse-map strategy flags to a warrior `PlayerSpec`.
+pub fn spec_from_flags(flags: StrategyFlags) -> Option<PlayerSpec> {
+    use PlayerSpec::*;
+    use StrategyFlags as F;
+    if flags.contains(F::ARMS) {
+        return Some(WarriorArms);
+    }
+    if flags.contains(F::FURY) {
+        return Some(WarriorFury);
+    }
+    if flags.contains(F::PROTECTION) {
+        return Some(WarriorProtection);
+    }
+    None
 }

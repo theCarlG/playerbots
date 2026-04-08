@@ -1310,12 +1310,8 @@ impl BtNode for Bt {
             Bt::MainHandIs(wt) => {
                 ok(ctx.interface.bot_equipped_weapon_subclass(0) == wt.subclass())
             }
-            Bt::OffHandIs(wt) => {
-                ok(ctx.interface.bot_equipped_weapon_subclass(1) == wt.subclass())
-            }
-            Bt::RangedIs(wt) => {
-                ok(ctx.interface.bot_equipped_weapon_subclass(2) == wt.subclass())
-            }
+            Bt::OffHandIs(wt) => ok(ctx.interface.bot_equipped_weapon_subclass(1) == wt.subclass()),
+            Bt::RangedIs(wt) => ok(ctx.interface.bot_equipped_weapon_subclass(2) == wt.subclass()),
             Bt::InShapeshift(form) => ok(ctx.snap.self_.shapeshift_form == *form),
             // ITEM_ID_SOUL_SHARD = 6265 (classic through wotlk).
             Bt::SoulShardsAtLeast(n) => {
@@ -1406,9 +1402,7 @@ impl BtNode for Bt {
                 _ => BtResult::Failure,
             },
             Bt::InReactRangeOfMaster => match ctx.master_guid {
-                Some(m) if m != 0 => {
-                    ok(ctx.interface.unit_distance(m) <= DEFAULT_REACT_DISTANCE)
-                }
+                Some(m) if m != 0 => ok(ctx.interface.unit_distance(m) <= DEFAULT_REACT_DISTANCE),
                 _ => BtResult::Failure,
             },
             Bt::IsFollowingMaster => ok(ctx.settings.mode == BehaviorMode::Follow
@@ -1444,18 +1438,15 @@ impl BtNode for Bt {
             },
 
             // ── Conditions — 11c ─────────────────────────────────────
-            Bt::PartyMemberNeedsDispel(school) => {
-                ok(ctx.interface.find_dispellable_target(school.mask()).is_some())
-            }
-            Bt::PartyMemberNeedsRes => {
-                ok(ctx.interface.find_dead_party_member().is_some())
-            }
+            Bt::PartyMemberNeedsDispel(school) => ok(ctx
+                .interface
+                .find_dispellable_target(school.mask())
+                .is_some()),
+            Bt::PartyMemberNeedsRes => ok(ctx.interface.find_dead_party_member().is_some()),
             Bt::PartyMemberNeedsHeal(threshold) => {
                 ok(crate::combat::targeting::find_heal_target(ctx, *threshold).is_some())
             }
-            Bt::HasBuffPotionAvailable => {
-                ok(ctx.interface.find_potion_in_bags(0).0 != 0)
-            }
+            Bt::HasBuffPotionAvailable => ok(ctx.interface.find_potion_in_bags(0).0 != 0),
             Bt::PotionCooldownReady => ok(ctx.interface.potion_cooldown_ready()),
 
             // ── Conditions — 11d ─────────────────────────────────────
@@ -1472,24 +1463,18 @@ impl BtNode for Bt {
             }
 
             // ── Conditions — 11e ─────────────────────────────────────
-            Bt::ItemInBagsCount(item, n) => {
-                ok(ctx.interface.bot_item_count(*item) >= *n)
-            }
+            Bt::ItemInBagsCount(item, n) => ok(ctx.interface.bot_item_count(*item) >= *n),
             Bt::HasRecipe(spell) => ok(ctx.interface.knows_spell(*spell)),
-            Bt::QuestInLogActive(quest_id) => {
-                ok(ctx
-                    .interface
-                    .get_quest_log()
-                    .iter()
-                    .any(|q| q.quest_id == *quest_id))
-            }
-            Bt::QuestInLogComplete(quest_id) => {
-                ok(ctx
-                    .interface
-                    .get_quest_log()
-                    .iter()
-                    .any(|q| q.quest_id == *quest_id && q.complete))
-            }
+            Bt::QuestInLogActive(quest_id) => ok(ctx
+                .interface
+                .get_quest_log()
+                .iter()
+                .any(|q| q.quest_id == *quest_id)),
+            Bt::QuestInLogComplete(quest_id) => ok(ctx
+                .interface
+                .get_quest_log()
+                .iter()
+                .any(|q| q.quest_id == *quest_id && q.complete)),
 
             Bt::ShouldFlee => {
                 // Command-driven override takes precedence.
@@ -1535,8 +1520,7 @@ impl BtNode for Bt {
                     None => return BtResult::Failure,
                 };
                 // Already behind and within melee range — nothing to do.
-                if ctx.interface.bot_is_behind(target)
-                    && ctx.interface.unit_distance(target) <= 5.0
+                if ctx.interface.bot_is_behind(target) && ctx.interface.unit_distance(target) <= 5.0
                 {
                     return BtResult::Failure;
                 }
@@ -1570,13 +1554,22 @@ impl BtNode for Bt {
             },
             Bt::HealLowest(spell, threshold) => {
                 match crate::combat::targeting::find_heal_target(ctx, *threshold) {
-                    Some(t) => cast(ctx, *spell, t),
+                    Some(t) => {
+                        // Claim the heal target for 3s (typical cast time + margin).
+                        // If another healer beat us, skip — find_heal_target already
+                        // filters claimed targets, but this handles the race window.
+                        ctx.try_claim_heal(t, 3000);
+                        cast(ctx, *spell, t)
+                    }
                     None => BtResult::Failure,
                 }
             }
             Bt::HealInjuredParty(spell, threshold) => {
                 match crate::combat::targeting::find_injured_party_member(ctx, *threshold) {
-                    Some(t) => cast(ctx, *spell, t),
+                    Some(t) => {
+                        ctx.try_claim_heal(t, 3000);
+                        cast(ctx, *spell, t)
+                    }
                     None => BtResult::Failure,
                 }
             }
@@ -1591,7 +1584,9 @@ impl BtNode for Bt {
                 let target = match ctx.current_target() {
                     Some(t) => t,
                     None => {
-                        ctx.monitor(format_args!("MOVE: StickToTarget({range}) FAIL (no target)"));
+                        ctx.monitor(format_args!(
+                            "MOVE: StickToTarget({range}) FAIL (no target)"
+                        ));
                         return BtResult::Failure;
                     }
                 };
@@ -1613,10 +1608,15 @@ impl BtNode for Bt {
                 let victim = ctx.nearby.iter().copied().find(|&u| {
                     u != current
                         && !ctx.interface.has_aura(u, *spell)
+                        && !ctx.is_cc_claimed_by_other(u)
                         && ctx.interface.can_cast(*spell, u)
                 });
                 match victim {
-                    Some(t) => cast(ctx, *spell, t),
+                    Some(t) => {
+                        // Claim CC for 15s (typical CC duration).
+                        ctx.try_claim_cc(t, 15_000);
+                        cast(ctx, *spell, t)
+                    }
                     None => BtResult::Failure,
                 }
             }
@@ -1682,7 +1682,8 @@ impl BtNode for Bt {
                 use crate::engine::blackboard::{Key, Value};
                 // Only record once per death.
                 if ctx.blackboard.get_u64(Key::DeathTimestampMs).is_none() {
-                    ctx.blackboard.set(Key::DeathTimestampMs, Value::U64(ctx.server_time_ms));
+                    ctx.blackboard
+                        .set(Key::DeathTimestampMs, Value::U64(ctx.server_time_ms));
                 }
                 BtResult::Success
             }
@@ -1785,14 +1786,10 @@ impl BtNode for Bt {
             }
             Bt::CcCastOnRti(spell) => tick_cc_cast_on_rti(ctx, *spell),
             Bt::CcCastOnNearest(spell) => tick_cc_cast_on_nearest(ctx, *spell),
-            Bt::RtiAssist => tick_rti_assist(
-                ctx,
-                ctx.settings.preferred_rti_icon.unwrap_or(7),
-            ),
-            Bt::RtiCcTargetSelect => tick_rti_assist(
-                ctx,
-                ctx.settings.preferred_cc_rti_icon.unwrap_or(5),
-            ),
+            Bt::RtiAssist => tick_rti_assist(ctx, ctx.settings.preferred_rti_icon.unwrap_or(7)),
+            Bt::RtiCcTargetSelect => {
+                tick_rti_assist(ctx, ctx.settings.preferred_cc_rti_icon.unwrap_or(5))
+            }
 
             // ── Actions — Step 13: cross-class reactive combat ────────
             Bt::PullBack => tick_pull_back(ctx),
@@ -1880,17 +1877,15 @@ impl BtNode for Bt {
                 Some(bt) => bt.tick(ctx),
                 None => BtResult::Failure,
             }, // NOTE: `bt.tick(ctx)` above resolves to `Bt::tick` directly —
-               // `ctx.encounter.phase_bt()` now returns `Option<&Bt>`, so there
-               // is no vtable lookup at this call site.
+            // `ctx.encounter.phase_bt()` now returns `Option<&Bt>`, so there
+            // is no vtable lookup at this call site.
 
             // ── Class preferences ─────────────────────────────────────────
             Bt::ApplyPoisons => crate::classes::rogue::poisons::tick_apply_poisons(ctx),
             Bt::DropConfiguredTotems => {
                 crate::classes::shaman::totems::tick_drop_configured_totems(ctx)
             }
-            Bt::ApplyShamanImbues => {
-                crate::classes::shaman::imbues::tick_apply_shaman_imbues(ctx)
-            }
+            Bt::ApplyShamanImbues => crate::classes::shaman::imbues::tick_apply_shaman_imbues(ctx),
             Bt::MaintainPaladinAura => {
                 crate::classes::paladin::prefs::tick_maintain_paladin_aura(ctx)
             }
@@ -2156,9 +2151,7 @@ fn eval_random_chance(ctx: &TickContext<'_>, pct: u8) -> bool {
     if pct >= 100 {
         return true;
     }
-    let mut seed = ctx
-        .server_time_ms
-        .wrapping_mul(0x9E37_79B1_7F4A_7C15)
+    let mut seed = ctx.server_time_ms.wrapping_mul(0x9E37_79B1_7F4A_7C15)
         ^ ctx.bot_handle.wrapping_mul(0xBF58_476D_1CE4_E5B9);
     // One round of xorshift to decorrelate low bits from the inputs.
     seed ^= seed >> 30;
@@ -2223,7 +2216,8 @@ fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
         if ctx.server_time_ms.saturating_sub(last_follow_ms) < 1_000 {
             return BtResult::Success;
         }
-        ctx.blackboard.set(BbKey::LastFollowMs, BbValue::U64(ctx.server_time_ms));
+        ctx.blackboard
+            .set(BbKey::LastFollowMs, BbValue::U64(ctx.server_time_ms));
     }
 
     apply_formation_follow(ctx, target);
@@ -2297,7 +2291,10 @@ fn apply_formation_follow(ctx: &mut TickContext<'_>, target: UnitHandle) {
     let chaos_in = ChaosState {
         dx: ctx.blackboard.get_f32(BbKey::ChaosDx).unwrap_or(0.0),
         dy: ctx.blackboard.get_f32(BbKey::ChaosDy).unwrap_or(0.0),
-        last_change_secs: ctx.blackboard.get_u64(BbKey::ChaosLastChangeSecs).unwrap_or(0),
+        last_change_secs: ctx
+            .blackboard
+            .get_u64(BbKey::ChaosLastChangeSecs)
+            .unwrap_or(0),
     };
 
     let fctx = FormationContext {
@@ -2498,7 +2495,10 @@ fn tick_interrupt(ctx: &mut TickContext<'_>) -> BtResult {
 }
 
 fn tick_dispel(ctx: &mut TickContext<'_>) -> BtResult {
-    if let Some((member, debuff_id)) = ctx.interface.find_dispellable_target(DispelSchool::Any.mask()) {
+    if let Some((member, debuff_id)) = ctx
+        .interface
+        .find_dispellable_target(DispelSchool::Any.mask())
+    {
         let spell = match ctx.class {
             PlayerClass::Priest => DISPEL_MAGIC,
             PlayerClass::Paladin => CLEANSE,
@@ -2608,7 +2608,26 @@ fn tick_tank_pickup(ctx: &mut TickContext<'_>) -> BtResult {
 }
 
 fn tick_assist_leader(ctx: &mut TickContext<'_>) -> BtResult {
-    let tank = ctx.interface.group_get_tank();
+    // Check shared GroupCoordination main_assist_target first — this is set
+    // by commands (`@all assist {skull}`) and takes priority over everything.
+    let coord_target = ctx
+        .group_state
+        .and_then(|gs| gs.coordination.main_assist_target)
+        .filter(|&t| t != 0 && ctx.interface.is_attackable(t));
+    if let Some(target) = coord_target {
+        if ctx.current_target() == Some(target) {
+            ctx.pending_target.set(Some(target));
+            return BtResult::Success;
+        }
+        if ctx.attack(target) {
+            ctx.monitor(format_args!(
+                "TARGET: AssistLeader -> main_assist 0x{target:X}"
+            ));
+            return BtResult::Success;
+        }
+    }
+
+    let tank = ctx.group_tank();
     // Find the best leader to assist: explicit tank > master > any group
     // member that is in combat and has a target.
     let members = &ctx.snap.group_members[..ctx.snap.group_size as usize];
@@ -2672,9 +2691,11 @@ fn tick_assist_leader(ctx: &mut TickContext<'_>) -> BtResult {
 
 fn tick_protect(ctx: &mut TickContext<'_>) -> BtResult {
     if let Some(protect) = ctx.settings.protect_target {
-        let attacker = ctx.attackers.iter().copied().find(|&a| {
-            ctx.interface.get_unit_snapshot(a).current_target == protect
-        });
+        let attacker = ctx
+            .attackers
+            .iter()
+            .copied()
+            .find(|&a| ctx.interface.get_unit_snapshot(a).current_target == protect);
         if let Some(target) = attacker {
             if ctx.current_target() == Some(target) {
                 ctx.pending_target.set(Some(target));
@@ -2788,7 +2809,11 @@ fn tick_apply_talent_build(ctx: &mut TickContext<'_>) -> BtResult {
             spent = true;
         }
     }
-    if spent { BtResult::Success } else { BtResult::Failure }
+    if spent {
+        BtResult::Success
+    } else {
+        BtResult::Failure
+    }
 }
 
 fn tick_vendor(ctx: &mut TickContext<'_>) -> BtResult {
@@ -2921,9 +2946,7 @@ fn tick_choose_travel_target(ctx: &mut TickContext<'_>) -> BtResult {
 
     // Try each need in priority order — query FFI for destinations.
     for (purpose, _relevance) in &needs {
-        let dests = ctx
-            .interface
-            .find_travel_dests(purpose.bits(), 1000.0, 5);
+        let dests = ctx.interface.find_travel_dests(purpose.bits(), 1000.0, 5);
         if dests.is_empty() {
             continue;
         }
@@ -2952,15 +2975,8 @@ fn tick_choose_travel_target(ctx: &mut TickContext<'_>) -> BtResult {
                 TravelPurpose::AH => TravelKind::AuctionHouse,
                 _ => TravelKind::NamedLocation,
             };
-            let dest = TravelDestination::new(
-                kind,
-                *purpose,
-                best.map_id,
-                best.x,
-                best.y,
-                best.z,
-            )
-            .with_entry(best.entry);
+            let dest = TravelDestination::new(kind, *purpose, best.map_id, best.x, best.y, best.z)
+                .with_entry(best.entry);
 
             crate::travel::planner::set_travel_dest(ctx.blackboard, &dest);
             return BtResult::Success;
@@ -3531,9 +3547,7 @@ fn tick_cc_cast_on_rti(ctx: &mut TickContext<'_>, spell: SpellId) -> BtResult {
 fn tick_cc_cast_on_nearest(ctx: &mut TickContext<'_>, spell: SpellId) -> BtResult {
     let current = ctx.current_target().unwrap_or(0);
     let victim = ctx.nearby.iter().copied().find(|&u| {
-        u != current
-            && !ctx.interface.has_aura(u, spell)
-            && ctx.interface.can_cast(spell, u)
+        u != current && !ctx.interface.has_aura(u, spell) && ctx.interface.can_cast(spell, u)
     });
     match victim {
         Some(t) => cast(ctx, spell, t),
@@ -3706,10 +3720,10 @@ fn tick_gather(ctx: &mut TickContext<'_>) -> BtResult {
 mod tests {
     use super::*;
     use crate::encounters::{EncounterEvent, EncounterFsm};
+    use crate::engine::blackboard::Blackboard;
     use crate::engine::context::tests::{
         TestCtxOwned, TestInterface, make_encounter_ctx, make_test_ctx_with,
     };
-    use crate::engine::blackboard::Blackboard;
     use crate::engine::throttles::Throttles;
     use crate::engine::timers::BotTimers;
     use crate::ffi::{BotRole, BotUnitSnapshot};
@@ -4121,6 +4135,7 @@ mod tests {
             nearby: &owned.nearby,
             attackers: &owned.attackers,
             group_state: None,
+            group_handle: None,
             interface: iface,
             blackboard: &mut owned.blackboard,
             timers: &mut owned.timers,
@@ -4289,11 +4304,7 @@ mod tests {
             match target {
                 1 => self.target_unit,
                 2 => self.protect_unit,
-                h => self
-                    .group_snapshots
-                    .get(&h)
-                    .copied()
-                    .unwrap_or_default(),
+                h => self.group_snapshots.get(&h).copied().unwrap_or_default(),
             }
         }
         fn has_aura(&self, _: UnitHandle, _: SpellId) -> bool {
@@ -4494,7 +4505,10 @@ mod tests {
             &mut tm,
             &mut th,
         );
-        assert_eq!(Bt::TargetCastingSpell(spell).tick(&mut ctx), BtResult::Success);
+        assert_eq!(
+            Bt::TargetCastingSpell(spell).tick(&mut ctx),
+            BtResult::Success
+        );
         assert_eq!(
             Bt::TargetCastingSpell(SpellId(999)).tick(&mut ctx),
             BtResult::Failure
@@ -4514,9 +4528,18 @@ mod tests {
     #[test]
     fn random_chance_bounds() {
         let mut owned = TestCtxOwned::new();
-        assert_eq!(Bt::RandomChance(0).tick(&mut owned.ctx()), BtResult::Failure);
-        assert_eq!(Bt::RandomChance(100).tick(&mut owned.ctx()), BtResult::Success);
-        assert_eq!(Bt::RandomChance(200).tick(&mut owned.ctx()), BtResult::Success);
+        assert_eq!(
+            Bt::RandomChance(0).tick(&mut owned.ctx()),
+            BtResult::Failure
+        );
+        assert_eq!(
+            Bt::RandomChance(100).tick(&mut owned.ctx()),
+            BtResult::Success
+        );
+        assert_eq!(
+            Bt::RandomChance(200).tick(&mut owned.ctx()),
+            BtResult::Success
+        );
     }
 
     #[test]
@@ -4621,7 +4644,10 @@ mod tests {
         assert_eq!(Bt::InLosOfMaster.tick(&mut ctx), BtResult::Success);
 
         // With Mock11a we can force has_los=false.
-        let mock = Mock11a { has_los: false, ..Mock11a::new() };
+        let mock = Mock11a {
+            has_los: false,
+            ..Mock11a::new()
+        };
         let mut bb = owned.blackboard;
         let mut tm = owned.timers;
         let mut th = owned.throttles;
@@ -4640,7 +4666,10 @@ mod tests {
 
     #[test]
     fn in_react_range_of_master_uses_distance() {
-        let mock = Mock11a { unit_distance: 100.0, ..Mock11a::new() };
+        let mock = Mock11a {
+            unit_distance: 100.0,
+            ..Mock11a::new()
+        };
         let mut owned = TestCtxOwned::new();
         let mut bb = owned.blackboard;
         let mut tm = owned.timers;
@@ -4660,7 +4689,10 @@ mod tests {
 
     #[test]
     fn in_react_range_of_master_fails_when_out_of_range() {
-        let mock = Mock11a { unit_distance: 300.0, ..Mock11a::new() };
+        let mock = Mock11a {
+            unit_distance: 300.0,
+            ..Mock11a::new()
+        };
         let mut owned = TestCtxOwned::new();
         let mut bb = owned.blackboard;
         let mut tm = owned.timers;
@@ -4768,7 +4800,10 @@ mod tests {
 
     #[test]
     fn target_is_player_matches_unit_kind_1() {
-        let mock = Mock11a { target_kind: 1, ..Mock11a::new() };
+        let mock = Mock11a {
+            target_kind: 1,
+            ..Mock11a::new()
+        };
         let mut owned = TestCtxOwned::new();
         owned.snap.self_.current_target = 1;
         let mut ctx = ctx_with_iface(&mut owned, &mock);
@@ -4779,7 +4814,10 @@ mod tests {
 
     #[test]
     fn target_is_pet_matches_unit_kind_2() {
-        let mock = Mock11a { target_kind: 2, ..Mock11a::new() };
+        let mock = Mock11a {
+            target_kind: 2,
+            ..Mock11a::new()
+        };
         let mut owned = TestCtxOwned::new();
         owned.snap.self_.current_target = 1;
         let mut ctx = ctx_with_iface(&mut owned, &mock);
@@ -4790,7 +4828,10 @@ mod tests {
 
     #[test]
     fn target_is_critter_matches_unit_kind_3() {
-        let mock = Mock11a { target_kind: 3, ..Mock11a::new() };
+        let mock = Mock11a {
+            target_kind: 3,
+            ..Mock11a::new()
+        };
         let mut owned = TestCtxOwned::new();
         owned.snap.self_.current_target = 1;
         let mut ctx = ctx_with_iface(&mut owned, &mock);
@@ -4803,7 +4844,10 @@ mod tests {
     fn target_type_conditions_fail_without_target() {
         // current_target = 0 → all three target-type gates short-circuit
         // to Failure regardless of what `unit_kind` would report.
-        let mock = Mock11a { target_kind: 1, ..Mock11a::new() };
+        let mock = Mock11a {
+            target_kind: 1,
+            ..Mock11a::new()
+        };
         let mut owned = TestCtxOwned::new();
         // Default snapshot has current_target == 0.
         let mut ctx = ctx_with_iface(&mut owned, &mock);
@@ -4932,17 +4976,11 @@ mod tests {
         let mut owned = TestCtxOwned::new();
         {
             let mut ctx = ctx_with_iface(&mut owned, &mock);
-            assert_eq!(
-                Bt::HasBuffPotionAvailable.tick(&mut ctx),
-                BtResult::Failure
-            );
+            assert_eq!(Bt::HasBuffPotionAvailable.tick(&mut ctx), BtResult::Failure);
         }
         mock.buff_potion_id = 13452; // Elixir of the Mongoose
         let mut ctx = ctx_with_iface(&mut owned, &mock);
-        assert_eq!(
-            Bt::HasBuffPotionAvailable.tick(&mut ctx),
-            BtResult::Success
-        );
+        assert_eq!(Bt::HasBuffPotionAvailable.tick(&mut ctx), BtResult::Success);
     }
 
     #[test]
@@ -5101,8 +5139,14 @@ mod tests {
     fn quest_in_log_active_matches_any_entry() {
         use crate::ffi::interface::QuestInfo;
         let mut mock = Mock11a::new();
-        mock.quest_log.push(QuestInfo { quest_id: 42, complete: false });
-        mock.quest_log.push(QuestInfo { quest_id: 77, complete: true });
+        mock.quest_log.push(QuestInfo {
+            quest_id: 42,
+            complete: false,
+        });
+        mock.quest_log.push(QuestInfo {
+            quest_id: 77,
+            complete: true,
+        });
         let mut owned = TestCtxOwned::new();
         let mut ctx = ctx_with_iface(&mut owned, &mock);
 
@@ -5115,8 +5159,14 @@ mod tests {
     fn quest_in_log_complete_requires_complete_flag() {
         use crate::ffi::interface::QuestInfo;
         let mut mock = Mock11a::new();
-        mock.quest_log.push(QuestInfo { quest_id: 42, complete: false });
-        mock.quest_log.push(QuestInfo { quest_id: 77, complete: true });
+        mock.quest_log.push(QuestInfo {
+            quest_id: 42,
+            complete: false,
+        });
+        mock.quest_log.push(QuestInfo {
+            quest_id: 77,
+            complete: true,
+        });
         let mut owned = TestCtxOwned::new();
         let mut ctx = ctx_with_iface(&mut owned, &mock);
 
@@ -5485,7 +5535,10 @@ mod tests {
         let mut ctx = owned.ctx();
         // Actions that delegate to FFI and the mock returns false by default:
         assert_eq!(Bt::Gossip(123).tick(&mut ctx), BtResult::Failure);
-        assert_eq!(Bt::BuyFromVendor(ItemId(100), 1).tick(&mut ctx), BtResult::Failure);
+        assert_eq!(
+            Bt::BuyFromVendor(ItemId(100), 1).tick(&mut ctx),
+            BtResult::Failure
+        );
         assert_eq!(Bt::MailItem.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::CheckMail.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::BankDeposit.tick(&mut ctx), BtResult::Failure);
@@ -5503,7 +5556,10 @@ mod tests {
         assert_eq!(Bt::RandomEmote.tick(&mut ctx), BtResult::Failure);
         // RandomSay: mock say returns true (overridden in test mock)
         assert_eq!(Bt::RandomSay.tick(&mut ctx), BtResult::Success);
-        assert_eq!(Bt::WorldBuffTravel(SpellId(1)).tick(&mut ctx), BtResult::Failure);
+        assert_eq!(
+            Bt::WorldBuffTravel(SpellId(1)).tick(&mut ctx),
+            BtResult::Failure
+        );
         assert_eq!(Bt::RtscConsumeMoveQueue.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::LfgJoin.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::LfgAccept.tick(&mut ctx), BtResult::Failure);

@@ -2,7 +2,7 @@
 ///
 /// Low-intensity behavior for idle bots that should look like real players.
 use crate::engine::bt::Bt::{self, *};
-use crate::{Seq, Sel};
+use crate::{Sel, Seq};
 
 pub fn rpg_subtree() -> Bt {
     Seq!(

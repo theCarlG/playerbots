@@ -8,8 +8,8 @@
 ///     Everyone MUST spread out so a teleport doesn't chain-kill stacked bots.
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::encounters::bt::Bt::{self, *};
-use crate::{Seq, Sel};
 use crate::ffi::SpellId;
+use crate::{Sel, Seq};
 
 pub const AURA_SHAZZRAH_CURSE: SpellId = SpellId(19714);
 pub const SPELL_ARCANE_EXPLOSION: SpellId = SpellId(19712);

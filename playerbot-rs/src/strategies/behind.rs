@@ -1,6 +1,6 @@
-use crate::{Sel, Seq};
 use crate::bot::settings::StrategyFlags;
 use crate::engine::bt::Bt;
+use crate::{Sel, Seq};
 
 /// Behind strategy — stay behind the current target to avoid cleaves
 /// and parries. Used by melee DPS (rogues, feral druids).

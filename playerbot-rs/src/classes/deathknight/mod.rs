@@ -2,17 +2,16 @@ pub mod blood;
 pub mod frost;
 pub mod unholy;
 
+use crate::{Sel, Seq};
 use crate::{
     bot::settings::StrategyFlags,
     bot::state::PlayerSpec,
-    classes::ClassKit,
     engine::{
         bt::Bt::{self, *},
         macro_fsm::ActiveFsm,
     },
     noncombat::GroupBuff,
 };
-use crate::{Seq, Sel};
 
 // Death Knights have no persistent party buffs.
 const BUFFS: &[GroupBuff] = &[];
@@ -32,19 +31,45 @@ pub fn boost() -> Bt {
     )
 }
 
-pub fn kit(spec: PlayerSpec) -> ClassKit {
+pub fn build_tree(fsm: ActiveFsm, spec: PlayerSpec) -> Bt {
     use PlayerSpec::{DeathKnightBlood, DeathKnightFrost, DeathKnightUnholy};
-    let combat = match spec {
-        DeathKnightBlood => blood::build_tree(ActiveFsm::Combat),
-        DeathKnightFrost => frost::build_tree(ActiveFsm::Combat),
-        DeathKnightUnholy => unholy::build_tree(ActiveFsm::Combat),
-        _ => unreachable!("non-deathknight spec passed to deathknight::kit"),
-    };
-    let world = match spec {
-        DeathKnightBlood => blood::build_tree(ActiveFsm::World),
-        DeathKnightFrost => frost::build_tree(ActiveFsm::World),
-        DeathKnightUnholy => unholy::build_tree(ActiveFsm::World),
-        _ => unreachable!("non-deathknight spec passed to deathknight::kit"),
-    };
-    ClassKit { combat, world, buffs: BUFFS }
+    match spec {
+        DeathKnightBlood => blood::build_tree(fsm),
+        DeathKnightFrost => frost::build_tree(fsm),
+        DeathKnightUnholy => unholy::build_tree(fsm),
+        _ => unreachable!("non-deathknight spec passed to deathknight::build_tree"),
+    }
+}
+
+pub fn buffs(_spec: PlayerSpec) -> &'static [GroupBuff] {
+    BUFFS
+}
+
+/// Per-spec default combat strategy flags (PB2 `AiFactory.cpp` DK branch).
+pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
+    use PlayerSpec::*;
+    use StrategyFlags as F;
+    let common = F::DKSQUEST | F::DPS_ASSIST | F::FLEE | F::CLOSE | F::CC;
+    match spec {
+        DeathKnightBlood => F::BLOOD | F::TANK | F::TANK_ASSIST | F::PULL | F::PULL_BACK | common,
+        DeathKnightFrost => F::FROST | F::FROST_AOE | common,
+        DeathKnightUnholy => F::UNHOLY | F::UNHOLY_AOE | common,
+        _ => F::NONE,
+    }
+}
+
+/// Reverse-map strategy flags to a death knight `PlayerSpec`.
+pub fn spec_from_flags(flags: StrategyFlags) -> Option<PlayerSpec> {
+    use PlayerSpec::*;
+    use StrategyFlags as F;
+    if flags.contains(F::BLOOD) {
+        return Some(DeathKnightBlood);
+    }
+    if flags.contains(F::FROST) {
+        return Some(DeathKnightFrost);
+    }
+    if flags.contains(F::UNHOLY) {
+        return Some(DeathKnightUnholy);
+    }
+    None
 }

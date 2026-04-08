@@ -6,12 +6,12 @@
 /// Design: ~20 clean commands replace the old 70+ redundant C++ commands.
 /// Each command maps to exactly one `BotCommand` variant.
 use crate::bot::class_prefs::{
-    HunterAspect, HunterSting, HunterTrap, PaladinAura, PaladinBlessing, PoisonKind, ShamanImbue, TotemRole,
-    TotemSlot, WarlockCurse, WarlockPet, WarriorStance, WeaponHand,
+    HunterAspect, HunterSting, HunterTrap, PaladinAura, PaladinBlessing, PoisonKind, ShamanImbue,
+    TotemRole, TotemSlot, WarlockCurse, WarlockPet, WarriorStance, WeaponHand,
 };
 use crate::bot::settings::{
-    BehaviorMode, BotStateKind, ChatChannel, FollowFormation, LootPolicy,
-    PositionStance, Reactivity, StrategyFlags,
+    BehaviorMode, BotStateKind, ChatChannel, FollowFormation, LootPolicy, PositionStance,
+    Reactivity, StrategyFlags,
 };
 use crate::commands::BotCommand;
 use crate::data::spells::lookup_spell_by_name;
@@ -40,29 +40,92 @@ const COMMANDS: &[CommandSpec] = &[
         parse: |cmd, _| BehaviorMode::from_str(cmd).map(BotCommand::SetMode),
     },
     // -- Combat orders / strategies / reactivity --
-    CommandSpec { names: &["co"], parse: |_, a| parse_combat_order(a) },
-    CommandSpec { names: &["nc"], parse: |_, a| parse_strategies(a, BotStateKind::NonCombat) },
-    CommandSpec { names: &["react"], parse: |_, a| parse_reactivity(a) },
+    CommandSpec {
+        names: &["co"],
+        parse: |_, a| parse_combat_order(a),
+    },
+    CommandSpec {
+        names: &["nc"],
+        parse: |_, a| parse_strategies(a, BotStateKind::NonCombat),
+    },
+    CommandSpec {
+        names: &["react"],
+        parse: |_, a| parse_reactivity(a),
+    },
     // PB2 4-state model: each of `co` / `nc` / `react` / `de` targets
     // its own strategy engine. `de +spec,?` toggles *dead-state*
     // strategies; the other three are handled by their own parsers
     // (`co` routes to `parse_combat_order`, `react` routes to
     // `parse_reactivity`).
-    CommandSpec { names: &["de"], parse: |_, a| parse_strategies(a, BotStateKind::Dead) },
-    CommandSpec { names: &["ll"], parse: |_, a| parse_loot_policy(a) },
+    CommandSpec {
+        names: &["de"],
+        parse: |_, a| parse_strategies(a, BotStateKind::Dead),
+    },
+    CommandSpec {
+        names: &["ll"],
+        parse: |_, a| parse_loot_policy(a),
+    },
     // Mangosbot sends the two-word form `save mana [?|on|off]`.
-    CommandSpec { names: &["save"], parse: |_, a| parse_save(a) },
+    CommandSpec {
+        names: &["save"],
+        parse: |_, a| parse_save(a),
+    },
     // -- Targeting --
-    CommandSpec { names: &["focus"], parse: |_, _| Some(BotCommand::Focus(None)) },
-    CommandSpec { names: &["attack", "attack my target", "queue attack"], parse: |_, a| parse_attack(a) },
-    CommandSpec { names: &["pull"], parse: |_, a| parse_pull(a) },
-    CommandSpec { names: &["cc"], parse: |_, a| parse_cc(a) },
+    CommandSpec {
+        names: &["focus"],
+        parse: |_, _| Some(BotCommand::Focus(None)),
+    },
+    CommandSpec {
+        names: &["attack", "attack my target", "queue attack"],
+        parse: |_, a| parse_attack(a),
+    },
+    CommandSpec {
+        names: &["pull"],
+        parse: |_, a| parse_pull(a),
+    },
+    CommandSpec {
+        names: &["cc"],
+        parse: |_, a| {
+            // "cc skull" or "cc 8" — assign this bot to CC the marked mob.
+            if a.is_empty() {
+                return Some(BotCommand::Unknown("cc: need target icon".into()));
+            }
+            let icon = match parse_rti(a[0]) {
+                Some(i) => i,
+                None => return Some(BotCommand::Unknown(format!("cc: unknown icon '{}'", a[0]))),
+            };
+            Some(BotCommand::AssignCc { icon, spell: None })
+        },
+    },
+    CommandSpec {
+        names: &["uncc"],
+        parse: |_, a| {
+            if a.is_empty() {
+                Some(BotCommand::UnassignCc(None))
+            } else {
+                let icon = parse_rti(a[0]);
+                Some(BotCommand::UnassignCc(icon))
+            }
+        },
+    },
     // -- Movement --
-    CommandSpec { names: &["come", "c"], parse: |_, _| Some(BotCommand::ComeToMe) },
-    CommandSpec { names: &["guard"], parse: |_, _| Some(BotCommand::Guard) },
-    CommandSpec { names: &["go"], parse: |_, a| parse_go(a) },
+    CommandSpec {
+        names: &["come", "c"],
+        parse: |_, _| Some(BotCommand::ComeToMe),
+    },
+    CommandSpec {
+        names: &["guard"],
+        parse: |_, _| Some(BotCommand::Guard),
+    },
+    CommandSpec {
+        names: &["go"],
+        parse: |_, a| parse_go(a),
+    },
     // -- RTSC (Real-Time Strategy Control) --
-    CommandSpec { names: &["rtsc"], parse: |_, a| parse_rtsc(a) },
+    CommandSpec {
+        names: &["rtsc"],
+        parse: |_, a| parse_rtsc(a),
+    },
     // -- Spell control --
     CommandSpec {
         names: &["blacklist"],
@@ -73,22 +136,40 @@ const COMMANDS: &[CommandSpec] = &[
         parse: |_, a| parse_spell_id(a).map(BotCommand::UnblacklistSpell),
     },
     // -- Economy --
-    CommandSpec { names: &["repair"], parse: |_, _| Some(BotCommand::Repair) },
-    CommandSpec { names: &["vendor", "sell"], parse: |_, _| Some(BotCommand::Vendor) },
+    CommandSpec {
+        names: &["repair"],
+        parse: |_, _| Some(BotCommand::Repair),
+    },
+    CommandSpec {
+        names: &["vendor", "sell"],
+        parse: |_, _| Some(BotCommand::Vendor),
+    },
     // -- Healing --
-    CommandSpec { names: &["heal"], parse: |_, a| parse_heal_threshold(a) },
+    CommandSpec {
+        names: &["heal"],
+        parse: |_, a| parse_heal_threshold(a),
+    },
     // -- Information --
     CommandSpec {
         names: &["status", "stats", "who"],
         parse: |_, _| Some(BotCommand::Status),
     },
-    CommandSpec { names: &["settings"], parse: |_, _| Some(BotCommand::ListSettings) },
+    CommandSpec {
+        names: &["settings"],
+        parse: |_, _| Some(BotCommand::ListSettings),
+    },
     CommandSpec {
         names: &["where", "position", "pos"],
         parse: |_, _| Some(BotCommand::Where),
     },
-    CommandSpec { names: &["help", "commands"], parse: |_, _| Some(BotCommand::Help) },
-    CommandSpec { names: &["ready"], parse: |_, _| Some(BotCommand::Ready) },
+    CommandSpec {
+        names: &["help", "commands"],
+        parse: |_, _| Some(BotCommand::Help),
+    },
+    CommandSpec {
+        names: &["ready"],
+        parse: |_, _| Some(BotCommand::Ready),
+    },
     // -- Utility --
     CommandSpec {
         names: &["reset"],
@@ -100,7 +181,10 @@ const COMMANDS: &[CommandSpec] = &[
             }
         },
     },
-    CommandSpec { names: &["mount", "dismount"], parse: |_, _| Some(BotCommand::Mount) },
+    CommandSpec {
+        names: &["mount", "dismount"],
+        parse: |_, _| Some(BotCommand::Mount),
+    },
     CommandSpec {
         names: &["rez", "resurrect"],
         parse: |_, _| Some(BotCommand::Resurrect),
@@ -110,28 +194,67 @@ const COMMANDS: &[CommandSpec] = &[
         names: &["flee", "runaway", "panic"],
         parse: |_, _| Some(BotCommand::Flee),
     },
-    CommandSpec { names: &["free"], parse: |_, _| Some(BotCommand::Free) },
-    CommandSpec { names: &["summon"], parse: |_, _| Some(BotCommand::Summon) },
+    CommandSpec {
+        names: &["free"],
+        parse: |_, _| Some(BotCommand::Free),
+    },
+    CommandSpec {
+        names: &["summon"],
+        parse: |_, _| Some(BotCommand::Summon),
+    },
     // -- Cast a named spell once (addon sends `cast Taunt`). --
-    CommandSpec { names: &["cast"], parse: |_, a| parse_cast(a) },
+    CommandSpec {
+        names: &["cast"],
+        parse: |_, a| parse_cast(a),
+    },
     // RaidControl sends bare spell names without `cast` prefix.
-    CommandSpec { names: &["remove curse"], parse: |_, _| parse_cast(&["remove", "curse"]) },
-    CommandSpec { names: &["dispel magic"], parse: |_, _| parse_cast(&["dispel", "magic"]) },
+    CommandSpec {
+        names: &["remove curse"],
+        parse: |_, _| parse_cast(&["remove", "curse"]),
+    },
+    CommandSpec {
+        names: &["dispel magic"],
+        parse: |_, _| parse_cast(&["dispel", "magic"]),
+    },
     // -- Formation --
-    CommandSpec { names: &["formation"], parse: |_, a| parse_formation(a) },
+    CommandSpec {
+        names: &["formation"],
+        parse: |_, a| parse_formation(a),
+    },
     // -- Named-location travel --
-    CommandSpec { names: &["travel", "goto"], parse: |_, a| parse_travel(a) },
+    CommandSpec {
+        names: &["travel", "goto"],
+        parse: |_, a| parse_travel(a),
+    },
     // -- Tunables / PB2 Wave 1 --
-    CommandSpec { names: &["range", "ra"], parse: |_, a| parse_range(a) },
+    CommandSpec {
+        names: &["range", "ra"],
+        parse: |_, a| parse_range(a),
+    },
     // `all +strat,-strat` — apply strategies to all 4 PB2 state engines.
-    CommandSpec { names: &["all"], parse: |_, a| parse_all(a) },
+    CommandSpec {
+        names: &["all"],
+        parse: |_, a| parse_all(a),
+    },
     // `stop` — stop current action / go passive.
-    CommandSpec { names: &["stop"], parse: |_, _| Some(BotCommand::Stop) },
+    CommandSpec {
+        names: &["stop"],
+        parse: |_, _| Some(BotCommand::Stop),
+    },
     // `u <item name>` / `use <item name>` — use an item by name.
-    CommandSpec { names: &["u", "use"], parse: |_, a| parse_use_item(a) },
+    CommandSpec {
+        names: &["u", "use"],
+        parse: |_, a| parse_use_item(a),
+    },
     // `e <item name>` / `equip <item name>` — equip an item by name.
-    CommandSpec { names: &["e", "equip"], parse: |_, a| parse_equip_item(a) },
-    CommandSpec { names: &["stance"], parse: |_, a| parse_stance(a) },
+    CommandSpec {
+        names: &["e", "equip"],
+        parse: |_, a| parse_equip_item(a),
+    },
+    CommandSpec {
+        names: &["stance"],
+        parse: |_, a| parse_stance(a),
+    },
     CommandSpec {
         names: &["max-dps", "maxdps"],
         parse: |_, _| Some(BotCommand::MaxDps),
@@ -144,24 +267,57 @@ const COMMANDS: &[CommandSpec] = &[
         names: &["self-res", "selfres"],
         parse: |_, _| Some(BotCommand::ToggleSelfRes),
     },
-    CommandSpec { names: &["cheat"], parse: |_, a| parse_cheat(a) },
-    CommandSpec { names: &["keep"], parse: |_, a| parse_keep(a, true) },
-    CommandSpec { names: &["unkeep"], parse: |_, a| parse_keep(a, false) },
-    CommandSpec { names: &["chat"], parse: |_, a| parse_chat(a) },
-    CommandSpec { names: &["rti"], parse: |_, a| parse_rti_cmd(a) },
-    CommandSpec { names: &["emote"], parse: |_, a| parse_emote(a) },
+    CommandSpec {
+        names: &["cheat"],
+        parse: |_, a| parse_cheat(a),
+    },
+    CommandSpec {
+        names: &["keep"],
+        parse: |_, a| parse_keep(a, true),
+    },
+    CommandSpec {
+        names: &["unkeep"],
+        parse: |_, a| parse_keep(a, false),
+    },
+    CommandSpec {
+        names: &["chat"],
+        parse: |_, a| parse_chat(a),
+    },
+    CommandSpec {
+        names: &["rti"],
+        parse: |_, a| parse_rti_cmd(a),
+    },
+    CommandSpec {
+        names: &["emote"],
+        parse: |_, a| parse_emote(a),
+    },
     CommandSpec {
         names: &["debug", "cdebug"],
-        parse: |_, _| Some(BotCommand::Debug),
+        parse: |_, a| match a.first().map(|s| &**s) {
+            Some("fsm") => Some(BotCommand::DebugFsm),
+            Some("claims" | "claim") => Some(BotCommand::DebugClaims),
+            Some("coord" | "coordination" | "group") => Some(BotCommand::DebugCoord),
+            Some("bt") => Some(BotCommand::DebugBt),
+            _ => Some(BotCommand::Debug),
+        },
     },
     // -- Wave 2 info queries (reuse existing FFI) --
-    CommandSpec { names: &["los"], parse: |_, _| Some(BotCommand::CheckLos) },
+    CommandSpec {
+        names: &["los"],
+        parse: |_, _| Some(BotCommand::CheckLos),
+    },
     CommandSpec {
         names: &["quests", "q"],
         parse: |_, _| Some(BotCommand::ListQuests),
     },
-    CommandSpec { names: &["talents"], parse: |_, _| Some(BotCommand::ListTalents) },
-    CommandSpec { names: &["spells"], parse: |_, _| Some(BotCommand::ListSpells) },
+    CommandSpec {
+        names: &["talents"],
+        parse: |_, _| Some(BotCommand::ListTalents),
+    },
+    CommandSpec {
+        names: &["spells"],
+        parse: |_, _| Some(BotCommand::ListSpells),
+    },
     CommandSpec {
         names: &["release"],
         parse: |_, _| Some(BotCommand::ReleaseSpirit),
@@ -170,7 +326,10 @@ const COMMANDS: &[CommandSpec] = &[
         names: &["revive"],
         parse: |_, _| Some(BotCommand::AcceptRevive),
     },
-    CommandSpec { names: &["jump"], parse: |_, _| Some(BotCommand::Jump) },
+    CommandSpec {
+        names: &["jump"],
+        parse: |_, _| Some(BotCommand::Jump),
+    },
     CommandSpec {
         names: &["hearth", "home"],
         parse: |_, _| Some(BotCommand::UseHearth),
@@ -207,81 +366,436 @@ const COMMANDS: &[CommandSpec] = &[
         parse: |_, _| Some(BotCommand::GuildLeave),
     },
     // -- Class preferences --
-    CommandSpec { names: &["poison", "poisons"], parse: |_, a| parse_poison(a) },
-    CommandSpec { names: &["totem", "totems"], parse: |_, a| parse_totem(a) },
-    CommandSpec { names: &["imbue", "imbues"], parse: |_, a| parse_imbue(a) },
-    CommandSpec { names: &["aura", "auras"], parse: |_, a| parse_aura(a) },
-    CommandSpec { names: &["blessing", "blessings"], parse: |_, a| parse_blessing(a) },
-    CommandSpec { names: &["aspect", "aspects"], parse: |_, a| parse_aspect(a) },
-    CommandSpec { names: &["trap", "traps"], parse: |_, a| parse_trap(a) },
-    CommandSpec { names: &["curse", "curses"], parse: |_, a| parse_curse(a) },
-    CommandSpec { names: &["forcestance", "stancelock"], parse: |_, a| parse_forcestance(a) },
-    CommandSpec { names: &["suppression"], parse: |_, a| parse_duty(a, DutyKind::Suppression) },
-    CommandSpec { names: &["douse"], parse: |_, a| parse_duty(a, DutyKind::Douse) },
+    CommandSpec {
+        names: &["poison", "poisons"],
+        parse: |_, a| parse_poison(a),
+    },
+    CommandSpec {
+        names: &["totem", "totems"],
+        parse: |_, a| parse_totem(a),
+    },
+    CommandSpec {
+        names: &["imbue", "imbues"],
+        parse: |_, a| parse_imbue(a),
+    },
+    CommandSpec {
+        names: &["aura", "auras"],
+        parse: |_, a| parse_aura(a),
+    },
+    CommandSpec {
+        names: &["blessing", "blessings"],
+        parse: |_, a| parse_blessing(a),
+    },
+    CommandSpec {
+        names: &["aspect", "aspects"],
+        parse: |_, a| parse_aspect(a),
+    },
+    CommandSpec {
+        names: &["trap", "traps"],
+        parse: |_, a| parse_trap(a),
+    },
+    CommandSpec {
+        names: &["curse", "curses"],
+        parse: |_, a| parse_curse(a),
+    },
+    CommandSpec {
+        names: &["forcestance", "stancelock"],
+        parse: |_, a| parse_forcestance(a),
+    },
+    CommandSpec {
+        names: &["suppression"],
+        parse: |_, a| parse_duty(a, DutyKind::Suppression),
+    },
+    CommandSpec {
+        names: &["douse"],
+        parse: |_, a| parse_duty(a, DutyKind::Douse),
+    },
     // -- PB2 parity: remaining commands --
     // Single-letter shortcuts from PB2
-    CommandSpec { names: &["s"], parse: |_, _| Some(BotCommand::Vendor) }, // sell
-    CommandSpec { names: &["b"], parse: |_, _| Some(BotCommand::Buy) },
-    CommandSpec { names: &["bb"], parse: |_, _| Some(BotCommand::Buyback) },
-    CommandSpec { names: &["r"], parse: |_, _| Some(BotCommand::QuestReward) },
-    CommandSpec { names: &["t", "nt"], parse: |_, _| Some(BotCommand::Trade) },
-    CommandSpec { names: &["ue"], parse: |_, a| Some(BotCommand::UnequipItemByName(a.join(" "))) },
+    CommandSpec {
+        names: &["s"],
+        parse: |_, _| Some(BotCommand::Vendor),
+    }, // sell
+    CommandSpec {
+        names: &["b"],
+        parse: |_, _| Some(BotCommand::Buy),
+    },
+    CommandSpec {
+        names: &["bb"],
+        parse: |_, _| Some(BotCommand::Buyback),
+    },
+    CommandSpec {
+        names: &["r"],
+        parse: |_, _| Some(BotCommand::QuestReward),
+    },
+    CommandSpec {
+        names: &["t", "nt"],
+        parse: |_, _| Some(BotCommand::Trade),
+    },
+    CommandSpec {
+        names: &["ue"],
+        parse: |_, a| Some(BotCommand::UnequipItemByName(a.join(" "))),
+    },
     // PB2 targeted commands
-    CommandSpec { names: &["wait for attack"], parse: |_, a| {
-        let secs = a.first().and_then(|s| s.parse::<u32>().ok()).unwrap_or(3);
-        Some(BotCommand::SetWaitForAttack(secs))
-    }},
-    CommandSpec { names: &["tank attack"], parse: |_, _| Some(BotCommand::TankAttack) },
-    CommandSpec { names: &["loot", "add all loot"], parse: |_, _| Some(BotCommand::Loot) },
-    CommandSpec { names: &["destroy"], parse: |_, a| Some(BotCommand::DestroyItem(a.join(" "))) },
-    CommandSpec { names: &["ss"], parse: |_, a| Some(BotCommand::SkipSpell(a.join(" "))) },
-    CommandSpec { names: &["roll"], parse: |_, a| Some(BotCommand::LootRoll(a.first().unwrap_or(&"pass").to_string())) },
-    CommandSpec { names: &["give leader"], parse: |_, _| Some(BotCommand::GiveLeader) },
-    CommandSpec { names: &["invite"], parse: |_, a| Some(BotCommand::InvitePlayer(a.join(" "))) },
-    CommandSpec { names: &["pet"], parse: |_, a| Some(BotCommand::Pet(a.join(" "))) },
-    CommandSpec { names: &["buff target"], parse: |_, a| Some(BotCommand::BuffTarget(a.join(" "))) },
-    CommandSpec { names: &["boost target"], parse: |_, a| Some(BotCommand::BoostTarget(a.join(" "))) },
-    CommandSpec { names: &["revive target"], parse: |_, a| Some(BotCommand::ReviveTarget(a.join(" "))) },
-    CommandSpec { names: &["follow target"], parse: |_, a| Some(BotCommand::FollowTarget(a.join(" "))) },
-    CommandSpec { names: &["focus heal"], parse: |_, a| Some(BotCommand::FocusHeal(a.join(" "))) },
-    CommandSpec { names: &["max dps"], parse: |_, _| Some(BotCommand::MaxDps) },
-    CommandSpec { names: &["self res"], parse: |_, _| Some(BotCommand::ToggleSelfRes) },
+    CommandSpec {
+        names: &["wait for attack"],
+        parse: |_, a| {
+            let secs = a.first().and_then(|s| s.parse::<u32>().ok()).unwrap_or(3);
+            Some(BotCommand::SetWaitForAttack(secs))
+        },
+    },
+    CommandSpec {
+        names: &["tank attack"],
+        parse: |_, _| Some(BotCommand::TankAttack),
+    },
+    CommandSpec {
+        names: &["loot", "add all loot"],
+        parse: |_, _| Some(BotCommand::Loot),
+    },
+    CommandSpec {
+        names: &["destroy"],
+        parse: |_, a| Some(BotCommand::DestroyItem(a.join(" "))),
+    },
+    CommandSpec {
+        names: &["ss"],
+        parse: |_, a| Some(BotCommand::SkipSpell(a.join(" "))),
+    },
+    CommandSpec {
+        names: &["roll"],
+        parse: |_, a| {
+            Some(BotCommand::LootRoll(
+                a.first().unwrap_or(&"pass").to_string(),
+            ))
+        },
+    },
+    CommandSpec {
+        names: &["give leader"],
+        parse: |_, _| Some(BotCommand::GiveLeader),
+    },
+    CommandSpec {
+        names: &["invite"],
+        parse: |_, a| Some(BotCommand::InvitePlayer(a.join(" "))),
+    },
+    CommandSpec {
+        names: &["pet"],
+        parse: |_, a| Some(BotCommand::Pet(a.join(" "))),
+    },
+    CommandSpec {
+        names: &["buff target"],
+        parse: |_, a| Some(BotCommand::BuffTarget(a.join(" "))),
+    },
+    CommandSpec {
+        names: &["boost target"],
+        parse: |_, a| Some(BotCommand::BoostTarget(a.join(" "))),
+    },
+    CommandSpec {
+        names: &["revive target"],
+        parse: |_, a| Some(BotCommand::ReviveTarget(a.join(" "))),
+    },
+    CommandSpec {
+        names: &["follow target"],
+        parse: |_, a| Some(BotCommand::FollowTarget(a.join(" "))),
+    },
+    CommandSpec {
+        names: &["focus heal"],
+        parse: |_, a| Some(BotCommand::FocusHeal(a.join(" "))),
+    },
+    CommandSpec {
+        names: &["max dps"],
+        parse: |_, _| Some(BotCommand::MaxDps),
+    },
+    CommandSpec {
+        names: &["self res"],
+        parse: |_, _| Some(BotCommand::ToggleSelfRes),
+    },
     // NOTE: "save mana" is handled by the single-word "save" entry which
     // checks args[0]=="mana". We must NOT add a multi-word "save mana" entry
     // here because it would steal args from parse_save().
-    CommandSpec { names: &["move style"], parse: |_, a| Some(BotCommand::MoveStyle(a.first().unwrap_or(&"run").to_string())) },
-    CommandSpec { names: &["talk"], parse: |_, _| Some(BotCommand::Talk) },
-    CommandSpec { names: &["trainer"], parse: |_, _| Some(BotCommand::Trainer) },
-    CommandSpec { names: &["taxi"], parse: |_, _| Some(BotCommand::Taxi) },
-    CommandSpec { names: &["craft"], parse: |_, a| Some(BotCommand::Craft(a.join(" "))) },
-    CommandSpec { names: &["outfit"], parse: |_, a| Some(BotCommand::Outfit(a.join(" "))) },
-    CommandSpec { names: &["log"], parse: |_, a| Some(BotCommand::LogLevel(a.join(" "))) },
-    CommandSpec { names: &["share"], parse: |_, _| Some(BotCommand::ShareQuest) },
-    CommandSpec { names: &["doquest"], parse: |_, a| Some(BotCommand::DoQuest(a.join(" "))) },
-    CommandSpec { names: &["bank", "gb", "gbank"], parse: |_, _| Some(BotCommand::Bank) },
-    CommandSpec { names: &["ah"], parse: |_, a| Some(BotCommand::AuctionHouse(a.join(" "))) },
-    CommandSpec { names: &["guild invite", "guild join", "guild promote", "guild demote", "guild remove", "guild leader"], parse: |cmd, _| Some(BotCommand::GuildCommand(cmd.to_string())) },
-    CommandSpec { names: &["bg free"], parse: |_, _| Some(BotCommand::BgFree) },
-    CommandSpec { names: &["flag"], parse: |_, _| Some(BotCommand::Flag) },
-    CommandSpec { names: &["sendmail"], parse: |_, a| Some(BotCommand::SendMail(a.join(" "))) },
-    CommandSpec { names: &["possible attack targets"], parse: |_, _| Some(BotCommand::PossibleAttackTargets) },
-    CommandSpec { names: &["attackers"], parse: |_, _| Some(BotCommand::ShowAttackers) },
+    CommandSpec {
+        names: &["move style"],
+        parse: |_, a| {
+            Some(BotCommand::MoveStyle(
+                a.first().unwrap_or(&"run").to_string(),
+            ))
+        },
+    },
+    CommandSpec {
+        names: &["talk"],
+        parse: |_, _| Some(BotCommand::Talk),
+    },
+    CommandSpec {
+        names: &["trainer"],
+        parse: |_, _| Some(BotCommand::Trainer),
+    },
+    CommandSpec {
+        names: &["taxi"],
+        parse: |_, _| Some(BotCommand::Taxi),
+    },
+    CommandSpec {
+        names: &["craft"],
+        parse: |_, a| Some(BotCommand::Craft(a.join(" "))),
+    },
+    CommandSpec {
+        names: &["outfit"],
+        parse: |_, a| Some(BotCommand::Outfit(a.join(" "))),
+    },
+    CommandSpec {
+        names: &["log"],
+        parse: |_, a| Some(BotCommand::LogLevel(a.join(" "))),
+    },
+    CommandSpec {
+        names: &["share"],
+        parse: |_, _| Some(BotCommand::ShareQuest),
+    },
+    CommandSpec {
+        names: &["doquest"],
+        parse: |_, a| Some(BotCommand::DoQuest(a.join(" "))),
+    },
+    CommandSpec {
+        names: &["bank", "gb", "gbank"],
+        parse: |_, _| Some(BotCommand::Bank),
+    },
+    CommandSpec {
+        names: &["ah"],
+        parse: |_, a| Some(BotCommand::AuctionHouse(a.join(" "))),
+    },
+    CommandSpec {
+        names: &[
+            "guild invite",
+            "guild join",
+            "guild promote",
+            "guild demote",
+            "guild remove",
+            "guild leader",
+        ],
+        parse: |cmd, _| Some(BotCommand::GuildCommand(cmd.to_string())),
+    },
+    CommandSpec {
+        names: &["bg free"],
+        parse: |_, _| Some(BotCommand::BgFree),
+    },
+    CommandSpec {
+        names: &["flag"],
+        parse: |_, _| Some(BotCommand::Flag),
+    },
+    CommandSpec {
+        names: &["sendmail"],
+        parse: |_, a| Some(BotCommand::SendMail(a.join(" "))),
+    },
+    CommandSpec {
+        names: &["possible attack targets"],
+        parse: |_, _| Some(BotCommand::PossibleAttackTargets),
+    },
+    CommandSpec {
+        names: &["attackers"],
+        parse: |_, _| Some(BotCommand::ShowAttackers),
+    },
     // PB2 commands that map to existing functionality or are no-ops
-    CommandSpec { names: &["load ai", "list ai", "save ai"], parse: |cmd, a| Some(BotCommand::AiProfile(format!("{} {}", cmd, a.join(" ")).trim().to_string())) },
-    CommandSpec { names: &["reset strats"], parse: |_, _| Some(BotCommand::ResetStrategies) },
-    CommandSpec { names: &["reset values"], parse: |_, _| Some(BotCommand::Reset) },
-    CommandSpec { names: &["cs"], parse: |_, a| Some(BotCommand::CustomStrategy(a.join(" "))) },
-    CommandSpec { names: &["wts"], parse: |_, _| Some(BotCommand::WhatToSell) },
-    CommandSpec { names: &["teleport"], parse: |_, a| Some(BotCommand::Teleport(a.join(" "))) },
-    CommandSpec { names: &["hire"], parse: |_, _| Some(BotCommand::Trainer) }, // hire = trainer (PB2 alias)
-    CommandSpec { names: &["glyph"], parse: |_, _| Some(BotCommand::Trainer) }, // glyph = trainer (PB2 alias for glyph master)
-    CommandSpec { names: &["faction"], parse: |_, _| Some(BotCommand::ShowFaction) },
-    CommandSpec { names: &["set value"], parse: |_, a| Some(BotCommand::SetValue(a.join(" "))) },
-    CommandSpec { names: &["speak"], parse: |_, a| Some(BotCommand::Speak(a.join(" "))) },
-    CommandSpec { names: &["warning"], parse: |_, _| Some(BotCommand::Flee) }, // warning = flee
-    CommandSpec { names: &["runaway"], parse: |_, _| Some(BotCommand::Flee) }, // alias
-    CommandSpec { names: &["quest reward", "reward"], parse: |_, _| Some(BotCommand::QuestReward) },
-    CommandSpec { names: &["lfg"], parse: |_, _| Some(BotCommand::Lfg) },
+    CommandSpec {
+        names: &["load ai", "list ai", "save ai"],
+        parse: |cmd, a| {
+            Some(BotCommand::AiProfile(
+                format!("{} {}", cmd, a.join(" ")).trim().to_string(),
+            ))
+        },
+    },
+    CommandSpec {
+        names: &["reset strats"],
+        parse: |_, _| Some(BotCommand::ResetStrategies),
+    },
+    CommandSpec {
+        names: &["reset values"],
+        parse: |_, _| Some(BotCommand::Reset),
+    },
+    CommandSpec {
+        names: &["cs"],
+        parse: |_, a| Some(BotCommand::CustomStrategy(a.join(" "))),
+    },
+    CommandSpec {
+        names: &["wts"],
+        parse: |_, _| Some(BotCommand::WhatToSell),
+    },
+    CommandSpec {
+        names: &["teleport"],
+        parse: |_, a| Some(BotCommand::Teleport(a.join(" "))),
+    },
+    CommandSpec {
+        names: &["hire"],
+        parse: |_, _| Some(BotCommand::Trainer),
+    }, // hire = trainer (PB2 alias)
+    CommandSpec {
+        names: &["glyph"],
+        parse: |_, _| Some(BotCommand::Trainer),
+    }, // glyph = trainer (PB2 alias for glyph master)
+    CommandSpec {
+        names: &["faction"],
+        parse: |_, _| Some(BotCommand::ShowFaction),
+    },
+    CommandSpec {
+        names: &["set value"],
+        parse: |_, a| Some(BotCommand::SetValue(a.join(" "))),
+    },
+    CommandSpec {
+        names: &["speak"],
+        parse: |_, a| Some(BotCommand::Speak(a.join(" "))),
+    },
+    CommandSpec {
+        names: &["warning"],
+        parse: |_, _| Some(BotCommand::Flee),
+    }, // warning = flee
+    CommandSpec {
+        names: &["runaway"],
+        parse: |_, _| Some(BotCommand::Flee),
+    }, // alias
+    CommandSpec {
+        names: &["quest reward", "reward"],
+        parse: |_, _| Some(BotCommand::QuestReward),
+    },
+    CommandSpec {
+        names: &["lfg"],
+        parse: |_, _| Some(BotCommand::Lfg),
+    },
+    CommandSpec {
+        names: &["set mt", "set maintank"],
+        parse: |_, _| Some(BotCommand::SetMainTank),
+    },
+    CommandSpec {
+        names: &["set ot", "set offtank"],
+        parse: |_, _| Some(BotCommand::SetOffTank),
+    },
+    CommandSpec {
+        names: &["unset mt", "unset ot", "unset tank"],
+        parse: |_, _| Some(BotCommand::UnsetTank),
+    },
+    CommandSpec {
+        names: &["assist"],
+        parse: |_, a| {
+            if a.is_empty() {
+                Some(BotCommand::SetMainAssist(None))
+            } else {
+                Some(BotCommand::SetMainAssistByName(a.join(" ")))
+            }
+        },
+    },
+    CommandSpec {
+        names: &["tank"],
+        parse: |_, a| {
+            // "tank skull" or "tank 8" — assign tank focus target.
+            if a.is_empty() {
+                return Some(BotCommand::Unknown("tank: need target icon".into()));
+            }
+            let icon = match parse_rti(a[0]) {
+                Some(i) => i,
+                None => {
+                    return Some(BotCommand::Unknown(format!(
+                        "tank: unknown icon '{}'",
+                        a[0]
+                    )));
+                }
+            };
+            Some(BotCommand::AssignTankTarget(icon))
+        },
+    },
+    CommandSpec {
+        names: &["untank"],
+        parse: |_, a| {
+            if a.is_empty() {
+                Some(BotCommand::UnassignTankTarget(None))
+            } else {
+                let icon = parse_rti(a[0]);
+                Some(BotCommand::UnassignTankTarget(icon))
+            }
+        },
+    },
+    CommandSpec {
+        names: &["monitor"],
+        parse: |_, a| {
+            match a.first().map(|s| &**s) {
+                Some("on" | "1" | "true") => Some(BotCommand::SetMonitor(true)),
+                Some("off" | "0" | "false") => Some(BotCommand::SetMonitor(false)),
+                _ => Some(BotCommand::SetMonitor(true)), // bare "monitor" toggles on
+            }
+        },
+    },
+    // -- enable/disable: apply a strategy flag to both Combat and NonCombat --
+    CommandSpec {
+        names: &["enable"],
+        parse: |_, a| {
+            let name = a.join(" ");
+            let none = StrategyFlags::NONE;
+            match StrategyFlags::parse_name(&name) {
+                Some(flag) => Some(BotCommand::Batch(vec![
+                    BotCommand::ApplyStrategies {
+                        state: BotStateKind::Combat,
+                        add: flag,
+                        remove: none,
+                        toggle: none,
+                        query: false,
+                    },
+                    BotCommand::ApplyStrategies {
+                        state: BotStateKind::NonCombat,
+                        add: flag,
+                        remove: none,
+                        toggle: none,
+                        query: false,
+                    },
+                ])),
+                None => Some(BotCommand::Unknown(format!("enable {name}"))),
+            }
+        },
+    },
+    CommandSpec {
+        names: &["disable"],
+        parse: |_, a| {
+            let name = a.join(" ");
+            let none = StrategyFlags::NONE;
+            match StrategyFlags::parse_name(&name) {
+                Some(flag) => Some(BotCommand::Batch(vec![
+                    BotCommand::ApplyStrategies {
+                        state: BotStateKind::Combat,
+                        add: none,
+                        remove: flag,
+                        toggle: none,
+                        query: false,
+                    },
+                    BotCommand::ApplyStrategies {
+                        state: BotStateKind::NonCombat,
+                        add: none,
+                        remove: flag,
+                        toggle: none,
+                        query: false,
+                    },
+                ])),
+                None => Some(BotCommand::Unknown(format!("disable {name}"))),
+            }
+        },
+    },
+    // -- preset: apply a named strategy profile --
+    CommandSpec {
+        names: &["preset"],
+        parse: |_, a| Some(BotCommand::Preset(a.join(" "))),
+    },
+    // -- addon subscriptions --
+    CommandSpec {
+        names: &["subscribe", "sub"],
+        parse: |_, a| {
+            if a.is_empty() {
+                Some(BotCommand::Subscribe("all".to_string()))
+            } else {
+                Some(BotCommand::Subscribe(a[0].to_string()))
+            }
+        },
+    },
+    CommandSpec {
+        names: &["unsubscribe", "unsub"],
+        parse: |_, a| {
+            if a.is_empty() {
+                Some(BotCommand::Unsubscribe(None))
+            } else {
+                Some(BotCommand::Unsubscribe(Some(a[0].to_string())))
+            }
+        },
+    },
 ];
 
 /// Parse a chat message into a `BotCommand`.
@@ -364,7 +878,10 @@ fn parse_combat_order(args: &[&str]) -> Option<BotCommand> {
             Some(b'+') => (1i8, &tok[1..]),
             Some(b'-') => (-1i8, &tok[1..]),
             Some(b'~') => (0i8, &tok[1..]),
-            _ => { i += 1; continue; }
+            _ => {
+                i += 1;
+                continue;
+            }
         };
         if first_word.is_empty() {
             i += 1;
@@ -373,17 +890,25 @@ fn parse_combat_order(args: &[&str]) -> Option<BotCommand> {
         // Greedy multi-word match: try 3-word, 2-word, 1-word.
         let mut matched = false;
         for window_len in (1..=3).rev() {
-            if i + window_len > tokens.len() { continue; }
+            if i + window_len > tokens.len() {
+                continue;
+            }
             let mut name_parts = vec![first_word];
             for j in 1..window_len {
                 let next = tokens[i + j];
                 // Stop if the next token starts a new signed flag or is a query marker.
-                if next.starts_with('+') || next.starts_with('-') || next.starts_with('~') || next == "?" {
+                if next.starts_with('+')
+                    || next.starts_with('-')
+                    || next.starts_with('~')
+                    || next == "?"
+                {
                     break;
                 }
                 name_parts.push(next);
             }
-            if name_parts.len() < window_len { continue; }
+            if name_parts.len() < window_len {
+                continue;
+            }
             let candidate = name_parts.join(" ");
             if let Some(flag) = StrategyFlags::parse_name(&candidate) {
                 match sign {
@@ -518,7 +1043,11 @@ fn parse_loot_policy(args: &[&str]) -> Option<BotCommand> {
                 }
             }
         }
-        Some(BotCommand::ApplyLootPolicy { add, remove, toggle })
+        Some(BotCommand::ApplyLootPolicy {
+            add,
+            remove,
+            toggle,
+        })
     }
 }
 
@@ -528,9 +1057,7 @@ fn parse_save(args: &[&str]) -> Option<BotCommand> {
         Some("mana") => match args.get(1).copied() {
             None => Some(BotCommand::ToggleSaveMana),
             Some("?") => Some(BotCommand::QuerySaveMana),
-            Some("on") | Some("yes") | Some("true") => {
-                Some(BotCommand::SetSaveMana(1))
-            }
+            Some("on") | Some("yes") | Some("true") => Some(BotCommand::SetSaveMana(1)),
             Some("off") | Some("0") | Some("no") | Some("false") => {
                 Some(BotCommand::SetSaveMana(0))
             }
@@ -606,8 +1133,7 @@ fn parse_rtsc(args: &[&str]) -> Option<BotCommand> {
         Some("show") => Some(BotCommand::RtscShow),
         Some("file") => parse_rtsc_file(&args[1..]),
         _ => Some(BotCommand::Unknown(
-            "rtsc: select/cancel/toggle/reset/move/save/unsave/go/show/last/jump/file"
-                .into(),
+            "rtsc: select/cancel/toggle/reset/move/save/unsave/go/show/last/jump/file".into(),
         )),
     }
 }
@@ -644,9 +1170,7 @@ fn parse_rtsc_file(args: &[&str]) -> Option<BotCommand> {
             name_glob,
             bot_glob,
         }),
-        _ => Some(BotCommand::Unknown(
-            "rtsc file: expected save|load".into(),
-        )),
+        _ => Some(BotCommand::Unknown("rtsc file: expected save|load".into())),
     }
 }
 
@@ -658,9 +1182,10 @@ fn parse_rti(token: &str) -> Option<u8> {
         return rest.parse::<u8>().ok().filter(|&n| (1..=8).contains(&n));
     }
     if let Ok(n) = token.parse::<u8>()
-        && (1..=8).contains(&n) {
-            return Some(n);
-        }
+        && (1..=8).contains(&n)
+    {
+        return Some(n);
+    }
     Some(match token {
         "star" => 1,
         "circle" => 2,
@@ -703,23 +1228,6 @@ fn parse_pull(args: &[&str]) -> Option<BotCommand> {
         }
         // Bare `pull` — pull master's current target.
         None => Some(BotCommand::Pull(None)),
-    }
-}
-
-fn parse_cc(args: &[&str]) -> Option<BotCommand> {
-    match args.first().copied() {
-        Some(first) => {
-            // RaidControl sends bare `cc rti` — implicit skull, same as
-            // `attack rti`.
-            if first == "rti" {
-                return Some(BotCommand::CcRti(8));
-            }
-            if let Some(icon) = parse_rti(first) {
-                return Some(BotCommand::CcRti(icon));
-            }
-            Some(BotCommand::Unknown(format!("cc: unknown target `{first}`")))
-        }
-        None => Some(BotCommand::Unknown("cc: need raid target".into())),
     }
 }
 
@@ -782,7 +1290,13 @@ fn parse_strategies(args: &[&str], state: BotStateKind) -> Option<BotCommand> {
         }
     }
 
-    let strat_cmd = BotCommand::ApplyStrategies { state, add, remove, toggle, query };
+    let strat_cmd = BotCommand::ApplyStrategies {
+        state,
+        add,
+        remove,
+        toggle,
+        query,
+    };
     if side_effects.is_empty() {
         Some(strat_cmd)
     } else {
@@ -945,9 +1459,7 @@ fn parse_stance(args: &[&str]) -> Option<BotCommand> {
         "defensive" | "def" | "2" => 2,
         "berserker" | "zerk" | "3" => 3,
         _ => {
-            return Some(BotCommand::Unknown(format!(
-                "stance: unknown `{first}`"
-            )));
+            return Some(BotCommand::Unknown(format!("stance: unknown `{first}`")));
         }
     };
     Some(BotCommand::SetStance(st))
@@ -1280,7 +1792,9 @@ fn parse_forcestance(args: &[&str]) -> Option<BotCommand> {
 ///   2. Emit the class-pref command alongside the `ApplyStrategies`.
 ///
 /// Returns `None` when the name doesn't match any class-pref pattern.
-pub(super) fn try_parse_class_pref_strategy(name: &str) -> Option<(StrategyFlags, Option<BotCommand>)> {
+pub(super) fn try_parse_class_pref_strategy(
+    name: &str,
+) -> Option<(StrategyFlags, Option<BotCommand>)> {
     let words: Vec<&str> = name.split_whitespace().collect();
     if words.is_empty() {
         return None;
@@ -1291,50 +1805,74 @@ pub(super) fn try_parse_class_pref_strategy(name: &str) -> Option<(StrategyFlags
         "poison" if words.len() == 3 => {
             let hand = WeaponHand::from_token(words[1])?;
             let kind = PoisonKind::from_token(words[2]);
-            Some((StrategyFlags::POISONS, Some(BotCommand::SetPoison { hand, kind })))
+            Some((
+                StrategyFlags::POISONS,
+                Some(BotCommand::SetPoison { hand, kind }),
+            ))
         }
 
         // `totem earth strength` → TOTEMS + SetTotem { Earth, StrengthOfEarth }
         "totem" if words.len() == 3 => {
             let slot = TotemSlot::from_token(words[1])?;
             let role = TotemRole::from_token(words[2]);
-            Some((StrategyFlags::TOTEMS, Some(BotCommand::SetTotem { slot, role })))
+            Some((
+                StrategyFlags::TOTEMS,
+                Some(BotCommand::SetTotem { slot, role }),
+            ))
         }
 
         // `curse agony` → CURSE + SetWarlockCurse(Agony)
         "curse" if words.len() == 2 => {
             let curse = WarlockCurse::from_token(words[1])?;
-            Some((StrategyFlags::CURSE, Some(BotCommand::SetWarlockCurse(Some(curse)))))
+            Some((
+                StrategyFlags::CURSE,
+                Some(BotCommand::SetWarlockCurse(Some(curse))),
+            ))
         }
 
         // `aura devotion` → AURA + SetPaladinAura(Devotion)
         "aura" if words.len() == 2 => {
             let aura = PaladinAura::from_token(words[1])?;
-            Some((StrategyFlags::AURA, Some(BotCommand::SetPaladinAura(Some(aura)))))
+            Some((
+                StrategyFlags::AURA,
+                Some(BotCommand::SetPaladinAura(Some(aura))),
+            ))
         }
 
         // `blessing might` → BLESSING + SetPaladinBlessing(Might)
         "blessing" if words.len() == 2 => {
             let bless = PaladinBlessing::from_token(words[1])?;
-            Some((StrategyFlags::BLESSING, Some(BotCommand::SetPaladinBlessing(Some(bless)))))
+            Some((
+                StrategyFlags::BLESSING,
+                Some(BotCommand::SetPaladinBlessing(Some(bless))),
+            ))
         }
 
         // `aspect hawk` → ASPECT + SetHunterAspect(Hawk)
         "aspect" if words.len() == 2 => {
             let aspect = HunterAspect::from_token(words[1])?;
-            Some((StrategyFlags::ASPECT, Some(BotCommand::SetHunterAspect(Some(aspect)))))
+            Some((
+                StrategyFlags::ASPECT,
+                Some(BotCommand::SetHunterAspect(Some(aspect))),
+            ))
         }
 
         // `sting serpent` → STING + SetHunterSting(Serpent)
         "sting" if words.len() == 2 => {
             let sting = HunterSting::from_token(words[1])?;
-            Some((StrategyFlags::STING, Some(BotCommand::SetHunterSting(Some(sting)))))
+            Some((
+                StrategyFlags::STING,
+                Some(BotCommand::SetHunterSting(Some(sting))),
+            ))
         }
 
         // `pet imp` → PET + SetWarlockPet(Imp)
         "pet" if words.len() == 2 => {
             let pet = WarlockPet::from_token(words[1])?;
-            Some((StrategyFlags::PET, Some(BotCommand::SetWarlockPet(Some(pet)))))
+            Some((
+                StrategyFlags::PET,
+                Some(BotCommand::SetWarlockPet(Some(pet))),
+            ))
         }
 
         _ => None,
@@ -1394,7 +1932,8 @@ mod tests {
         assert_eq!(
             parse("co +tank"),
             Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat, query: false,
+                state: BotStateKind::Combat,
+                query: false,
                 add: F::TANK,
                 remove: F::NONE,
                 toggle: F::NONE,
@@ -1404,7 +1943,8 @@ mod tests {
         assert_eq!(
             parse("co -threat"),
             Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat, query: false,
+                state: BotStateKind::Combat,
+                query: false,
                 add: F::NONE,
                 remove: F::THREAT,
                 toggle: F::NONE,
@@ -1414,7 +1954,8 @@ mod tests {
         assert_eq!(
             parse("co +tank assist"),
             Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat, query: false,
+                state: BotStateKind::Combat,
+                query: false,
                 add: F::TANK_ASSIST,
                 remove: F::NONE,
                 toggle: F::NONE,
@@ -1424,7 +1965,8 @@ mod tests {
         assert_eq!(
             parse("co -tank assist,+dps assist"),
             Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat, query: false,
+                state: BotStateKind::Combat,
+                query: false,
                 add: F::DPS_ASSIST,
                 remove: F::TANK_ASSIST,
                 toggle: F::NONE,
@@ -1434,7 +1976,8 @@ mod tests {
         assert_eq!(
             parse("co -threat -dps assist -close +tank assist"),
             Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat, query: false,
+                state: BotStateKind::Combat,
+                query: false,
                 add: F::TANK_ASSIST,
                 remove: F::THREAT | F::DPS_ASSIST | F::CLOSE,
                 toggle: F::NONE,
@@ -1444,7 +1987,8 @@ mod tests {
         assert_eq!(
             parse("co -pull back"),
             Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat, query: false,
+                state: BotStateKind::Combat,
+                query: false,
                 add: F::NONE,
                 remove: F::PULL_BACK,
                 toggle: F::NONE,
@@ -1530,10 +2074,7 @@ mod tests {
         assert_eq!(parse("rtsc reset"), Some(BotCommand::RtscReset));
         assert_eq!(parse("rtsc last"), Some(BotCommand::RtscLast));
         assert_eq!(parse("rtsc jump"), Some(BotCommand::RtscJump));
-        assert_eq!(
-            parse("rtsc jump reset"),
-            Some(BotCommand::RtscJumpReset)
-        );
+        assert_eq!(parse("rtsc jump reset"), Some(BotCommand::RtscJumpReset));
     }
 
     #[test]
@@ -1735,7 +2276,10 @@ mod tests {
             }),
         );
         // Unknown spell names fall through to CastByName for FFI resolution
-        assert!(matches!(parse("cast xyzzy"), Some(BotCommand::CastByName { .. })));
+        assert!(matches!(
+            parse("cast xyzzy"),
+            Some(BotCommand::CastByName { .. })
+        ));
         assert!(matches!(parse("cast"), Some(BotCommand::Unknown(_))));
     }
 
@@ -1797,7 +2341,10 @@ mod tests {
         assert_eq!(parse("stance battle"), Some(BotCommand::SetStance(1)));
         assert_eq!(parse("stance 3"), Some(BotCommand::SetStance(3)));
         assert_eq!(parse("stance def"), Some(BotCommand::SetStance(2)));
-        assert!(matches!(parse("stance bogus"), Some(BotCommand::Unknown(_))));
+        assert!(matches!(
+            parse("stance bogus"),
+            Some(BotCommand::Unknown(_))
+        ));
 
         // Positioning stances (Mangosbot addon toolbar).
         assert_eq!(
@@ -1826,7 +2373,10 @@ mod tests {
         assert_eq!(parse("cheat 7"), Some(BotCommand::SetCheatFlags(7)));
         assert_eq!(parse("cheat off"), Some(BotCommand::SetCheatFlags(0)));
 
-        assert_eq!(parse("keep 12345"), Some(BotCommand::KeepItem(ItemId(12345))));
+        assert_eq!(
+            parse("keep 12345"),
+            Some(BotCommand::KeepItem(ItemId(12345)))
+        );
         assert_eq!(
             parse("unkeep 12345"),
             Some(BotCommand::UnkeepItem(ItemId(12345))),
@@ -1834,14 +2384,23 @@ mod tests {
 
         assert_eq!(
             parse("chat party"),
-            Some(BotCommand::SetChatChannel { channel: ChatChannel::Party, on: true }),
+            Some(BotCommand::SetChatChannel {
+                channel: ChatChannel::Party,
+                on: true
+            }),
         );
         assert_eq!(
             parse("chat guild off"),
-            Some(BotCommand::SetChatChannel { channel: ChatChannel::Guild, on: false }),
+            Some(BotCommand::SetChatChannel {
+                channel: ChatChannel::Guild,
+                on: false
+            }),
         );
 
-        assert_eq!(parse("rti skull"), Some(BotCommand::SetPreferredRti(Some(8))));
+        assert_eq!(
+            parse("rti skull"),
+            Some(BotCommand::SetPreferredRti(Some(8)))
+        );
         assert_eq!(parse("rti 3"), Some(BotCommand::SetPreferredRti(Some(3))));
         assert_eq!(parse("rti clear"), Some(BotCommand::SetPreferredRti(None)));
         assert_eq!(parse("rti"), Some(BotCommand::SetPreferredRti(None)));
@@ -1891,7 +2450,10 @@ mod tests {
         // addon's probe loop sees a valid response.
         assert_eq!(parse("formation ?"), Some(BotCommand::QueryFormation));
         assert_eq!(parse("stance ?"), Some(BotCommand::QueryStance));
-        assert_eq!(parse("co ?"), Some(BotCommand::QueryStrategies(BotStateKind::Combat)));
+        assert_eq!(
+            parse("co ?"),
+            Some(BotCommand::QueryStrategies(BotStateKind::Combat))
+        );
         assert_eq!(
             parse("nc ?"),
             Some(BotCommand::QueryStrategies(BotStateKind::NonCombat))
@@ -1957,7 +2519,8 @@ mod tests {
         assert_eq!(
             parse("co +boost"),
             Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat, query: false,
+                state: BotStateKind::Combat,
+                query: false,
                 add: F::BOOST,
                 remove: F::NONE,
                 toggle: F::NONE,
@@ -1967,7 +2530,8 @@ mod tests {
         assert_eq!(
             parse("co +i"),
             Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat, query: false,
+                state: BotStateKind::Combat,
+                query: false,
                 add: F::BOOST,
                 remove: F::NONE,
                 toggle: F::NONE,
@@ -1986,5 +2550,153 @@ mod tests {
         assert_eq!(parse("reset"), Some(BotCommand::Reset));
         assert_eq!(parse("mount"), Some(BotCommand::Mount));
         assert_eq!(parse("rez"), Some(BotCommand::Resurrect));
+    }
+
+    #[test]
+    fn debug_sub_commands() {
+        assert_eq!(parse("debug"), Some(BotCommand::Debug));
+        assert_eq!(parse("debug fsm"), Some(BotCommand::DebugFsm));
+        assert_eq!(parse("debug claims"), Some(BotCommand::DebugClaims));
+        assert_eq!(parse("debug claim"), Some(BotCommand::DebugClaims));
+        assert_eq!(parse("debug coord"), Some(BotCommand::DebugCoord));
+        assert_eq!(parse("debug coordination"), Some(BotCommand::DebugCoord));
+        assert_eq!(parse("debug group"), Some(BotCommand::DebugCoord));
+        // Unknown sub-command falls back to generic debug.
+        assert_eq!(parse("debug blah"), Some(BotCommand::Debug));
+    }
+
+    #[test]
+    fn group_coordination_commands() {
+        assert_eq!(parse("set mt"), Some(BotCommand::SetMainTank));
+        assert_eq!(parse("set maintank"), Some(BotCommand::SetMainTank));
+        assert_eq!(parse("set ot"), Some(BotCommand::SetOffTank));
+        assert_eq!(parse("set offtank"), Some(BotCommand::SetOffTank));
+        assert_eq!(parse("unset mt"), Some(BotCommand::UnsetTank));
+        assert_eq!(parse("unset ot"), Some(BotCommand::UnsetTank));
+        assert_eq!(parse("unset tank"), Some(BotCommand::UnsetTank));
+        assert_eq!(parse("assist"), Some(BotCommand::SetMainAssist(None)));
+    }
+
+    #[test]
+    fn cc_assign_commands() {
+        // cc with icon name
+        assert_eq!(
+            parse("cc skull"),
+            Some(BotCommand::AssignCc {
+                icon: 8,
+                spell: None
+            })
+        );
+        assert_eq!(
+            parse("cc moon"),
+            Some(BotCommand::AssignCc {
+                icon: 5,
+                spell: None
+            })
+        );
+        // cc with numeric icon
+        assert_eq!(
+            parse("cc 3"),
+            Some(BotCommand::AssignCc {
+                icon: 3,
+                spell: None
+            })
+        );
+        // cc with no args → error
+        assert_eq!(
+            parse("cc"),
+            Some(BotCommand::Unknown("cc: need target icon".into()))
+        );
+        // cc with unknown icon → error
+        assert!(matches!(parse("cc banana"), Some(BotCommand::Unknown(_))));
+    }
+
+    #[test]
+    fn uncc_commands() {
+        // bare uncc → clear all
+        assert_eq!(parse("uncc"), Some(BotCommand::UnassignCc(None)));
+        // uncc with icon → clear specific
+        assert_eq!(parse("uncc skull"), Some(BotCommand::UnassignCc(Some(8))));
+        assert_eq!(parse("uncc 5"), Some(BotCommand::UnassignCc(Some(5))));
+        // uncc with unknown → None icon
+        assert_eq!(parse("uncc banana"), Some(BotCommand::UnassignCc(None)));
+    }
+
+    #[test]
+    fn tank_target_commands() {
+        // tank with icon name
+        assert_eq!(parse("tank skull"), Some(BotCommand::AssignTankTarget(8)));
+        assert_eq!(parse("tank star"), Some(BotCommand::AssignTankTarget(1)));
+        // tank with numeric icon
+        assert_eq!(parse("tank 7"), Some(BotCommand::AssignTankTarget(7)));
+        // tank with no args → error
+        assert_eq!(
+            parse("tank"),
+            Some(BotCommand::Unknown("tank: need target icon".into()))
+        );
+        // tank with unknown icon → error
+        assert!(matches!(parse("tank banana"), Some(BotCommand::Unknown(_))));
+    }
+
+    #[test]
+    fn untank_commands() {
+        // bare untank → clear all
+        assert_eq!(parse("untank"), Some(BotCommand::UnassignTankTarget(None)));
+        // untank with icon → clear specific
+        assert_eq!(
+            parse("untank skull"),
+            Some(BotCommand::UnassignTankTarget(Some(8)))
+        );
+        assert_eq!(
+            parse("untank 3"),
+            Some(BotCommand::UnassignTankTarget(Some(3)))
+        );
+        // untank with unknown → None icon
+        assert_eq!(
+            parse("untank banana"),
+            Some(BotCommand::UnassignTankTarget(None))
+        );
+    }
+
+    #[test]
+    fn monitor_command() {
+        assert_eq!(parse("monitor on"), Some(BotCommand::SetMonitor(true)));
+        assert_eq!(parse("monitor off"), Some(BotCommand::SetMonitor(false)));
+        assert_eq!(parse("monitor 1"), Some(BotCommand::SetMonitor(true)));
+        assert_eq!(parse("monitor 0"), Some(BotCommand::SetMonitor(false)));
+        assert_eq!(parse("monitor"), Some(BotCommand::SetMonitor(true)));
+    }
+
+    #[test]
+    fn enable_disable_commands() {
+        // "enable aoe" should parse to a Batch of two ApplyStrategies
+        let cmd = parse("enable aoe").unwrap();
+        assert!(matches!(cmd, BotCommand::Batch(_)));
+        let cmd = parse("disable aoe").unwrap();
+        assert!(matches!(cmd, BotCommand::Batch(_)));
+        // Unknown flag
+        let cmd = parse("enable nonexistent").unwrap();
+        assert!(matches!(cmd, BotCommand::Unknown(_)));
+    }
+
+    #[test]
+    fn preset_command() {
+        assert_eq!(
+            parse("preset boss"),
+            Some(BotCommand::Preset("boss".to_string()))
+        );
+        assert_eq!(
+            parse("preset raid-clear"),
+            Some(BotCommand::Preset("raid-clear".to_string()))
+        );
+    }
+
+    #[test]
+    fn assist_with_name() {
+        assert_eq!(parse("assist"), Some(BotCommand::SetMainAssist(None)));
+        assert_eq!(
+            parse("assist playerone"),
+            Some(BotCommand::SetMainAssistByName("playerone".to_string()))
+        );
     }
 }

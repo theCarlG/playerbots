@@ -81,7 +81,9 @@ mod tests {
         let mut fsm = GrobbolusFsm::new();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
 
-        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).expect("should have BT when active");
+        let bt = fsm
+            .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+            .expect("should have BT when active");
         let iface = TestInterface::new()
             .with_aura(AURA_MUTATING_INJECTION)
             .with_safe_pos();
@@ -96,7 +98,9 @@ mod tests {
         let mut fsm = GrobbolusFsm::new();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
 
-        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).expect("should have BT when active");
+        let bt = fsm
+            .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+            .expect("should have BT when active");
         let iface = TestInterface::new();
         let mut owned = TestCtxOwned::new();
         let mut ctx =

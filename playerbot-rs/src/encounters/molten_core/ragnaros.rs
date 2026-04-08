@@ -5,8 +5,8 @@
 ///   Submerged (75%/50%/25%): kill 8 Sons of Flame.
 ///   Phase 2 (< 25%): same as Ground, adds spawn continuously.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
 use crate::Seq;
+use crate::encounters::bt::Bt::{self, *};
 use crate::ffi::SpellId;
 
 pub const ENTRY_SON_OF_FLAME: u32 = 12143;
@@ -164,7 +164,9 @@ mod tests {
         let mut fsm = RagnarosFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
         fsm.update(&EncounterEvent::None, 0.74, 0);
-        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).unwrap();
+        let bt = fsm
+            .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+            .unwrap();
         let iface = TestInterface::new();
         let mut owned = TestCtxOwned::new();
         owned.attackers = vec![42];
@@ -175,6 +177,10 @@ mod tests {
 
     #[test]
     fn no_bt_when_idle() {
-        assert!(RagnarosFsm::default().phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).is_none());
+        assert!(
+            RagnarosFsm::default()
+                .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+                .is_none()
+        );
     }
 }

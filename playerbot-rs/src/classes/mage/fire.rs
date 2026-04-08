@@ -1,14 +1,18 @@
+use crate::{Sel, Seq};
 /// Fire Mage behavior tree (Classic / Vanilla).
 ///
 /// Priority: Ice Block → Evocation → Counterspell → Fire Blast execute →
 ///   Scorch (build Fire Vulnerability stacks) → Fireball
 use crate::{
     data::spells::vanilla::mage::*,
-    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::bt::{
+        Bt::{self, *},
+        Op::*,
+        Resource::*,
+    },
     engine::macro_fsm::ActiveFsm,
     ffi::SpellId,
 };
-use crate::{Seq, Sel};
 
 // Improved Scorch stacks: aura 22959, max 5 stacks.
 const FIRE_VULNERABILITY: SpellId = SpellId(22959);

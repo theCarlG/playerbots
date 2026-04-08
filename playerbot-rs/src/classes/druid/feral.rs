@@ -1,3 +1,4 @@
+use crate::{Sel, Seq};
 /// Feral Druid behavior tree (Classic / Vanilla).
 ///
 /// Handles both Bear (tank) and Cat (DPS) based on role.
@@ -7,12 +8,15 @@ use crate::{
     data::spells::vanilla::druid::*,
     engine::{
         aura_helpers::{DEMO_ROAR_RANKS, FAERIE_FIRE_RANKS, RAKE_RANKS, RIP_RANKS},
-        bt::{Bt::{self, *}, Op::*, Resource::*},
+        bt::{
+            Bt::{self, *},
+            Op::*,
+            Resource::*,
+        },
         macro_fsm::ActiveFsm,
     },
     ffi::SpellId,
 };
-use crate::{Seq, Sel};
 
 const GROWL: SpellId = SpellId(6795);
 const FRENZIED_REGENERATION: SpellId = SpellId(22842);
@@ -45,7 +49,10 @@ fn bear_tree() -> Bt {
         Seq!(
             InCombat,
             Sel!(
-                Seq!(Cmp(SelfHealthPct, Below(30)), CastOnSelf(FRENZIED_REGENERATION)),
+                Seq!(
+                    Cmp(SelfHealthPct, Below(30)),
+                    CastOnSelf(FRENZIED_REGENERATION)
+                ),
                 CastOnTarget(GROWL),
                 Seq!(
                     Bt::target_missing_any_rank(FAERIE_FIRE_RANKS),

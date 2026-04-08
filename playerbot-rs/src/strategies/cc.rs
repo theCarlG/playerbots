@@ -1,7 +1,7 @@
-use crate::{Sel, Seq};
 use crate::bot::settings::StrategyFlags;
 use crate::engine::bt::Bt;
 use crate::ffi::SpellId;
+use crate::{Sel, Seq};
 
 /// CC strategy — crowd-control nearby enemies using the bot's CC spell.
 ///
@@ -19,10 +19,7 @@ pub fn build(cc_spell: SpellId) -> Bt {
         Bt::StrategyEnabled(StrategyFlags::CC),
         Bt::throttle(
             2_000,
-            Sel!(
-                Bt::CcCastOnRti(cc_spell),
-                Bt::CcCastOnNearest(cc_spell),
-            ),
+            Sel!(Bt::CcCastOnRti(cc_spell), Bt::CcCastOnNearest(cc_spell),),
         ),
     )
 }

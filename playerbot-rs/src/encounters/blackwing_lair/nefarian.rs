@@ -22,8 +22,8 @@
 ///   - Air/Final: normal rotation (no class calls during transition).
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::encounters::bt::Bt::{self, *};
-use crate::{Seq, Sel};
 use crate::ffi::SpellId;
+use crate::{Sel, Seq};
 
 // ── Class Call spell IDs (auras applied to affected class) ───────────────
 
@@ -150,7 +150,9 @@ mod tests {
         let mut fsm = NefarianFsm::new();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
 
-        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).expect("ground phase should have BT");
+        let bt = fsm
+            .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+            .expect("ground phase should have BT");
         let iface = TestInterface::new().with_aura(PRIEST_CALL);
         let mut owned = TestCtxOwned::new();
         let mut ctx =
@@ -163,7 +165,9 @@ mod tests {
         let mut fsm = NefarianFsm::new();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
 
-        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).expect("ground phase should have BT");
+        let bt = fsm
+            .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+            .expect("ground phase should have BT");
         let iface = TestInterface::new().with_aura(MAGE_CALL).with_safe_pos();
         let mut owned = TestCtxOwned::new();
         let mut ctx = make_encounter_ctx(&mut owned, &iface, &fsm, PlayerClass::Mage, BotRole::DPS);
@@ -175,7 +179,9 @@ mod tests {
         let mut fsm = NefarianFsm::new();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
 
-        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).expect("ground phase should have BT");
+        let bt = fsm
+            .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+            .expect("ground phase should have BT");
         let iface = TestInterface::new();
         let mut owned = TestCtxOwned::new();
         let mut ctx =
@@ -187,6 +193,9 @@ mod tests {
     fn no_bt_during_air_phase() {
         let mut fsm = NefarianFsm::new();
         fsm.phase = NefPhase::Air;
-        assert!(fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).is_none());
+        assert!(
+            fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+                .is_none()
+        );
     }
 }

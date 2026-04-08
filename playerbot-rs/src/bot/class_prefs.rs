@@ -899,49 +899,102 @@ impl ClassPrefs {
                     S::WarlockAffliction => Some(WarlockPet::Felhunter),
                     _ => Some(WarlockPet::Imp),
                 };
-                Self::Warlock(WarlockPrefs { curse: Some(curse), pet })
+                Self::Warlock(WarlockPrefs {
+                    curse: Some(curse),
+                    pet,
+                })
             }
-            PlayerClass::Warrior => Self::Warrior(WarriorPrefs { forced_stance: None }),
+            PlayerClass::Warrior => Self::Warrior(WarriorPrefs {
+                forced_stance: None,
+            }),
             _ => Self::None,
         }
     }
 
     pub fn as_rogue(&self) -> Option<&RoguePrefs> {
-        if let Self::Rogue(r) = self { Some(r) } else { None }
+        if let Self::Rogue(r) = self {
+            Some(r)
+        } else {
+            None
+        }
     }
     pub fn as_shaman(&self) -> Option<&ShamanPrefs> {
-        if let Self::Shaman(s) = self { Some(s) } else { None }
+        if let Self::Shaman(s) = self {
+            Some(s)
+        } else {
+            None
+        }
     }
     pub fn as_paladin(&self) -> Option<&PaladinPrefs> {
-        if let Self::Paladin(p) = self { Some(p) } else { None }
+        if let Self::Paladin(p) = self {
+            Some(p)
+        } else {
+            None
+        }
     }
     pub fn as_hunter(&self) -> Option<&HunterPrefs> {
-        if let Self::Hunter(h) = self { Some(h) } else { None }
+        if let Self::Hunter(h) = self {
+            Some(h)
+        } else {
+            None
+        }
     }
     pub fn as_warlock(&self) -> Option<&WarlockPrefs> {
-        if let Self::Warlock(w) = self { Some(w) } else { None }
+        if let Self::Warlock(w) = self {
+            Some(w)
+        } else {
+            None
+        }
     }
     pub fn as_warrior(&self) -> Option<&WarriorPrefs> {
-        if let Self::Warrior(w) = self { Some(w) } else { None }
+        if let Self::Warrior(w) = self {
+            Some(w)
+        } else {
+            None
+        }
     }
 
     pub fn as_rogue_mut(&mut self) -> Option<&mut RoguePrefs> {
-        if let Self::Rogue(r) = self { Some(r) } else { None }
+        if let Self::Rogue(r) = self {
+            Some(r)
+        } else {
+            None
+        }
     }
     pub fn as_shaman_mut(&mut self) -> Option<&mut ShamanPrefs> {
-        if let Self::Shaman(s) = self { Some(s) } else { None }
+        if let Self::Shaman(s) = self {
+            Some(s)
+        } else {
+            None
+        }
     }
     pub fn as_paladin_mut(&mut self) -> Option<&mut PaladinPrefs> {
-        if let Self::Paladin(p) = self { Some(p) } else { None }
+        if let Self::Paladin(p) = self {
+            Some(p)
+        } else {
+            None
+        }
     }
     pub fn as_hunter_mut(&mut self) -> Option<&mut HunterPrefs> {
-        if let Self::Hunter(h) = self { Some(h) } else { None }
+        if let Self::Hunter(h) = self {
+            Some(h)
+        } else {
+            None
+        }
     }
     pub fn as_warlock_mut(&mut self) -> Option<&mut WarlockPrefs> {
-        if let Self::Warlock(w) = self { Some(w) } else { None }
+        if let Self::Warlock(w) = self {
+            Some(w)
+        } else {
+            None
+        }
     }
     pub fn as_warrior_mut(&mut self) -> Option<&mut WarriorPrefs> {
-        if let Self::Warrior(w) = self { Some(w) } else { None }
+        if let Self::Warrior(w) = self {
+            Some(w)
+        } else {
+            None
+        }
     }
 }
 
@@ -1435,8 +1488,7 @@ mod tests {
 
     #[test]
     fn default_ret_paladin_gets_retribution_aura_and_might() {
-        let prefs =
-            ClassPrefs::default_for(PlayerClass::Paladin, PlayerSpec::PaladinRetribution);
+        let prefs = ClassPrefs::default_for(PlayerClass::Paladin, PlayerSpec::PaladinRetribution);
         let p = prefs.as_paladin().expect("paladin variant");
         assert_eq!(p.aura, Some(PaladinAura::Retribution));
         assert_eq!(p.blessing, Some(PaladinBlessing::Might));
@@ -1453,8 +1505,7 @@ mod tests {
 
     #[test]
     fn default_prot_paladin_gets_devotion_and_kings() {
-        let prefs =
-            ClassPrefs::default_for(PlayerClass::Paladin, PlayerSpec::PaladinProtection);
+        let prefs = ClassPrefs::default_for(PlayerClass::Paladin, PlayerSpec::PaladinProtection);
         let p = prefs.as_paladin().expect("paladin variant");
         assert_eq!(p.aura, Some(PaladinAura::Devotion));
         assert_eq!(p.blessing, Some(PaladinBlessing::Kings));
@@ -1462,8 +1513,7 @@ mod tests {
 
     #[test]
     fn default_hunter_gets_hawk_and_freezing_trap() {
-        let prefs =
-            ClassPrefs::default_for(PlayerClass::Hunter, PlayerSpec::HunterMarksmanship);
+        let prefs = ClassPrefs::default_for(PlayerClass::Hunter, PlayerSpec::HunterMarksmanship);
         let h = prefs.as_hunter().expect("hunter variant");
         assert_eq!(h.aspect, Some(HunterAspect::Hawk));
         assert_eq!(h.trap, Some(HunterTrap::Freezing));
@@ -1472,16 +1522,14 @@ mod tests {
 
     #[test]
     fn default_affliction_warlock_gets_curse_of_agony() {
-        let prefs =
-            ClassPrefs::default_for(PlayerClass::Warlock, PlayerSpec::WarlockAffliction);
+        let prefs = ClassPrefs::default_for(PlayerClass::Warlock, PlayerSpec::WarlockAffliction);
         let w = prefs.as_warlock().expect("warlock variant");
         assert_eq!(w.curse, Some(WarlockCurse::Agony));
     }
 
     #[test]
     fn default_destro_warlock_gets_curse_of_elements() {
-        let prefs =
-            ClassPrefs::default_for(PlayerClass::Warlock, PlayerSpec::WarlockDestruction);
+        let prefs = ClassPrefs::default_for(PlayerClass::Warlock, PlayerSpec::WarlockDestruction);
         let w = prefs.as_warlock().expect("warlock variant");
         assert_eq!(w.curse, Some(WarlockCurse::Elements));
     }

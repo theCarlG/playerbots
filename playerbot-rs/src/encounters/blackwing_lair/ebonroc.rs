@@ -5,8 +5,8 @@
 /// the raid must kick it on every attempt.
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::engine::bt::Bt::{self, *};
-use crate::{Sel, Seq};
 use crate::ffi::SpellId;
+use crate::{Sel, Seq};
 
 pub const SPELL_SHADOW_FLAME: SpellId = SpellId(22539);
 pub const SPELL_WING_BUFFET: SpellId = SpellId(23339);

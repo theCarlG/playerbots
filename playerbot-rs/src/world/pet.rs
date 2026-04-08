@@ -1,6 +1,6 @@
 /// Pet management — summon, revive, feed (Hunter/Warlock).
 use crate::engine::bt::Bt::{self, *};
-use crate::{Seq, Sel};
+use crate::{Sel, Seq};
 
 pub fn pet_subtree() -> Bt {
     Seq!(

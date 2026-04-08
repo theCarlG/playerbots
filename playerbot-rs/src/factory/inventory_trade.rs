@@ -41,7 +41,11 @@ pub fn init_inventory_trade(iface: &dyn BotInterface, level: u32) {
         ITEM_QUALITY_UNCOMMON => {
             // One partial stack of up to half the max stack size.
             let half = max_stack / 2;
-            let count = if half == 0 { 1 } else { iface.random_u32(1, half) };
+            let count = if half == 0 {
+                1
+            } else {
+                iface.random_u32(1, half)
+            };
             (count, 1)
         }
         // Other qualities (poor / rare / epic / ...) are not stocked.
@@ -214,7 +218,10 @@ mod tests {
 
     #[test]
     fn noop_when_no_trade_available() {
-        let m = MockIface { trade_id: 0, ..Default::default() };
+        let m = MockIface {
+            trade_id: 0,
+            ..Default::default()
+        };
         init_inventory_trade(&m, 40);
         assert!(m.adds.borrow().is_empty());
     }

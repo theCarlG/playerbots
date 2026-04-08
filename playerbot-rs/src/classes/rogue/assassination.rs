@@ -1,3 +1,4 @@
+use crate::{Sel, Seq};
 /// Assassination Rogue behavior tree (Classic / Vanilla).
 ///
 /// Priority: Vanish (emergency) → Kick interrupt → Slice and Dice upkeep →
@@ -12,7 +13,6 @@ use crate::{
     },
     engine::macro_fsm::ActiveFsm,
 };
-use crate::{Seq, Sel};
 
 pub fn build_tree(fsm: ActiveFsm) -> Bt {
     match fsm {
@@ -28,10 +28,7 @@ fn combat_tree() -> Bt {
         super::boost(),
         // 0. OUT-OF-COMBAT MAINTENANCE: keep weapon poisons applied.
         //    Throttled so we don't spam cast attempts on a failed apply.
-        Seq!(
-            InCombat.not(),
-            Bt::throttle(30_000, ApplyPoisons),
-        ),
+        Seq!(InCombat.not(), Bt::throttle(30_000, ApplyPoisons),),
         // 1. UTILITY & POSITIONING (Highest Priority)
         StickToTarget(5.0),
         // 2. DEFENSIVE: "Oh Crap" Logic
@@ -64,10 +61,7 @@ fn combat_tree() -> Bt {
                 // Pro Tip: "Pooling" — Don't spam builders if energy is low
                 // unless we are about to cap (100 energy).
                 Seq!(
-                    Sel!(
-                        Cmp(SelfEnergy, Above(59)),
-                        Cmp(TargetHealthPct, Below(35)),
-                    ),
+                    Sel!(Cmp(SelfEnergy, Above(59)), Cmp(TargetHealthPct, Below(35)),),
                     Sel!(
                         // Backstab: The priority builder (requires Dagger + Behind).
                         Seq!(

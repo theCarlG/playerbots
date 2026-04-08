@@ -1,12 +1,16 @@
+use crate::{Sel, Seq};
 /// Discipline Priest behavior tree (Classic / Vanilla).
 ///
 /// Hybrid spec — proactive PW:Shield and Inner Fire, heals like Holy with more mitigation.
 use crate::{
     data::spells::vanilla::priest::*,
-    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::bt::{
+        Bt::{self, *},
+        Op::*,
+        Resource::*,
+    },
     engine::macro_fsm::ActiveFsm,
 };
-use crate::{Seq, Sel};
 
 pub fn build_tree(fsm: ActiveFsm) -> Bt {
     match fsm {

@@ -1,6 +1,6 @@
-use crate::{Sel, Seq};
 use crate::bot::settings::StrategyFlags;
 use crate::engine::bt::Bt;
+use crate::{Sel, Seq};
 
 /// Travel strategy — non-combat destination selection and navigation.
 ///
@@ -13,10 +13,7 @@ pub fn build() -> Bt {
         Bt::Not(Box::new(Bt::InCombat)),
         Sel!(
             // If we already have a travel destination, keep moving.
-            Seq!(
-                Bt::HasTravelDest,
-                Bt::TravelToBlackboard,
-            ),
+            Seq!(Bt::HasTravelDest, Bt::TravelToBlackboard,),
             // Otherwise pick a new destination.
             Bt::throttle(5_000, Bt::ChooseTravelTarget),
         ),

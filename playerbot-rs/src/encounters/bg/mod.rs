@@ -1,3 +1,5 @@
+pub mod alterac;
+pub mod arathi;
 /// Battleground encounter modules.
 ///
 /// Each BG has its own file owning the node/flag/base logic.
@@ -10,5 +12,3 @@
 /// `engine/bt.rs` via FFI callbacks (`get_bg_objective_pos`,
 /// `capture_bg_objective`, `queue_bg`, `accept_bg_invite`).
 pub mod warsong;
-pub mod arathi;
-pub mod alterac;

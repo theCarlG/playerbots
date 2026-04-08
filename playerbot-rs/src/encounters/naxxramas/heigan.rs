@@ -226,13 +226,19 @@ mod tests {
     fn dance_phase_has_bt() {
         let mut fsm = HeiganFsm::default();
         fsm.phase = HeiganPhase::DancePhase;
-        assert!(fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).is_some());
+        assert!(
+            fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+                .is_some()
+        );
     }
 
     #[test]
     fn dps_phase_no_bt() {
         let mut fsm = HeiganFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
-        assert!(fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).is_none());
+        assert!(
+            fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+                .is_none()
+        );
     }
 }

@@ -1,14 +1,18 @@
+use crate::{Sel, Seq};
 /// Shadow Priest behavior tree (Classic / Vanilla).
 ///
 /// Priority: Shadowform → Fade → emergency self-heal → Vampiric Embrace →
 ///   SW:Pain → Mind Blast → Devouring Plague → Mind Flay → Psychic Scream (`AoE` panic)
 use crate::{
     data::spells::vanilla::priest::*,
-    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::bt::{
+        Bt::{self, *},
+        Op::*,
+        Resource::*,
+    },
     engine::macro_fsm::ActiveFsm,
     ffi::SpellId,
 };
-use crate::{Seq, Sel};
 
 // All SW:Pain / Devouring Plague ranks worth checking for re-application.
 const SW_PAIN_RANKS: &[SpellId] = &[

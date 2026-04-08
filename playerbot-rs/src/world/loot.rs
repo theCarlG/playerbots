@@ -1,6 +1,6 @@
+use crate::Seq;
 /// Looting — approach and loot nearby corpses.
 use crate::engine::bt::Bt::{self, *};
-use crate::Seq;
 use crate::engine::bt::Setting;
 
 pub fn loot_subtree() -> Bt {

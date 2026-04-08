@@ -4,13 +4,12 @@ pub mod prefs;
 pub mod survival;
 
 use crate::{
-    Seq, Sel,
+    Sel, Seq,
     bot::settings::StrategyFlags,
     bot::state::PlayerSpec,
-    classes::ClassKit,
     data::spells::vanilla::hunter::{BESTIAL_WRATH, RAPID_FIRE},
     engine::{
-        bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
+        bt::Bt::{self, CastOnSelf, InCombat, StrategyEnabled},
         macro_fsm::ActiveFsm,
     },
     noncombat::GroupBuff,
@@ -27,19 +26,53 @@ pub fn boost() -> Bt {
     )
 }
 
-pub fn kit(spec: PlayerSpec) -> ClassKit {
+pub fn build_tree(fsm: ActiveFsm, spec: PlayerSpec) -> Bt {
     use PlayerSpec::{HunterBeastMastery, HunterMarksmanship, HunterSurvival};
-    let combat = match spec {
-        HunterBeastMastery => beast_mastery::build_tree(ActiveFsm::Combat),
-        HunterMarksmanship => marksmanship::build_tree(ActiveFsm::Combat),
-        HunterSurvival => survival::build_tree(ActiveFsm::Combat),
-        _ => unreachable!("non-hunter spec passed to hunter::kit"),
-    };
-    let world = match spec {
-        HunterBeastMastery => beast_mastery::build_tree(ActiveFsm::World),
-        HunterMarksmanship => marksmanship::build_tree(ActiveFsm::World),
-        HunterSurvival => survival::build_tree(ActiveFsm::World),
-        _ => unreachable!("non-hunter spec passed to hunter::kit"),
-    };
-    ClassKit { combat, world, buffs: BUFFS }
+    match spec {
+        HunterBeastMastery => beast_mastery::build_tree(fsm),
+        HunterMarksmanship => marksmanship::build_tree(fsm),
+        HunterSurvival => survival::build_tree(fsm),
+        _ => unreachable!("non-hunter spec passed to hunter::build_tree"),
+    }
+}
+
+pub fn buffs(_spec: PlayerSpec) -> &'static [GroupBuff] {
+    BUFFS
+}
+
+/// Per-spec default combat strategy flags (PB2 `AiFactory.cpp` hunter branch).
+pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
+    use PlayerSpec::*;
+    use StrategyFlags as F;
+    let common = F::DPS_ASSIST
+        | F::RANGED
+        | F::CC
+        | F::AOE
+        | F::BUFF
+        | F::BOOST
+        | F::ASPECT
+        | F::STING
+        | F::PET;
+    match spec {
+        HunterBeastMastery => F::BEAST_MASTERY | common,
+        HunterMarksmanship => F::MARKSMANSHIP | common,
+        HunterSurvival => F::SURVIVAL | common,
+        _ => F::NONE,
+    }
+}
+
+/// Reverse-map strategy flags to a hunter `PlayerSpec`.
+pub fn spec_from_flags(flags: StrategyFlags) -> Option<PlayerSpec> {
+    use PlayerSpec::*;
+    use StrategyFlags as F;
+    if flags.contains(F::BEAST_MASTERY) {
+        return Some(HunterBeastMastery);
+    }
+    if flags.contains(F::MARKSMANSHIP) {
+        return Some(HunterMarksmanship);
+    }
+    if flags.contains(F::SURVIVAL) {
+        return Some(HunterSurvival);
+    }
+    None
 }

@@ -247,7 +247,12 @@ mod tests {
             assert!(set.contains(&f), "missing alliance faction {f}");
         }
         // Values must all be at the honored cap.
-        assert!(m.rep_calls.borrow().iter().all(|(_, v)| *v == REP_FRIENDLY_MAX));
+        assert!(
+            m.rep_calls
+                .borrow()
+                .iter()
+                .all(|(_, v)| *v == REP_FRIENDLY_MAX)
+        );
     }
 
     #[test]

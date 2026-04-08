@@ -1,3 +1,4 @@
+use crate::{Sel, Seq};
 /// Balance Druid behavior tree (Classic / Vanilla).
 ///
 /// Priority: emergency self-heal → Barkskin → Faerie Fire → Insect Swarm →
@@ -6,11 +7,14 @@ use crate::{
     data::spells::vanilla::druid::*,
     engine::{
         aura_helpers::{FAERIE_FIRE_RANKS, INSECT_SWARM_RANKS, MOONFIRE_RANKS},
-        bt::{Bt::{self, *}, Op::*, Resource::*},
+        bt::{
+            Bt::{self, *},
+            Op::*,
+            Resource::*,
+        },
         macro_fsm::ActiveFsm,
     },
 };
-use crate::{Seq, Sel};
 
 pub fn build_tree(fsm: ActiveFsm) -> Bt {
     match fsm {

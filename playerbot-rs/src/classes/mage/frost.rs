@@ -1,14 +1,18 @@
+use crate::{Sel, Seq};
 /// Frost Mage behavior tree (Classic / Vanilla).
 ///
 /// Priority: Ice Block → Evocation → Counterspell → Frost Nova + Blink (melee escape)
 ///   → Cone of Cold (on frozen target) → Fire Blast execute → Frostbolt
 use crate::{
     data::spells::vanilla::mage::*,
-    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::bt::{
+        Bt::{self, *},
+        Op::*,
+        Resource::*,
+    },
     engine::macro_fsm::ActiveFsm,
     ffi::SpellId,
 };
-use crate::{Seq, Sel};
 
 // Frozen auras applied by Frost Nova.
 const FROST_NOVA_AURA_A: SpellId = SpellId(122);

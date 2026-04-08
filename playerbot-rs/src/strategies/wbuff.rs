@@ -1,6 +1,6 @@
-use crate::{Sel, Seq};
 use crate::bot::settings::StrategyFlags;
 use crate::engine::bt::Bt;
+use crate::{Sel, Seq};
 
 /// World buff strategy — apply missing world buffs from config, then optionally
 /// travel to world buff locations.

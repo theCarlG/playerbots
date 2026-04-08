@@ -1,14 +1,18 @@
+use crate::{Sel, Seq};
 /// Demonology Warlock behavior tree (Classic / Vanilla).
 ///
 /// Pet-focused. Priority: Demon Armor → Life Tap → Curse of Agony → Corruption →
 ///   Immolate → Shadow Bolt
 use crate::{
     data::spells::vanilla::warlock::*,
-    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::bt::{
+        Bt::{self, *},
+        Op::*,
+        Resource::*,
+    },
     engine::macro_fsm::ActiveFsm,
     ffi::SpellId,
 };
-use crate::{Seq, Sel};
 
 const CURSE_OF_AGONY: SpellId = SpellId(11722);
 
@@ -38,10 +42,7 @@ fn combat_tree() -> Bt {
                     Bt::target_missing(CURSE_OF_AGONY),
                     CastOnTarget(CURSE_OF_AGONY),
                 ),
-                Seq!(
-                    Bt::target_missing(CORRUPTION),
-                    CastOnTarget(CORRUPTION),
-                ),
+                Seq!(Bt::target_missing(CORRUPTION), CastOnTarget(CORRUPTION),),
                 Seq!(Bt::target_missing(IMMOLATE), CastOnTarget(IMMOLATE)),
                 CastOnTarget(SHADOW_BOLT),
             ),

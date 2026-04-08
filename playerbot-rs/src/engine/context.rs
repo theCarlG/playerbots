@@ -10,8 +10,8 @@ use crate::{
     bot::state::PlayerClass,
     encounters::EncounterFsm,
     engine::{
-        blackboard::Blackboard, group_state::GroupState, macro_fsm::ActiveFsm,
-        snapshot::WorldSnapshotExt, throttles::Throttles, timers::BotTimers,
+        blackboard::Blackboard, group_registry::GroupHandle, group_state::GroupState,
+        macro_fsm::ActiveFsm, snapshot::WorldSnapshotExt, throttles::Throttles, timers::BotTimers,
     },
     ffi::{BotRole, BotWorldSnapshot, UnitHandle, interface::BotInterface},
 };
@@ -22,6 +22,11 @@ pub struct TickContext<'a> {
     pub nearby: &'a [UnitHandle], // hostile nearby units (refreshed every 500ms)
     pub attackers: &'a [UnitHandle], // units attacking this bot (refreshed every 500ms)
     pub group_state: Option<&'a GroupState>,
+
+    /// Handle to the shared group state. Provides write access for claims.
+    /// Separate from `group_state` (which holds a read guard snapshot).
+    /// BT nodes that need to write claims call `group_handle.state().try_write()`.
+    pub group_handle: Option<&'a GroupHandle>,
 
     // ── Mutable bot state ───────────────────────────────────────────────
     pub interface: &'a dyn BotInterface,
@@ -133,13 +138,98 @@ impl<'a> TickContext<'a> {
         self.encounter.map_or(0, |e| e.phase_id())
     }
 
+    /// Check if a heal target is already claimed by another bot in the group.
+    /// Returns `true` if claimed by someone else (we should skip this target).
+    /// Returns `false` if unclaimed, claimed by us, or no group.
+    pub fn is_heal_claimed_by_other(&self, target: UnitHandle) -> bool {
+        use crate::engine::claim::ClaimData;
+        let Some(gs) = self.group_state else {
+            return false;
+        };
+        gs.encounter.claims.is_claimed_by_other(
+            self.bot_handle,
+            &ClaimData::HealTarget(target),
+            self.server_time_ms,
+        )
+    }
+
+    /// Try to claim a heal target via the shared group state.
+    /// Returns `true` if the claim was placed (or refreshed).
+    /// Returns `false` if another bot already claimed it, or no group handle.
+    pub fn try_claim_heal(&self, target: UnitHandle, ttl_ms: u64) -> bool {
+        use crate::engine::claim::ClaimData;
+        let Some(handle) = self.group_handle else {
+            return true;
+        }; // solo = always ok
+        let Ok(mut gs) = handle.state().try_write() else {
+            return true;
+        }; // can't lock = optimistic
+        gs.encounter.claims.try_claim(
+            self.bot_handle,
+            ClaimData::HealTarget(target),
+            ttl_ms,
+            self.server_time_ms,
+        )
+    }
+
+    /// Check if a CC target is already claimed by another bot.
+    pub fn is_cc_claimed_by_other(&self, target: UnitHandle) -> bool {
+        use crate::engine::claim::ClaimData;
+        let Some(gs) = self.group_state else {
+            return false;
+        };
+        gs.encounter.claims.is_claimed_by_other(
+            self.bot_handle,
+            &ClaimData::CcTarget(target),
+            self.server_time_ms,
+        )
+    }
+
+    /// Get the group's main tank. Checks `GroupCoordination.tank_order` first,
+    /// then falls back to the FFI `group_get_tank()` (C++ server-side role).
+    pub fn group_tank(&self) -> Option<UnitHandle> {
+        if let Some(gs) = self.group_state {
+            if let Some(mt) = gs.coordination.main_tank() {
+                return Some(mt);
+            }
+        }
+        self.interface.group_get_tank()
+    }
+
+    /// Get the group's active tank (for tank-swap awareness).
+    /// Falls back to `group_tank()` if no active tank is set.
+    pub fn active_tank(&self) -> Option<UnitHandle> {
+        if let Some(gs) = self.group_state {
+            if let Some(at) = gs.coordination.active_tank() {
+                return Some(at);
+            }
+        }
+        self.group_tank()
+    }
+
+    /// Try to claim a CC target.
+    pub fn try_claim_cc(&self, target: UnitHandle, ttl_ms: u64) -> bool {
+        use crate::engine::claim::ClaimData;
+        let Some(handle) = self.group_handle else {
+            return true;
+        };
+        let Ok(mut gs) = handle.state().try_write() else {
+            return true;
+        };
+        gs.encounter.claims.try_claim(
+            self.bot_handle,
+            ClaimData::CcTarget(target),
+            ttl_ms,
+            self.server_time_ms,
+        )
+    }
+
     /// Push a diagnostic line to the monitor log (no-op when monitor is off).
     /// These lines are flushed to the log file at the end of each tick.
     #[inline]
     pub fn monitor(&mut self, line: impl std::fmt::Display) {
         if self.monitor_trace.is_some() {
-            self.blackboard
-                .push_monitor_line(format!("{line}"));
+            self.blackboard.push_monitor_line(format!("{line}"));
         }
     }
 
@@ -312,6 +402,7 @@ pub mod tests {
             nearby,
             attackers,
             group_state: None,
+            group_handle: None,
             interface,
             blackboard,
             timers,
@@ -370,6 +461,7 @@ pub mod tests {
                 nearby: &self.nearby,
                 attackers: &self.attackers,
                 group_state: None,
+                group_handle: None,
                 interface: &self.interface,
                 blackboard: &mut self.blackboard,
                 timers: &mut self.timers,

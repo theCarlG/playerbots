@@ -1,6 +1,6 @@
-use crate::{Sel, Seq};
 use crate::bot::settings::StrategyFlags;
 use crate::engine::bt::Bt;
+use crate::{Sel, Seq};
 
 /// RPG strategy — idle wandering, NPC interaction, emotes.
 /// PB2: `RpgStrategy` — gated on the `rpg` strategy flag.

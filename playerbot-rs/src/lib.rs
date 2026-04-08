@@ -189,10 +189,13 @@ pub unsafe extern "C" fn playerbot_packet_in(
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
     let bytes = unsafe { packet_bytes(data, len) };
-    bot.events.lock().unwrap().push_back(bot::events::BotEvent::PacketIn {
-        opcode,
-        data: bytes,
-    });
+    bot.events
+        .lock()
+        .unwrap()
+        .push_back(bot::events::BotEvent::PacketIn {
+            opcode,
+            data: bytes,
+        });
 }
 
 /// # Safety: state valid, data readable for len bytes (or null/0).
@@ -205,10 +208,13 @@ pub unsafe extern "C" fn playerbot_packet_out(
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
     let bytes = unsafe { packet_bytes(data, len) };
-    bot.events.lock().unwrap().push_back(bot::events::BotEvent::PacketOut {
-        opcode,
-        data: bytes,
-    });
+    bot.events
+        .lock()
+        .unwrap()
+        .push_back(bot::events::BotEvent::PacketOut {
+            opcode,
+            data: bytes,
+        });
 }
 
 // ── Push combat events ────────────────────────────────────────────────────
@@ -223,12 +229,15 @@ pub unsafe extern "C" fn playerbot_unit_spell_cast(
     success: bool,
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot.events.lock().unwrap().push_back(bot::events::BotEvent::UnitSpellCast {
-        caster,
-        spell_id: SpellId(spell_id),
-        target,
-        success,
-    });
+    bot.events
+        .lock()
+        .unwrap()
+        .push_back(bot::events::BotEvent::UnitSpellCast {
+            caster,
+            spell_id: SpellId(spell_id),
+            target,
+            success,
+        });
 }
 
 /// RTSC spell position — called when spell 30758 is cast on ground by the master.
@@ -238,7 +247,9 @@ pub unsafe extern "C" fn playerbot_unit_spell_cast(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn playerbot_rtsc_spell(state: *mut (), x: f32, y: f32, z: f32) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot.pending_commands.lock().unwrap()
+    bot.pending_commands
+        .lock()
+        .unwrap()
         .push_back(commands::PendingCommand::internal(
             commands::BotCommand::RtscSpellPosition(x, y, z),
         ));
@@ -254,12 +265,15 @@ pub unsafe extern "C" fn playerbot_aura_changed(
     stacks: u8,
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot.events.lock().unwrap().push_back(bot::events::BotEvent::AuraChanged {
-        unit,
-        spell_id: SpellId(spell_id),
-        applied,
-        stacks,
-    });
+    bot.events
+        .lock()
+        .unwrap()
+        .push_back(bot::events::BotEvent::AuraChanged {
+            unit,
+            spell_id: SpellId(spell_id),
+            applied,
+            stacks,
+        });
 }
 
 /// # Safety: state valid.
@@ -270,7 +284,9 @@ pub unsafe extern "C" fn playerbot_unit_died(
     killer: UnitHandle,
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot.events.lock().unwrap()
+    bot.events
+        .lock()
+        .unwrap()
         .push_back(bot::events::BotEvent::UnitDied { victim, killer });
 }
 
@@ -283,11 +299,14 @@ pub unsafe extern "C" fn playerbot_damage_taken(
     dealer: UnitHandle,
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot.events.lock().unwrap().push_back(bot::events::BotEvent::DamageTaken {
-        damage,
-        spell_id: SpellId(spell_id),
-        dealer,
-    });
+    bot.events
+        .lock()
+        .unwrap()
+        .push_back(bot::events::BotEvent::DamageTaken {
+            damage,
+            spell_id: SpellId(spell_id),
+            dealer,
+        });
 }
 
 // ── Chat command injection ────────────────────────────────────────────────

@@ -1,14 +1,18 @@
+use crate::{Sel, Seq};
 /// Retribution Paladin behavior tree (Classic / Vanilla).
 ///
 /// Priority: emergency shield → self-heal → Hammer of Wrath → Exorcism →
 ///   Judgement (with seal) → maintain seal → Consecration
 use crate::{
     data::spells::vanilla::paladin::*,
-    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::bt::{
+        Bt::{self, *},
+        Op::*,
+        Resource::*,
+    },
     engine::macro_fsm::ActiveFsm,
     ffi::SpellId,
 };
-use crate::{Seq, Sel};
 
 // Seal of Righteousness rank IDs for the has-any-rank check.
 const SEAL_RANKS: &[SpellId] = &[
@@ -47,7 +51,10 @@ fn combat_tree() -> Bt {
             InCombat,
             Sel!(
                 // Execute phase.
-                Seq!(Cmp(TargetHealthPct, Below(20)), CastOnTarget(HAMMER_OF_WRATH)),
+                Seq!(
+                    Cmp(TargetHealthPct, Below(20)),
+                    CastOnTarget(HAMMER_OF_WRATH)
+                ),
                 // Talented instants.
                 CastOnTarget(HOLY_SHOCK),
                 CastOnTarget(EXORCISM),

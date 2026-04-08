@@ -1,13 +1,17 @@
+use crate::{Sel, Seq};
 /// Arcane Mage behavior tree (Classic / Vanilla).
 ///
 /// Priority: Ice Block → Evocation → Counterspell → Fire Blast execute →
 ///   Arcane Missiles → Frostbolt filler → Arcane Explosion `AoE`
 use crate::{
     data::spells::vanilla::mage::*,
-    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::bt::{
+        Bt::{self, *},
+        Op::*,
+        Resource::*,
+    },
     engine::macro_fsm::ActiveFsm,
 };
-use crate::{Seq, Sel};
 
 pub fn build_tree(fsm: ActiveFsm) -> Bt {
     match fsm {

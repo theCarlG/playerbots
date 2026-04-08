@@ -111,7 +111,9 @@ mod tests {
     fn air_melee_holds_position() {
         let mut fsm = OnyxiaFsm::default();
         fsm.phase = OnyxiaPhase::Phase2;
-        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).unwrap();
+        let bt = fsm
+            .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+            .unwrap();
         let iface = TestInterface::new();
         let mut owned = TestCtxOwned::new();
         let mut ctx =
@@ -121,6 +123,10 @@ mod tests {
 
     #[test]
     fn no_bt_when_idle() {
-        assert!(OnyxiaFsm::default().phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).is_none());
+        assert!(
+            OnyxiaFsm::default()
+                .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+                .is_none()
+        );
     }
 }

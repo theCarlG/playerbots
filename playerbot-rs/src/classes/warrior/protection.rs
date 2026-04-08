@@ -1,3 +1,4 @@
+use crate::{Sel, Seq};
 /// Protection Warrior behavior tree (Classic / Vanilla).
 ///
 /// Tank priority: survival CDs → taunt → Shield Block → Bloodrage → Revenge →
@@ -6,11 +7,14 @@ use crate::{
     data::spells::vanilla::warrior::*,
     engine::{
         aura_helpers::DEMORALIZING_SHOUT_RANKS,
-        bt::{Bt::{self, *}, Op::*, Resource::*},
+        bt::{
+            Bt::{self, *},
+            Op::*,
+            Resource::*,
+        },
         macro_fsm::ActiveFsm,
     },
 };
-use crate::{Seq, Sel};
 
 pub fn build_tree(fsm: ActiveFsm) -> Bt {
     match fsm {
@@ -37,7 +41,10 @@ fn combat_tree() -> Bt {
             Sel!(
                 // Switch to Defensive Stance for Prot rotation.
                 // InShapeshift(18) = Defensive Stance.
-                Seq!(Not(Box::new(InShapeshift(18))), CastOnSelf(DEFENSIVE_STANCE)),
+                Seq!(
+                    Not(Box::new(InShapeshift(18))),
+                    CastOnSelf(DEFENSIVE_STANCE)
+                ),
                 // Taunt is gated by can_cast (only fires on aggro loss).
                 CastOnTarget(TAUNT),
                 // Shield Block mitigation.

@@ -248,7 +248,10 @@ mod tests {
     }
 
     fn talent(row: u32, ranks: [u32; 5]) -> BotTalentEntry {
-        BotTalentEntry { row, rank_ids: ranks }
+        BotTalentEntry {
+            row,
+            rank_ids: ranks,
+        }
     }
 
     #[test]

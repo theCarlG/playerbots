@@ -1,7 +1,7 @@
 /// Quest behavior — accept, work on, and turn in quests.
 use crate::engine::bt::Bt::{self, *};
-use crate::{Seq, Sel};
 use crate::engine::bt::Setting;
+use crate::{Sel, Seq};
 
 pub fn quest_subtree() -> Bt {
     Seq!(

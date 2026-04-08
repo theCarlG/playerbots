@@ -1,3 +1,4 @@
+use crate::{Sel, Seq};
 /// Arms Warrior behavior tree (Classic / Vanilla).
 ///
 /// Priority: charge/stick → emergency Intimidating Shout → Execute → Overpower
@@ -6,11 +7,14 @@ use crate::{
     data::spells::vanilla::warrior::*,
     engine::{
         aura_helpers::{BATTLE_SHOUT_RANKS, REND_RANKS},
-        bt::{Bt::{self, *}, Op::*, Resource::*},
+        bt::{
+            Bt::{self, *},
+            Op::*,
+            Resource::*,
+        },
         macro_fsm::ActiveFsm,
     },
 };
-use crate::{Seq, Sel};
 
 pub fn build_tree(fsm: ActiveFsm) -> Bt {
     match fsm {
@@ -35,7 +39,10 @@ fn combat_tree() -> Bt {
                 // InShapeshift(17) = Battle Stance.
                 Seq!(Not(Box::new(InShapeshift(17))), CastOnSelf(BATTLE_STANCE)),
                 // Emergency fear at very low HP.
-                Seq!(Cmp(SelfHealthPct, Below(15)), CastOnTarget(INTIMIDATING_SHOUT)),
+                Seq!(
+                    Cmp(SelfHealthPct, Below(15)),
+                    CastOnTarget(INTIMIDATING_SHOUT)
+                ),
                 // Execute on low-HP target.
                 Seq!(Cmp(TargetHealthPct, Below(20)), CastOnTarget(EXECUTE)),
                 // Overpower proc (server gates via can_cast).

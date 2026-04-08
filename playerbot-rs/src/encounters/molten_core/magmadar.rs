@@ -6,8 +6,8 @@
 ///   - Melee DPS: normal rotation.
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::encounters::bt::Bt::{self, *};
-use crate::{Seq, Sel};
 use crate::ffi::SpellId;
+use crate::{Sel, Seq};
 
 pub const SPELL_LAVA_BOMB: SpellId = SpellId(19411);
 pub const AURA_PANIC: SpellId = SpellId(19408);

@@ -72,10 +72,11 @@ pub fn build_buff_subtree(buffs: Vec<GroupBuff>) -> Box<dyn BtNode> {
             action(move |ctx| {
                 for buff in &buffs {
                     if let Some(target_handle) = find_buff_target(ctx, buff)
-                        && ctx.interface.cast_spell(buff.spell_id, target_handle) {
-                            ctx.timers.on_spell_cast(buff.spell_id, ctx.server_time_ms);
-                            return BtResult::Success;
-                        }
+                        && ctx.interface.cast_spell(buff.spell_id, target_handle)
+                    {
+                        ctx.timers.on_spell_cast(buff.spell_id, ctx.server_time_ms);
+                        return BtResult::Success;
+                    }
                 }
                 BtResult::Failure
             }),
@@ -90,7 +91,7 @@ fn find_buff_target(
     buff: &GroupBuff,
 ) -> Option<u64> {
     use crate::ffi::UnitHandle;
-    use BuffTarget::{Me, Tank, Healer, AnyMember};
+    use BuffTarget::{AnyMember, Healer, Me, Tank};
 
     let me = ctx.bot_handle;
 

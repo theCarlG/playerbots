@@ -24,9 +24,9 @@ pub fn init_special_spells(iface: &dyn BotInterface) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ffi::BotSpellInfo;
     use crate::ffi::interface::BotInterface;
     use crate::ffi::types::{ItemId, SpellId};
-    use crate::ffi::BotSpellInfo;
     use std::cell::RefCell;
     use std::collections::HashSet;
 

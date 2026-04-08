@@ -1,3 +1,4 @@
+use crate::{Sel, Seq};
 /// Protection Paladin behavior tree (Classic / Vanilla).
 ///
 /// No taunt in vanilla — threat from Righteous Fury + seal/judgement/consecration.
@@ -5,11 +6,14 @@
 ///   → Judgement (with seal) → re-seal → Consecration → Holy Wrath
 use crate::{
     data::spells::vanilla::paladin::*,
-    engine::bt::{Bt::{self, *}, Op::*, Resource::*},
+    engine::bt::{
+        Bt::{self, *},
+        Op::*,
+        Resource::*,
+    },
     engine::macro_fsm::ActiveFsm,
     ffi::SpellId,
 };
-use crate::{Seq, Sel};
 
 const HOLY_SHIELD: SpellId = SpellId(27179); // rank 4 talent
 const RIGHTEOUS_FURY: SpellId = SpellId(25780);
@@ -42,10 +46,7 @@ fn combat_tree() -> Bt {
         // `co +boost` burst cooldowns (paladin-wide list).
         super::boost(),
         // Maintain Righteous Fury (100% bonus threat).
-        Seq!(
-            Bt::self_missing(RIGHTEOUS_FURY),
-            CastOnSelf(RIGHTEOUS_FURY),
-        ),
+        Seq!(Bt::self_missing(RIGHTEOUS_FURY), CastOnSelf(RIGHTEOUS_FURY),),
         // Emergency bubble.
         Seq!(Cmp(SelfHealthPct, Below(15)), CastOnSelf(DIVINE_SHIELD)),
         // Close gap.
@@ -58,7 +59,10 @@ fn combat_tree() -> Bt {
                 // Instant damage/threat.
                 CastOnTarget(EXORCISM),
                 // Execute phase.
-                Seq!(Cmp(TargetHealthPct, Below(20)), CastOnTarget(HAMMER_OF_WRATH)),
+                Seq!(
+                    Cmp(TargetHealthPct, Below(20)),
+                    CastOnTarget(HAMMER_OF_WRATH)
+                ),
                 // Judgement with seal.
                 Seq!(
                     Bt::self_missing_any_rank(SEAL_RANKS).not(),
