@@ -42,7 +42,7 @@ impl EncounterFsm for SulfuronFsm {
     fn boss_entry(&self) -> u32 {
         super::ENTRY_SULFURON
     }
-    fn phase_bt(&self) -> Option<Bt> {
+    fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         if self.active {
             // Interrupt Dark Mending on adds; ranged stay at range.
             Some(Sel!(

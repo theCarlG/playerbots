@@ -44,7 +44,7 @@ impl EncounterFsm for FiremawFsm {
     fn boss_entry(&self) -> u32 {
         super::ENTRY_FIREMAW
     }
-    fn phase_bt(&self) -> Option<Bt> {
+    fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         if self.active {
             // Melee stay behind the drake (out of Shadow Flame cone);
             // ranged maintain max range to stay outside both the cone and

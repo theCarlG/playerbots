@@ -85,7 +85,7 @@ impl EncounterFsm for BaronGeddonFsm {
         super::ENTRY_BARON_GEDDON
     }
 
-    fn phase_bt(&self) -> Option<Bt> {
+    fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         if self.active {
             Some(Self::build_bt())
         } else {
@@ -105,7 +105,7 @@ mod tests {
     fn living_bomb_mage_ice_blocks() {
         let mut fsm = BaronGeddonFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
-        let bt = fsm.phase_bt().unwrap();
+        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).unwrap();
         let iface = TestInterface::new().with_aura(AURA_LIVING_BOMB);
         let mut owned = TestCtxOwned::new();
         let mut ctx = make_encounter_ctx(&mut owned, &iface, &fsm, PlayerClass::Mage, BotRole::DPS);
@@ -116,7 +116,7 @@ mod tests {
     fn living_bomb_warrior_flees() {
         let mut fsm = BaronGeddonFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
-        let bt = fsm.phase_bt().unwrap();
+        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).unwrap();
         let iface = TestInterface::new()
             .with_aura(AURA_LIVING_BOMB)
             .with_safe_pos();
@@ -130,7 +130,7 @@ mod tests {
     fn no_mechanic_returns_failure() {
         let mut fsm = BaronGeddonFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
-        let bt = fsm.phase_bt().unwrap();
+        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).unwrap();
         let iface = TestInterface::new();
         let mut owned = TestCtxOwned::new();
         let mut ctx =
@@ -140,6 +140,6 @@ mod tests {
 
     #[test]
     fn no_bt_when_idle() {
-        assert!(BaronGeddonFsm::default().phase_bt().is_none());
+        assert!(BaronGeddonFsm::default().phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).is_none());
     }
 }

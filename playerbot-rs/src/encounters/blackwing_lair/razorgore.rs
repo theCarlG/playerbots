@@ -79,7 +79,7 @@ impl EncounterFsm for RazorgoreFsm {
         super::ENTRY_RAZORGORE
     }
 
-    fn phase_bt(&self) -> Option<Bt> {
+    fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         match self.phase {
             RazorgorePhase::Idle => None,
             // Phase 1: tanks pick up adds, ranged stay at range for kiting.

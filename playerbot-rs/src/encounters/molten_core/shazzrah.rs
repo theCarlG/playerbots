@@ -42,7 +42,7 @@ impl EncounterFsm for ShazzrahFsm {
     fn boss_entry(&self) -> u32 {
         super::ENTRY_SHAZZRAH
     }
-    fn phase_bt(&self) -> Option<Bt> {
+    fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         if self.active {
             Some(Sel!(
                 Seq!(IsRanged, MaintainRange(30.0)),

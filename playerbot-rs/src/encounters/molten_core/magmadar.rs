@@ -42,7 +42,7 @@ impl EncounterFsm for MagmadarFsm {
         super::ENTRY_MAGMADAR
     }
 
-    fn phase_bt(&self) -> Option<Bt> {
+    fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         if self.active {
             Some(Sel!(
                 Seq!(IsRanged, MaintainRange(30.0)),

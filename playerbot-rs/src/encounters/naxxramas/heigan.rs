@@ -131,7 +131,7 @@ impl EncounterFsm for HeiganFsm {
         super::ENTRY_HEIGAN
     }
 
-    fn phase_bt(&self) -> Option<Bt> {
+    fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         match self.phase {
             HeiganPhase::DancePhase => Some(MoveToSafeZone),
             _ => None, // DPS phase: normal rotation
@@ -226,13 +226,13 @@ mod tests {
     fn dance_phase_has_bt() {
         let mut fsm = HeiganFsm::default();
         fsm.phase = HeiganPhase::DancePhase;
-        assert!(fsm.phase_bt().is_some());
+        assert!(fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).is_some());
     }
 
     #[test]
     fn dps_phase_no_bt() {
         let mut fsm = HeiganFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
-        assert!(fsm.phase_bt().is_none());
+        assert!(fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).is_none());
     }
 }

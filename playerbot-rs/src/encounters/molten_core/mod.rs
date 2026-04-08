@@ -220,8 +220,8 @@ impl EncounterFsm for MoltenCoreFsm {
         self.active_boss.as_ref().map_or(0, |b| b.boss_entry())
     }
 
-    fn phase_bt(&self) -> Option<Bt> {
-        let boss_bt = self.active_boss.as_ref().and_then(|b| b.phase_bt());
+    fn phase_bt(&self, fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
+        let boss_bt = self.active_boss.as_ref().and_then(|b| b.phase_bt(fsm));
         match boss_bt {
             Some(bt) => Some(Sel!(bt, Self::zone_wide_bt())),
             None => Some(Self::zone_wide_bt()),

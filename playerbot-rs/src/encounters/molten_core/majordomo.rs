@@ -53,7 +53,7 @@ impl EncounterFsm for MajordomoFsm {
     fn boss_entry(&self) -> u32 {
         super::ENTRY_MAJORDOMO
     }
-    fn phase_bt(&self) -> Option<Bt> {
+    fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         if self.active {
             // Interrupt healer adds; spread to avoid AoE chaining.
             Some(Sel!(

@@ -106,7 +106,7 @@ impl EncounterFsm for RagnarosFsm {
         super::ENTRY_RAGNAROS
     }
 
-    fn phase_bt(&self) -> Option<Bt> {
+    fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         match self.phase {
             RagnarosPhase::Idle => None,
             RagnarosPhase::Submerged => Some(AttackNearest),
@@ -164,7 +164,7 @@ mod tests {
         let mut fsm = RagnarosFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
         fsm.update(&EncounterEvent::None, 0.74, 0);
-        let bt = fsm.phase_bt().unwrap();
+        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).unwrap();
         let iface = TestInterface::new();
         let mut owned = TestCtxOwned::new();
         owned.attackers = vec![42];
@@ -175,6 +175,6 @@ mod tests {
 
     #[test]
     fn no_bt_when_idle() {
-        assert!(RagnarosFsm::default().phase_bt().is_none());
+        assert!(RagnarosFsm::default().phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).is_none());
     }
 }

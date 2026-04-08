@@ -144,7 +144,7 @@ impl EncounterFsm for NaxxramasFsm {
         self.active_boss.as_ref().map_or(0, |b| b.boss_entry())
     }
 
-    fn phase_bt(&self) -> Option<Bt> {
-        self.active_boss.as_ref().and_then(|b| b.phase_bt())
+    fn phase_bt(&self, fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
+        self.active_boss.as_ref().and_then(|b| b.phase_bt(fsm))
     }
 }

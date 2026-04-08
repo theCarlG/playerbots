@@ -46,7 +46,7 @@ impl EncounterFsm for GarrFsm {
     fn boss_entry(&self) -> u32 {
         super::ENTRY_GARR
     }
-    fn phase_bt(&self) -> Option<Bt> {
+    fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         if self.active {
             Some(
                 // Ranged stay back at 20y from the boss (out of most Eruption chains).

@@ -41,7 +41,7 @@ impl EncounterFsm for LucifronFsm {
     fn boss_entry(&self) -> u32 {
         super::ENTRY_LUCIFRON
     }
-    fn phase_bt(&self) -> Option<Bt> {
+    fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         if self.active {
             Some(
                 // Dispellers run the default reactive dispel path — the encounter

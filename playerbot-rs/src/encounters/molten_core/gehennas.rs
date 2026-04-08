@@ -41,7 +41,7 @@ impl EncounterFsm for GehennasFsm {
     fn boss_entry(&self) -> u32 {
         super::ENTRY_GEHENNAS
     }
-    fn phase_bt(&self) -> Option<Bt> {
+    fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         if self.active {
             // Ranged spread to avoid Rain of Fire splash; melee normal.
             Some(Sel!(Seq!(IsRanged, MaintainRange(15.0))))

@@ -78,7 +78,7 @@ impl EncounterFsm for VaelastraszFsm {
     fn boss_entry(&self) -> u32 {
         super::ENTRY_VAELASTRASZ
     }
-    fn phase_bt(&self) -> Option<Bt> {
+    fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         if self.active {
             Some(Self::build_bt())
         } else {

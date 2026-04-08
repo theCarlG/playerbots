@@ -1876,7 +1876,7 @@ impl BtNode for Bt {
             // ── Noncombat ────────────────────────────────────────────────
             Bt::Consumables => tick_consumables(ctx),
             Bt::Buff(buffs) => tick_buff(ctx, buffs),
-            Bt::EncounterOverride => match ctx.encounter.and_then(|e| e.phase_bt()) {
+            Bt::EncounterOverride => match ctx.encounter.and_then(|e| e.phase_bt(ctx.active_fsm)) {
                 Some(bt) => bt.tick(ctx),
                 None => BtResult::Failure,
             }, // NOTE: `bt.tick(ctx)` above resolves to `Bt::tick` directly —

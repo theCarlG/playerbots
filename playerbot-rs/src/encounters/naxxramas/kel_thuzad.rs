@@ -111,7 +111,7 @@ impl EncounterFsm for KelThuzadFsm {
         super::ENTRY_KEL_THUZAD
     }
 
-    fn phase_bt(&self) -> Option<Bt> {
+    fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         match self.phase {
             KtPhase::Idle => None,
             // Phase 1: kill adds
@@ -163,7 +163,7 @@ mod tests {
         let mut fsm = KelThuzadFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
 
-        let bt = fsm.phase_bt().expect("add waves should have BT");
+        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).expect("add waves should have BT");
         let iface = TestInterface::new();
         let mut owned = TestCtxOwned::new();
         owned.attackers = vec![77]; // an add
@@ -177,7 +177,7 @@ mod tests {
         let mut fsm = KelThuzadFsm::default();
         fsm.phase = KtPhase::KtActive;
 
-        let bt = fsm.phase_bt().expect("KT active should have BT");
+        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).expect("KT active should have BT");
         let iface = TestInterface::new();
         let mut owned = TestCtxOwned::new();
         let mut ctx =

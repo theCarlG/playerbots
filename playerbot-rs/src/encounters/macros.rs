@@ -50,8 +50,8 @@ macro_rules! encounter_dispatch {
             fn boss_entry(&self) -> u32 {
                 match self { $( Self::$variant(fsm) => fsm.boss_entry(), )+ }
             }
-            fn phase_bt(&self) -> Option<$crate::engine::bt::Bt> {
-                match self { $( Self::$variant(fsm) => fsm.phase_bt(), )+ }
+            fn phase_bt(&self, active_fsm: $crate::engine::macro_fsm::ActiveFsm) -> Option<$crate::engine::bt::Bt> {
+                match self { $( Self::$variant(fsm) => fsm.phase_bt(active_fsm), )+ }
             }
             fn safe_zone_hint(&self) -> u8 {
                 match self { $( Self::$variant(fsm) => fsm.safe_zone_hint(), )+ }

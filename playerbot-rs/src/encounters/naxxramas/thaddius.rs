@@ -127,7 +127,7 @@ impl EncounterFsm for ThaddiusFsm {
         super::ENTRY_THADDIUS
     }
 
-    fn phase_bt(&self) -> Option<Bt> {
+    fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         match self.phase {
             ThaddiusPhase::Adds => Some(AttackNearest),
             ThaddiusPhase::PolarityReposition => Some(Sel!(
@@ -202,20 +202,20 @@ mod tests {
     fn adds_phase_has_bt() {
         let mut fsm = ThaddiusFsm::default();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
-        assert!(fsm.phase_bt().is_some());
+        assert!(fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).is_some());
     }
 
     #[test]
     fn polarity_phase_has_bt() {
         let mut fsm = ThaddiusFsm::default();
         fsm.phase = ThaddiusPhase::PolarityReposition;
-        assert!(fsm.phase_bt().is_some());
+        assert!(fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).is_some());
     }
 
     #[test]
     fn normal_phase_no_bt() {
         let mut fsm = ThaddiusFsm::default();
         fsm.phase = ThaddiusPhase::Normal;
-        assert!(fsm.phase_bt().is_none());
+        assert!(fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).is_none());
     }
 }

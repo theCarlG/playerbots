@@ -114,7 +114,8 @@ pub trait EncounterFsm: Send {
     /// specific gameplay logic lives in that module rather than in
     /// `engine/bt.rs`, and is reached from the tree via
     /// [`Bt::Custom`](crate::engine::bt::Bt::Custom) leaves.
-    fn phase_bt(&self) -> Option<Bt> {
+    fn phase_bt(&self, fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
+        let _ = fsm;
         None
     }
 }
@@ -263,7 +264,7 @@ where
         self.active_boss.as_ref().map_or(0, |b| b.boss_entry())
     }
 
-    fn phase_bt(&self) -> Option<Bt> {
-        self.active_boss.as_ref().and_then(|b| b.phase_bt())
+    fn phase_bt(&self, fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
+        self.active_boss.as_ref().and_then(|b| b.phase_bt(fsm))
     }
 }

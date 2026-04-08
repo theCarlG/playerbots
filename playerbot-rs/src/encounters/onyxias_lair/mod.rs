@@ -75,7 +75,7 @@ impl EncounterFsm for OnyxiaFsm {
         ENTRY_ONYXIA
     }
 
-    fn phase_bt(&self) -> Option<Bt> {
+    fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         match self.phase {
             OnyxiaPhase::Idle => None,
             OnyxiaPhase::Phase2 => Some(Sel!(
@@ -111,7 +111,7 @@ mod tests {
     fn air_melee_holds_position() {
         let mut fsm = OnyxiaFsm::default();
         fsm.phase = OnyxiaPhase::Phase2;
-        let bt = fsm.phase_bt().unwrap();
+        let bt = fsm.phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).unwrap();
         let iface = TestInterface::new();
         let mut owned = TestCtxOwned::new();
         let mut ctx =
@@ -121,6 +121,6 @@ mod tests {
 
     #[test]
     fn no_bt_when_idle() {
-        assert!(OnyxiaFsm::default().phase_bt().is_none());
+        assert!(OnyxiaFsm::default().phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat).is_none());
     }
 }

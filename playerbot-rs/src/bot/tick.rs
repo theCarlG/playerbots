@@ -113,7 +113,7 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
 
     // Check for encounter override before building TickContext.
     // The encounter's phase_bt() is dynamic (phase changes each tick).
-    let enc_override = encounter.as_ref().and_then(|enc| enc.phase_bt());
+    let enc_override = encounter.as_ref().and_then(|enc| enc.phase_bt(active_fsm));
 
     let mut ctx = TickContext {
         snap,

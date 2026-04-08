@@ -45,7 +45,7 @@ impl EncounterFsm for BroodlordFsm {
     fn boss_entry(&self) -> u32 {
         super::ENTRY_BROODLORD
     }
-    fn phase_bt(&self) -> Option<Bt> {
+    fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         if self.active {
             Some(
                 // Ranged stay at max range (30y) to avoid the knockback cone
