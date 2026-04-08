@@ -22,7 +22,7 @@
 use crate::bot::formation::{
     ChaosState, FormationContext, FormationMember, FormationOutput, resolve_formation,
 };
-use crate::bot::settings::{BehaviorMode, CombatOrder, Reactivity, StrategyFlags};
+use crate::bot::settings::{BehaviorMode, Reactivity, StrategyFlags};
 use crate::bot::state::PlayerClass;
 use crate::engine::blackboard::{Key as BbKey, Value as BbValue};
 use crate::engine::bt_nodes::{BtNode, BtResult};
@@ -310,6 +310,10 @@ pub enum Bt {
     InCombat,
     /// Bot is alive (not dead/ghost).
     IsAlive,
+    /// Bot is a ghost (released spirit, corpse running).
+    IsGhost,
+    /// Bot is on a taxi flight path.
+    OnTaxi,
     /// Bot is mounted.
     IsMounted,
     /// Bot is indoors.
@@ -318,10 +322,9 @@ pub enum Bt {
     IsMoving,
     /// Bot's current behavior mode matches.
     ModeIs(BehaviorMode),
-    /// Bot's combat order contains all of these flags.
-    CombatOrderHas(CombatOrder),
     /// Bot's strategy flags contain all of these. Use to gate opt-in
-    /// subtrees (RPG branches, RTSC, grind extras, CC management).
+    /// subtrees (RPG branches, RTSC, grind extras, CC management,
+    /// combat-order targeting like tank/assist/protect, boost, etc.).
     StrategyEnabled(StrategyFlags),
     /// Bot's reactivity level matches.
     ReactivityIs(Reactivity),
@@ -673,6 +676,14 @@ pub enum Bt {
     /// moving, `Failure` when there is no target or the bot is
     /// already inside `dist`.
     CloseToTarget(f32),
+    /// Ensure auto-attack / auto-shoot is engaged on the current target.
+    /// Called each tick in the combat wrapper after targeting resolves.
+    /// For ranged-equipped bots, calls `auto_shoot` to start/maintain
+    /// Auto Shot (bow/gun/crossbow) or Shoot (wand). For melee bots
+    /// (or when auto_shoot fails), calls `auto_attack(true)` to engage
+    /// melee swings. Always returns Success so it doesn't block the
+    /// combat pipeline Seq.
+    EngageTarget,
     /// Initiate combat with the current target via the best available
     /// pull path. Dispatches in this order:
     ///   1. `auto_shoot` — wand/bow/gun/crossbow ranged auto-attack.
@@ -698,6 +709,11 @@ pub enum Bt {
     /// range. Callers that want "mark once and throttle" should
     /// wrap with `Throttle`.
     MarkRti(u8),
+    /// Mark the current target with the bot's `preferred_rti_icon` setting.
+    /// Returns Failure when the setting is `None` (user ran `rti clear`),
+    /// so the throttle parent doesn't block subsequent ticks. This allows
+    /// users to disable RTI marking at runtime without rebuilding the tree.
+    MarkRtiPreferred,
     /// Mark the bot's current target with CC icon `icon`. Identical
     /// wire behaviour to `MarkRti` — kept as its own variant so CC
     /// strategies (mage sheep, priest shackle, warlock banish) can
@@ -1095,11 +1111,24 @@ impl BtNode for Bt {
             Bt::Seq(children) => {
                 let mut last_i = 0;
                 let mut res = BtResult::Success;
+                // Snapshot each child's trace so earlier children's paths
+                // aren't overwritten when a later child's Sel clears the
+                // trace.  Only collected when monitor tracing is active.
+                let mut child_traces: Vec<Vec<String>> = Vec::new();
                 for (i, child) in children.iter().enumerate() {
                     last_i = i;
                     match child.tick(ctx) {
-                        BtResult::Success => {}
+                        BtResult::Success => {
+                            if let Some(ref trace) = ctx.monitor_trace {
+                                let snapshot = trace.borrow().clone();
+                                child_traces.push(snapshot);
+                            }
+                        }
                         other => {
+                            if let Some(ref trace) = ctx.monitor_trace {
+                                let snapshot = trace.borrow().clone();
+                                child_traces.push(snapshot);
+                            }
                             res = other;
                             break;
                         }
@@ -1107,7 +1136,31 @@ impl BtNode for Bt {
                 }
                 if let Some(ref trace) = ctx.monitor_trace {
                     if res != BtResult::Failure {
-                        trace.borrow_mut().insert(0, format!("Seq[{last_i}]"));
+                        // Reconstruct a combined trace showing all children.
+                        // Format: "Seq[last] > child_trace" for the last
+                        // child, with earlier children appended as
+                        // " || Seq[i] > ..." segments.
+                        let mut combined = Vec::new();
+                        combined.push(format!("Seq[{last_i}]"));
+                        if let Some(last) = child_traces.last() {
+                            combined.extend(last.iter().cloned());
+                        }
+                        // Prepend earlier children's traces so the primary
+                        // action (Seq[0]) is visible.
+                        if child_traces.len() > 1 {
+                            for (ci, ct) in child_traces.iter().enumerate() {
+                                if ci == child_traces.len() - 1 {
+                                    break;
+                                }
+                                let child_path = if ct.is_empty() {
+                                    String::from("(empty)")
+                                } else {
+                                    ct.join(" > ")
+                                };
+                                combined.push(format!("|| Seq[{ci}]={child_path}"));
+                            }
+                        }
+                        *trace.borrow_mut() = combined;
                     }
                 }
                 return res;
@@ -1235,11 +1288,12 @@ impl BtNode for Bt {
             Bt::Noop => BtResult::Success,
             Bt::InCombat => ok(ctx.in_combat()),
             Bt::IsAlive => ok(ctx.snap.self_.is_alive),
+            Bt::IsGhost => ok(ctx.snap.self_.is_ghost),
+            Bt::OnTaxi => ok(ctx.snap.self_.on_taxi),
             Bt::IsMounted => ok(ctx.interface.is_mounted()),
             Bt::IsIndoor => ok(ctx.interface.is_indoor()),
             Bt::IsMoving => ok(ctx.snap.self_.is_moving),
             Bt::ModeIs(mode) => ok(ctx.settings.mode == *mode),
-            Bt::CombatOrderHas(flags) => ok(ctx.settings.combat_order.contains(*flags)),
             // True if *any* of the four per-state strategy engines has
             // this flag set. Typed filters (`@nc=`, `@co=`, `@react=`,
             // `@dead=`) key on a specific slot via the chat-filter layer;
@@ -1297,11 +1351,22 @@ impl BtNode for Bt {
             Bt::HasPet => ok(ctx.interface.has_pet()),
             Bt::PetAlive => ok(ctx.interface.pet_is_alive()),
             Bt::PetUnhappy => ok(ctx.interface.pet_happiness() < 2),
-            Bt::ShouldEngage => ok(match ctx.settings.reactivity {
-                Reactivity::Passive => false,
-                Reactivity::Defensive => !ctx.attackers.is_empty(),
-                Reactivity::Aggressive => !ctx.attackers.is_empty() || !ctx.nearby.is_empty(),
-            }),
+            Bt::ShouldEngage => {
+                let result = match ctx.settings.reactivity {
+                    Reactivity::Passive => false,
+                    Reactivity::Defensive => !ctx.attackers.is_empty(),
+                    Reactivity::Aggressive => !ctx.attackers.is_empty() || !ctx.nearby.is_empty(),
+                };
+                if !result {
+                    ctx.monitor(format_args!(
+                        "ENGAGE: ShouldEngage=false react={:?} attackers={} nearby={}",
+                        ctx.settings.reactivity,
+                        ctx.attackers.len(),
+                        ctx.nearby.len(),
+                    ));
+                }
+                ok(result)
+            }
             Bt::TargetCastingSpell(spell) => ok(ctx.current_target().is_some_and(|t| {
                 let s = ctx.interface.get_unit_snapshot(t);
                 s.is_casting && s.casting_spell_id == spell.raw()
@@ -1436,12 +1501,19 @@ impl BtNode for Bt {
             Bt::FleeToSafe(radius) => move_to_safe(ctx, *radius),
             Bt::MoveAwayFromRaid(dist) => move_to_safe(ctx, *dist),
             Bt::MaintainRange(min_range) => {
-                let too_close = ctx
+                let (too_close, dist) = ctx
                     .current_target()
-                    .is_some_and(|t| ctx.interface.unit_distance(t) < *min_range);
+                    .map(|t| {
+                        let d = ctx.interface.unit_distance(t);
+                        (d < *min_range, d)
+                    })
+                    .unwrap_or((false, 0.0));
                 if !too_close {
                     return BtResult::Failure;
                 }
+                ctx.monitor(format_args!(
+                    "MOVE: MaintainRange({min_range}) dist={dist:.1}y -> flee",
+                ));
                 move_to_safe(ctx, *min_range * 2.0)
             }
             Bt::MoveBehind(distance) => {
@@ -1455,8 +1527,9 @@ impl BtNode for Bt {
                 {
                     return BtResult::Failure;
                 }
-                let pos = ctx.interface.get_behind_position(target, *distance);
-                if ctx.interface.move_to(pos.x, pos.y, pos.z) {
+                // Use chase with angle=PI to smoothly track behind the target
+                // instead of move_to which restarts splines every tick.
+                if ctx.interface.chase(target, *distance, std::f32::consts::PI) {
                     BtResult::Running
                 } else {
                     BtResult::Failure
@@ -1496,17 +1569,27 @@ impl BtNode for Bt {
             }
             Bt::StickToTarget(range) => {
                 if ctx.snap.self_.is_casting {
+                    ctx.monitor(format_args!("MOVE: StickToTarget({range}) SKIP (casting)"));
+                    return BtResult::Failure;
+                }
+                if ctx.settings.mode == BehaviorMode::Stay {
                     return BtResult::Failure;
                 }
                 let target = match ctx.current_target() {
                     Some(t) => t,
-                    None => return BtResult::Failure,
+                    None => {
+                        ctx.monitor(format_args!("MOVE: StickToTarget({range}) FAIL (no target)"));
+                        return BtResult::Failure;
+                    }
                 };
-                if ctx.interface.unit_distance(target) <= *range {
+                let dist = ctx.interface.unit_distance(target);
+                if dist <= *range {
                     return BtResult::Failure;
                 }
-                let snap = ctx.interface.get_unit_snapshot(target);
-                if ctx.interface.move_to(snap.pos.x, snap.pos.y, snap.pos.z) {
+                ctx.monitor(format_args!(
+                    "MOVE: StickToTarget({range}) dist={dist:.1}y -> chase 0x{target:X}",
+                ));
+                if ctx.interface.chase(target, *range, 0.0) {
                     BtResult::Running
                 } else {
                     BtResult::Failure
@@ -1527,7 +1610,11 @@ impl BtNode for Bt {
             Bt::AttackNearest => {
                 let target = ctx.attackers.first().or_else(|| ctx.nearby.first());
                 match target {
-                    Some(&unit) if ctx.interface.attack(unit) => BtResult::Success,
+                    Some(&unit) if ctx.current_target() == Some(unit) => {
+                        ctx.pending_target.set(Some(unit));
+                        BtResult::Success
+                    }
+                    Some(&unit) if ctx.attack(unit) => BtResult::Success,
                     _ => BtResult::Failure,
                 }
             }
@@ -1658,6 +1745,7 @@ impl BtNode for Bt {
             // ── Actions — 11f ────────────────────────────────────────
             Bt::KiteFromTarget(dist) => tick_kite_from_target(ctx, *dist),
             Bt::CloseToTarget(dist) => tick_close_to_target(ctx, *dist),
+            Bt::EngageTarget => tick_engage_target(ctx),
             Bt::PullTarget => tick_pull_target(ctx),
 
             // ── Actions — 11g ────────────────────────────────────────
@@ -1670,6 +1758,17 @@ impl BtNode for Bt {
                     return BtResult::Failure;
                 }
                 ok(ctx.interface.group_set_target_icon(target, *icon))
+            }
+            Bt::MarkRtiPreferred => {
+                let icon = match ctx.settings.preferred_rti_icon {
+                    Some(i) => i,
+                    None => return BtResult::Failure,
+                };
+                let target = match ctx.current_target() {
+                    Some(t) => t,
+                    None => return BtResult::Failure,
+                };
+                ok(ctx.interface.group_set_target_icon(target, icon))
             }
             Bt::CcCastOnRti(spell) => tick_cc_cast_on_rti(ctx, *spell),
             Bt::CcCastOnNearest(spell) => tick_cc_cast_on_nearest(ctx, *spell),
@@ -1925,41 +2024,52 @@ fn move_to_safe(ctx: &mut TickContext<'_>, radius: f32) -> BtResult {
 fn cast(ctx: &mut TickContext<'_>, spell: SpellId, target: u64) -> BtResult {
     // Don't interrupt an in-progress cast (e.g. Summon Demon, Hearthstone).
     if ctx.snap.self_.is_casting {
+        let name = ctx.spell_name(spell);
+        ctx.monitor(format_args!(
+            "CAST {name} on 0x{target:X}: SKIP (already casting spell={})",
+            ctx.snap.self_.casting_spell_id,
+        ));
         return BtResult::Failure;
     }
     if ctx.timers.gcd_active(ctx.server_time_ms) {
+        // GCD is too spammy for chat/monitor - only log when explicitly asked
         return BtResult::Failure;
     }
     if ctx.timers.spell_on_cooldown(spell, ctx.server_time_ms) {
-        if ctx.monitor_trace.is_some() {
-            let rem = ctx.timers.cooldown_remaining_ms(spell, ctx.server_time_ms);
-            monitor_cast_event(ctx, spell, target, &format!("CD ({rem}ms left)"));
-        }
+        let rem = ctx.timers.cooldown_remaining_ms(spell, ctx.server_time_ms);
+        let name = ctx.spell_name(spell);
+        ctx.monitor(format_args!(
+            "CAST {name} on 0x{target:X}: CD ({rem}ms left)",
+        ));
         return BtResult::Failure;
     }
     if ctx.interface.cast_spell(spell, target) {
         ctx.timers.on_spell_cast(spell, ctx.server_time_ms);
-        if ctx.monitor_trace.is_some() {
-            monitor_cast_event(ctx, spell, target, "OK");
-        }
+        let name = ctx.spell_name(spell);
+        ctx.monitor(format_args!("CAST {name} on 0x{target:X}: OK"));
         BtResult::Success
     } else {
-        if ctx.monitor_trace.is_some() {
-            monitor_cast_event(ctx, spell, target, "FAIL (FFI rejected)");
-        }
+        let dist = ctx.interface.unit_distance(target);
+        let moving = ctx.snap.self_.is_moving;
+        let has_spell = ctx.interface.knows_spell(spell);
+        let can = ctx.interface.can_cast(spell, target);
+        let name = ctx.spell_name(spell);
+        let los = ctx.interface.has_los(target);
+        // Build a human-readable reason string.
+        let reason = if !has_spell {
+            "not learned"
+        } else if !los {
+            "no line of sight"
+        } else if !can {
+            "can't cast (range/mana/stance?)"
+        } else {
+            "server rejected"
+        };
+        ctx.monitor(format_args!(
+            "CAST {name} on 0x{target:X}: FAIL ({reason}) dist={dist:.1}y los={los} knows={has_spell} can_cast={can} moving={moving}",
+        ));
         BtResult::Failure
     }
-}
-
-/// Log a cast attempt result to the monitor trace (stored in blackboard,
-/// flushed by the tick wrapper).
-fn monitor_cast_event(ctx: &mut TickContext<'_>, spell: SpellId, target: u64, result: &str) {
-    ctx.blackboard.push_monitor_line(format!(
-        "CAST {} on 0x{:X}: {}",
-        spell.raw(),
-        target,
-        result,
-    ));
 }
 
 fn count_group_members_below(ctx: &TickContext<'_>, threshold: f32) -> u8 {
@@ -2057,10 +2167,6 @@ fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
     //   * Failure — there is literally no follow target for this bot
     //     (solo, masterless random bot). The selector falls through to
     //     RPG/Grind so unclaimed bots still do something.
-    //
-    // The "only re-follow when far enough away" gate avoids fighting the
-    // movement generator on every tick — CMaNGOS already handles the
-    // close-range stick-with-target case via the chase generator.
 
     let Some(target) = pick_follow_target(ctx) else {
         return BtResult::Failure;
@@ -2072,10 +2178,39 @@ fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
         return BtResult::Success;
     }
 
-    if ctx.interface.unit_distance(target) <= REFOLLOW_THRESHOLD {
-        // Already in chase range — don't re-issue. Sticky behavior matches
-        // PB2's `tooFarDistance` gate regardless of formation type.
+    // For chase-offset formations (Melee, Queue, Far), the chase movement
+    // generator maintains the offset once started. We only need to re-issue
+    // when the bot drifts far from the target.
+    //
+    // For position-based formations (Near, Arrow, Raid, Line, Shield, etc.),
+    // the bot must recompute its formation slot each tick as the leader moves.
+    // The dedup in CB_MoveTo/CB_Follow prevents redundant commands when the
+    // computed position hasn't changed, so we can safely call every tick.
+    use crate::bot::settings::FollowFormation;
+    let uses_chase = matches!(
+        ctx.settings.follow_formation,
+        FollowFormation::Melee | FollowFormation::Queue | FollowFormation::Far
+    );
+
+    let dist_to_target = ctx.interface.unit_distance(target);
+
+    if uses_chase && dist_to_target <= REFOLLOW_THRESHOLD {
+        // Chase generator is handling it — don't re-issue.
         return BtResult::Success;
+    }
+
+    // For position-based formations, throttle move_to re-issue when the bot
+    // is close to the follow target. Without this, formation position shifts
+    // every tick as the leader moves, causing MovePoint to fire every ~100ms
+    // which restarts the spline and produces stuttering/gliding movement.
+    // When close, only re-issue every ~1s; when far, always re-issue.
+    if !uses_chase && dist_to_target <= REFOLLOW_THRESHOLD {
+        use crate::engine::blackboard::{Key as BbKey, Value as BbValue};
+        let last_follow_ms = ctx.blackboard.get_u64(BbKey::LastFollowMs).unwrap_or(0);
+        if ctx.server_time_ms.saturating_sub(last_follow_ms) < 1_000 {
+            return BtResult::Success;
+        }
+        ctx.blackboard.set(BbKey::LastFollowMs, BbValue::U64(ctx.server_time_ms));
     }
 
     apply_formation_follow(ctx, target);
@@ -2185,8 +2320,17 @@ fn apply_formation_follow(ctx: &mut TickContext<'_>, target: UnitHandle) {
         FormationOutput::ChaseOffset { offset, angle } => {
             ctx.interface.follow(target, offset, angle);
         }
-        FormationOutput::Position { x, y, z } => {
-            ctx.interface.move_to(x, y, z);
+        FormationOutput::Position { x, y, z: _ } => {
+            // Convert absolute position to follow offset so we can use
+            // MoveFollow (smooth target tracking) instead of MovePoint
+            // (restarts spline every tick, causing stutter).
+            let tx = follow_target.x;
+            let ty = follow_target.y;
+            let dx = x - tx;
+            let dy = y - ty;
+            let offset = dx.hypot(dy).max(0.5);
+            let angle = dy.atan2(dx) - follow_target.o;
+            ctx.interface.follow(target, offset, angle);
         }
     }
 }
@@ -2326,14 +2470,22 @@ fn tick_interrupt(ctx: &mut TickContext<'_>) -> BtResult {
     };
     if ctx.interface.can_cast(spell, target) && ctx.interface.cast_spell(spell, target) {
         ctx.timers.on_spell_cast(spell, ctx.server_time_ms);
+        let name = ctx.spell_name(spell);
+        ctx.monitor(format_args!("REACTIVE: Interrupt {name} on 0x{target:X}"));
         BtResult::Success
     } else {
+        let name = ctx.spell_name(spell);
+        let can = ctx.interface.can_cast(spell, target);
+        let dist = ctx.interface.unit_distance(target);
+        ctx.monitor(format_args!(
+            "REACTIVE: Interrupt {name} FAIL can_cast={can} dist={dist:.1}y on 0x{target:X}",
+        ));
         BtResult::Failure
     }
 }
 
 fn tick_dispel(ctx: &mut TickContext<'_>) -> BtResult {
-    if let Some((member, _debuff_id)) = ctx.interface.find_dispellable_target(DispelSchool::Any.mask()) {
+    if let Some((member, debuff_id)) = ctx.interface.find_dispellable_target(DispelSchool::Any.mask()) {
         let spell = match ctx.class {
             PlayerClass::Priest => DISPEL_MAGIC,
             PlayerClass::Paladin => CLEANSE,
@@ -2344,6 +2496,10 @@ fn tick_dispel(ctx: &mut TickContext<'_>) -> BtResult {
         };
         if ctx.interface.can_cast(spell, member) && ctx.interface.cast_spell(spell, member) {
             ctx.timers.on_spell_cast(spell, ctx.server_time_ms);
+            let name = ctx.spell_name(spell);
+            ctx.monitor(format_args!(
+                "REACTIVE: Dispel {name} on 0x{member:X} (debuff={debuff_id})",
+            ));
             return BtResult::Success;
         }
     }
@@ -2359,12 +2515,13 @@ fn tick_resurrect(ctx: &mut TickContext<'_>) -> BtResult {
             PlayerClass::Shaman => ANCESTRAL_SPIRIT,
             _ => return BtResult::Failure,
         };
-        // Rebirth works in combat, others only out of combat.
         if spell != REBIRTH && ctx.in_combat() {
             return BtResult::Failure;
         }
         if ctx.interface.can_cast(spell, dead) && ctx.interface.cast_spell(spell, dead) {
             ctx.timers.on_spell_cast(spell, ctx.server_time_ms);
+            let name = ctx.spell_name(spell);
+            ctx.monitor(format_args!("REACTIVE: Resurrect {name} on 0x{dead:X}"));
             return BtResult::Success;
         }
     }
@@ -2393,6 +2550,8 @@ fn tick_threat_dump(ctx: &mut TickContext<'_>) -> BtResult {
     let me = ctx.bot_handle;
     if ctx.interface.can_cast(spell, me) && ctx.interface.cast_spell(spell, me) {
         ctx.timers.on_spell_cast(spell, ctx.server_time_ms);
+        let name = ctx.spell_name(spell);
+        ctx.monitor(format_args!("REACTIVE: ThreatDump {name}"));
         BtResult::Success
     } else {
         BtResult::Failure
@@ -2400,11 +2559,18 @@ fn tick_threat_dump(ctx: &mut TickContext<'_>) -> BtResult {
 }
 
 fn tick_focus_attack(ctx: &mut TickContext<'_>) -> BtResult {
-    if let Some(focus) = ctx.settings.focus_target
-        && ctx.current_target() != Some(focus)
-        && ctx.interface.attack(focus)
-    {
-        return BtResult::Success;
+    if let Some(focus) = ctx.settings.focus_target {
+        if ctx.current_target() == Some(focus) {
+            ctx.pending_target.set(Some(focus));
+            return BtResult::Success;
+        }
+        if ctx.attack(focus) {
+            ctx.monitor(format_args!("TARGET: FocusAttack -> 0x{focus:X}"));
+            return BtResult::Success;
+        }
+        ctx.monitor(format_args!(
+            "TARGET: FocusAttack -> attack(0x{focus:X}) REFUSED",
+        ));
     }
     BtResult::Failure
 }
@@ -2412,46 +2578,82 @@ fn tick_focus_attack(ctx: &mut TickContext<'_>) -> BtResult {
 fn tick_tank_pickup(ctx: &mut TickContext<'_>) -> BtResult {
     for &attacker in ctx.attackers {
         let snap = ctx.interface.get_unit_snapshot(attacker);
-        if snap.current_target != ctx.bot_handle && ctx.interface.taunt(attacker) {
-            return BtResult::Success;
+        if snap.current_target != ctx.bot_handle {
+            if ctx.interface.taunt(attacker) {
+                ctx.monitor(format_args!(
+                    "TARGET: TankPickup -> taunt 0x{attacker:X} (was on 0x{:X})",
+                    snap.current_target,
+                ));
+                return BtResult::Success;
+            }
+            ctx.monitor(format_args!(
+                "TARGET: TankPickup -> taunt(0x{attacker:X}) REFUSED",
+            ));
         }
     }
     BtResult::Failure
 }
 
 fn tick_assist_leader(ctx: &mut TickContext<'_>) -> BtResult {
-    let leader_target = ctx
-        .interface
-        .group_get_tank()
-        .or_else(|| {
-            ctx.snap.group_members[..ctx.snap.group_size as usize]
-                .iter()
-                .copied()
-                .find(|&h| h != 0 && h != ctx.bot_handle)
-        })
-        .and_then(|leader| {
-            let snap = ctx.interface.get_unit_snapshot(leader);
-            if snap.current_target != 0 {
-                Some(snap.current_target)
-            } else {
-                None
-            }
-        });
+    let tank = ctx.interface.group_get_tank();
+    let leader = tank.or_else(|| {
+        ctx.snap.group_members[..ctx.snap.group_size as usize]
+            .iter()
+            .copied()
+            .find(|&h| h != 0 && h != ctx.bot_handle)
+    });
 
-    if let Some(target) = leader_target
-        && ctx.current_target() != Some(target)
-        && ctx.interface.attack(target)
-    {
-        return BtResult::Success;
+    let leader_target = leader.and_then(|l| {
+        let snap = ctx.interface.get_unit_snapshot(l);
+        if snap.current_target != 0 {
+            Some(snap.current_target)
+        } else {
+            None
+        }
+    });
+
+    if let Some(target) = leader_target {
+        if ctx.current_target() == Some(target) {
+            ctx.pending_target.set(Some(target));
+            return BtResult::Success;
+        }
+        if ctx.attack(target) {
+            ctx.monitor(format_args!(
+                "TARGET: AssistLeader -> attack 0x{:X} (leader=0x{:X})",
+                target,
+                leader.unwrap_or(0),
+            ));
+            return BtResult::Success;
+        }
+        ctx.monitor(format_args!(
+            "TARGET: AssistLeader -> attack(0x{:X}) REFUSED by FFI",
+            target,
+        ));
+    } else {
+        ctx.monitor(format_args!(
+            "TARGET: AssistLeader FAIL tank={:?} leader={:?} group_size={} (leader has no target)",
+            tank.map(|t| format!("0x{t:X}")),
+            leader.map(|l| format!("0x{l:X}")),
+            ctx.snap.group_size,
+        ));
     }
     BtResult::Failure
 }
 
 fn tick_protect(ctx: &mut TickContext<'_>) -> BtResult {
     if let Some(protect) = ctx.settings.protect_target {
-        for &attacker in ctx.attackers {
-            let snap = ctx.interface.get_unit_snapshot(attacker);
-            if snap.current_target == protect && ctx.interface.attack(attacker) {
+        let attacker = ctx.attackers.iter().copied().find(|&a| {
+            ctx.interface.get_unit_snapshot(a).current_target == protect
+        });
+        if let Some(target) = attacker {
+            if ctx.current_target() == Some(target) {
+                ctx.pending_target.set(Some(target));
+                return BtResult::Success;
+            }
+            if ctx.attack(target) {
+                ctx.monitor(format_args!(
+                    "TARGET: Protect -> attack 0x{target:X} (protecting 0x{protect:X})",
+                ));
                 return BtResult::Success;
             }
         }
@@ -2619,7 +2821,7 @@ fn tick_attack_quest_mob(ctx: &mut TickContext<'_>) -> BtResult {
     let has_active = quests.iter().any(|q| !q.complete);
     if has_active
         && let Some(&target) = ctx.nearby.iter().find(|&&u| ctx.interface.is_attackable(u))
-        && ctx.interface.attack(target)
+        && ctx.attack(target)
     {
         return BtResult::Success;
     }
@@ -3039,7 +3241,7 @@ fn tick_grind(ctx: &mut TickContext<'_>) -> BtResult {
     // Re-engage existing target.
     if let Some(t) = ctx.current_target()
         && ctx.interface.is_attackable(t)
-        && ctx.interface.attack(t)
+        && ctx.attack(t)
     {
         return BtResult::Success;
     }
@@ -3054,7 +3256,7 @@ fn tick_grind(ctx: &mut TickContext<'_>) -> BtResult {
         diff <= 3 && ctx.interface.unit_distance(unit) < ctx.settings.max_combat_range
     });
     if let Some(t) = target
-        && ctx.interface.attack(t)
+        && ctx.attack(t)
     {
         return BtResult::Success;
     }
@@ -3129,11 +3331,14 @@ fn tick_close_to_target(ctx: &mut TickContext<'_>, dist: f32) -> BtResult {
         Some(t) => t,
         None => return BtResult::Failure,
     };
-    if ctx.interface.unit_distance(target) <= dist {
+    let cur_dist = ctx.interface.unit_distance(target);
+    if cur_dist <= dist {
         return BtResult::Failure;
     }
-    let snap = ctx.interface.get_unit_snapshot(target);
-    if ctx.interface.move_to(snap.pos.x, snap.pos.y, snap.pos.z) {
+    ctx.monitor(format_args!(
+        "MOVE: CloseToTarget({dist}) cur={cur_dist:.1}y -> chase 0x{target:X}",
+    ));
+    if ctx.interface.chase(target, dist, 0.0) {
         BtResult::Running
     } else {
         BtResult::Failure
@@ -3146,6 +3351,26 @@ fn tick_close_to_target(ctx: &mut TickContext<'_>, dist: f32) -> BtResult {
 /// success; `Failure` when every path bails (no target, no ranged
 /// weapon + no taunt + attack refused, etc.). Class-specific pulls
 /// wrap this leaf; they are never inlined here.
+/// Ensure auto-attack / auto-shoot is engaged on the current target.
+/// For ranged-equipped bots, tries `auto_shoot` first (Auto Shot for
+/// bow/gun/crossbow, Shoot for wand). Falls back to melee `auto_attack`.
+/// Always returns Success so the combat Seq continues.
+fn tick_engage_target(ctx: &mut TickContext<'_>) -> BtResult {
+    let Some(target) = ctx.current_target() else {
+        ctx.monitor(format_args!("ENGAGE: no target — pass-through"));
+        return BtResult::Success; // no target yet — don't block
+    };
+    // Try ranged auto-shoot first (idempotent if already firing).
+    if ctx.interface.auto_shoot(target) {
+        ctx.monitor(format_args!("ENGAGE: auto_shoot on 0x{target:X}"));
+    } else {
+        // No ranged weapon or shoot failed — ensure melee auto-attack.
+        ctx.interface.auto_attack(true);
+        ctx.monitor(format_args!("ENGAGE: auto_attack on 0x{target:X}"));
+    }
+    BtResult::Success
+}
+
 fn tick_pull_target(ctx: &mut TickContext<'_>) -> BtResult {
     let target = match ctx.current_target() {
         Some(t) => t,
@@ -3157,7 +3382,7 @@ fn tick_pull_target(ctx: &mut TickContext<'_>) -> BtResult {
     if ctx.interface.taunt(target) {
         return BtResult::Success;
     }
-    if ctx.interface.attack(target) {
+    if ctx.attack(target) {
         return BtResult::Success;
     }
     BtResult::Failure
@@ -3288,7 +3513,7 @@ fn tick_rti_assist(ctx: &mut TickContext<'_>, icon_0to7: u8) -> BtResult {
         return BtResult::Failure;
     }
     match ctx.interface.get_unit_with_raid_icon(icon_0to7 + 1) {
-        Some(u) if ctx.interface.attack(u) => BtResult::Success,
+        Some(u) if ctx.attack(u) => BtResult::Success,
         _ => BtResult::Failure,
     }
 }
@@ -3329,7 +3554,7 @@ fn tick_bg_capture(ctx: &mut TickContext<'_>) -> BtResult {
 fn tick_bg_attack(ctx: &mut TickContext<'_>) -> BtResult {
     let enemies = ctx.interface.get_nearby_enemies(30.0);
     if let Some(&enemy) = enemies.first()
-        && ctx.interface.attack(enemy)
+        && ctx.attack(enemy)
     {
         return BtResult::Success;
     }
@@ -3872,6 +4097,7 @@ mod tests {
             role: BotRole::DPS,
             settings: &owned.settings,
             monitor_trace: None,
+            pending_target: std::cell::Cell::new(None),
         }
     }
 

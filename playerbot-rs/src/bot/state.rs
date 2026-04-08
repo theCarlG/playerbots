@@ -3,6 +3,7 @@
 /// This is the opaque `void*` returned by `playerbot_create` and stored by
 /// the C++ `PlayerbotRust` class. It owns everything the AI needs.
 use std::collections::VecDeque;
+use std::sync::Mutex;
 
 use crate::{
     bot::class_prefs::ClassPrefs,
@@ -109,7 +110,12 @@ pub struct BotState {
 
     /// Push events from C++ (spell casts, aura changes, deaths, damage).
     /// Processed before the BT runs each tick.
-    pub events: VecDeque<BotEvent>,
+    ///
+    /// Protected by a `Mutex` because push-event FFI functions
+    /// (`playerbot_packet_in`, `playerbot_aura_changed`, …) can be called
+    /// from the session thread while `playerbot_update` drains the queue on
+    /// the map-worker thread.
+    pub events: Mutex<VecDeque<BotEvent>>,
 
     /// Per-bot typed key-value store.
     pub blackboard: Blackboard,
@@ -149,7 +155,11 @@ pub struct BotState {
     pub settings: BotSettings,
 
     /// Pending commands from chat, processed at tick start.
-    pub pending_commands: VecDeque<PendingCommand>,
+    ///
+    /// Protected by a `Mutex` for the same reason as `events` —
+    /// `playerbot_chat_command` and `playerbot_rtsc_spell` can be called
+    /// from a different thread than `playerbot_update`.
+    pub pending_commands: Mutex<VecDeque<PendingCommand>>,
 
     /// Travel target — per-bot destination lifecycle (PB2 TravelTarget).
     pub travel_target: TravelTarget,
@@ -161,10 +171,14 @@ pub struct BotState {
     // ── Debug monitor ───────────────────────────────────────────────────
     /// When true, commands/BT path/settings are logged to a file.
     pub monitor_active: bool,
+    /// Per-bot log file name (e.g. `monitor_70B`). Cached on creation.
+    pub monitor_file_name: String,
     /// Previous tick's BT path string (for change detection).
     pub last_bt_path: String,
     /// Last time we wrote a TICK summary line.
     pub last_monitor_summary_ms: u64,
+    /// Last known combat state (for transition logging).
+    pub last_monitor_in_combat: bool,
 }
 
 impl BotState {
@@ -188,7 +202,7 @@ impl BotState {
             nearby_units: Vec::new(),
             timers: BotTimers::new(),
             throttles: Throttles::new(),
-            events: VecDeque::new(),
+            events: Mutex::new(VecDeque::new()),
             blackboard: Blackboard::default(),
             group_state: None,
             master_guid: None,
@@ -198,13 +212,15 @@ impl BotState {
             spec,
             role,
             settings,
-            pending_commands: VecDeque::new(),
+            pending_commands: Mutex::new(VecDeque::new()),
             travel_target: TravelTarget::default(),
             last_attackers_refresh_ms: 0,
             last_nearby_refresh_ms: 0,
             monitor_active: false,
+            monitor_file_name: super::monitor::make_monitor_file_name(handle),
             last_bt_path: String::new(),
             last_monitor_summary_ms: 0,
+            last_monitor_in_combat: false,
         }
     }
 
@@ -260,8 +276,8 @@ impl BotState {
     /// where the field is introduced, instead of hiding it in a scattered
     /// `extern "C"` wrapper.
     pub fn reset_strategies(&mut self) {
-        self.pending_commands.clear();
-        self.events.clear();
+        self.pending_commands.lock().unwrap().clear();
+        self.events.lock().unwrap().clear();
         self.blackboard = Blackboard::default();
         self.throttles = Throttles::new();
         self.timers = BotTimers::new();

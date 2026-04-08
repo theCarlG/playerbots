@@ -187,6 +187,17 @@ impl Default for MoltenCoreFsm {
 }
 
 impl EncounterFsm for MoltenCoreFsm {
+    fn set_boss_entry(&mut self, entry: u32) {
+        // Only switch if we don't already have this boss active.
+        let dominated = self
+            .active_boss
+            .as_ref()
+            .is_some_and(|b| b.boss_entry() == entry);
+        if !dominated {
+            self.set_active_boss_by_entry(entry);
+        }
+    }
+
     fn update(&mut self, event: &EncounterEvent, boss_hp_pct: f32, time_ms: u64) {
         if let Some(boss) = &mut self.active_boss {
             boss.update(event, boss_hp_pct, time_ms);

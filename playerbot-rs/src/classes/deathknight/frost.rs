@@ -30,11 +30,7 @@ pub fn build_tree() -> Bt {
             Sel!(
                 // Absorb vs casters.
                 Seq!(TargetIsCasting, CastOnSelf(ANTI_MAGIC_SHELL)),
-                // Burst / AoE.
-                CastOnTarget(HOWLING_BLAST),
-                // Main melee.
-                CastOnTarget(OBLITERATE),
-                // Diseases.
+                // Diseases first — Obliterate benefits from both active.
                 Seq!(
                     Bt::target_missing(FROST_FEVER),
                     CastOnTarget(ICY_TOUCH),
@@ -43,6 +39,10 @@ pub fn build_tree() -> Bt {
                     Bt::target_missing(BLOOD_PLAGUE),
                     CastOnTarget(PLAGUE_STRIKE),
                 ),
+                // Burst / AoE.
+                CastOnTarget(HOWLING_BLAST),
+                // Main melee.
+                CastOnTarget(OBLITERATE),
                 // RP dump.
                 CastOnTarget(FROST_STRIKE),
                 // Snare fleeing target.

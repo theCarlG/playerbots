@@ -10,8 +10,8 @@ use crate::bot::class_prefs::{
     TotemSlot, WarlockCurse, WarriorStance, WeaponHand,
 };
 use crate::bot::settings::{
-    BehaviorMode, BotStateKind, ChatChannel, CombatOrder, FollowFormation, LootPolicy, Reactivity,
-    StrategyFlags,
+    BehaviorMode, BotStateKind, ChatChannel, FollowFormation, LootPolicy,
+    PositionStance, Reactivity, StrategyFlags,
 };
 use crate::commands::BotCommand;
 use crate::data::spells::lookup_spell_by_name;
@@ -114,6 +114,9 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec { names: &["summon"], parse: |_, _| Some(BotCommand::Summon) },
     // -- Cast a named spell once (addon sends `cast Taunt`). --
     CommandSpec { names: &["cast"], parse: |_, a| parse_cast(a) },
+    // RaidControl sends bare spell names without `cast` prefix.
+    CommandSpec { names: &["remove curse"], parse: |_, _| parse_cast(&["remove", "curse"]) },
+    CommandSpec { names: &["dispel magic"], parse: |_, _| parse_cast(&["dispel", "magic"]) },
     // -- Formation --
     CommandSpec { names: &["formation"], parse: |_, a| parse_formation(a) },
     // -- Named-location travel --
@@ -307,88 +310,103 @@ pub fn parse(text: &str) -> Option<BotCommand> {
     Some(BotCommand::Unknown(text.to_string()))
 }
 
-/// Parse `co` arguments.
+/// Parse `co` arguments — routes through the Combat strategy slot.
 ///
 /// Bare form (no sign): `co tank` → full replace with that flag.
 /// Signed form: `co +tank -fury`, `co +tank assist,+dps assist` → additive/subtractive edit.
-/// Flags are comma- or space-separated; multi-word names (`tank assist`,
-/// `dps assist`, `pull back`) are matched greedily.
+/// Query form: `co ?` → report current combat strategies.
+///
+/// This is the unified path: `co` now reads/writes the same `StrategyFlags`
+/// bitfield that the BT's `StrategyEnabled` checks use, eliminating the old
+/// `CombatOrder` ↔ `StrategyFlags` split.
 fn parse_combat_order(args: &[&str]) -> Option<BotCommand> {
     if args.is_empty() || args == ["?"] {
-        return Some(BotCommand::QueryCombatOrder);
+        return Some(BotCommand::QueryStrategies(BotStateKind::Combat));
     }
 
-    // Re-join so we can split on commas (the addon sends `co x,y` as one arg chain).
     let joined = args.join(" ");
     let signed = joined.contains('+') || joined.contains('-') || joined.contains('~');
 
     // Bare form: single flag, full replacement.
     if !signed {
-        let tokens: Vec<&str> = joined.split_whitespace().collect();
-        return match CombatOrder::parse_flag(&tokens) {
-            Some((flag, _)) => Some(BotCommand::SetCombatOrder(flag)),
+        let name = joined.trim();
+        return match StrategyFlags::parse_name(name) {
+            Some(flag) => Some(BotCommand::SetCombatStrategies(flag)),
             // PB2 silently ignores unknown strategy names.
-            None => Some(BotCommand::SetCombatOrder(CombatOrder::NONE)),
+            None => Some(BotCommand::SetCombatStrategies(StrategyFlags::NONE)),
         };
     }
 
-    // Signed form: walk tokens, each token starts with +/-/~, followed by flag name(s).
-    // `~` = toggle. A bare `?` chunk (e.g. `co +tank assist,?`) is Mangosbot's
-    // request to apply *and* re-query the flags in one round-trip.
-    let mut add = CombatOrder::NONE;
-    let mut remove = CombatOrder::NONE;
-    let mut toggle = CombatOrder::NONE;
+    // Signed form: walk tokens, each sign (+/-/~) starts a new flag.
+    // Multi-word names are matched greedily (try 3-word, 2-word, 1-word).
+    // Commas are treated as token separators alongside spaces.
+    //
+    // This mirrors the old CombatOrder parser's greedy multi-word logic
+    // while using StrategyFlags::parse_name for the actual lookup.
+    let normalized = joined.replace(',', " ");
+    let tokens: Vec<&str> = normalized.split_whitespace().collect();
+
+    let mut add = StrategyFlags::NONE;
+    let mut remove = StrategyFlags::NONE;
+    let mut toggle = StrategyFlags::NONE;
     let mut query = false;
 
-    for chunk in joined.split(',') {
-        let chunk_trim = chunk.trim();
-        if chunk_trim == "?" {
+    let mut i = 0;
+    while i < tokens.len() {
+        let tok = tokens[i];
+        if tok == "?" {
             query = true;
+            i += 1;
             continue;
         }
-        let tokens: Vec<&str> = chunk_trim.split_whitespace().collect();
-        let mut i = 0;
-        while i < tokens.len() {
-            let tok = tokens[i];
-            let (sign, rest) = match tok.chars().next() {
-                Some('+') => (1i8, &tok[1..]),
-                Some('-') => (-1i8, &tok[1..]),
-                Some('~') => (0i8, &tok[1..]),
-                _ => {
-                    // PB2 silently ignores unknown prefixes.
-                    i += 1;
-                    continue;
+        let (sign, first_word) = match tok.as_bytes().first() {
+            Some(b'+') => (1i8, &tok[1..]),
+            Some(b'-') => (-1i8, &tok[1..]),
+            Some(b'~') => (0i8, &tok[1..]),
+            _ => { i += 1; continue; }
+        };
+        if first_word.is_empty() {
+            i += 1;
+            continue;
+        }
+        // Greedy multi-word match: try 3-word, 2-word, 1-word.
+        let mut matched = false;
+        for window_len in (1..=3).rev() {
+            if i + window_len > tokens.len() { continue; }
+            let mut name_parts = vec![first_word];
+            for j in 1..window_len {
+                let next = tokens[i + j];
+                // Stop if the next token starts a new signed flag or is a query marker.
+                if next.starts_with('+') || next.starts_with('-') || next.starts_with('~') || next == "?" {
+                    break;
                 }
-            };
-            // Build a small slice starting with the unsigned first word.
-            let mut window: Vec<&str> = Vec::with_capacity(2);
-            if !rest.is_empty() {
-                window.push(rest);
+                name_parts.push(next);
             }
-            if let Some(next) = tokens.get(i + 1) {
-                // Include the next token only if it doesn't start a new signed flag.
-                if !next.starts_with('+') && !next.starts_with('-') && !next.starts_with('~') {
-                    window.push(next);
+            if name_parts.len() < window_len { continue; }
+            let candidate = name_parts.join(" ");
+            if let Some(flag) = StrategyFlags::parse_name(&candidate) {
+                match sign {
+                    1 => add.insert(flag),
+                    -1 => remove.insert(flag),
+                    _ => toggle.insert(flag),
                 }
+                i += window_len;
+                matched = true;
+                break;
             }
-            match CombatOrder::parse_flag(&window) {
-                Some((flag, consumed)) => {
-                    match sign {
-                        1 => add.insert(flag),
-                        -1 => remove.insert(flag),
-                        _ => toggle.insert(flag),
-                    }
-                    i += 1 + consumed.saturating_sub(1);
-                }
-                // PB2 silently ignores unknown combat strategy names.
-                None => {
-                    i += 1;
-                }
-            }
+        }
+        if !matched {
+            i += 1; // skip unknown
         }
     }
 
-    Some(BotCommand::ApplyCombatOrder { add, remove, toggle, query })
+    Some(BotCommand::ApplyStrategies {
+        state: BotStateKind::Combat,
+        add,
+        remove,
+        toggle,
+        query,
+    })
 }
 
 fn parse_reactivity(args: &[&str]) -> Option<BotCommand> {
@@ -412,7 +430,7 @@ fn parse_reactivity(args: &[&str]) -> Option<BotCommand> {
         }
     }
     match args.first().copied() {
-        None | Some("?") => Some(BotCommand::QueryReactivity),
+        None | Some("?") => Some(BotCommand::QueryStrategies(BotStateKind::Reaction)),
         Some("passive") => Some(BotCommand::SetReactivity(Reactivity::Passive)),
         Some("defensive") => Some(BotCommand::SetReactivity(Reactivity::Defensive)),
         Some("aggressive") => Some(BotCommand::SetReactivity(Reactivity::Aggressive)),
@@ -549,7 +567,7 @@ fn parse_rtsc(args: &[&str]) -> Option<BotCommand> {
                 let name = args.get(2).unwrap_or(&"default").to_string();
                 Some(BotCommand::RtscSaveHere(name))
             }
-            Some("exact") => {
+            Some("exact") | Some("selected") => {
                 let name = args.get(2).unwrap_or(&"default").to_string();
                 Some(BotCommand::RtscSave(name))
             }
@@ -672,6 +690,11 @@ fn parse_pull(args: &[&str]) -> Option<BotCommand> {
 fn parse_cc(args: &[&str]) -> Option<BotCommand> {
     match args.first().copied() {
         Some(first) => {
+            // RaidControl sends bare `cc rti` — implicit skull, same as
+            // `attack rti`.
+            if first == "rti" {
+                return Some(BotCommand::CcRti(8));
+            }
             if let Some(icon) = parse_rti(first) {
                 return Some(BotCommand::CcRti(icon));
             }
@@ -859,15 +882,29 @@ fn parse_range(args: &[&str]) -> Option<BotCommand> {
 }
 
 fn parse_stance(args: &[&str]) -> Option<BotCommand> {
-    // Accept numeric 0..=3 or named battle/defensive/berserker.
+    // `stance` has two roles in PB2's vocabulary:
+    //
+    //  1. Warrior combat stance: `stance battle`, `stance defensive`,
+    //     `stance berserker`, `stance 1`/`2`/`3`.
+    //
+    //  2. Positioning stance (Mangosbot addon toolbar): `stance near`,
+    //     `stance behind`, `stance tank`, `stance turnback`. These
+    //     toggle strategy flags that gate reactive positioning subtrees.
+    //
+    // The parser tries positioning keywords first, then warrior stances.
     let Some(first) = args.first().copied() else {
         return Some(BotCommand::QueryStance);
     };
     if first == "?" {
         return Some(BotCommand::QueryStance);
     }
+    // Positioning stances.
+    if let Some(ps) = PositionStance::from_str(first) {
+        return Some(BotCommand::SetPositionStance(ps));
+    }
+    // Warrior combat stances.
     let st: u8 = match first {
-        "none" | "0" => 0,
+        "0" => 0,
         "battle" | "1" => 1,
         "defensive" | "def" | "2" => 2,
         "berserker" | "zerk" | "3" => 3,
@@ -1221,78 +1258,86 @@ mod tests {
 
     #[test]
     fn parse_combat_orders_bare() {
+        use crate::bot::settings::StrategyFlags as F;
         assert_eq!(
             parse("co tank"),
-            Some(BotCommand::SetCombatOrder(CombatOrder::TANK))
+            Some(BotCommand::SetCombatStrategies(F::TANK))
         );
         assert_eq!(
             parse("co assist"),
-            Some(BotCommand::SetCombatOrder(CombatOrder::ASSIST))
+            Some(BotCommand::SetCombatStrategies(F::ASSIST))
         );
         assert_eq!(
             parse("co protect"),
-            Some(BotCommand::SetCombatOrder(CombatOrder::PROTECT))
+            Some(BotCommand::SetCombatStrategies(F::PROTECT))
         );
         assert_eq!(
             parse("co pull"),
-            Some(BotCommand::SetCombatOrder(CombatOrder::PULL))
+            Some(BotCommand::SetCombatStrategies(F::PULL))
         );
     }
 
     #[test]
     fn parse_combat_orders_signed() {
+        use crate::bot::settings::{BotStateKind, StrategyFlags as F};
         // Simple additive.
         assert_eq!(
             parse("co +tank"),
-            Some(BotCommand::ApplyCombatOrder { query: false,
-                add: CombatOrder::TANK,
-                remove: CombatOrder::NONE,
-                toggle: CombatOrder::NONE,
+            Some(BotCommand::ApplyStrategies {
+                state: BotStateKind::Combat, query: false,
+                add: F::TANK,
+                remove: F::NONE,
+                toggle: F::NONE,
             }),
         );
         // Subtractive.
         assert_eq!(
             parse("co -threat"),
-            Some(BotCommand::ApplyCombatOrder { query: false,
-                add: CombatOrder::NONE,
-                remove: CombatOrder::THREAT,
-                toggle: CombatOrder::NONE,
+            Some(BotCommand::ApplyStrategies {
+                state: BotStateKind::Combat, query: false,
+                add: F::NONE,
+                remove: F::THREAT,
+                toggle: F::NONE,
             }),
         );
         // Multi-word flag.
         assert_eq!(
             parse("co +tank assist"),
-            Some(BotCommand::ApplyCombatOrder { query: false,
-                add: CombatOrder::TANK_ASSIST,
-                remove: CombatOrder::NONE,
-                toggle: CombatOrder::NONE,
+            Some(BotCommand::ApplyStrategies {
+                state: BotStateKind::Combat, query: false,
+                add: F::TANK_ASSIST,
+                remove: F::NONE,
+                toggle: F::NONE,
             }),
         );
         // Comma-separated mixed.
         assert_eq!(
             parse("co -tank assist,+dps assist"),
-            Some(BotCommand::ApplyCombatOrder { query: false,
-                add: CombatOrder::DPS_ASSIST,
-                remove: CombatOrder::TANK_ASSIST,
-                toggle: CombatOrder::NONE,
+            Some(BotCommand::ApplyStrategies {
+                state: BotStateKind::Combat, query: false,
+                add: F::DPS_ASSIST,
+                remove: F::TANK_ASSIST,
+                toggle: F::NONE,
             }),
         );
         // Space-separated mixed, multi-flag.
         assert_eq!(
             parse("co -threat -dps assist -close +tank assist"),
-            Some(BotCommand::ApplyCombatOrder { query: false,
-                add: CombatOrder::TANK_ASSIST,
-                remove: CombatOrder::THREAT | CombatOrder::DPS_ASSIST | CombatOrder::CLOSE,
-                toggle: CombatOrder::NONE,
+            Some(BotCommand::ApplyStrategies {
+                state: BotStateKind::Combat, query: false,
+                add: F::TANK_ASSIST,
+                remove: F::THREAT | F::DPS_ASSIST | F::CLOSE,
+                toggle: F::NONE,
             }),
         );
         // pull back — two-word flag in subtractive form.
         assert_eq!(
             parse("co -pull back"),
-            Some(BotCommand::ApplyCombatOrder { query: false,
-                add: CombatOrder::NONE,
-                remove: CombatOrder::PULL_BACK,
-                toggle: CombatOrder::NONE,
+            Some(BotCommand::ApplyStrategies {
+                state: BotStateKind::Combat, query: false,
+                add: F::NONE,
+                remove: F::PULL_BACK,
+                toggle: F::NONE,
             }),
         );
     }
@@ -1456,7 +1501,7 @@ mod tests {
         );
         assert_eq!(
             parse("Co Tank"),
-            Some(BotCommand::SetCombatOrder(CombatOrder::TANK))
+            Some(BotCommand::SetCombatStrategies(StrategyFlags::TANK))
         );
     }
 
@@ -1538,11 +1583,12 @@ mod tests {
         );
         assert_eq!(
             parse("co ~threat,?"),
-            Some(BotCommand::ApplyCombatOrder {
+            Some(BotCommand::ApplyStrategies {
+                state: BotStateKind::Combat,
                 query: true,
-                add: CombatOrder::NONE,
-                remove: CombatOrder::NONE,
-                toggle: CombatOrder::THREAT,
+                add: StrategyFlags::NONE,
+                remove: StrategyFlags::NONE,
+                toggle: StrategyFlags::THREAT,
             }),
         );
     }
@@ -1643,6 +1689,24 @@ mod tests {
         assert_eq!(parse("stance def"), Some(BotCommand::SetStance(2)));
         assert!(matches!(parse("stance bogus"), Some(BotCommand::Unknown(_))));
 
+        // Positioning stances (Mangosbot addon toolbar).
+        assert_eq!(
+            parse("stance behind"),
+            Some(BotCommand::SetPositionStance(PositionStance::Behind))
+        );
+        assert_eq!(
+            parse("stance near"),
+            Some(BotCommand::SetPositionStance(PositionStance::Near))
+        );
+        assert_eq!(
+            parse("stance tank"),
+            Some(BotCommand::SetPositionStance(PositionStance::Tank))
+        );
+        assert_eq!(
+            parse("stance turnback"),
+            Some(BotCommand::SetPositionStance(PositionStance::Turnback))
+        );
+
         assert_eq!(parse("max-dps"), Some(BotCommand::MaxDps));
         assert_eq!(parse("maxdps"), Some(BotCommand::MaxDps));
         assert_eq!(parse("save-mana"), Some(BotCommand::ToggleSaveMana));
@@ -1717,7 +1781,7 @@ mod tests {
         // addon's probe loop sees a valid response.
         assert_eq!(parse("formation ?"), Some(BotCommand::QueryFormation));
         assert_eq!(parse("stance ?"), Some(BotCommand::QueryStance));
-        assert_eq!(parse("co ?"), Some(BotCommand::QueryCombatOrder));
+        assert_eq!(parse("co ?"), Some(BotCommand::QueryStrategies(BotStateKind::Combat)));
         assert_eq!(
             parse("nc ?"),
             Some(BotCommand::QueryStrategies(BotStateKind::NonCombat))
@@ -1726,7 +1790,10 @@ mod tests {
             parse("de ?"),
             Some(BotCommand::QueryStrategies(BotStateKind::Dead))
         );
-        assert_eq!(parse("react ?"), Some(BotCommand::QueryReactivity));
+        assert_eq!(
+            parse("react ?"),
+            Some(BotCommand::QueryStrategies(BotStateKind::Reaction))
+        );
         assert_eq!(parse("rti ?"), Some(BotCommand::QueryRti));
         assert_eq!(parse("ll ?"), Some(BotCommand::QueryLootPolicy));
         assert_eq!(parse("save mana ?"), Some(BotCommand::QuerySaveMana));
@@ -1775,22 +1842,25 @@ mod tests {
 
     #[test]
     fn co_boost_flag_parses() {
+        use crate::bot::settings::{BotStateKind, StrategyFlags as F};
         // RaidControl burst-cooldown keyword.
         assert_eq!(
             parse("co +boost"),
-            Some(BotCommand::ApplyCombatOrder { query: false,
-                add: CombatOrder::BOOST,
-                remove: CombatOrder::NONE,
-                toggle: CombatOrder::NONE,
+            Some(BotCommand::ApplyStrategies {
+                state: BotStateKind::Combat, query: false,
+                add: F::BOOST,
+                remove: F::NONE,
+                toggle: F::NONE,
             }),
         );
         // Mangosbot uses `i` as alias for boost.
         assert_eq!(
             parse("co +i"),
-            Some(BotCommand::ApplyCombatOrder { query: false,
-                add: CombatOrder::BOOST,
-                remove: CombatOrder::NONE,
-                toggle: CombatOrder::NONE,
+            Some(BotCommand::ApplyStrategies {
+                state: BotStateKind::Combat, query: false,
+                add: F::BOOST,
+                remove: F::NONE,
+                toggle: F::NONE,
             }),
         );
     }

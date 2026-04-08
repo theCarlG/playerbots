@@ -83,10 +83,10 @@ pub fn heal_interrupt_subtree() -> Bt {
 }
 
 /// Kite: ranged DPS move away when an attacker enters melee range.
-/// Gated on CLOSE strategy flag (reused for kite, matching kite.rs).
+/// Gated on RANGED strategy flag — only ranged classes should kite.
 pub fn kite_subtree() -> Bt {
     Seq!(
-        StrategyEnabled(StrategyFlags::CLOSE),
+        StrategyEnabled(StrategyFlags::RANGED),
         Bt::throttle(1_000, KiteFromTarget(8.0)),
     )
 }
@@ -115,12 +115,14 @@ pub fn behind_subtree() -> Bt {
     )
 }
 
-/// Mark the current target with the raid target icon (skull by default).
+/// Mark the current target with the bot's preferred raid target icon.
 /// Gated on TANK_ASSIST — only tanks/leaders should mark targets.
+/// When `preferred_rti_icon` is `None`, the subtree does nothing (the user
+/// can clear it with `rti clear` to stop marking entirely).
 pub fn mark_rti_subtree() -> Bt {
     Seq!(
         StrategyEnabled(StrategyFlags::TANK_ASSIST),
-        Bt::throttle(3_000, MarkRti(7)),
+        Bt::throttle(3_000, MarkRtiPreferred),
     )
 }
 
@@ -131,17 +133,17 @@ pub fn targeting_subtree() -> Bt {
         Seq!(HasFocusTarget, FocusAttack),
         // Tank: pick up loose adds.
         Seq!(
-            CombatOrderHas(crate::bot::settings::CombatOrder::TANK),
+            StrategyEnabled(StrategyFlags::TANK),
             Bt::throttle(1_000, TankPickupAdds),
         ),
         // Assist: attack leader/tank's target.
         Seq!(
-            CombatOrderHas(crate::bot::settings::CombatOrder::ASSIST),
+            StrategyEnabled(StrategyFlags::ASSIST),
             AssistLeader,
         ),
         // Protect: attack what attacks protect target.
         Seq!(
-            CombatOrderHas(crate::bot::settings::CombatOrder::PROTECT),
+            StrategyEnabled(StrategyFlags::PROTECT),
             ProtectAttacker,
         ),
         // Aggressive: attack nearest hostile (bot reaches out and grabs

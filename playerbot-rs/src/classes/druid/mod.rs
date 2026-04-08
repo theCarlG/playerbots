@@ -4,11 +4,11 @@ pub mod restoration;
 
 use crate::{
     Seq, Sel,
-    bot::settings::CombatOrder,
+    bot::settings::StrategyFlags,
     bot::state::PlayerSpec,
     classes::ClassKit,
     data::spells::vanilla::druid::{NATURE_SWIFTNESS, TIGERS_FURY},
-    engine::bt::Bt::{self, CastOnSelf, CombatOrderHas, InCombat},
+    engine::bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
     ffi::SpellId,
     noncombat::GroupBuff,
 };
@@ -21,7 +21,7 @@ const BUFFS: &[GroupBuff] = &[GroupBuff::on_party(MARK_OF_THE_WILD)];
 /// `co +boost` burst subtree — druid offensive cooldowns.
 pub fn boost() -> Bt {
     Seq!(
-        CombatOrderHas(CombatOrder::BOOST),
+        StrategyEnabled(StrategyFlags::BOOST),
         InCombat,
         Sel!(CastOnSelf(TIGERS_FURY), CastOnSelf(NATURE_SWIFTNESS)),
     )

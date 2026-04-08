@@ -43,6 +43,11 @@ impl BotTimers {
         now_ms < self.gcd_ready_at
     }
 
+    /// Milliseconds remaining on the GCD (0 if ready).
+    pub fn gcd_remaining_ms(&self, now_ms: u64) -> u64 {
+        self.gcd_ready_at.saturating_sub(now_ms)
+    }
+
     /// Called by action nodes when a spell is successfully cast.
     /// Records the GCD and the spell's own cooldown.
     pub fn on_spell_cast(&mut self, _spell_id: SpellId, now_ms: u64) {

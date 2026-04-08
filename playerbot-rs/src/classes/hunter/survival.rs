@@ -18,6 +18,8 @@ pub fn build_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (hunter-wide list).
         super::boost(),
+        // Maintain ranged positioning (deadzone at 8y).
+        MaintainRange(8.0),
         // Emergency FD.
         Seq!(Cmp(SelfHealthPct, Below(15)), CastOnSelf(FEIGN_DEATH)),
         Seq!(

@@ -30,194 +30,6 @@ pub enum BehaviorMode {
     Bg,
 }
 
-/// How the bot selects combat targets. Bitflags-style — multiple flags may
-/// coexist (e.g. `TANK | ASSIST`, `TANK_ASSIST | DPS_ASSIST`).
-///
-/// Matches the C++ bitfield semantics the `RaidControl` addon drives:
-/// `co +tank`, `co -threat`, `co +tank assist,+dps assist`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CombatOrder(pub u32);
-
-impl CombatOrder {
-    pub const NONE: Self = Self(0);
-    pub const TANK: Self = Self(1 << 0);
-    pub const ASSIST: Self = Self(1 << 1);
-    pub const PROTECT: Self = Self(1 << 2);
-    pub const PULL: Self = Self(1 << 3);
-    pub const THREAT: Self = Self(1 << 4);
-    pub const PASSIVE: Self = Self(1 << 5);
-    pub const FURY: Self = Self(1 << 6);
-    pub const DPS: Self = Self(1 << 7);
-    pub const CLOSE: Self = Self(1 << 8);
-    pub const AOE: Self = Self(1 << 9);
-    pub const GRIND: Self = Self(1 << 10);
-    pub const TANK_ASSIST: Self = Self(1 << 11);
-    pub const DPS_ASSIST: Self = Self(1 << 12);
-    pub const PULL_BACK: Self = Self(1 << 13);
-    /// Use offensive cooldowns/trinkets during combat ("burst DPS"). Read
-    /// by class rotations to decide whether to pop Blood Fury / Berserking /
-    /// Blade Flurry / trinkets / Bloodlust etc. Alias: `i` (Mangosbot icon).
-    pub const BOOST: Self = Self(1 << 14);
-    /// Position behind the target (melee dps). Matches the
-    /// `RaidControl` `+behind/-behind` hint.
-    pub const BEHIND: Self = Self(1 << 15);
-    /// Hold off damage until the tank has a few seconds of threat.
-    /// Multi-word name: `wait for attack`.
-    pub const WAIT_FOR_ATTACK: Self = Self(1 << 16);
-    /// Prefer crowd-control spells (mage sheep, priest shackle, hunter trap,
-    /// druid roots, warlock banish, rogue sap). `RaidControl` sends
-    /// `@mage co +cc` before pulls with multiple caster targets.
-    pub const CC: Self = Self(1 << 17);
-    /// Fight at ranged distance (default for casters/hunters). The
-    /// `RaidControl` `+range` / `+ranged` alias.
-    pub const RANGED: Self = Self(1 << 18);
-    /// Role flag: prefer healing-centric rotation. `@priest co +heal` etc.
-    pub const HEAL: Self = Self(1 << 19);
-    /// Shaman restoration spec hint (`@shaman co +restoration`). Distinct
-    /// from `HEAL` in that it implies totem layouts + water-shield usage.
-    pub const RESTORATION: Self = Self(1 << 20);
-    /// Prefer stealthed opening / shadowmeld on engage.
-    pub const STEALTH: Self = Self(1 << 21);
-    /// Druid feral form hint (`@druid co +feral`, `+tank feral`,
-    /// `+dps feral`). Decides bear vs cat form on engage.
-    pub const FERAL: Self = Self(1 << 22);
-    /// Druid main-tank feral (bear-form tank). Multi-word: `tank feral`.
-    pub const TANK_FERAL: Self = Self(1 << 23);
-    /// Druid dps feral (cat-form dps). Multi-word: `dps feral`.
-    pub const DPS_FERAL: Self = Self(1 << 24);
-
-    /// True if all bits in `other` are set in `self`.
-    pub const fn contains(self, other: Self) -> bool {
-        (self.0 & other.0) == other.0
-    }
-
-    pub fn insert(&mut self, other: Self) {
-        self.0 |= other.0;
-    }
-    pub fn remove(&mut self, other: Self) {
-        self.0 &= !other.0;
-    }
-    pub fn is_empty(self) -> bool {
-        self.0 == 0
-    }
-
-    /// Parse a flag name from the addon vocabulary. Supports multi-word
-    /// forms ("tank assist", "dps assist", "pull back", "wait for attack",
-    /// "tank feral", "dps feral"). Returns `(flag, words_consumed)`.
-    ///
-    /// Greedy: always tries the longest match first (3-word → 2-word →
-    /// 1-word) so `wait for attack` is parsed as a single flag rather than
-    /// three bad words.
-    pub fn parse_flag(tokens: &[&str]) -> Option<(Self, usize)> {
-        let first = *tokens.first()?;
-        // 3-word: `wait for attack`.
-        if let (Some(b), Some(c)) = (tokens.get(1).copied(), tokens.get(2).copied())
-            && (first, b, c) == ("wait", "for", "attack")
-        {
-            return Some((Self::WAIT_FOR_ATTACK, 3));
-        }
-        // 2-word greedy.
-        if let Some(second) = tokens.get(1).copied() {
-            let pair: Self = match (first, second) {
-                ("tank", "assist") => Self::TANK_ASSIST,
-                ("dps", "assist") => Self::DPS_ASSIST,
-                ("pull", "back") => Self::PULL_BACK,
-                ("tank", "feral") => Self::TANK_FERAL,
-                ("dps", "feral") => Self::DPS_FERAL,
-                _ => Self::NONE,
-            };
-            if !pair.is_empty() {
-                return Some((pair, 2));
-            }
-        }
-        // 1-word fallback. Aliases and typo-tolerance live here.
-        let single: Self = match first {
-            "tank" => Self::TANK,
-            "assist" => Self::ASSIST,
-            "protect" => Self::PROTECT,
-            "pull" => Self::PULL,
-            "threat" | "threath" => Self::THREAT, // RaidControl typo
-            "passive" => Self::PASSIVE,
-            "fury" => Self::FURY,
-            "dps" => Self::DPS,
-            "close" => Self::CLOSE,
-            "aoe" => Self::AOE,
-            "grind" => Self::GRIND,
-            "boost" | "i" => Self::BOOST, // Mangosbot keybind alias
-            "behind" => Self::BEHIND,
-            "cc" => Self::CC,
-            "range" | "ranged" => Self::RANGED,
-            "heal" | "healer" => Self::HEAL,
-            "restoration" | "resto" => Self::RESTORATION,
-            "stealth" => Self::STEALTH,
-            "feral" => Self::FERAL,
-            _ => return None,
-        };
-        Some((single, 1))
-    }
-
-    /// Render as a stable string for query responses. Order and punctuation
-    /// mirror what the addons expect to see echoed back.
-    pub fn describe(self) -> String {
-        if self.is_empty() {
-            return "none".to_string();
-        }
-        let mut parts: Vec<&str> = Vec::new();
-        let pairs: &[(Self, &str)] = &[
-            (Self::TANK, "tank"),
-            (Self::ASSIST, "assist"),
-            (Self::PROTECT, "protect"),
-            (Self::PULL, "pull"),
-            (Self::THREAT, "threat"),
-            (Self::PASSIVE, "passive"),
-            (Self::FURY, "fury"),
-            (Self::DPS, "dps"),
-            (Self::CLOSE, "close"),
-            (Self::AOE, "aoe"),
-            (Self::GRIND, "grind"),
-            (Self::TANK_ASSIST, "tank assist"),
-            (Self::DPS_ASSIST, "dps assist"),
-            (Self::PULL_BACK, "pull back"),
-            (Self::BOOST, "boost"),
-            (Self::BEHIND, "behind"),
-            (Self::WAIT_FOR_ATTACK, "wait for attack"),
-            (Self::CC, "cc"),
-            (Self::RANGED, "ranged"),
-            (Self::HEAL, "heal"),
-            (Self::RESTORATION, "restoration"),
-            (Self::STEALTH, "stealth"),
-            (Self::FERAL, "feral"),
-            (Self::TANK_FERAL, "tank feral"),
-            (Self::DPS_FERAL, "dps feral"),
-        ];
-        for (flag, name) in pairs {
-            if self.contains(*flag) {
-                parts.push(name);
-            }
-        }
-        parts.join(", ")
-    }
-}
-
-impl Default for CombatOrder {
-    fn default() -> Self {
-        Self::ASSIST
-    }
-}
-
-impl std::ops::BitOr for CombatOrder {
-    type Output = Self;
-    fn bitor(self, rhs: Self) -> Self {
-        Self(self.0 | rhs.0)
-    }
-}
-
-impl std::ops::BitOrAssign for CombatOrder {
-    fn bitor_assign(&mut self, rhs: Self) {
-        self.0 |= rhs.0;
-    }
-}
-
 /// PB2 has four independent strategy engines per bot, one per `BotState`.
 /// Each engine owns its own strategy list, toggled by a separate chat
 /// command: `co` → combat, `nc` → non-combat, `react` → reaction, `de` →
@@ -326,21 +138,9 @@ impl StrategyFlags {
 
     // ── Bits 16–30: PB2 all-bot / generic combat base (§3.1 & §3.3).
     //
-    // These were added in Part 5 Step 6 for per-class default parity. Most
-    // of them do NOT yet have BT-consumer wiring — they exist so:
-    //   1. `@co=mount` / `@co=aoe` / etc. chat filters behave like PB2.
-    //   2. `co ?` / `nc ?` query replies list the same names PB2 ships.
-    //   3. Future Part 5 Step 11+ consumers can gate on `has(state, flag)`.
-    //
-    // Overlap with `CombatOrder`: a handful of these (TANK_ASSIST,
-    // DPS_ASSIST, PULL, PULL_BACK, CLOSE, AOE, RANGED, BEHIND, BOOST,
-    // TANK_FERAL, DPS_FERAL, STEALTH, CC) share their names with
-    // `CombatOrder` bits. PB2 stores these as *strategies*; the Rust port
-    // historically used `CombatOrder` for `co +<name>` parsing, and still
-    // does. The strategy-slot copies populated at bot-create time are for
-    // chat-filter/query parity only; rotation gating continues to read
-    // `CombatOrder` until the follow-up reconciliation (tracked as the
-    // "co → StrategySet" unification in the Step 6 end-notes).
+    // These are the single source of truth: `co` commands read/write the
+    // Combat strategy slot directly, and BT nodes gate on `StrategyEnabled`.
+    // The old `CombatOrder` bitfield has been removed.
     pub const MOUNT: Self = Self::bit(16);
     pub const AVOID_MOBS: Self = Self::bit(17);
     pub const RACIALS: Self = Self::bit(18);
@@ -374,8 +174,7 @@ impl StrategyFlags {
     pub const CURSE: Self = Self::bit(44);
     pub const DKSQUEST: Self = Self::bit(45);
 
-    // ── Bits 46–47: druid feral hints (also present on `CombatOrder`,
-    // see header comment on the `CombatOrder` block for the overlap note).
+    // ── Bits 46–47: druid feral hints.
     pub const TANK_FERAL: Self = Self::bit(46);
     pub const DPS_FERAL: Self = Self::bit(47);
 
@@ -510,6 +309,20 @@ impl StrategyFlags {
     pub const BEAR: Self = Self::bit2(16);
     pub const CAT: Self = Self::bit2(17);
 
+    // ── Combat-order targeting flags (formerly on `CombatOrder`, now
+    // unified into the Combat strategy slot so `co` commands, BT gates,
+    // and addon queries all read the same bitfield).
+    pub const ASSIST: Self = Self::bit2(18);
+    pub const PROTECT: Self = Self::bit2(19);
+    pub const FERAL: Self = Self::bit2(20);
+
+    /// Mutually-exclusive targeting flags. Bare `co <mode>` clears these
+    /// before inserting the new one, preserving all other Combat slot flags.
+    pub const TARGETING_EXCLUSIVE: Self = Self(
+        Self::ASSIST.0 | Self::PROTECT.0 | Self::TANK.0,
+        Self::ASSIST.1 | Self::PROTECT.1 | Self::TANK.1,
+    );
+
     pub const fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0 && (self.1 & other.1) == other.1
     }
@@ -579,7 +392,7 @@ impl StrategyFlags {
         (Self::PET, "pet"),
         (Self::CURSE, "curse"),
         (Self::DKSQUEST, "dksquest"),
-        // Druid feral hints (shared with CombatOrder).
+        // Druid feral hints.
         (Self::TANK_FERAL, "tank feral"),
         (Self::DPS_FERAL, "dps feral"),
         // Spec-name strategies.
@@ -686,6 +499,10 @@ impl StrategyFlags {
         (Self::DPS, "dps"),
         (Self::BEAR, "bear"),
         (Self::CAT, "cat"),
+        // Combat-order targeting flags.
+        (Self::ASSIST, "assist"),
+        (Self::PROTECT, "protect"),
+        (Self::FERAL, "feral"),
     ];
 
     /// Look up a flag by the name the addon sends. Multi-word names are
@@ -702,6 +519,15 @@ impl StrategyFlags {
         // 1. Exact match — handles all single-word and known multi-word names.
         if let Some((f, _)) = Self::NAME_TABLE.iter().find(|(_, n)| *n == trimmed) {
             return Some(*f);
+        }
+        // 1b. Aliases not in NAME_TABLE (kept out of describe() output).
+        match trimmed {
+            "i" => return Some(Self::BOOST),        // Mangosbot keybind alias
+            "threath" => return Some(Self::THREAT),  // RaidControl typo
+            "range" => return Some(Self::RANGED),    // short form
+            "resto" => return Some(Self::RESTORATION),
+            "healer" => return Some(Self::HEAL),
+            _ => {}
         }
 
         // 2. Compound decomposition — split into words and combine flags.
@@ -830,14 +656,13 @@ impl StrategySet {
     }
 
     /// Reset every slot to PB2 defaults (`reset ai` / `reset strats`).
-    pub fn reset_to_defaults(&mut self) {
-        *self = Self::pb2_defaults();
+    pub fn reset_to_defaults(&mut self, init: &StrategySet) {
+        *self = *init;
     }
 
     /// Reset a single slot back to its PB2 default.
-    pub fn reset_slot(&mut self, kind: BotStateKind) {
-        let defaults = Self::pb2_defaults();
-        self.slots[kind as usize] = defaults.slots[kind as usize];
+    pub fn reset_slot(&mut self, kind: BotStateKind, init: &StrategySet) {
+        self.slots[kind as usize] = init.slots[kind as usize];
     }
 }
 
@@ -957,6 +782,61 @@ impl std::ops::BitOr for StrategyFlags {
     }
 }
 
+/// Positioning stance — the Mangosbot addon's `stance` toolbar.
+///
+/// These correspond to the addon's stance buttons: `stance near`,
+/// `stance behind`, `stance tank`, `stance turnback`. Each maps to
+/// a set of strategy flags that gate reactive positioning subtrees.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PositionStance {
+    /// Default positioning — no special positioning flags added.
+    #[default]
+    Near,
+    /// Attack from behind (melee DPS). Enables BEHIND strategy flag.
+    Behind,
+    /// Off-tank stance. Enables CLOSE strategy flag.
+    Tank,
+    /// Tank positions so the mob's back faces the raid. Enables CLOSE + BEHIND.
+    Turnback,
+}
+
+impl PositionStance {
+    pub fn from_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "near" | "default" | "none" => Self::Near,
+            "behind" => Self::Behind,
+            "tank" => Self::Tank,
+            "turnback" => Self::Turnback,
+            _ => return None,
+        })
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Near => "near",
+            Self::Behind => "behind",
+            Self::Tank => "tank",
+            Self::Turnback => "turnback",
+        }
+    }
+
+    /// Strategy flags to add for this positioning stance.
+    pub fn strategy_flags(self) -> StrategyFlags {
+        match self {
+            Self::Near => StrategyFlags::NONE,
+            Self::Behind => StrategyFlags::BEHIND,
+            Self::Tank => StrategyFlags::CLOSE,
+            Self::Turnback => StrategyFlags::CLOSE | StrategyFlags::BEHIND,
+        }
+    }
+
+    /// All positioning-related strategy flags that should be cleared
+    /// when switching stances.
+    pub fn all_position_flags() -> StrategyFlags {
+        StrategyFlags::BEHIND | StrategyFlags::CLOSE
+    }
+}
+
 /// How followers arrange themselves around the master when in Follow mode.
 ///
 /// Exact 1:1 mirror of PB2's 11 formations registered in
@@ -1052,12 +932,15 @@ impl Reactivity {
 pub struct BotSettings {
     // -- Behavior --
     pub mode: BehaviorMode,
-    pub combat_order: CombatOrder,
     pub reactivity: Reactivity,
     /// Per-state strategy engines — PB2 has four independent engines
     /// per bot (combat / non-combat / reaction / dead), each with its
     /// own strategy list toggled by `co` / `nc` / `react` / `de`.
     pub strategies: StrategySet,
+    /// Per-class init strategies snapshot (set once in `create_bot`).
+    /// `Reset` / `ResetStrategies` restore `strategies` to this instead
+    /// of the empty `pb2_defaults()` baseline so per-class defaults survive.
+    pub init_strategies: StrategySet,
 
     // -- Combat tuning --
     pub focus_target: Option<UnitHandle>,
@@ -1115,6 +998,10 @@ pub struct BotSettings {
     /// Warrior stance (0=none, 1=battle, 2=defensive, 3=berserker).
     /// Ignored by non-warrior classes.
     pub stance: u8,
+    /// Positioning stance — the Mangosbot addon's `stance` toolbar
+    /// (`stance near`, `stance behind`, `stance tank`, `stance turnback`).
+    /// Controls which positioning strategy flags are active.
+    pub position_stance: PositionStance,
     /// `save mana` toggle — when true, the bot prefers cheap casts and avoids
     /// full-cost rotation spells until mana is topped up.
     /// Save mana level: 0 = off, 1-5 = increasing conservation. PB2 uses
@@ -1208,9 +1095,9 @@ impl Default for BotSettings {
     fn default() -> Self {
         Self {
             mode: BehaviorMode::Follow,
-            combat_order: CombatOrder::ASSIST,
             reactivity: Reactivity::Defensive,
             strategies: StrategySet::pb2_defaults(),
+            init_strategies: StrategySet::pb2_defaults(),
             focus_target: None,
             protect_target: None,
             spell_blacklist: HashSet::new(),
@@ -1240,6 +1127,7 @@ impl Default for BotSettings {
             rtsc_waypoints: HashMap::new(),
             rtsc_last_seen: None,
             stance: 0,
+            position_stance: PositionStance::Near,
             save_mana: 0,
             loot_policy: LootPolicy::defaults(),
             self_res: false,
@@ -1465,7 +1353,6 @@ mod tests {
     fn default_settings_are_sane() {
         let s = BotSettings::default();
         assert_eq!(s.mode, BehaviorMode::Follow);
-        assert_eq!(s.combat_order, CombatOrder::ASSIST);
         assert_eq!(s.reactivity, Reactivity::Defensive);
         assert!(s.spell_blacklist.is_empty());
         assert!(s.auto_loot);

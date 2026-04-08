@@ -70,6 +70,13 @@ pub trait EncounterFsm: Send {
     /// Used by the coordinator to match the right FSM to a given target.
     fn boss_entry(&self) -> u32;
 
+    /// Activate the sub-FSM for a specific boss by NPC entry ID.
+    ///
+    /// Instance wrappers (MC, BWL, etc.) use this to switch to the
+    /// correct boss FSM when the bot's target matches a known boss.
+    /// Default: no-op (single-boss or simple FSMs ignore this).
+    fn set_boss_entry(&mut self, _entry: u32) {}
+
     /// Hint for Heigan-style safe zone positioning (1-4). 0 = not applicable.
     fn safe_zone_hint(&self) -> u8 {
         0
@@ -228,6 +235,12 @@ impl<T> EncounterFsm for BasicInstanceFsm<T>
 where
     T: EncounterFsm + TryFrom<u32>,
 {
+    fn set_boss_entry(&mut self, entry: u32) {
+        if !self.active_boss.as_ref().is_some_and(|b| b.boss_entry() == entry) {
+            self.set_active_boss_by_entry(entry);
+        }
+    }
+
     fn update(&mut self, event: &EncounterEvent, boss_hp_pct: f32, time_ms: u64) {
         if let Some(boss) = &mut self.active_boss {
             boss.update(event, boss_hp_pct, time_ms);

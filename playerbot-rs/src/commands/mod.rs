@@ -10,8 +10,8 @@ use crate::bot::class_prefs::{
     TotemSlot, WarlockCurse, WarriorStance, WeaponHand,
 };
 use crate::bot::settings::{
-    BehaviorMode, BotSettings, BotStateKind, ChatChannel, CombatOrder, Reactivity, RtscAction,
-    StrategyFlags,
+    BehaviorMode, BotSettings, BotStateKind, ChatChannel, PositionStance, Reactivity,
+    RtscAction, StrategyFlags,
 };
 use crate::bot::state::BotState;
 use crate::ffi::{ItemId, SpellId, UnitHandle};
@@ -21,18 +21,8 @@ use crate::ffi::{ItemId, SpellId, UnitHandle};
 pub enum BotCommand {
     // -- Mode commands --
     SetMode(BehaviorMode),
-    SetCombatOrder(CombatOrder),
-    /// Additive/subtractive combat order edit (`co +tank -fury`).
-    /// `query` is `true` when the original command ended with `,?` —
-    /// Mangosbot uses that form to both apply *and* re-query the flags in
-    /// one round-trip, so the handler whispers the current state after
-    /// applying.
-    ApplyCombatOrder {
-        add: CombatOrder,
-        remove: CombatOrder,
-        toggle: CombatOrder,
-        query: bool,
-    },
+    /// Bare `co tank` — full-replace the Combat strategy slot with this flag.
+    SetCombatStrategies(StrategyFlags),
     /// Additive/subtractive strategy toggles for one `BotStateKind` slot.
     /// `nc +rtsc,-rpg bg` → `NonCombat`; `co +aoe` → `Combat`;
     /// `de +ghost` → `Dead`; `react +flee` → `Reaction`. `~` toggles.
@@ -189,6 +179,9 @@ pub enum BotCommand {
     EquipItemByName(String),
     /// `stance <N>` — warrior stance (1/2/3, warrior-only).
     SetStance(u8),
+    /// `stance near|behind|tank|turnback` — positioning stance.
+    /// Toggles BEHIND/CLOSE strategy flags per the Mangosbot addon toolbar.
+    SetPositionStance(PositionStance),
     /// `max dps` — DPS combat order + aggressive reactivity shortcut.
     MaxDps,
     /// `save mana` toggle.
@@ -330,9 +323,7 @@ pub enum BotCommand {
     QueryFormation,
     /// `stance ?` — whisper current warrior stance.
     QueryStance,
-    /// `co ?` — whisper current combat-order flags.
-    QueryCombatOrder,
-    /// `nc ?` / `de ?` / `react ?` — whisper the strategy list for one
+    /// `nc ?` / `co ?` / `de ?` / `react ?` — whisper the strategy list for one
     /// of the four per-state engines. The state kind selects which
     /// slot to report and which Mangosbot-compatible reply prefix to
     /// use. See [`BotStateKind::reply_prefix`].
@@ -436,7 +427,7 @@ impl BotCommand {
             | ListQuests | ListTalents | ListSpells | ListReputation | ListSkills
             | MailSummary
             // Addon probes — must be readable by anyone who can whisper.
-            | QueryFormation | QueryStance | QueryCombatOrder | QueryStrategies(_)
+            | QueryFormation | QueryStance | QueryStrategies(_)
             | QueryReactivity | QueryRti | QueryCcRti | QuerySaveMana | QueryLootPolicy => SecurityLevel::Talk,
 
             // Destructive / account-level — master only.
@@ -445,8 +436,7 @@ impl BotCommand {
 
             // Everything else — group members.
             SetMode(_)
-            | SetCombatOrder(_)
-            | ApplyCombatOrder { .. }
+            | SetCombatStrategies(_)
             | ApplyStrategies { .. }
             | SetReactivity(_)
             | Focus(_)
@@ -494,6 +484,7 @@ impl BotCommand {
             | ApplyStrategiesAll { .. }
             | Stop
             | SetStance(_)
+            | SetPositionStance(_)
             | MaxDps
             | ToggleSaveMana
             | SetSaveMana(_)
@@ -699,7 +690,10 @@ impl PendingCommand {
 /// Process all pending commands on a bot, mutating its settings.
 /// Called once per tick before the BT runs.
 pub fn process_commands(bot: &mut BotState) {
-    while let Some(pc) = bot.pending_commands.pop_front() {
+    // Drain the mutex-protected queue into a local vec so we don't hold the
+    // lock while executing commands (which may call back into the interface).
+    let cmds: Vec<PendingCommand> = bot.pending_commands.lock().unwrap().drain(..).collect();
+    for pc in cmds {
         let required = pc.command.required_security();
         if pc.security < required {
             // Silently drop under-privileged commands. A verbose reply
@@ -760,7 +754,11 @@ fn reply(bot: &BotState, pc: &PendingCommand, msg: &str) {
             if pc.origin.is_addon() {
                 bot.interface.tell_addon(guid, msg);
             } else {
-                bot.interface.tell_player(guid, msg);
+                // Whisper the sender directly. PB2 used TellPlayerNoFacing
+                // which broadcasts to party/raid, but that spams the group
+                // channel when configuring bots — whisper is the expected
+                // behavior for command responses.
+                bot.interface.whisper(guid, msg);
             }
         }
         None => {
@@ -773,16 +771,34 @@ fn reply(bot: &BotState, pc: &PendingCommand, msg: &str) {
 /// fails.  Mirrors PB2's "I can't do that" / "I don't know that spell"
 /// feedback.
 fn try_commanded_cast(bot: &BotState, pc: &PendingCommand, spell: SpellId, target: u64) {
+    let spell_name = bot.interface.get_spell_name(spell);
+    let name = if spell_name.is_empty() {
+        format!("#{}", spell.raw())
+    } else {
+        spell_name
+    };
     if target == 0 {
-        reply(bot, pc, "cast: no target");
+        reply(bot, pc, &format!("Can't cast {name}: no target"));
         return;
     }
     if !bot.interface.knows_spell(spell) {
-        reply(bot, pc, &format!("cast: I don't know spell {}", spell.raw()));
+        reply(bot, pc, &format!("Can't cast {name}: I don't know that spell"));
+        return;
+    }
+    let dist = bot.interface.unit_distance(target);
+    let los = bot.interface.has_los(target);
+    let can = bot.interface.can_cast(spell, target);
+    if !can {
+        let reason = if !los {
+            "no line of sight"
+        } else {
+            "out of range, not enough resources, or wrong stance"
+        };
+        reply(bot, pc, &format!("Can't cast {name}: {reason} (dist={dist:.0}y)"));
         return;
     }
     if !bot.interface.cast_spell(spell, target) {
-        reply(bot, pc, &format!("cast: can't cast {} right now", spell.raw()));
+        reply(bot, pc, &format!("Can't cast {name}: server rejected (dist={dist:.0}y los={los})"));
     }
 }
 
@@ -819,25 +835,19 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 BehaviorMode::Follow => reply(bot, pc, "Following..."),
                 BehaviorMode::Stay | BehaviorMode::Guard => reply(bot, pc, "Staying..."),
                 _ => {
-                    let verbose = s.verbose;
-                    if verbose {
-                        reply(bot, pc, &format!("Mode: {}", mode.as_str()));
-                    }
+                    // Always reply so Mangosbot's OnWhisper refresh hook
+                    // can trigger an `nc ?` re-query for any mode change.
+                    reply(bot, pc, &format!("Mode: {}", mode.as_str()));
                 }
             }
         }
-        BotCommand::SetCombatOrder(order) => {
-            s.combat_order = *order;
-        }
-        BotCommand::ApplyCombatOrder { add, remove, toggle, query } => {
-            s.combat_order.remove(*remove);
-            s.combat_order.insert(*add);
-            // Toggle: xor each flag in the toggle set.
-            s.combat_order.0 ^= toggle.0;
-            if *query {
-                let msg = format!("Combat Strategies: {}", s.combat_order.describe());
-                reply(bot, pc, &msg);
-            }
+        BotCommand::SetCombatStrategies(flags) => {
+            // Bare `co tank` — swap the mutually-exclusive targeting flags
+            // (ASSIST/PROTECT/TANK) but preserve all other Combat slot flags
+            // (RANGED, BEHIND, BOOST, AOE, etc.) that init.rs set up.
+            let slot = s.strategies.get_mut(BotStateKind::Combat);
+            slot.remove(StrategyFlags::TARGETING_EXCLUSIVE);
+            slot.insert(*flags);
         }
         BotCommand::ApplyStrategies { state, add, remove, toggle, query } => {
             let slot = s.strategies.get_mut(*state);
@@ -853,7 +863,8 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             }
         }
         BotCommand::ResetStrategies => {
-            s.strategies.reset_to_defaults();
+            let init = s.init_strategies;
+            s.strategies.reset_to_defaults(&init);
         }
         BotCommand::SetReactivity(level) => {
             s.reactivity = *level;
@@ -1047,9 +1058,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         }
         BotCommand::Status => {
             let msg = format!(
-                "Mode:{} CO:{:#x} React:{:?} HP:{:.0}% MP:{:.0}%",
+                "Mode:{} CO:[{}] React:{:?} HP:{:.0}% MP:{:.0}%",
                 s.mode.as_str(),
-                s.combat_order.0,
+                s.strategies.get(BotStateKind::Combat).describe(),
                 s.reactivity,
                 bot.snap.self_.health as f32 / bot.snap.self_.max_health.max(1) as f32 * 100.0,
                 bot.snap.self_.mana as f32 / bot.snap.self_.max_mana.max(1) as f32 * 100.0,
@@ -1084,7 +1095,10 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             reply(bot, pc, &msg);
         }
         BotCommand::Reset => {
+            let init = s.init_strategies;
             *s = BotSettings::default();
+            s.strategies = init;
+            s.init_strategies = init;
         }
         BotCommand::Mount => {
             // Toggle mount: if already mounted, dismount; otherwise cast
@@ -1272,8 +1286,17 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             let msg = format!("Stance set to {name}");
             reply(bot, pc, &msg);
         }
+        BotCommand::SetPositionStance(ps) => {
+            s.position_stance = *ps;
+            // Clear old positioning flags and apply new ones.
+            let combat = s.strategies.get_mut(BotStateKind::Combat);
+            combat.remove(PositionStance::all_position_flags());
+            combat.insert(ps.strategy_flags());
+            let msg = format!("Stance set to {}", ps.as_str());
+            reply(bot, pc, &msg);
+        }
         BotCommand::MaxDps => {
-            s.combat_order = CombatOrder::DPS;
+            s.strategies.set(BotStateKind::Combat, StrategyFlags::DPS);
             s.reactivity = Reactivity::Aggressive;
         }
         BotCommand::ToggleSaveMana => {
@@ -1331,9 +1354,8 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         }
         BotCommand::Debug => {
             let msg = format!(
-                "DBG mode={} co={:#x} react={:?} co-strats={:#x} nc-strats={:#x} react-strats={:#x} de-strats={:#x} cheat={:#x}",
+                "DBG mode={} react={:?} co-strats={:#x} nc-strats={:#x} react-strats={:#x} de-strats={:#x} cheat={:#x}",
                 s.mode.as_str(),
-                s.combat_order.0,
                 s.reactivity,
                 s.strategies.get(BotStateKind::Combat).0,
                 s.strategies.get(BotStateKind::NonCombat).0,
@@ -1460,11 +1482,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                     WeaponHand::MainHand => r.mh = *kind,
                     WeaponHand::OffHand => r.oh = *kind,
                 }
-                if bot.settings.verbose {
-                    let label = kind.map_or("cleared", |k| k.as_str());
-                    reply(bot, pc, &format!("poison {}: {label}", hand.as_str()));
-                }
-            } else if bot.settings.verbose {
+                let label = kind.map_or("cleared", |k| k.as_str());
+                reply(bot, pc, &format!("poison {}: {label}", hand.as_str()));
+            } else {
                 reply(bot, pc, "poison: not a rogue");
             }
         }
@@ -1485,20 +1505,16 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             if let Some(r) = role
                 && r.slot() != *slot
             {
-                if bot.settings.verbose {
-                    reply(
-                        bot,
-                        pc,
-                        &format!("totem: {} is not a {} totem", r.as_str(), slot.as_str()),
-                    );
-                }
+                reply(
+                    bot,
+                    pc,
+                    &format!("totem: {} is not a {} totem", r.as_str(), slot.as_str()),
+                );
             } else if let Some(sh) = s.class_prefs.as_shaman_mut() {
                 sh.set(*slot, *role);
-                if bot.settings.verbose {
-                    let label = role.map_or("cleared", |r| r.as_str());
-                    reply(bot, pc, &format!("totem {}: {label}", slot.as_str()));
-                }
-            } else if bot.settings.verbose {
+                let label = role.map_or("cleared", |r| r.as_str());
+                reply(bot, pc, &format!("totem {}: {label}", slot.as_str()));
+            } else {
                 reply(bot, pc, "totem: not a shaman");
             }
         }
@@ -1522,11 +1538,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                     WeaponHand::MainHand => sh.mh_imbue = *imbue,
                     WeaponHand::OffHand => sh.oh_imbue = *imbue,
                 }
-                if bot.settings.verbose {
-                    let label = imbue.map_or("cleared", |i| i.as_str());
-                    reply(bot, pc, &format!("imbue {}: {label}", hand.as_str()));
-                }
-            } else if bot.settings.verbose {
+                let label = imbue.map_or("cleared", |i| i.as_str());
+                reply(bot, pc, &format!("imbue {}: {label}", hand.as_str()));
+            } else {
                 reply(bot, pc, "imbue: not a shaman");
             }
         }
@@ -1545,36 +1559,30 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         BotCommand::SetPaladinAura(aura) => {
             if let Some(p) = s.class_prefs.as_paladin_mut() {
                 p.aura = *aura;
-                if bot.settings.verbose {
-                    let label = aura.map_or("cleared", |a| a.as_str());
-                    reply(bot, pc, &format!("aura: {label}"));
-                }
-            } else if bot.settings.verbose {
+                let label = aura.map_or("cleared", |a| a.as_str());
+                reply(bot, pc, &format!("aura: {label}"));
+            } else {
                 reply(bot, pc, "aura: not a paladin");
             }
         }
         BotCommand::SetPaladinBlessing(blessing) => {
             if let Some(p) = s.class_prefs.as_paladin_mut() {
                 p.blessing = *blessing;
-                if bot.settings.verbose {
-                    let label = blessing.map_or("cleared", |b| b.as_str());
-                    reply(bot, pc, &format!("blessing: {label}"));
-                }
-            } else if bot.settings.verbose {
+                let label = blessing.map_or("cleared", |b| b.as_str());
+                reply(bot, pc, &format!("blessing: {label}"));
+            } else {
                 reply(bot, pc, "blessing: not a paladin");
             }
         }
         BotCommand::SetPaladinGreaterBlessing(flag) => {
             if let Some(p) = s.class_prefs.as_paladin_mut() {
                 p.use_greater = *flag;
-                if bot.settings.verbose {
-                    reply(
-                        bot,
-                        pc,
-                        &format!("greater blessing: {}", if *flag { "on" } else { "off" }),
-                    );
-                }
-            } else if bot.settings.verbose {
+                reply(
+                    bot,
+                    pc,
+                    &format!("greater blessing: {}", if *flag { "on" } else { "off" }),
+                );
+            } else {
                 reply(bot, pc, "blessing: not a paladin");
             }
         }
@@ -1594,22 +1602,18 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         BotCommand::SetHunterAspect(aspect) => {
             if let Some(h) = s.class_prefs.as_hunter_mut() {
                 h.aspect = *aspect;
-                if bot.settings.verbose {
-                    let label = aspect.map_or("cleared", |a| a.as_str());
-                    reply(bot, pc, &format!("aspect: {label}"));
-                }
-            } else if bot.settings.verbose {
+                let label = aspect.map_or("cleared", |a| a.as_str());
+                reply(bot, pc, &format!("aspect: {label}"));
+            } else {
                 reply(bot, pc, "aspect: not a hunter");
             }
         }
         BotCommand::SetHunterTrap(trap) => {
             if let Some(h) = s.class_prefs.as_hunter_mut() {
                 h.trap = *trap;
-                if bot.settings.verbose {
-                    let label = trap.map_or("cleared", |t| t.as_str());
-                    reply(bot, pc, &format!("trap: {label}"));
-                }
-            } else if bot.settings.verbose {
+                let label = trap.map_or("cleared", |t| t.as_str());
+                reply(bot, pc, &format!("trap: {label}"));
+            } else {
                 reply(bot, pc, "trap: not a hunter");
             }
         }
@@ -1628,11 +1632,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         BotCommand::SetWarlockCurse(curse) => {
             if let Some(w) = s.class_prefs.as_warlock_mut() {
                 w.curse = *curse;
-                if bot.settings.verbose {
-                    let label = curse.map_or("cleared", |c| c.as_str());
-                    reply(bot, pc, &format!("curse: {label}"));
-                }
-            } else if bot.settings.verbose {
+                let label = curse.map_or("cleared", |c| c.as_str());
+                reply(bot, pc, &format!("curse: {label}"));
+            } else {
                 reply(bot, pc, "curse: not a warlock");
             }
         }
@@ -1647,11 +1649,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         BotCommand::SetWarriorForcedStance(stance) => {
             if let Some(w) = s.class_prefs.as_warrior_mut() {
                 w.forced_stance = *stance;
-                if bot.settings.verbose {
-                    let label = stance.map_or("cleared", |st| st.as_str());
-                    reply(bot, pc, &format!("forcestance: {label}"));
-                }
-            } else if bot.settings.verbose {
+                let label = stance.map_or("cleared", |st| st.as_str());
+                reply(bot, pc, &format!("forcestance: {label}"));
+            } else {
                 reply(bot, pc, "forcestance: not a warrior");
             }
         }
@@ -1668,15 +1668,11 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
 
         BotCommand::SetSuppressionDuty(mode) => {
             bot.settings.encounter_prefs.suppression_duty = *mode;
-            if bot.settings.verbose {
-                reply(bot, pc, &format!("suppression: {}", mode.as_word()));
-            }
+            reply(bot, pc, &format!("suppression: {}", mode.as_word()));
         }
         BotCommand::SetDouseDuty(mode) => {
             bot.settings.encounter_prefs.douse_duty = *mode;
-            if bot.settings.verbose {
-                reply(bot, pc, &format!("douse: {}", mode.as_word()));
-            }
+            reply(bot, pc, &format!("douse: {}", mode.as_word()));
         }
         BotCommand::ShowEncounterPrefs => {
             let p = &bot.settings.encounter_prefs;
@@ -1700,24 +1696,18 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
 
         // -- Query replies ---------------------------------------------
         BotCommand::QueryFormation => {
-            // Mangosbot parses `Formation: <name>` (line 3391 in Mangosbot.lua).
-            let msg = format!("Formation: {}", s.follow_formation.as_str());
+            // Mangosbot parses `Formation: ` at position 1, extracts from
+            // position 11 (line 3391). PB2 embeds `|cff00ff00` color code.
+            let msg = format!("Formation: |cff00ff00{}", s.follow_formation.as_str());
             reply(bot, pc, &msg);
         }
         BotCommand::QueryStance => {
-            let name = match s.stance {
-                1 => "battle",
-                2 => "defensive",
-                3 => "berserker",
-                _ => "none",
-            };
-            // Mangosbot parses `Stance: <name>` (line 3394).
-            let msg = format!("Stance: {name}");
-            reply(bot, pc, &msg);
-        }
-        BotCommand::QueryCombatOrder => {
-            // Mangosbot parses `Combat Strategies: ...` (line 3358, trim=19).
-            let msg = format!("Combat Strategies: {}", s.combat_order.describe());
+            // Mangosbot parses `Stance: ` at position 1, then extracts
+            // from position 11 onwards (line 3394). PB2 embeds WoW color
+            // codes (`|cff00ff00`) which pad the prefix to 10 chars before
+            // the value name. The addon uses `string.find` for matching,
+            // so the color code prefix on the value is harmless.
+            let msg = format!("Stance: |cff00ff00{}", s.position_stance.as_str());
             reply(bot, pc, &msg);
         }
         BotCommand::QueryStrategies(state) => {
@@ -1735,21 +1725,21 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             reply(bot, pc, &msg);
         }
         BotCommand::QueryRti => {
-            let msg = format!("rti: {}", rti_icon_name(s.preferred_rti_icon));
+            let msg = format!("rti: |cff00ff00{}", rti_icon_name(s.preferred_rti_icon));
             reply(bot, pc, &msg);
         }
         BotCommand::QueryCcRti => {
-            let msg = format!("rti cc: {}", rti_icon_name(s.preferred_cc_rti_icon));
+            let msg = format!("rti cc: |cff00ff00{}", rti_icon_name(s.preferred_cc_rti_icon));
             reply(bot, pc, &msg);
         }
         BotCommand::QuerySaveMana => {
             // Mangosbot parses `Mana save level: <val>` (line 3400).
-            let msg = format!("Mana save level: {}", s.save_mana);
+            let msg = format!("Mana save level: |cff00ff00{}", s.save_mana);
             reply(bot, pc, &msg);
         }
         BotCommand::QueryLootPolicy => {
             // Mangosbot parses `Loot strategy: <val>` (line 3403).
-            let msg = format!("Loot strategy: {}", s.loot_policy.describe());
+            let msg = format!("Loot strategy: |cff00ff00{}", s.loot_policy.describe());
             reply(bot, pc, &msg);
         }
 
@@ -1762,7 +1752,7 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         }
         BotCommand::TankAttack => {
             // PB2: attack current target as tank. Set combat order to tank+attack.
-            s.combat_order = CombatOrder::TANK;
+            s.strategies.set(BotStateKind::Combat, StrategyFlags::TANK);
             s.reactivity = Reactivity::Aggressive;
         }
         BotCommand::Loot => {
@@ -1911,13 +1901,20 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         }
         BotCommand::FocusHeal(name) => {
             // PB2 "focus heal +Name" — resolve name and set as focus/heal target.
+            // RaidControl sends "focus heal none" to clear the focus target.
             let name_clean = name.trim_start_matches('+');
-            let guid = bot.interface.resolve_player_by_name(name_clean);
-            if guid != 0 {
-                s.focus_target = Some(guid);
-                s.protect_target = Some(guid);
-            } else if s.verbose {
-                reply(bot, pc, &format!("focus heal: player `{name_clean}` not found"));
+            if name_clean.eq_ignore_ascii_case("none") || name_clean.is_empty() {
+                s.focus_target = None;
+                s.protect_target = None;
+                reply(bot, pc, "focus heal: cleared");
+            } else {
+                let guid = bot.interface.resolve_player_by_name(name_clean);
+                if guid != 0 {
+                    s.focus_target = Some(guid);
+                    s.protect_target = Some(guid);
+                } else if s.verbose {
+                    reply(bot, pc, &format!("focus heal: player `{name_clean}` not found"));
+                }
             }
         }
         BotCommand::MoveStyle(style) => {
@@ -2294,6 +2291,10 @@ mod tests {
             self.inner.can_reach(x, y, z)
         }
 
+        fn whisper(&self, guid: u64, msg: &str) -> bool {
+            WHISPERED.lock().unwrap().push((guid, msg.to_string()));
+            true
+        }
         fn tell_player(&self, guid: u64, msg: &str) -> bool {
             WHISPERED.lock().unwrap().push((guid, msg.to_string()));
             true
@@ -2318,7 +2319,7 @@ mod tests {
     #[test]
     fn set_mode_via_command() {
         let mut bot = test_bot();
-        bot.pending_commands
+        bot.pending_commands.lock().unwrap()
             .push_back(PendingCommand::internal(BotCommand::SetMode(
                 BehaviorMode::Grind,
             )));
@@ -2330,12 +2331,12 @@ mod tests {
     fn blacklist_spell() {
         let mut bot = test_bot();
         let spell = SpellId(100);
-        bot.pending_commands
+        bot.pending_commands.lock().unwrap()
             .push_back(PendingCommand::internal(BotCommand::BlacklistSpell(spell)));
         process_commands(&mut bot);
         assert!(bot.settings.spell_blacklist.contains(&spell));
 
-        bot.pending_commands
+        bot.pending_commands.lock().unwrap()
             .push_back(PendingCommand::internal(BotCommand::UnblacklistSpell(
                 spell,
             )));
@@ -2349,7 +2350,7 @@ mod tests {
         bot.snap.self_.pos.x = 10.0;
         bot.snap.self_.pos.y = 20.0;
         bot.snap.self_.pos.z = 30.0;
-        bot.pending_commands
+        bot.pending_commands.lock().unwrap()
             .push_back(PendingCommand::internal(BotCommand::Guard));
         process_commands(&mut bot);
         assert_eq!(bot.settings.mode, BehaviorMode::Guard);
@@ -2361,7 +2362,7 @@ mod tests {
         let mut bot = test_bot();
         bot.settings.mode = BehaviorMode::Grind;
         bot.settings.flee_hp_pct = 0.5;
-        bot.pending_commands
+        bot.pending_commands.lock().unwrap()
             .push_back(PendingCommand::internal(BotCommand::Reset));
         process_commands(&mut bot);
         assert_eq!(bot.settings.mode, BehaviorMode::Follow);
@@ -2382,14 +2383,14 @@ mod tests {
             BotCommand::SetChatChannel { channel: ChatChannel::Party, on: true },
             BotCommand::SetPreferredRti(Some(8)),
         ] {
-            bot.pending_commands
+            bot.pending_commands.lock().unwrap()
                 .push_back(PendingCommand::internal(cmd));
         }
         process_commands(&mut bot);
 
         assert!((bot.settings.follow_distance - 7.5).abs() < f32::EPSILON);
         assert_eq!(bot.settings.stance, 2);
-        assert_eq!(bot.settings.combat_order, CombatOrder::DPS);
+        assert!(bot.settings.strategies.get(BotStateKind::Combat).contains(StrategyFlags::DPS));
         assert_eq!(bot.settings.reactivity, Reactivity::Aggressive);
         assert!(bot.settings.save_mana > 0);
         assert!(bot.settings.self_res);
@@ -2399,13 +2400,13 @@ mod tests {
         assert_eq!(bot.settings.preferred_rti_icon, Some(8));
 
         // Unkeep should remove from keep_items.
-        bot.pending_commands
+        bot.pending_commands.lock().unwrap()
             .push_back(PendingCommand::internal(BotCommand::UnkeepItem(ItemId(42))));
         process_commands(&mut bot);
         assert!(!bot.settings.keep_items.contains(&ItemId(42)));
 
         // Toggling chat channel off clears the bit.
-        bot.pending_commands
+        bot.pending_commands.lock().unwrap()
             .push_back(PendingCommand::internal(BotCommand::SetChatChannel {
                 channel: ChatChannel::Party,
                 on: false,
@@ -2425,7 +2426,7 @@ mod tests {
         let mut bot = test_bot_with_recorder();
 
         // Addon-origin query (`#a co ?`) — should land on the addon sink.
-        bot.pending_commands.push_back(PendingCommand::external(
+        bot.pending_commands.lock().unwrap().push_back(PendingCommand::external(
             0xABCD,
             SecurityLevel::AllowAll,
             ChatOrigin::new(2 /* CHAT_MSG_PARTY */, LANG_ADDON),
@@ -2439,7 +2440,7 @@ mod tests {
         ));
 
         // Whisper-origin query — should land on the whisper sink.
-        bot.pending_commands.push_back(PendingCommand::external(
+        bot.pending_commands.lock().unwrap().push_back(PendingCommand::external(
             0x1234,
             SecurityLevel::AllowAll,
             ChatOrigin::new(6 /* CHAT_MSG_WHISPER */, 0 /* LANG_UNIVERSAL */),
@@ -2473,7 +2474,7 @@ mod tests {
     #[test]
     fn heal_threshold_set() {
         let mut bot = test_bot();
-        bot.pending_commands
+        bot.pending_commands.lock().unwrap()
             .push_back(PendingCommand::internal(BotCommand::SetHealThreshold(0.70)));
         process_commands(&mut bot);
         assert!((bot.settings.heal_party_threshold - 0.70).abs() < f32::EPSILON);

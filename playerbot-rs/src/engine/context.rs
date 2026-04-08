@@ -3,6 +3,8 @@
 /// Built once at the start of each `playerbot_update` call and passed
 /// down through the entire tree. Immutable game state is borrowed;
 /// mutable bot state (timers, blackboard, target) is mutably borrowed.
+use std::cell::Cell;
+
 use crate::{
     bot::settings::BotSettings,
     bot::state::PlayerClass,
@@ -61,6 +63,12 @@ pub struct TickContext<'a> {
     /// winning leaf. Each compositor pushes its variant+index, the leaf
     /// pushes its Debug name. After the tick, join with ` > `.
     pub monitor_trace: Option<std::cell::RefCell<Vec<String>>>,
+
+    /// Target override set by `attack()` during this tick. `current_target()`
+    /// checks this first so that nodes downstream of the targeting subtree
+    /// (positioning, class rotation) see the freshly-acquired target instead
+    /// of the stale snapshot value.
+    pub pending_target: Cell<Option<UnitHandle>>,
 }
 
 impl<'a> TickContext<'a> {
@@ -75,9 +83,25 @@ impl<'a> TickContext<'a> {
     }
 
     /// Convenience: self current target handle (None if no target).
+    /// Checks `pending_target` first (set by `attack()` this tick) so
+    /// downstream nodes see the freshly-acquired target immediately.
     pub fn current_target(&self) -> Option<UnitHandle> {
+        if let Some(h) = self.pending_target.get() {
+            return Some(h);
+        }
         let h = self.snap.self_unit().current_target;
         if h == 0 { None } else { Some(h) }
+    }
+
+    /// Call `interface.attack(target)` and, on success, update
+    /// `pending_target` so downstream nodes see the new target this tick.
+    pub fn attack(&self, target: UnitHandle) -> bool {
+        if self.interface.attack(target) {
+            self.pending_target.set(Some(target));
+            true
+        } else {
+            false
+        }
     }
 
     /// True if this bot is currently in combat.
@@ -103,6 +127,35 @@ impl<'a> TickContext<'a> {
     /// Current encounter phase ID (0 if no encounter).
     pub fn encounter_phase(&self) -> u32 {
         self.encounter.map_or(0, |e| e.phase_id())
+    }
+
+    /// Push a diagnostic line to the monitor log (no-op when monitor is off).
+    /// These lines are flushed to the log file at the end of each tick.
+    #[inline]
+    pub fn monitor(&mut self, line: impl std::fmt::Display) {
+        if self.monitor_trace.is_some() {
+            self.blackboard
+                .push_monitor_line(format!("{line}"));
+        }
+    }
+
+    /// Get a human-readable spell name for monitor logging.
+    /// Returns "SpellName(id)" or "#id" if the name isn't available.
+    pub fn spell_name(&self, spell: crate::ffi::SpellId) -> String {
+        let name = self.interface.get_spell_name(spell);
+        if name.is_empty() || name.starts_with('#') {
+            format!("#{}", spell.raw())
+        } else {
+            format!("{name}({})", spell.raw())
+        }
+    }
+
+    /// Send a debug message to the bot's master in party chat.
+    /// Only active when the monitor is enabled (development mode).
+    pub fn debug_say(&self, msg: &str) {
+        if self.monitor_trace.is_some() {
+            self.interface.say(msg, 0);
+        }
     }
 
     /// True if this bot has the TANK role.
@@ -269,6 +322,7 @@ pub mod tests {
             role: BotRole::DPS,
             settings: default_test_settings(),
             monitor_trace: None,
+            pending_target: Cell::new(None),
         }
     }
 
@@ -325,6 +379,7 @@ pub mod tests {
                 role: BotRole::DPS,
                 settings: &self.settings,
                 monitor_trace: None,
+                pending_target: Cell::new(None),
             }
         }
     }

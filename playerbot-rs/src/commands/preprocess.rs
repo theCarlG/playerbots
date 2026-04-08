@@ -114,7 +114,7 @@ pub fn preprocess_and_enqueue(
     } else {
         PendingCommand::external(sender_guid, security, origin, cmd)
     };
-    bot.pending_commands.push_back(pc);
+    bot.pending_commands.lock().unwrap().push_back(pc);
 }
 
 fn split_once_sep<'a>(text: &'a str, sep: &str) -> Option<(&'a str, &'a str)> {

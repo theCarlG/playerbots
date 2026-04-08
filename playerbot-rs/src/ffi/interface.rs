@@ -6,9 +6,9 @@
 /// `BtNode` and `TickContext` use `&dyn BotInterface` so they work in both contexts
 /// without any conditional compilation.
 use super::{
-    BotAuraInfo, BotCallbacks, BotHandle, BotMailSummary, BotPosition, BotReputationEntry,
-    BotSkillEntry, BotSpellInfo, BotTalentEntry, BotTaxiNode, BotThreatEntry, BotTravelDest,
-    BotUnitSnapshot, BotWorldSnapshot, UnitHandle,
+    BotAuraInfo, BotCallbacks, BotHandle, BotInventoryItem, BotMailSummary, BotPosition,
+    BotReputationEntry, BotSkillEntry, BotSpellInfo, BotTalentEntry, BotTaxiNode, BotThreatEntry,
+    BotTravelDest, BotUnitSnapshot, BotWorldSnapshot, UnitHandle,
     types::{BotRole, ItemId, SpellId},
 };
 
@@ -77,6 +77,12 @@ pub trait BotInterface: Send {
     fn knows_spell(&self, _spell_id: SpellId) -> bool {
         true
     }
+    /// Look up the spell name from the server spell DB. Returns an empty
+    /// string if the spell does not exist. Used by the debug monitor for
+    /// human-readable logging.
+    fn get_spell_name(&self, _spell_id: SpellId) -> String {
+        String::new()
+    }
 
     /* ── Pathfinding / positioning ───────────────────────────────────── */
 
@@ -101,6 +107,12 @@ pub trait BotInterface: Send {
     fn cast_spell_pos(&self, spell_id: SpellId, x: f32, y: f32, z: f32) -> bool;
     fn move_to(&self, x: f32, y: f32, z: f32) -> bool;
     fn follow(&self, target: UnitHandle, dist: f32, angle: f32) -> bool;
+    /// Chase a unit in combat using MoveChase — smoothly tracks the target
+    /// at the given distance and angle without restarting splines every tick.
+    /// Default falls back to `follow` so test mocks don't need updating.
+    fn chase(&self, target: UnitHandle, dist: f32, angle: f32) -> bool {
+        self.follow(target, dist, angle)
+    }
     fn stop_moving(&self) -> bool;
     fn attack(&self, target: UnitHandle) -> bool;
     fn auto_attack(&self, enable: bool) -> bool;
@@ -773,6 +785,12 @@ pub trait BotInterface: Send {
         0
     }
 
+    /// Returns the bot's dominant talent tab (0/1/2) by examining actual
+    /// talent point investment. Mirrors PB2's `AiFactory::GetPlayerSpecTab`.
+    fn bot_get_spec_tab(&self) -> u32 {
+        0
+    }
+
     /* ── Chat-command helpers (Wave 2) ───────────────────────────────── */
 
     /// Make the bot jump in place (vertical knockback).
@@ -938,6 +956,53 @@ pub trait BotInterface: Send {
 
     /// Withdraw useful items from the bank.
     fn bank_withdraw(&self) -> bool {
+        false
+    }
+
+    /* ── EngBags: inventory enumeration ────────────────────────────── */
+
+    /// Return the bot's bag contents (backpack + equipped bags).
+    fn bot_get_inventory(&self) -> Vec<BotInventoryItem> {
+        Vec::new()
+    }
+
+    /// Return the bot's equipped items.
+    fn bot_get_equipped(&self) -> Vec<BotInventoryItem> {
+        Vec::new()
+    }
+
+    /// Return items in the bot's bank slots. Requires banker proximity.
+    fn bot_get_bank_items(&self) -> Vec<BotInventoryItem> {
+        Vec::new()
+    }
+
+    /// Return items attached to mails in the bot's inbox.
+    fn bot_get_mail_items(&self) -> Vec<BotInventoryItem> {
+        Vec::new()
+    }
+
+    /// Sell a specific item by ID (adds sell price to gold, destroys item).
+    fn sell_item(&self, _item_id: ItemId) -> bool {
+        false
+    }
+
+    /// Deposit a specific item (by ID) from bags into bank.
+    fn bank_deposit_item(&self, _item_id: ItemId) -> bool {
+        false
+    }
+
+    /// Withdraw a specific item (by ID) from bank into bags.
+    fn bank_withdraw_item(&self, _item_id: ItemId) -> bool {
+        false
+    }
+
+    /// Take items + money from a specific mail (1-based index).
+    fn bot_mail_take_index(&self, _mail_index: u32) -> bool {
+        false
+    }
+
+    /// Send a specific item (by ID) from bags to the master via mail.
+    fn send_mail_item(&self, _item_id: ItemId) -> bool {
         false
     }
 
@@ -1146,6 +1211,21 @@ impl BotInterface for RealInterface {
         unsafe { (self.cbs.bot_knows_spell.unwrap())(self.handle, spell_id.raw()) }
     }
 
+    fn get_spell_name(&self, spell_id: SpellId) -> String {
+        let mut buf = [0u8; 128];
+        let len = unsafe {
+            (self.cbs.get_spell_name.unwrap())(
+                spell_id.raw(),
+                buf.as_mut_ptr() as *mut i8,
+                buf.len() as u32,
+            )
+        };
+        if len == 0 {
+            return format!("#{}", spell_id.raw());
+        }
+        String::from_utf8_lossy(&buf[..len as usize]).into_owned()
+    }
+
     fn get_behind_position(&self, target: UnitHandle, distance: f32) -> BotPosition {
         unsafe { (self.cbs.get_behind_position.unwrap())(self.handle, target, distance) }
     }
@@ -1193,6 +1273,10 @@ impl BotInterface for RealInterface {
 
     fn follow(&self, target: UnitHandle, dist: f32, angle: f32) -> bool {
         unsafe { (self.cbs.follow.unwrap())(self.handle, target, dist, angle) }
+    }
+
+    fn chase(&self, target: UnitHandle, dist: f32, angle: f32) -> bool {
+        unsafe { (self.cbs.chase.unwrap())(self.handle, target, dist, angle) }
     }
 
     fn stop_moving(&self) -> bool {
@@ -1877,6 +1961,10 @@ impl BotInterface for RealInterface {
         unsafe { (self.cbs.bot_pick_spec_no.unwrap())(self.handle, incremental) }
     }
 
+    fn bot_get_spec_tab(&self) -> u32 {
+        unsafe { (self.cbs.bot_get_spec_tab.unwrap())(self.handle) }
+    }
+
     /* ── Chat-command helpers (Wave 2) ───────────────────────────────── */
 
     fn bot_jump(&self) -> bool {
@@ -2083,6 +2171,82 @@ impl BotInterface for RealInterface {
 
     fn bank_withdraw(&self) -> bool {
         unsafe { (self.cbs.bank_withdraw.unwrap())(self.handle) }
+    }
+
+    fn bot_get_inventory(&self) -> Vec<BotInventoryItem> {
+        unsafe {
+            let mut count = 0u32;
+            let ptr = (self.cbs.bot_get_inventory.unwrap())(self.handle, &mut count);
+            if ptr.is_null() || count == 0 {
+                return Vec::new();
+            }
+            let slice = std::slice::from_raw_parts(ptr, count as usize);
+            let v = slice.to_vec();
+            (self.cbs.bot_free_inventory_list.unwrap())(ptr);
+            v
+        }
+    }
+
+    fn bot_get_equipped(&self) -> Vec<BotInventoryItem> {
+        unsafe {
+            let mut count = 0u32;
+            let ptr = (self.cbs.bot_get_equipped.unwrap())(self.handle, &mut count);
+            if ptr.is_null() || count == 0 {
+                return Vec::new();
+            }
+            let slice = std::slice::from_raw_parts(ptr, count as usize);
+            let v = slice.to_vec();
+            (self.cbs.bot_free_inventory_list.unwrap())(ptr);
+            v
+        }
+    }
+
+    fn bot_get_bank_items(&self) -> Vec<BotInventoryItem> {
+        unsafe {
+            let mut count = 0u32;
+            let ptr = (self.cbs.bot_get_bank_items.unwrap())(self.handle, &mut count);
+            if ptr.is_null() || count == 0 {
+                return Vec::new();
+            }
+            let slice = std::slice::from_raw_parts(ptr, count as usize);
+            let v = slice.to_vec();
+            (self.cbs.bot_free_inventory_list.unwrap())(ptr);
+            v
+        }
+    }
+
+    fn bot_get_mail_items(&self) -> Vec<BotInventoryItem> {
+        unsafe {
+            let mut count = 0u32;
+            let ptr = (self.cbs.bot_get_mail_items.unwrap())(self.handle, &mut count);
+            if ptr.is_null() || count == 0 {
+                return Vec::new();
+            }
+            let slice = std::slice::from_raw_parts(ptr, count as usize);
+            let v = slice.to_vec();
+            (self.cbs.bot_free_inventory_list.unwrap())(ptr);
+            v
+        }
+    }
+
+    fn sell_item(&self, item_id: ItemId) -> bool {
+        unsafe { (self.cbs.sell_item.unwrap())(self.handle, item_id.0) }
+    }
+
+    fn bank_deposit_item(&self, item_id: ItemId) -> bool {
+        unsafe { (self.cbs.bank_deposit_item.unwrap())(self.handle, item_id.0) }
+    }
+
+    fn bank_withdraw_item(&self, item_id: ItemId) -> bool {
+        unsafe { (self.cbs.bank_withdraw_item.unwrap())(self.handle, item_id.0) }
+    }
+
+    fn bot_mail_take_index(&self, mail_index: u32) -> bool {
+        unsafe { (self.cbs.bot_mail_take_index.unwrap())(self.handle, mail_index) }
+    }
+
+    fn send_mail_item(&self, item_id: ItemId) -> bool {
+        unsafe { (self.cbs.send_mail_item.unwrap())(self.handle, item_id.0) }
     }
 
     fn ah_post(&self) -> bool {

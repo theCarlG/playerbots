@@ -49,6 +49,9 @@ pub enum Key {
     // ── Death behavior ───────────────────────────────────────────────
     DeathTimestampMs, // u64: server_time_ms when the bot died (0 = alive)
 
+    // ── Follow throttle ──────────────────────────────────────────────
+    LastFollowMs, // u64: last time position-based follow issued move_to
+
     // ── RTSC move queue ─────────────────────────────────────────────
     RtscMoveX, // f32: next RTSC move waypoint
     RtscMoveY,

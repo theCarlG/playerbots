@@ -23,6 +23,8 @@ const BLOOD_PLAGUE: SpellId = SpellId(55078);
 #[cfg(feature = "wotlk")]
 pub fn build_tree() -> Bt {
     Sel!(
+        // `co +boost` burst cooldowns (DK-wide list).
+        super::boost(),
         StickToTarget(5.0),
         // Death Grip pull on ranged targets.
         Seq!(Cmp(TargetDistance, Above(15)), CastOnTarget(DEATH_GRIP)),

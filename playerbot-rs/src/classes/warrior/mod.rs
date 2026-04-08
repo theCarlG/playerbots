@@ -5,13 +5,13 @@ pub mod protection;
 
 use crate::{
     Seq, Sel,
-    bot::settings::CombatOrder,
+    bot::settings::StrategyFlags,
     bot::state::PlayerSpec,
     classes::ClassKit,
     data::spells::vanilla::warrior::{
         BATTLE_SHOUT, BERSERKER_RAGE, BLOODRAGE, DEATH_WISH, RECKLESSNESS,
     },
-    engine::bt::Bt::{self, CastOnSelf, CombatOrderHas, InCombat},
+    engine::bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
     noncombat::GroupBuff,
 };
 
@@ -23,7 +23,7 @@ const BUFFS: &[GroupBuff] = &[GroupBuff::on_party(BATTLE_SHOUT)];
 /// fall through to the normal rotation.
 pub fn boost() -> Bt {
     Seq!(
-        CombatOrderHas(CombatOrder::BOOST),
+        StrategyEnabled(StrategyFlags::BOOST),
         InCombat,
         Sel!(
             CastOnSelf(RECKLESSNESS),

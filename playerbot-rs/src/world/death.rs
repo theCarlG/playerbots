@@ -11,8 +11,9 @@ use crate::engine::bt::Bt::{self, *};
 use crate::{Seq, Sel};
 
 pub fn death_subtree() -> Bt {
+    // Called from the root FSM's Dead state — IsAlive.not() is already
+    // guaranteed by the caller. This subtree always succeeds (Noop fallback).
     Seq!(
-        IsAlive.not(),
         // Record when we died (idempotent — only sets if not already set).
         RecordDeathTime,
         Sel!(
@@ -30,6 +31,8 @@ pub fn death_subtree() -> Bt {
             Bt::throttle(3_000, CorpseRun),
             // 4. Spirit healer as last resort (after waiting long enough).
             Bt::throttle(30_000, UseSpiritHealer),
+            // 5. Fallback: idle. The root FSM ensures no other state runs.
+            Bt::Noop,
         ),
     )
 }

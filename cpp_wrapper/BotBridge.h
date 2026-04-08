@@ -56,6 +56,7 @@ namespace BotBridge
     bool        CB_BotWeaponEnchanted(BotHandle bot, uint8_t slot);
     uint8_t     CB_BotRunesReadyMask(BotHandle bot);
     bool        CB_BotKnowsSpell(BotHandle bot, uint32_t spell_id);
+    uint32_t    CB_GetSpellName(uint32_t spell_id, char* buf, uint32_t buf_len);
 
     // ── Pathfinding / positioning ──────────────────────────────────────────
     BotPosition     CB_GetBehindPosition(BotHandle bot, UnitHandle target, float distance);
@@ -69,6 +70,7 @@ namespace BotBridge
     bool CB_CastSpellPos(BotHandle bot, uint32_t spell_id, float x, float y, float z);
     bool CB_MoveTo(BotHandle bot, float x, float y, float z);
     bool CB_Follow(BotHandle bot, UnitHandle target, float dist, float angle);
+    bool CB_Chase(BotHandle bot, UnitHandle target, float dist, float angle);
     bool CB_StopMoving(BotHandle bot);
     bool CB_Attack(BotHandle bot, UnitHandle target);
     bool CB_AutoAttack(BotHandle bot, bool enable);
@@ -262,6 +264,7 @@ namespace BotBridge
     uint32_t        CB_BotFreeTalentPoints(BotHandle bot);
     void            CB_BotUpdateFreeTalentPoints(BotHandle bot);
     uint32_t        CB_BotPickSpecNo(BotHandle bot, bool incremental);
+    uint32_t        CB_BotGetSpecTab(BotHandle bot);
 
     // ── Chat-command helpers (Wave 2) ──────────────────────────────────────
     bool                CB_BotJump(BotHandle bot);
@@ -337,6 +340,20 @@ namespace BotBridge
 
     // ── Debug ─────────────────────────────────────────────────────────────
     bool CB_DebugDumpState(BotHandle bot, uint8_t kind);
+
+    // EngBags: inventory enumeration
+    BotInventoryItem* CB_BotGetInventory(BotHandle bot, uint32_t* out_count);
+    BotInventoryItem* CB_BotGetEquipped(BotHandle bot, uint32_t* out_count);
+    BotInventoryItem* CB_BotGetBankItems(BotHandle bot, uint32_t* out_count);
+    BotInventoryItem* CB_BotGetMailItems(BotHandle bot, uint32_t* out_count);
+    void              CB_BotFreeInventoryList(BotInventoryItem* list);
+
+    // EngBags: item actions
+    bool CB_SellItem(BotHandle bot, uint32_t item_id);
+    bool CB_BankDepositItem(BotHandle bot, uint32_t item_id);
+    bool CB_BankWithdrawItem(BotHandle bot, uint32_t item_id);
+    bool CB_BotMailTakeIndex(BotHandle bot, uint32_t mail_index);
+    bool CB_SendMailItem(BotHandle bot, uint32_t item_id);
 
     // ── Internal helpers ────────────────────────────────────────────────────
     Player* FindBot(BotHandle bot);

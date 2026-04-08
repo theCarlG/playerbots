@@ -5,21 +5,21 @@ pub mod retribution;
 
 use crate::{
     Seq,
-    bot::settings::CombatOrder,
+    bot::settings::StrategyFlags,
     bot::state::PlayerSpec,
     classes::ClassKit,
     data::spells::vanilla::paladin::{
         BLESSING_OF_KINGS, BLESSING_OF_MIGHT, BLESSING_OF_WISDOM, DEVOTION_AURA, DIVINE_FAVOR,
         RETRIBUTION_AURA,
     },
-    engine::bt::Bt::{self, CastOnSelf, CombatOrderHas, InCombat},
+    engine::bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
     noncombat::GroupBuff,
 };
 
 /// `co +boost` burst subtree — paladin offensive cooldowns.
 pub fn boost() -> Bt {
     Seq!(
-        CombatOrderHas(CombatOrder::BOOST),
+        StrategyEnabled(StrategyFlags::BOOST),
         InCombat,
         CastOnSelf(DIVINE_FAVOR),
     )

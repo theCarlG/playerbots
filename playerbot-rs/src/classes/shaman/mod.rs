@@ -6,18 +6,18 @@ pub mod totems;
 
 use crate::{
     Seq, Sel,
-    bot::settings::CombatOrder,
+    bot::settings::StrategyFlags,
     bot::state::PlayerSpec,
     classes::ClassKit,
     data::spells::vanilla::shaman::{ELEMENTAL_MASTERY, LIGHTNING_SHIELD, NATURE_SWIFTNESS},
-    engine::bt::Bt::{self, CastOnSelf, CombatOrderHas, InCombat},
+    engine::bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
     noncombat::GroupBuff,
 };
 
 /// `co +boost` burst subtree — shaman offensive cooldowns.
 pub fn boost() -> Bt {
     Seq!(
-        CombatOrderHas(CombatOrder::BOOST),
+        StrategyEnabled(StrategyFlags::BOOST),
         InCombat,
         Sel!(CastOnSelf(ELEMENTAL_MASTERY), CastOnSelf(NATURE_SWIFTNESS)),
     )

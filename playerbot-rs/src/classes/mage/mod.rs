@@ -4,13 +4,13 @@ pub mod frost;
 
 use crate::{
     Seq, Sel,
-    bot::settings::CombatOrder,
+    bot::settings::StrategyFlags,
     bot::state::PlayerSpec,
     classes::ClassKit,
     data::spells::vanilla::mage::{
         ARCANE_BRILLIANCE, ARCANE_INTELLECT, ARCANE_POWER, COMBUSTION, PRESENCE_OF_MIND,
     },
-    engine::bt::Bt::{self, CastOnSelf, CombatOrderHas, InCombat},
+    engine::bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
     noncombat::GroupBuff,
 };
 
@@ -23,7 +23,7 @@ const BUFFS: &[GroupBuff] = &[GroupBuff::on_party_aura(
 /// `co +boost` burst subtree — mage offensive cooldowns.
 pub fn boost() -> Bt {
     Seq!(
-        CombatOrderHas(CombatOrder::BOOST),
+        StrategyEnabled(StrategyFlags::BOOST),
         InCombat,
         Sel!(
             CastOnSelf(COMBUSTION),

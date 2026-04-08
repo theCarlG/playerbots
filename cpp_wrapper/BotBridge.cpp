@@ -110,6 +110,13 @@ BotUnitSnapshot BotBridge::FillUnitSnapshot(Unit* unit)
     s.health     = unit->GetHealth();
     s.max_health = unit->GetMaxHealth();
     s.is_alive   = unit->IsAlive();
+    s.is_ghost   = false;
+    s.on_taxi    = false;
+    if (Player* p = unit->ToPlayer())
+    {
+        s.is_ghost = p->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_GHOST);
+        s.on_taxi  = p->IsTaxiFlying();
+    }
     s.in_combat  = unit->IsInCombat();
     s.is_casting = unit->IsNonMeleeSpellCasted(false);
     s.is_moving  = unit->IsMoving();
@@ -158,6 +165,12 @@ BotUnitSnapshot BotBridge::FillUnitSnapshot(Unit* unit)
     // treats it opaquely and matches on raw u8 values.
     s.shapeshift_form = static_cast<uint8_t>(unit->GetShapeshiftForm());
 
+    // NPC entry for creature identification (boss detection, etc.)
+    if (Creature* c = unit->ToCreature())
+    {
+        s.npc_entry = c->GetEntry();
+    }
+
     // Player-specific
     if (Player* p = unit->ToPlayer())
     {
@@ -203,6 +216,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.bot_weapon_enchanted        = CB_BotWeaponEnchanted;
     cbs.bot_runes_ready_mask        = CB_BotRunesReadyMask;
     cbs.bot_knows_spell             = CB_BotKnowsSpell;
+    cbs.get_spell_name              = CB_GetSpellName;
 
     // Pathfinding / positioning
     cbs.get_behind_position = CB_GetBehindPosition;
@@ -215,6 +229,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.cast_spell_pos      = CB_CastSpellPos;
     cbs.move_to             = CB_MoveTo;
     cbs.follow              = CB_Follow;
+    cbs.chase               = CB_Chase;
     cbs.stop_moving         = CB_StopMoving;
     cbs.attack              = CB_Attack;
     cbs.auto_attack         = CB_AutoAttack;
@@ -375,6 +390,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.bot_free_talent_points              = CB_BotFreeTalentPoints;
     cbs.bot_update_free_talent_points       = CB_BotUpdateFreeTalentPoints;
     cbs.bot_pick_spec_no                    = CB_BotPickSpecNo;
+    cbs.bot_get_spec_tab                    = CB_BotGetSpecTab;
 
     // Chat-command helpers (Wave 2)
     cbs.bot_jump                            = CB_BotJump;
@@ -471,6 +487,20 @@ BotCallbacks BotBridge::MakeCallbacks()
 
     // Debug
     cbs.debug_dump_state                    = CB_DebugDumpState;
+
+    // EngBags: inventory enumeration
+    cbs.bot_get_inventory                   = CB_BotGetInventory;
+    cbs.bot_get_equipped                    = CB_BotGetEquipped;
+    cbs.bot_get_bank_items                  = CB_BotGetBankItems;
+    cbs.bot_get_mail_items                  = CB_BotGetMailItems;
+    cbs.bot_free_inventory_list             = CB_BotFreeInventoryList;
+
+    // EngBags: item actions
+    cbs.sell_item                           = CB_SellItem;
+    cbs.bank_deposit_item                   = CB_BankDepositItem;
+    cbs.bank_withdraw_item                  = CB_BankWithdrawItem;
+    cbs.bot_mail_take_index                 = CB_BotMailTakeIndex;
+    cbs.send_mail_item                      = CB_SendMailItem;
 
     return cbs;
 }
@@ -1011,6 +1041,20 @@ bool BotBridge::CB_CanReach(BotHandle bot, float x, float y, float z)
                                          b->GetPositionZ(), x, y, z, false);
 }
 
+// ── Movement de-duplication state (used by CB_CastSpell and movement callbacks) ──
+// Defined here before CB_CastSpell which needs to erase entries when stopping to cast.
+struct MoveState
+{
+    enum Kind { NONE, POINT, FOLLOW, CHASE };
+    float x = 0, y = 0, z = 0;
+    UnitHandle followTarget = 0;
+    float followDist = 0;
+    float followAngle = 0;
+    Kind kind = NONE;
+};
+
+static std::unordered_map<BotHandle, MoveState> s_moveState;
+
 // ── Commands ──────────────────────────────────────────────────────────────
 
 bool BotBridge::CB_CastSpell(BotHandle bot, uint32_t spell_id, UnitHandle target)
@@ -1028,8 +1072,33 @@ bool BotBridge::CB_CastSpell(BotHandle bot, uint32_t spell_id, UnitHandle target
         t = b; // fallback to self
 
     // Check that the spell is ready and known
-    if (!b->HasSpell(spell_id) || !b->IsSpellReady(spell_id))
+    if (!b->HasSpell(spell_id))
+    {
+        sLog.outDebug("[BotBridge] CastSpell: bot=0x%llX spell=%u NOT KNOWN",
+                      (unsigned long long)bot, spell_id);
         return false;
+    }
+    if (!b->IsSpellReady(spell_id))
+    {
+        sLog.outDebug("[BotBridge] CastSpell: bot=0x%llX spell=%u NOT READY (server CD)",
+                      (unsigned long long)bot, spell_id);
+        return false;
+    }
+
+    // Stop moving before casting spells that require it. Cast-time and
+    // channeled spells obviously need the bot to stand still. Melee
+    // instants can be used while moving in WoW, so don't disrupt the
+    // bot's approach/positioning for those.
+    bool hasCastTime = (GetSpellCastTime(spellInfo, b) > 0)
+                     || IsChanneledSpell(spellInfo);
+    if (hasCastTime && !b->IsStopped())
+    {
+        b->StopMoving();
+        b->GetMotionMaster()->Clear(false);
+        b->GetMotionMaster()->MoveIdle();
+        // Invalidate move state so the next chase/follow call isn't deduped.
+        s_moveState.erase(bot);
+    }
 
     // Pre-validate with CheckCast so we don't trigger a GCD on the Rust side
     // for a spell that will fail (wrong stance, out of range, not enough power, etc.)
@@ -1040,6 +1109,8 @@ bool BotBridge::CB_CastSpell(BotHandle bot, uint32_t spell_id, UnitHandle target
     SpellCastResult result = spell->CheckCast(true);
     if (result != SPELL_CAST_OK)
     {
+        sLog.outDebug("[BotBridge] CastSpell REJECTED: bot=0x%llX spell=%u target=0x%llX CheckCast=%d",
+                      (unsigned long long)bot, spell_id, (unsigned long long)target, (int)result);
         delete spell;
         return false;
     }
@@ -1087,20 +1158,11 @@ bool BotBridge::CB_CastSpellPos(BotHandle bot, uint32_t spell_id,
 // We track the last-issued destination per bot. If the new request matches the
 // previous one (within a small epsilon) and the bot is still moving, we skip
 // the MotionMaster call entirely.
+//
+// NOTE: MoveState and s_moveState are defined above (before CB_CastSpell)
+// because CB_CastSpell needs to erase entries when stopping to cast.
 
-struct MoveState
-{
-    enum Kind { NONE, POINT, FOLLOW };
-    float x = 0, y = 0, z = 0;
-    UnitHandle followTarget = 0;
-    float followDist = 0;
-    float followAngle = 0;
-    Kind kind = NONE;
-};
-
-static std::unordered_map<BotHandle, MoveState> s_moveState;
-
-static constexpr float MOVE_EPSILON_SQ = 0.5f * 0.5f; // 0.5 yard
+static constexpr float MOVE_EPSILON_SQ = 1.5f * 1.5f; // 1.5 yards
 
 static bool sameDest(const MoveState& s, float x, float y, float z)
 {
@@ -1114,13 +1176,17 @@ bool BotBridge::CB_MoveTo(BotHandle bot, float x, float y, float z)
     if (!b)
         return false;
 
-    auto& st = s_moveState[bot];
-    if (st.kind == MoveState::POINT && sameDest(st, x, y, z) && b->IsMoving())
-        return true; // already heading there
-
     // Ensure run mode — bots default to walking without this.
-    if (b->IsWalking())
+    bool wasWalking = b->IsWalking();
+    if (wasWalking)
         b->m_movementInfo.RemoveMovementFlag(MOVEFLAG_WALK_MODE);
+
+    auto& st = s_moveState[bot];
+    // Skip if already heading to the same point AND not transitioning
+    // from walk to run (the existing spline was started in walk mode
+    // and needs to be replaced with a run-speed spline).
+    if (st.kind == MoveState::POINT && sameDest(st, x, y, z) && b->IsMoving() && !wasWalking)
+        return true; // already heading there at run speed
 
     b->GetMotionMaster()->MovePoint(0, x, y, z);
     st.x = x; st.y = y; st.z = z;
@@ -1136,19 +1202,46 @@ bool BotBridge::CB_Follow(BotHandle bot, UnitHandle target, float dist, float an
     if (!b || !t)
         return false;
 
-    auto& st = s_moveState[bot];
-    if (st.kind == MoveState::FOLLOW && st.followTarget == target
-        && st.followDist == dist && st.followAngle == angle)
-        return true; // already following same target with same params
-
     // Ensure run mode — bots default to walking without this.
-    if (b->IsWalking())
+    bool wasWalking = b->IsWalking();
+    if (wasWalking)
         b->m_movementInfo.RemoveMovementFlag(MOVEFLAG_WALK_MODE);
+
+    auto& st = s_moveState[bot];
+    // Skip if already following the same target with the same params AND
+    // not transitioning from walk to run.
+    if (st.kind == MoveState::FOLLOW && st.followTarget == target
+        && st.followDist == dist && st.followAngle == angle && !wasWalking)
+        return true; // already following at run speed
 
     b->GetMotionMaster()->MoveFollow(t, dist, angle);
     st.x = 0; st.y = 0; st.z = 0;
     st.followTarget = target; st.followDist = dist; st.followAngle = angle;
     st.kind = MoveState::FOLLOW;
+    return true;
+}
+
+bool BotBridge::CB_Chase(BotHandle bot, UnitHandle target, float dist, float angle)
+{
+    Player* b = FindBot(bot);
+    Unit* t   = FindUnit(bot, target);
+    if (!b || !t)
+        return false;
+
+    // Ensure run mode.
+    if (b->IsWalking())
+        b->m_movementInfo.RemoveMovementFlag(MOVEFLAG_WALK_MODE);
+
+    auto& st = s_moveState[bot];
+    // Skip if already chasing the same target with the same params.
+    if (st.kind == MoveState::CHASE && st.followTarget == target
+        && st.followDist == dist && st.followAngle == angle)
+        return true;
+
+    b->GetMotionMaster()->MoveChase(t, dist, angle);
+    st.x = 0; st.y = 0; st.z = 0;
+    st.followTarget = target; st.followDist = dist; st.followAngle = angle;
+    st.kind = MoveState::CHASE;
     return true;
 }
 
@@ -1179,10 +1272,19 @@ bool BotBridge::CB_AutoAttack(BotHandle bot, bool enable)
     Player* b = FindBot(bot);
     if (!b)
         return false;
-    // This fork has no Player::SetAutoAttack. Disable = AttackStop;
-    // enable is a no-op here — CB_Attack already toggles meleeAttack on.
     if (!enable)
+    {
         b->AttackStop();
+    }
+    else
+    {
+        // Enable melee auto-attack on current target if not already swinging.
+        // Mirrors PB2's AttackAnythingAction: find a valid victim and engage.
+        if (!b->IsInCombat() || b->GetVictim())
+            return true; // already attacking or not in combat — skip
+        // If in combat but no victim, re-engage via CB_Attack on the current
+        // target. This path is rare (mob tab-targeted but not attacked yet).
+    }
     return true;
 }
 
@@ -1223,6 +1325,15 @@ bool BotBridge::CB_AutoShoot(BotHandle bot, UnitHandle target)
 
     if (!b->HasSpell(spell_id) || !b->IsSpellReady(spell_id))
         return false;
+
+    // Check if we're already casting / channeling this spell — don't restart.
+    // Auto Shot (75) and Shoot (5019) are channeled/auto-repeat, so
+    // re-issuing them would cancel the current volley and restart from scratch.
+    if (Spell* current = b->GetCurrentSpell(CURRENT_AUTOREPEAT_SPELL))
+    {
+        if (current->m_spellInfo->Id == spell_id)
+            return true; // already auto-shooting — idempotent success
+    }
 
     SpellEntry const* spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(spell_id);
     if (!spellInfo)
@@ -4075,6 +4186,44 @@ uint32_t BotBridge::CB_BotPickSpecNo(BotHandle bot, bool incremental)
     return picked;
 }
 
+uint32_t BotBridge::CB_BotGetSpecTab(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+
+    // Mirror AiFactory::GetPlayerSpecTab — count invested talent ranks per tab.
+    int maxTalentCount = 0, bestTab = 0;
+    uint32 classMask = b->getClassMask();
+    for (int tab = 0; tab < 3; ++tab)
+    {
+        int tabCount = 0;
+        for (uint32 j = 0; j < sTalentStore.GetNumRows(); ++j)
+        {
+            TalentEntry const* talentInfo = sTalentStore.LookupEntry(j);
+            if (!talentInfo)
+                continue;
+            TalentTabEntry const* talentTabInfo = sTalentTabStore.LookupEntry(talentInfo->TalentTab);
+            if (!talentTabInfo || talentTabInfo->tabpage != uint32(tab) || !(talentTabInfo->ClassMask & classMask))
+                continue;
+            for (int rank = MAX_TALENT_RANK - 1; rank >= 0; --rank)
+            {
+                if (talentInfo->RankID[rank] && b->HasSpell(talentInfo->RankID[rank]))
+                {
+                    tabCount += rank + 1;
+                    break;
+                }
+            }
+        }
+        if (tabCount > maxTalentCount)
+        {
+            maxTalentCount = tabCount;
+            bestTab = tab;
+        }
+    }
+    return static_cast<uint32_t>(bestTab);
+}
+
 // ── Factory: config list queries ──────────────────────────────────────────
 
 uint32_t* BotBridge::CB_GetRandomBotSpellIds(BotHandle /*bot*/, uint32_t* out_count)
@@ -4479,6 +4628,30 @@ bool BotBridge::CB_BotKnowsSpell(BotHandle bot, uint32_t spell_id)
     if (!b)
         return false;
     return b->HasSpell(spell_id);
+}
+
+uint32_t BotBridge::CB_GetSpellName(uint32_t spell_id, char* buf, uint32_t buf_len)
+{
+    if (!buf || buf_len == 0)
+        return 0;
+    buf[0] = '\0';
+
+    SpellEntry const* spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(spell_id);
+    if (!spellInfo)
+        return 0;
+
+    const char* name = spellInfo->SpellName[0]; // English locale
+    if (!name || !name[0])
+        return 0;
+
+    uint32_t len = 0;
+    while (len < buf_len - 1 && name[len])
+    {
+        buf[len] = name[len];
+        ++len;
+    }
+    buf[len] = '\0';
+    return len;
 }
 
 // ── RTSC / file I/O helpers ───────────────────────────────────────────────
@@ -5451,4 +5624,391 @@ bool BotBridge::CB_DebugDumpState(BotHandle bot, uint8_t kind)
     // Debug dump is handled on the Rust side — this just confirms
     // the bot is valid.
     return true;
+}
+
+// ── EngBags: inventory enumeration ───────────────────────────────────────────
+
+static void FillItemEntry(BotInventoryItem& out, Item const* item, uint32_t mailIdx = 0)
+{
+    ItemPrototype const* proto = item->GetProto();
+    out.item_id         = proto->ItemId;
+    out.count           = item->GetCount();
+    out.enchant_id      = item->GetEnchantmentId(PERM_ENCHANTMENT_SLOT);
+    out.random_property = item->GetItemRandomPropertyId();
+    out.suffix_factor   = item->GetItemSuffixFactor();
+    out.quality          = proto->Quality;
+    out.soulbound        = item->IsSoulBound() ? 1 : 0;
+    out.mail_index       = mailIdx;
+    // Copy the name, ensuring null termination.
+    strncpy(out.name, proto->Name1, sizeof(out.name) - 1);
+    out.name[sizeof(out.name) - 1] = '\0';
+}
+
+BotInventoryItem* BotBridge::CB_BotGetInventory(BotHandle bot, uint32_t* out_count)
+{
+    *out_count = 0;
+    Player* b = FindBot(bot);
+    if (!b)
+        return nullptr;
+
+    std::vector<BotInventoryItem> items;
+
+    // Main backpack (INVENTORY_SLOT_ITEM_START .. INVENTORY_SLOT_ITEM_END)
+    for (int i = INVENTORY_SLOT_ITEM_START; i < INVENTORY_SLOT_ITEM_END; ++i)
+    {
+        Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, i);
+        if (!item || !item->GetProto())
+            continue;
+        BotInventoryItem e{};
+        FillItemEntry(e, item);
+        items.push_back(e);
+    }
+
+    // Extra bags (INVENTORY_SLOT_BAG_START .. INVENTORY_SLOT_BAG_END)
+    for (int bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
+    {
+        Bag* pBag = dynamic_cast<Bag*>(b->GetItemByPos(INVENTORY_SLOT_BAG_0, bag));
+        if (!pBag)
+            continue;
+        for (uint32 slot = 0; slot < pBag->GetBagSize(); ++slot)
+        {
+            Item* item = b->GetItemByPos(bag, slot);
+            if (!item || !item->GetProto())
+                continue;
+            BotInventoryItem e{};
+            FillItemEntry(e, item);
+            items.push_back(e);
+        }
+    }
+
+    if (items.empty())
+        return nullptr;
+
+    *out_count = static_cast<uint32_t>(items.size());
+    auto* arr = new BotInventoryItem[items.size()];
+    memcpy(arr, items.data(), sizeof(BotInventoryItem) * items.size());
+    return arr;
+}
+
+BotInventoryItem* BotBridge::CB_BotGetEquipped(BotHandle bot, uint32_t* out_count)
+{
+    *out_count = 0;
+    Player* b = FindBot(bot);
+    if (!b)
+        return nullptr;
+
+    std::vector<BotInventoryItem> items;
+
+    for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+    {
+        Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+        if (!item || !item->GetProto())
+            continue;
+        BotInventoryItem e{};
+        FillItemEntry(e, item);
+        items.push_back(e);
+    }
+
+    if (items.empty())
+        return nullptr;
+
+    *out_count = static_cast<uint32_t>(items.size());
+    auto* arr = new BotInventoryItem[items.size()];
+    memcpy(arr, items.data(), sizeof(BotInventoryItem) * items.size());
+    return arr;
+}
+
+BotInventoryItem* BotBridge::CB_BotGetBankItems(BotHandle bot, uint32_t* out_count)
+{
+    *out_count = 0;
+    Player* b = FindBot(bot);
+    if (!b)
+        return nullptr;
+
+    std::vector<BotInventoryItem> items;
+
+    for (int i = BANK_SLOT_ITEM_START; i < BANK_SLOT_ITEM_END; ++i)
+    {
+        Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, i);
+        if (!item || !item->GetProto())
+            continue;
+        BotInventoryItem e{};
+        FillItemEntry(e, item);
+        items.push_back(e);
+    }
+
+    if (items.empty())
+        return nullptr;
+
+    *out_count = static_cast<uint32_t>(items.size());
+    auto* arr = new BotInventoryItem[items.size()];
+    memcpy(arr, items.data(), sizeof(BotInventoryItem) * items.size());
+    return arr;
+}
+
+BotInventoryItem* BotBridge::CB_BotGetMailItems(BotHandle bot, uint32_t* out_count)
+{
+    *out_count = 0;
+    Player* b = FindBot(bot);
+    if (!b)
+        return nullptr;
+
+    std::vector<BotInventoryItem> items;
+    uint32_t mailIdx = 1;
+
+    for (auto it = b->GetMailBegin(); it != b->GetMailEnd(); ++it, ++mailIdx)
+    {
+        Mail* mail = *it;
+        if (!mail || !mail->HasItems())
+            continue;
+
+        for (auto const& info : mail->items)
+        {
+            Item* item = b->GetMItem(info.item_guid);
+            if (!item || !item->GetProto())
+                continue;
+            BotInventoryItem e{};
+            FillItemEntry(e, item, mailIdx);
+            items.push_back(e);
+        }
+    }
+
+    if (items.empty())
+        return nullptr;
+
+    *out_count = static_cast<uint32_t>(items.size());
+    auto* arr = new BotInventoryItem[items.size()];
+    memcpy(arr, items.data(), sizeof(BotInventoryItem) * items.size());
+    return arr;
+}
+
+void BotBridge::CB_BotFreeInventoryList(BotInventoryItem* list)
+{
+    delete[] list;
+}
+
+// ── EngBags: item actions ────────────────────────────────────────────────────
+
+bool BotBridge::CB_SellItem(BotHandle bot, uint32_t item_id)
+{
+    Player* b = FindBot(bot);
+    if (!b || item_id == 0)
+        return false;
+
+    // Search bags for the item.
+    auto findAndSell = [&](uint8 bag, uint8 slot) -> bool {
+        Item* item = b->GetItemByPos(bag, slot);
+        if (!item || item->GetEntry() != item_id)
+            return false;
+        ItemPrototype const* proto = item->GetProto();
+        if (!proto || proto->SellPrice == 0)
+            return false;
+        uint32 money = proto->SellPrice * item->GetCount();
+        b->ModifyMoney(money);
+        b->DestroyItem(bag, slot, true);
+        return true;
+    };
+
+    // Main backpack
+    for (int i = INVENTORY_SLOT_ITEM_START; i < INVENTORY_SLOT_ITEM_END; ++i)
+        if (findAndSell(INVENTORY_SLOT_BAG_0, i))
+            return true;
+
+    // Extra bags
+    for (int bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
+    {
+        Bag* pBag = dynamic_cast<Bag*>(b->GetItemByPos(INVENTORY_SLOT_BAG_0, bag));
+        if (!pBag)
+            continue;
+        for (uint32 slot = 0; slot < pBag->GetBagSize(); ++slot)
+            if (findAndSell(bag, slot))
+                return true;
+    }
+
+    return false;
+}
+
+static bool FindNearbyBanker(Player* b)
+{
+    CreatureList creatures;
+    MaNGOS::AllCreaturesOfEntryInRangeCheck check(b, 0, INTERACTION_DISTANCE * 2);
+    MaNGOS::CreatureListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(creatures, check);
+    Cell::VisitAllObjects(b, searcher, INTERACTION_DISTANCE * 2);
+    for (Creature* c : creatures)
+    {
+        if (c->IsAlive() && c->isBanker() && c->IsWithinDistInMap(b, INTERACTION_DISTANCE))
+            return true;
+    }
+    return false;
+}
+
+bool BotBridge::CB_BankDepositItem(BotHandle bot, uint32_t item_id)
+{
+    Player* b = FindBot(bot);
+    if (!b || item_id == 0 || !FindNearbyBanker(b))
+        return false;
+
+    // Find the item in bags.
+    for (int i = INVENTORY_SLOT_ITEM_START; i < INVENTORY_SLOT_ITEM_END; ++i)
+    {
+        Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, i);
+        if (!item || item->GetEntry() != item_id)
+            continue;
+        ItemPosCountVec dest;
+        if (b->CanBankItem(NULL_BAG, NULL_SLOT, dest, item, false) == EQUIP_ERR_OK)
+        {
+            b->RemoveItem(INVENTORY_SLOT_BAG_0, i, true);
+            b->BankItem(dest, item, true);
+            return true;
+        }
+    }
+    // Extra bags
+    for (int bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
+    {
+        Bag* pBag = dynamic_cast<Bag*>(b->GetItemByPos(INVENTORY_SLOT_BAG_0, bag));
+        if (!pBag) continue;
+        for (uint32 slot = 0; slot < pBag->GetBagSize(); ++slot)
+        {
+            Item* item = b->GetItemByPos(bag, slot);
+            if (!item || item->GetEntry() != item_id)
+                continue;
+            ItemPosCountVec dest;
+            if (b->CanBankItem(NULL_BAG, NULL_SLOT, dest, item, false) == EQUIP_ERR_OK)
+            {
+                b->RemoveItem(bag, slot, true);
+                b->BankItem(dest, item, true);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool BotBridge::CB_BankWithdrawItem(BotHandle bot, uint32_t item_id)
+{
+    Player* b = FindBot(bot);
+    if (!b || item_id == 0 || !FindNearbyBanker(b))
+        return false;
+
+    for (int i = BANK_SLOT_ITEM_START; i < BANK_SLOT_ITEM_END; ++i)
+    {
+        Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, i);
+        if (!item || item->GetEntry() != item_id)
+            continue;
+        ItemPosCountVec dest;
+        if (b->CanStoreItem(NULL_BAG, NULL_SLOT, dest, item, false) == EQUIP_ERR_OK)
+        {
+            b->RemoveItem(INVENTORY_SLOT_BAG_0, i, true);
+            b->StoreItem(dest, item, true);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool BotBridge::CB_BotMailTakeIndex(BotHandle bot, uint32_t mail_index)
+{
+    Player* b = FindBot(bot);
+    if (!b || mail_index == 0)
+        return false;
+
+    ObjectGuid mailbox = FindNearbyMailbox(b);
+    if (mailbox.IsEmpty())
+        return false;
+
+    // Find the mail at the given 1-based index.
+    uint32_t idx = 1;
+    for (auto it = b->GetMailBegin(); it != b->GetMailEnd(); ++it, ++idx)
+    {
+        if (idx != mail_index)
+            continue;
+
+        Mail* mail = *it;
+        if (!mail)
+            return false;
+
+        uint32 id = mail->messageID;
+
+        if (mail->money > 0)
+        {
+            WorldPacket pkt;
+            pkt << mailbox;
+            pkt << id;
+            b->GetSession()->HandleMailTakeMoney(pkt);
+        }
+
+        if (mail->HasItems())
+        {
+            std::vector<uint32> itemGuids;
+            for (auto const& info : mail->items)
+                itemGuids.push_back(info.item_guid);
+            for (uint32 itemGuid : itemGuids)
+            {
+                WorldPacket pkt;
+                pkt << mailbox;
+                pkt << id;
+#ifndef MANGOSBOT_ZERO
+                pkt << itemGuid;
+#endif
+                b->GetSession()->HandleMailTakeItem(pkt);
+            }
+        }
+
+        WorldPacket delPkt;
+        delPkt << mailbox;
+        delPkt << id;
+#ifndef MANGOSBOT_ZERO
+        delPkt << uint32(0);
+#endif
+        b->GetSession()->HandleMailDelete(delPkt);
+        return true;
+    }
+
+    return false;
+}
+
+bool BotBridge::CB_SendMailItem(BotHandle bot, uint32_t item_id)
+{
+    Player* b = FindBot(bot);
+    if (!b || item_id == 0 || !b->GetGroup())
+        return false;
+
+    ObjectGuid leaderGuid = b->GetGroup()->GetLeaderGuid();
+    if (leaderGuid == b->GetObjectGuid())
+        return false;
+
+    // Search bags for the item.
+    for (int i = INVENTORY_SLOT_ITEM_START; i < INVENTORY_SLOT_ITEM_END; ++i)
+    {
+        Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, i);
+        if (!item || item->GetEntry() != item_id)
+            continue;
+
+        MailDraft draft("Bot item", "Sent by bot");
+        draft.AddItem(item);
+        draft.SendMailTo(MailReceiver(leaderGuid), MailSender(b), MAIL_CHECK_MASK_NONE);
+        b->DestroyItem(INVENTORY_SLOT_BAG_0, i, true);
+        return true;
+    }
+
+    // Extra bags
+    for (int bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
+    {
+        Bag* pBag = dynamic_cast<Bag*>(b->GetItemByPos(INVENTORY_SLOT_BAG_0, bag));
+        if (!pBag) continue;
+        for (uint32 slot = 0; slot < pBag->GetBagSize(); ++slot)
+        {
+            Item* item = b->GetItemByPos(bag, slot);
+            if (!item || item->GetEntry() != item_id)
+                continue;
+
+            MailDraft draft("Bot item", "Sent by bot");
+            draft.AddItem(item);
+            draft.SendMailTo(MailReceiver(leaderGuid), MailSender(b), MAIL_CHECK_MASK_NONE);
+            b->DestroyItem(bag, slot, true);
+            return true;
+        }
+    }
+
+    return false;
 }

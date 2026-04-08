@@ -15,13 +15,16 @@ pub fn build_tree() -> Bt {
     Sel!(
         // `co +boost` burst cooldowns (warrior-wide list).
         super::boost(),
-        // Close the gap: Charge if out of range, otherwise stick.
-        CastOnTarget(CHARGE),
+        // Close the gap: Charge if out of range (Battle Stance), otherwise stick.
+        Seq!(InShapeshift(17), CastOnTarget(CHARGE)),
         StickToTarget(5.0),
         // In-combat rotation.
         Seq!(
             InCombat,
             Sel!(
+                // Switch to Battle Stance for Arms rotation.
+                // InShapeshift(17) = Battle Stance.
+                Seq!(Not(Box::new(InShapeshift(17))), CastOnSelf(BATTLE_STANCE)),
                 // Emergency fear at very low HP.
                 Seq!(Cmp(SelfHealthPct, Below(15)), CastOnTarget(INTIMIDATING_SHOUT)),
                 // Execute on low-HP target.

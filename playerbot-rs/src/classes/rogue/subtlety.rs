@@ -26,17 +26,22 @@ pub fn build_tree() -> Bt {
                 Seq!(TargetIsCasting, CastOnTarget(KICK)),
                 // Panic stun.
                 Seq!(Cmp(SelfHealthPct, Below(40)), CastOnTarget(GOUGE)),
-                // Slice and Dice upkeep.
+                // Slice and Dice upkeep (requires at least 1 CP).
                 Seq!(
+                    Cmp(SelfComboPoints, Above(0)),
                     Bt::self_missing(SLICE_AND_DICE),
                     CastOnSelf(SLICE_AND_DICE),
                 ),
                 // Stealth opener (can_cast gates on stealth aura).
                 CastOnTarget(AMBUSH),
+                // Finisher at 4+ CP.
+                Seq!(
+                    Cmp(SelfComboPoints, Above(3)),
+                    CastOnTarget(EVISCERATE),
+                ),
                 // Hemorrhage: Subtlety talent — gate so low-level Sub bots
                 // that haven't talented yet fall through to Sinister Strike.
                 Seq!(KnowsSpell(HEMORRHAGE), CastOnTarget(HEMORRHAGE)),
-                CastOnTarget(EVISCERATE),
                 CastOnTarget(SINISTER_STRIKE),
             ),
         ),

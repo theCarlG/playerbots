@@ -28,7 +28,25 @@ pub fn create_bot(
     // `+return,+delayed roll` in nonCombat). This matches PB2's
     // `AiFactory::Add*Strategies` runtime composition — see `pb2_kit_strategies`
     // for the per-class breakdown ported from `AiFactory.cpp`.
-    state.settings.strategies = pb2_kit_strategies(class, spec);
+    let kit = pb2_kit_strategies(class, spec);
+    state.settings.strategies = kit;
+    state.settings.init_strategies = kit;
+    // Tanks default to marking targets with skull (icon 7). Non-tanks
+    // leave it as None so the MarkRtiPreferred node no-ops.
+    let combat_flags = state.settings.strategies.get(BotStateKind::Combat);
+    if combat_flags.contains(StrategyFlags::TANK_ASSIST) {
+        state.settings.preferred_rti_icon = Some(7);
+    }
+    // Set default position_stance to match the kitted strategy flags
+    // so `stance ?` reports the correct initial state.
+    use crate::bot::settings::PositionStance;
+    if combat_flags.contains(StrategyFlags::BEHIND) && combat_flags.contains(StrategyFlags::CLOSE) {
+        state.settings.position_stance = PositionStance::Turnback;
+    } else if combat_flags.contains(StrategyFlags::BEHIND) {
+        state.settings.position_stance = PositionStance::Behind;
+    } else if combat_flags.contains(StrategyFlags::CLOSE) {
+        state.settings.position_stance = PositionStance::Tank;
+    }
     Box::new(state)
 }
 
@@ -40,11 +58,10 @@ pub fn create_bot(
 /// `(class, spec)` turns on by default. This is the data side of
 /// PARITY_PLAN §3.2.
 ///
-/// **Scope note (Step 6):** populating these flags establishes the
-/// correct per-bot default set for chat-filter and query responses. The
-/// BT consumers that actually gate rotations on individual strategy
-/// flags land in Step 11+. Until then, rotations continue to use
-/// `CombatOrder` bits (see overlap note on `StrategyFlags`).
+/// These flags are the single source of truth for both chat-filter/query
+/// responses and BT runtime gating. The old `CombatOrder` bitfield has
+/// been removed; `co` commands now read/write the Combat strategy slot
+/// directly.
 pub fn pb2_kit_strategies(class: PlayerClass, spec: PlayerSpec) -> StrategySet {
     use BotStateKind::{Combat, NonCombat};
     use PlayerClass::{
@@ -66,7 +83,10 @@ pub fn pb2_kit_strategies(class: PlayerClass, spec: PlayerSpec) -> StrategySet {
 
     // ── All-bot combat base — PB2 `AiFactory::AddDefaultCombatStrategies`.
     //    Adds: mount, avoid mobs, racials, default, duel, pvp (non-BG).
-    let combat_base = F::MOUNT | F::AVOID_MOBS | F::RACIALS | F::DEFAULT | F::DUEL | F::PVP;
+    //    ASSIST is the default targeting mode (attack leader/tank's target);
+    //    tanks override by adding TANK which takes priority in the targeting
+    //    subtree's Sel ordering.
+    let combat_base = F::MOUNT | F::AVOID_MOBS | F::RACIALS | F::DEFAULT | F::DUEL | F::PVP | F::ASSIST;
     *set.get_mut(Combat) = set.get(Combat) | combat_base;
 
     // ── All-bot non-combat base — PB2 `AddDefaultNonCombatStrategies`.
@@ -83,6 +103,7 @@ pub fn pb2_kit_strategies(class: PlayerClass, spec: PlayerSpec) -> StrategySet {
         // Warrior (tab-based in PB2 AiFactory.cpp).
         (Warrior, WarriorProtection) => {
             F::PROTECTION
+                | F::TANK
                 | F::TANK_ASSIST
                 | F::PULL
                 | F::PULL_BACK
@@ -93,10 +114,10 @@ pub fn pb2_kit_strategies(class: PlayerClass, spec: PlayerSpec) -> StrategySet {
                 | F::BOOST
         }
         (Warrior, WarriorArms) => {
-            F::ARMS | F::DPS_ASSIST | F::CLOSE | F::BEHIND | F::AOE | F::CC | F::BUFF | F::BOOST
+            F::ARMS | F::DPS_ASSIST | F::BEHIND | F::AOE | F::CC | F::BUFF | F::BOOST
         }
         (Warrior, WarriorFury) => {
-            F::FURY | F::DPS_ASSIST | F::CLOSE | F::BEHIND | F::AOE | F::CC | F::BUFF | F::BOOST
+            F::FURY | F::DPS_ASSIST | F::BEHIND | F::AOE | F::CC | F::BUFF | F::BOOST
         }
 
         // Priest (all specs share dps assist/flee/cure/ranged/cc/buff/aoe/boost).
@@ -179,6 +200,7 @@ pub fn pb2_kit_strategies(class: PlayerClass, spec: PlayerSpec) -> StrategySet {
         // Paladin (tab-based). All specs add cure/aoe/cc/buff/boost/aura/blessing.
         (Paladin, PaladinProtection) => {
             F::PROTECTION
+                | F::TANK
                 | F::TANK_ASSIST
                 | F::PULL
                 | F::PULL_BACK
@@ -344,6 +366,7 @@ pub fn pb2_kit_strategies(class: PlayerClass, spec: PlayerSpec) -> StrategySet {
         // Death Knight. All specs add dksquest/dps assist/flee/close/cc.
         (DeathKnight, DeathKnightBlood) => {
             F::BLOOD
+                | F::TANK
                 | F::TANK_ASSIST
                 | F::PULL
                 | F::PULL_BACK
@@ -430,47 +453,64 @@ fn build_root_tree(class: PlayerClass, spec: PlayerSpec) -> Bt {
         buffs,
     } = class_kit(class, spec);
 
-    // Root is a Seq of two passes:
-    //   Pass 1 — Primary behavior (exclusive Sel).
-    //   Pass 2 — Maintenance (buffing, mounting, looting, etc.).
+    // ── Root: top-level FSM dispatch ────────────────────────────────
     //
-    // The old flat `Sel` put maintenance as the lowest-priority sibling
-    // of mode_dispatch. Because mode_dispatch (Follow) always succeeds
-    // for grouped bots, maintenance NEVER ran — bots would not buff,
-    // mount, loot, or do any upkeep. Splitting into two passes ensures
-    // bots always get a maintenance check after their primary action.
-    Seq!(
-        Sel!(
-            // 1. Death handling.
-            world::death::death_subtree(),
-            // 2. Passive mode — do nothing.
-            ModeIs(BehaviorMode::Passive),
-            // 3. Eat/drink — out of combat only.
-            Seq!(InCombat.not(), Consumables),
-            // 4. Duel request handling.
-            Seq!(
-                Bt::DuelRequested,
-                Sel!(
-                    Seq!(Bt::StrategyEnabled(StrategyFlags::DUEL), Bt::AcceptDuelRequest),
-                    Bt::DeclineDuelRequest,
+    // Fundamental states are mutually exclusive and fully contain the
+    // bot's behavior. A dead bot NEVER enters combat or movement trees.
+    // A bot on a taxi NEVER enters any other state. This prevents the
+    // "leaky state" bug where throttled death actions caused dead bots
+    // to fall through into combat/follow.
+    //
+    //   State priority (first match wins):
+    //     1. On taxi     → idle (wait for flight to end)
+    //     2. Dead/Ghost  → death handling only
+    //     3. Alive       → full behavior tree
+    //
+    Sel!(
+        // ── STATE: Taxi ──────────────────────────────────────────────
+        // Bot is on a flight path. Do nothing until it lands.
+        Seq!(Bt::OnTaxi, Bt::Noop),
+
+        // ── STATE: Dead ──────────────────────────────────────────────
+        // Bot is dead (corpse on ground or ghost running). Only death
+        // handling runs — no combat, no follow, no buffs, no movement.
+        Seq!(Bt::IsAlive.not(), world::death::death_subtree()),
+
+        // ── STATE: Alive ─────────────────────────────────────────────
+        // Full behavior: two passes — primary action then maintenance.
+        Seq!(
+            Bt::IsAlive,
+            // Pass 1 — Primary behavior (exclusive Sel).
+            Sel!(
+                // Passive mode — do nothing.
+                ModeIs(BehaviorMode::Passive),
+                // Eat/drink — out of combat only.
+                Seq!(InCombat.not(), Consumables),
+                // Duel request handling.
+                Seq!(
+                    Bt::DuelRequested,
+                    Sel!(
+                        Seq!(Bt::StrategyEnabled(StrategyFlags::DUEL), Bt::AcceptDuelRequest),
+                        Bt::DeclineDuelRequest,
+                    ),
                 ),
+                // Encounter override.
+                EncounterOverride,
+                // In combat → reactive + rotation (duels use normal combat).
+                Seq!(
+                    Sel!(InCombat, ShouldEngage, Bt::InDuel),
+                    combat_wrapper(combat_tree),
+                ),
+                // Out-of-combat mode dispatch.
+                mode_dispatch(),
+                // Fallback: always succeed so the Seq continues to maintenance.
+                Bt::Noop,
             ),
-            // 5. Encounter override.
-            EncounterOverride,
-            // 6. In combat → reactive + rotation (duels use normal combat).
-            Seq!(
-                Sel!(InCombat, ShouldEngage, Bt::InDuel),
-                combat_wrapper(combat_tree),
-            ),
-            // 7. Out-of-combat mode dispatch.
-            mode_dispatch(),
-            // Fallback: always succeed so the Seq continues to maintenance.
-            Bt::Noop,
+            // Pass 2 — Maintenance (buffing, mounting, looting, etc.).
+            //   Wrapped in Sel with Noop so a "nothing to maintain" Failure
+            //   doesn't fail the root Seq.
+            Sel!(maintenance_subtree(buffs), Bt::Noop),
         ),
-        // 8. Maintenance — runs after the primary action above.
-        //    Wrapped in Sel with Noop so a "nothing to maintain" Failure
-        //    doesn't fail the root Seq (the primary action already ran).
-        Sel!(maintenance_subtree(buffs), Bt::Noop),
     )
 }
 
@@ -488,7 +528,8 @@ fn build_root_tree(class: PlayerClass, spec: PlayerSpec) -> Bt {
 ///      gets positioning (close/ranged/behind/kite). When it fails
 ///      the bot still proceeds to the rotation for healing, buffing, etc.
 fn combat_wrapper(class_rotation: Bt) -> Bt {
-    use Bt::MaintainConfiguredCurse;
+    use Bt::{MaintainConfiguredCurse, ModeIs};
+    use BehaviorMode;
     Sel!(
         // ── A) Reactive — any one short-circuits the rest ────────────
         reactive::flee_subtree(),
@@ -512,16 +553,25 @@ fn combat_wrapper(class_rotation: Bt) -> Bt {
         Seq!(
             // B.1 — Targeting (optional — healers may have no enemy)
             Sel!(reactive::targeting_subtree(), Bt::Noop),
+            // B.1b — Engage auto-attack / auto-shoot on the resolved target.
+            //        Idempotent: re-calling auto_shoot / auto_attack when
+            //        already engaged is a no-op on the server side.
+            Bt::EngageTarget,
             // B.2 — Mark RTI (optional, tank only)
             Sel!(reactive::mark_rti_subtree(), Bt::Noop),
             // B.3 — Positioning (optional, fire-and-forget). Wrapped in
             //        `Optional` so Running from move commands doesn't
             //        block the Seq from continuing to the rotation.
-            Bt::Optional(Box::new(Sel!(
-                reactive::close_subtree(),
-                reactive::ranged_subtree(),
-                reactive::behind_subtree(),
-                reactive::kite_subtree(),
+            //        Suppressed in Stay mode — the bot fights from its
+            //        current position without chasing or repositioning.
+            Bt::Optional(Box::new(Seq!(
+                ModeIs(BehaviorMode::Stay).not(),
+                Sel!(
+                    reactive::behind_subtree(),
+                    reactive::ranged_subtree(),
+                    reactive::close_subtree(),
+                    reactive::kite_subtree(),
+                ),
             ))),
             // B.4 — Class rotation (the main event). Curse upkeep runs
             //        first since it's cheap and class-filtered.
@@ -719,7 +769,7 @@ mod tests {
         }
 
         let arms = pb2_kit_strategies(PlayerClass::Warrior, PlayerSpec::WarriorArms);
-        for f in [F::ARMS, F::DPS_ASSIST, F::CLOSE, F::BEHIND, F::AOE, F::CC, F::BUFF, F::BOOST] {
+        for f in [F::ARMS, F::DPS_ASSIST, F::BEHIND, F::AOE, F::CC, F::BUFF, F::BOOST] {
             assert!(
                 arms.get(BotStateKind::Combat).contains(f),
                 "arms warrior missing {:?}",

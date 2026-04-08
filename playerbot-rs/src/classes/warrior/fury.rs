@@ -12,12 +12,15 @@ pub fn build_tree() -> Bt {
         // `co +boost` burst cooldowns (warrior-wide list).
         super::boost(),
         // Close gap: Intercept (Berserker), Charge (Battle), then stick.
-        CastOnTarget(INTERCEPT),
-        CastOnTarget(CHARGE),
+        Seq!(InShapeshift(19), CastOnTarget(INTERCEPT)),
+        Seq!(InShapeshift(17), CastOnTarget(CHARGE)),
         StickToTarget(5.0),
         Seq!(
             InCombat,
             Sel!(
+                // Switch to Berserker Stance for our core rotation.
+                // InShapeshift(19) = Berserker Stance.
+                Seq!(Not(Box::new(InShapeshift(19))), CastOnSelf(BERSERKER_STANCE)),
                 // Emergency fear.
                 Seq!(Cmp(SelfHealthPct, Below(15)), CastOnTarget(INTIMIDATING_SHOUT)),
                 // Execute.
@@ -25,6 +28,8 @@ pub fn build_tree() -> Bt {
                 // Core damage.
                 CastOnTarget(BLOODTHIRST),
                 CastOnTarget(WHIRLWIND),
+                // Berserker Rage for fear immunity + rage generation.
+                CastOnSelf(BERSERKER_RAGE),
                 // Rage dumps (same swing slot).
                 CastOnTarget(HEROIC_STRIKE),
                 Seq!(Cmp(NearbyCount, AtLeast(2)), CastOnTarget(CLEAVE)),

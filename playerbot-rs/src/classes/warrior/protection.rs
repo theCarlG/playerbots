@@ -20,12 +20,15 @@ pub fn build_tree() -> Bt {
             Cmp(SelfHealthPct, Below(20)),
             Sel!(CastOnSelf(SHIELD_WALL), CastOnSelf(LAST_STAND)),
         ),
-        // Close gap.
-        CastOnTarget(CHARGE),
+        // Close gap (Charge requires Battle Stance).
+        Seq!(InShapeshift(17), CastOnTarget(CHARGE)),
         StickToTarget(5.0),
         Seq!(
             InCombat,
             Sel!(
+                // Switch to Defensive Stance for Prot rotation.
+                // InShapeshift(18) = Defensive Stance.
+                Seq!(Not(Box::new(InShapeshift(18))), CastOnSelf(DEFENSIVE_STANCE)),
                 // Taunt is gated by can_cast (only fires on aggro loss).
                 CastOnTarget(TAUNT),
                 // Shield Block mitigation.

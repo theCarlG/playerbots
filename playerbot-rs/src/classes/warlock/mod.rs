@@ -5,11 +5,11 @@ pub mod prefs;
 
 use crate::{
     Seq,
-    bot::settings::CombatOrder,
+    bot::settings::StrategyFlags,
     bot::state::PlayerSpec,
     classes::ClassKit,
     data::spells::vanilla::warlock::{DARK_PACT, DEMON_ARMOR},
-    engine::bt::Bt::{self, CastOnSelf, CombatOrderHas, InCombat},
+    engine::bt::Bt::{self, CastOnSelf, StrategyEnabled, InCombat},
     noncombat::GroupBuff,
 };
 
@@ -18,7 +18,7 @@ const BUFFS: &[GroupBuff] = &[GroupBuff::on_self(DEMON_ARMOR)];
 /// `co +boost` burst subtree — warlock offensive cooldowns.
 pub fn boost() -> Bt {
     Seq!(
-        CombatOrderHas(CombatOrder::BOOST),
+        StrategyEnabled(StrategyFlags::BOOST),
         InCombat,
         CastOnSelf(DARK_PACT),
     )

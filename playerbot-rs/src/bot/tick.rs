@@ -119,6 +119,7 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         } else {
             None
         },
+        pending_target: std::cell::Cell::new(None),
     };
 
     let _ = root_tree.tick(&mut ctx);
@@ -143,16 +144,31 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     drop(ctx);
     drop(ctx_group);
     if monitor_active {
+        // Log BT path changes (which leaf node was reached).
         if let Some(path) = monitor_path {
             if !path.is_empty() && path != bot.last_bt_path {
                 crate::bot::monitor::monitor_bt_path(bot, &path);
                 bot.last_bt_path = path;
             }
         }
+        // Log all diagnostic lines collected during BT evaluation.
         for line in monitor_lines {
             crate::bot::monitor::monitor_log(bot, &line);
         }
-        if now_ms.saturating_sub(bot.last_monitor_summary_ms) >= 5000 {
+        // Detect combat state transitions and log them.
+        let in_combat = bot.snap.self_.in_combat;
+        let was_in_combat = bot.last_monitor_in_combat;
+        if in_combat != was_in_combat {
+            bot.last_monitor_in_combat = in_combat;
+            if in_combat {
+                crate::bot::monitor::monitor_log(bot, ">>> COMBAT ENTERED <<<");
+                crate::bot::monitor::monitor_tick_summary(bot);
+            } else {
+                crate::bot::monitor::monitor_log(bot, ">>> COMBAT LEFT <<<");
+            }
+        }
+        // Periodic tick summary (every 2s for detailed debugging).
+        if now_ms.saturating_sub(bot.last_monitor_summary_ms) >= 2000 {
             crate::bot::monitor::monitor_tick_summary(bot);
             if !bot.last_bt_path.is_empty() {
                 crate::bot::monitor::monitor_bt_path(bot, &bot.last_bt_path);
@@ -183,8 +199,13 @@ fn process_events(bot: &mut BotState, _now_ms: u64) {
 
     let now_ms = bot.snap.server_time_ms;
 
+    // Drain the mutex-protected event queue into a local vec. This is
+    // critical for thread safety — push-event FFI functions can fire from
+    // the session thread while we run on the map-worker thread.
+    let events: Vec<_> = bot.events.lock().unwrap().drain(..).collect();
+
     // First pass: convert bot events to encounter events and dispatch.
-    while let Some(event) = bot.events.pop_front() {
+    for event in events {
         use crate::bot::events::BotEvent;
 
         let enc_event = match &event {
@@ -237,6 +258,37 @@ fn process_events(bot: &mut BotState, _now_ms: u64) {
         if zone > 0 {
             bot.blackboard
                 .set(Key::EncounterSafeZone, Value::U32(zone as u32));
+        }
+    }
+
+    // Boss detection: when the encounter FSM has no active boss yet, scan
+    // the bot's target and attackers for known boss NPC entries. This is
+    // how instance wrappers (MC, BWL, etc.) learn which boss fight is
+    // happening and switch to the correct sub-FSM.
+    if bot.snap.self_.in_combat {
+        if let Some(enc) = &mut bot.encounter {
+            if enc.boss_entry() == 0 {
+                // Check current target first.
+                let target = bot.snap.self_.current_target;
+                if target != 0 {
+                    let snap = bot.interface.get_unit_snapshot(target);
+                    if snap.npc_entry != 0 {
+                        enc.set_boss_entry(snap.npc_entry);
+                    }
+                }
+                // If still no boss, scan attackers.
+                if enc.boss_entry() == 0 {
+                    for &attacker in &bot.attackers {
+                        let snap = bot.interface.get_unit_snapshot(attacker);
+                        if snap.npc_entry != 0 {
+                            enc.set_boss_entry(snap.npc_entry);
+                            if enc.boss_entry() != 0 {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

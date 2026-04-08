@@ -36,13 +36,17 @@ pub fn build_tree() -> Bt {
                 CastOnTarget(RIPOSTE),
                 // AoE when swarmed.
                 Seq!(Cmp(NearbyCount, AtLeast(2)), CastOnSelf(BLADE_FLURRY)),
-                // Slice and Dice upkeep.
+                // Slice and Dice upkeep (requires at least 1 CP).
                 Seq!(
+                    Cmp(SelfComboPoints, Above(0)),
                     Bt::self_missing(SLICE_AND_DICE),
                     CastOnSelf(SLICE_AND_DICE),
                 ),
-                // Finisher when SnD is up.
-                CastOnTarget(EVISCERATE),
+                // Finisher when SnD is up (4+ CP for efficiency).
+                Seq!(
+                    Cmp(SelfComboPoints, Above(3)),
+                    CastOnTarget(EVISCERATE),
+                ),
                 // Rupture DoT.
                 Seq!(
                     Bt::target_missing_any_rank(RUPTURE_RANKS),

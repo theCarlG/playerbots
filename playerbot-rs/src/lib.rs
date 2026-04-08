@@ -97,7 +97,12 @@ pub unsafe extern "C" fn playerbot_create(
         Box::new(unsafe { RealInterface::new(bot_handle, *cbs) });
 
     let snap = interface.get_snapshot();
-    let (class, spec) = class_spec_from_snapshot(snap.self_.class_id);
+    let class = class_from_id(snap.self_.class_id);
+    // Derive spec from the bot's actual talent point investment, mirroring
+    // PB2's AiFactory::GetPlayerSpecTab.  This is authoritative regardless
+    // of how talents were assigned (addon UI premade spec, manual, random).
+    let spec_tab = interface.bot_get_spec_tab();
+    let spec = spec_from_class_and_tab(class, spec_tab);
 
     let state = bot::init::create_bot(bot_handle, interface, class, spec);
     Box::into_raw(state).cast()
@@ -184,7 +189,7 @@ pub unsafe extern "C" fn playerbot_packet_in(
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
     let bytes = unsafe { packet_bytes(data, len) };
-    bot.events.push_back(bot::events::BotEvent::PacketIn {
+    bot.events.lock().unwrap().push_back(bot::events::BotEvent::PacketIn {
         opcode,
         data: bytes,
     });
@@ -200,7 +205,7 @@ pub unsafe extern "C" fn playerbot_packet_out(
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
     let bytes = unsafe { packet_bytes(data, len) };
-    bot.events.push_back(bot::events::BotEvent::PacketOut {
+    bot.events.lock().unwrap().push_back(bot::events::BotEvent::PacketOut {
         opcode,
         data: bytes,
     });
@@ -218,7 +223,7 @@ pub unsafe extern "C" fn playerbot_unit_spell_cast(
     success: bool,
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot.events.push_back(bot::events::BotEvent::UnitSpellCast {
+    bot.events.lock().unwrap().push_back(bot::events::BotEvent::UnitSpellCast {
         caster,
         spell_id: SpellId(spell_id),
         target,
@@ -233,7 +238,7 @@ pub unsafe extern "C" fn playerbot_unit_spell_cast(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn playerbot_rtsc_spell(state: *mut (), x: f32, y: f32, z: f32) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot.pending_commands
+    bot.pending_commands.lock().unwrap()
         .push_back(commands::PendingCommand::internal(
             commands::BotCommand::RtscSpellPosition(x, y, z),
         ));
@@ -249,7 +254,7 @@ pub unsafe extern "C" fn playerbot_aura_changed(
     stacks: u8,
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot.events.push_back(bot::events::BotEvent::AuraChanged {
+    bot.events.lock().unwrap().push_back(bot::events::BotEvent::AuraChanged {
         unit,
         spell_id: SpellId(spell_id),
         applied,
@@ -265,7 +270,7 @@ pub unsafe extern "C" fn playerbot_unit_died(
     killer: UnitHandle,
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot.events
+    bot.events.lock().unwrap()
         .push_back(bot::events::BotEvent::UnitDied { victim, killer });
 }
 
@@ -278,7 +283,7 @@ pub unsafe extern "C" fn playerbot_damage_taken(
     dealer: UnitHandle,
 ) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot.events.push_back(bot::events::BotEvent::DamageTaken {
+    bot.events.lock().unwrap().push_back(bot::events::BotEvent::DamageTaken {
         damage,
         spell_id: SpellId(spell_id),
         dealer,
@@ -459,19 +464,71 @@ unsafe fn packet_bytes(data: *const u8, len: u32) -> Vec<u8> {
     }
 }
 
-fn class_spec_from_snapshot(class_id: u8) -> (bot::state::PlayerClass, bot::state::PlayerSpec) {
-    use bot::state::{PlayerClass::{Warrior, Paladin, Hunter, Rogue, Priest, DeathKnight, Shaman, Mage, Warlock, Druid}, PlayerSpec::{WarriorArms, PaladinRetribution, HunterMarksmanship, RogueCombat, PriestHoly, DeathKnightFrost, ShamanEnhancement, MageFrost, WarlockDestruction, DruidRestoration}};
+fn class_from_id(class_id: u8) -> bot::state::PlayerClass {
+    use bot::state::PlayerClass::*;
     match class_id {
-        1 => (Warrior, WarriorArms),
-        2 => (Paladin, PaladinRetribution),
-        3 => (Hunter, HunterMarksmanship),
-        4 => (Rogue, RogueCombat),
-        5 => (Priest, PriestHoly),
-        6 => (DeathKnight, DeathKnightFrost),
-        7 => (Shaman, ShamanEnhancement),
-        8 => (Mage, MageFrost),
-        9 => (Warlock, WarlockDestruction),
-        11 => (Druid, DruidRestoration),
-        _ => (Warrior, WarriorArms),
+        1 => Warrior,
+        2 => Paladin,
+        3 => Hunter,
+        4 => Rogue,
+        5 => Priest,
+        6 => DeathKnight,
+        7 => Shaman,
+        8 => Mage,
+        9 => Warlock,
+        11 => Druid,
+        _ => Warrior,
+    }
+}
+
+/// Map a (class, talent-tab-index) pair to the concrete `PlayerSpec`.
+///
+/// Talent tab indices (0/1/2) follow the WoW DBC `TalentTab` ordering.
+/// The stored `specNo` from `sRandomPlayerbotMgr` uses the same numbering.
+fn spec_from_class_and_tab(class: bot::state::PlayerClass, tab: u32) -> bot::state::PlayerSpec {
+    use bot::state::PlayerClass::*;
+    use bot::state::PlayerSpec::*;
+    match (class, tab) {
+        (Warrior, 0) => WarriorArms,
+        (Warrior, 1) => WarriorFury,
+        (Warrior, 2) => WarriorProtection,
+        (Paladin, 0) => PaladinHoly,
+        (Paladin, 1) => PaladinProtection,
+        (Paladin, 2) => PaladinRetribution,
+        (Hunter, 0) => HunterBeastMastery,
+        (Hunter, 1) => HunterMarksmanship,
+        (Hunter, 2) => HunterSurvival,
+        (Rogue, 0) => RogueAssassination,
+        (Rogue, 1) => RogueCombat,
+        (Rogue, 2) => RogueSubtlety,
+        (Priest, 0) => PriestDiscipline,
+        (Priest, 1) => PriestHoly,
+        (Priest, 2) => PriestShadow,
+        (DeathKnight, 0) => DeathKnightBlood,
+        (DeathKnight, 1) => DeathKnightFrost,
+        (DeathKnight, 2) => DeathKnightUnholy,
+        (Shaman, 0) => ShamanElemental,
+        (Shaman, 1) => ShamanEnhancement,
+        (Shaman, 2) => ShamanRestoration,
+        (Mage, 0) => MageArcane,
+        (Mage, 1) => MageFire,
+        (Mage, 2) => MageFrost,
+        (Warlock, 0) => WarlockAffliction,
+        (Warlock, 1) => WarlockDemonology,
+        (Warlock, 2) => WarlockDestruction,
+        (Druid, 0) => DruidBalance,
+        (Druid, 1) => DruidFeral,
+        (Druid, 2) => DruidRestoration,
+        // Fallback for unknown tab values — use the class default.
+        (Warrior, _) => WarriorArms,
+        (Paladin, _) => PaladinRetribution,
+        (Hunter, _) => HunterMarksmanship,
+        (Rogue, _) => RogueCombat,
+        (Priest, _) => PriestHoly,
+        (DeathKnight, _) => DeathKnightFrost,
+        (Shaman, _) => ShamanEnhancement,
+        (Mage, _) => MageFrost,
+        (Warlock, _) => WarlockDestruction,
+        (Druid, _) => DruidRestoration,
     }
 }

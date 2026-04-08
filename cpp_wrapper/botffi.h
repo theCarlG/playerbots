@@ -43,6 +43,8 @@ typedef struct {
     uint8_t  shapeshift_form;   /* Unit::GetShapeshiftForm() — druid forms, warrior stances, DK ghoul, etc. 0=none. */
     BotPosition pos;
     bool     is_alive;
+    bool     is_ghost;          /* Player has released spirit (ghost form) */
+    bool     on_taxi;           /* Player is on a taxi/flight path */
     bool     in_combat;
     bool     is_casting;
     bool     is_moving;
@@ -51,6 +53,7 @@ typedef struct {
     float    casting_progress;  /* 0.0–1.0, only valid when is_casting */
     UnitHandle current_target;  /* 0 = no target */
     uint32_t  aura_state_mask;  /* CMaNGOS AuraState bitmask for quick checks */
+    uint32_t  npc_entry;        /* Creature::GetEntry() for NPCs, 0 for players */
 } BotUnitSnapshot;
 
 typedef struct {
@@ -185,6 +188,21 @@ typedef struct {
     uint32_t total_money;
 } BotMailSummary;
 
+/* One item from the bot's inventory, bank, equipment, or mailbox.
+ * Returned in batches by the `bot_get_*` enumeration callbacks.
+ * The Rust side formats the WoW item-link string from these fields. */
+typedef struct {
+    uint32_t item_id;
+    uint32_t count;           /* stack count (1 for non-stackable) */
+    uint32_t enchant_id;      /* permanent enchantment id, 0 if none */
+    int32_t  random_property; /* GetItemRandomPropertyId(), 0 if none */
+    uint32_t suffix_factor;   /* GetItemSuffixFactor(), 0 if none */
+    uint8_t  quality;         /* 0=Poor .. 5=Legendary */
+    uint8_t  soulbound;       /* 1 if the item is soulbound */
+    uint32_t mail_index;      /* 1-based mail index; 0 for non-mail queries */
+    char     name[80];        /* null-terminated item name */
+} BotInventoryItem;
+
 typedef struct {
     UnitHandle unit;
     uint32_t   spell_id;        /* debuff spell ID */
@@ -291,6 +309,12 @@ typedef struct BotCallbacks {
      * or power cost — use `can_cast` for full castability. */
     bool        (*bot_knows_spell)(BotHandle bot, uint32_t spell_id);
 
+    /* Return the spell name for a given spell_id. Writes up to buf_len-1
+     * characters into buf and null-terminates. Returns the number of
+     * characters written (excluding NUL), or 0 if the spell doesn't exist.
+     * Used by the debug monitor to log human-readable spell names. */
+    uint32_t    (*get_spell_name)(uint32_t spell_id, char* buf, uint32_t buf_len);
+
     /* ── Pathfinding / positioning ───────────────────────────────────── */
     BotPosition     (*get_behind_position)(BotHandle bot, UnitHandle target, float distance);
     BotSafePosition (*get_safe_position)(BotHandle bot, float search_radius);
@@ -303,6 +327,10 @@ typedef struct BotCallbacks {
     bool (*cast_spell_pos)(BotHandle bot, uint32_t spell_id, float x, float y, float z);
     bool (*move_to)(BotHandle bot, float x, float y, float z);
     bool (*follow)(BotHandle bot, UnitHandle target, float dist, float angle);
+    /* Chase a unit in combat — uses MoveChase, which smoothly tracks
+     * the target at the given distance and angle without restarting
+     * splines every tick (unlike repeated move_to calls). */
+    bool (*chase)(BotHandle bot, UnitHandle target, float dist, float angle);
     bool (*stop_moving)(BotHandle bot);
     bool (*attack)(BotHandle bot, UnitHandle target);
     bool (*auto_attack)(BotHandle bot, bool enable);
@@ -694,6 +722,14 @@ typedef struct BotCallbacks {
      * Used by factory InitTalentsTree. */
     uint32_t        (*bot_pick_spec_no)(BotHandle bot, bool incremental);
 
+    /* Determine the bot's dominant talent tab (0/1/2) by examining actual
+     * talent points.  Mirrors PB2's AiFactory::GetPlayerSpecTab — iterates
+     * the TalentStore, counts invested ranks per tab, returns the tab with
+     * the highest total.  This is the authoritative spec derivation used
+     * when a bot has already had talents applied (by PB2 or the addon UI).
+     * Returns 0 when the bot has no talent points invested. */
+    uint32_t        (*bot_get_spec_tab)(BotHandle bot);
+
     /* ── Chat-command helpers (Wave 2) ───────────────────────────────── */
     /* Trigger a jump action on the bot (vertical movement, no target). */
     bool            (*bot_jump)(BotHandle bot);
@@ -939,6 +975,39 @@ typedef struct BotCallbacks {
     /* Dump debug state. kind: 0=full, 1=strategies, 2=blackboard.
      * Returns true if dump was written. */
     bool (*debug_dump_state)(BotHandle bot, uint8_t kind);
+
+    /* ── EngBags: inventory enumeration ─────────────────────────────── */
+    /* Return the bot's bag contents (backpack + equipped bags, excluding
+     * equipped gear and bank). Freshly-allocated; free with
+     * bot_free_inventory_list. */
+    BotInventoryItem* (*bot_get_inventory)(BotHandle bot, uint32_t* out_count);
+    /* Return the bot's equipped items (EQUIPMENT_SLOT_START..END).
+     * Freshly-allocated; free with bot_free_inventory_list. */
+    BotInventoryItem* (*bot_get_equipped)(BotHandle bot, uint32_t* out_count);
+    /* Return items in the bot's bank slots. Requires banker proximity.
+     * Returns NULL/0 if no banker nearby. */
+    BotInventoryItem* (*bot_get_bank_items)(BotHandle bot, uint32_t* out_count);
+    /* Return items attached to mails in the bot's inbox.
+     * `mail_index` is 1-based (matching EngBags #<index> format). */
+    BotInventoryItem* (*bot_get_mail_items)(BotHandle bot, uint32_t* out_count);
+    /* Free an array returned by any of the above. */
+    void              (*bot_free_inventory_list)(BotInventoryItem* list);
+
+    /* ── EngBags: item actions ──────────────────────────────────────── */
+    /* Sell a specific item from bags (by item ID). Adds SellPrice to
+     * gold and destroys the item. Returns true on success. */
+    bool (*sell_item)(BotHandle bot, uint32_t item_id);
+    /* Deposit a specific item (by ID) from bags into bank.
+     * Requires banker proximity. */
+    bool (*bank_deposit_item)(BotHandle bot, uint32_t item_id);
+    /* Withdraw a specific item (by ID) from bank into bags.
+     * Requires banker proximity. */
+    bool (*bank_withdraw_item)(BotHandle bot, uint32_t item_id);
+    /* Take items + money from a specific mail (1-based index).
+     * Requires mailbox proximity. */
+    bool (*bot_mail_take_index)(BotHandle bot, uint32_t mail_index);
+    /* Send a specific item (by ID) from bags to the master via mail. */
+    bool (*send_mail_item)(BotHandle bot, uint32_t item_id);
 } BotCallbacks;
 
 /* ── Rust exports (entry points CMaNGOS calls into Rust) ─────────────────── */

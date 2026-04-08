@@ -81,6 +81,12 @@ impl Default for ZulGurubFsm {
 }
 
 impl EncounterFsm for ZulGurubFsm {
+    fn set_boss_entry(&mut self, entry: u32) {
+        if !self.active_boss.as_ref().is_some_and(|b| b.boss_entry() == entry) {
+            self.set_active_boss_by_entry(entry);
+        }
+    }
+
     fn update(&mut self, event: &EncounterEvent, boss_hp_pct: f32, time_ms: u64) {
         if let Some(boss) = &mut self.active_boss {
             boss.update(event, boss_hp_pct, time_ms);
