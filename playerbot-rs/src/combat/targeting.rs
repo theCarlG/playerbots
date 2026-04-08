@@ -20,8 +20,8 @@ pub fn find_heal_target(ctx: &TickContext<'_>, threshold: f32) -> Option<UnitHan
     // Prioritize heal_priority[0] (main tank) — always heal tank first if injured.
     if let Some(gs) = ctx.group_state {
         let prio_target = gs.coordination.heal_priority[0];
-        if prio_target != 0 && prio_target != ctx.bot_handle {
-            if !ctx.is_heal_claimed_by_other(prio_target) {
+        if prio_target != 0 && prio_target != ctx.bot_handle
+            && !ctx.is_heal_claimed_by_other(prio_target) {
                 let snap = ctx.interface.get_unit_snapshot(prio_target);
                 if snap.is_alive && snap.max_health > 0 {
                     let pct = snap.health as f32 / snap.max_health as f32;
@@ -30,7 +30,6 @@ pub fn find_heal_target(ctx: &TickContext<'_>, threshold: f32) -> Option<UnitHan
                     }
                 }
             }
-        }
     }
 
     // Check self (never skip self — always allowed to heal yourself)

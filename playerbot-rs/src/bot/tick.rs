@@ -217,12 +217,11 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     drop(ctx_group);
     if monitor_active {
         // Log BT path changes (which leaf node was reached).
-        if let Some(path) = monitor_path {
-            if !path.is_empty() && path != bot.last_bt_path {
+        if let Some(path) = monitor_path
+            && !path.is_empty() && path != bot.last_bt_path {
                 crate::bot::monitor::monitor_bt_path(bot, &path);
                 bot.last_bt_path = path;
             }
-        }
         // Log all diagnostic lines collected during BT evaluation.
         for line in monitor_lines {
             crate::bot::monitor::monitor_log(bot, &line);
@@ -346,9 +345,9 @@ fn process_events(bot: &mut BotState, _now_ms: u64) {
     // the bot's target and attackers for known boss NPC entries. This is
     // how instance wrappers (MC, BWL, etc.) learn which boss fight is
     // happening and switch to the correct sub-FSM.
-    if bot.snap.self_.in_combat {
-        if let Some(enc) = &mut bot.encounter {
-            if enc.boss_entry() == 0 {
+    if bot.snap.self_.in_combat
+        && let Some(enc) = &mut bot.encounter
+            && enc.boss_entry() == 0 {
                 // Check current target first.
                 let target = bot.snap.self_.current_target;
                 if target != 0 {
@@ -370,8 +369,6 @@ fn process_events(bot: &mut BotState, _now_ms: u64) {
                     }
                 }
             }
-        }
-    }
 
     // If bot entered combat, notify encounter FSM.
     if bot.snap.self_.in_combat
@@ -437,7 +434,7 @@ fn update_travel_target(bot: &mut BotState, now_ms: u64) {
 ///
 /// Every bot in the group writes its local encounter view. Since all bots
 /// process the same events, they converge. The shared state is the
-/// coordination surface — ClaimTable lives here, encounter phase is readable
+/// coordination surface — `ClaimTable` lives here, encounter phase is readable
 /// by any bot without polling the local FSM of others.
 ///
 /// Also GCs expired claims every ~5 seconds (piggybacks on a write lock
@@ -465,24 +462,21 @@ fn sync_encounter_to_group(bot: &mut BotState, now_ms: u64) {
     }
 
     // Sync paladin blessings to group coordination.
-    if bot.class == crate::bot::state::PlayerClass::Paladin {
-        if let crate::bot::class_prefs::ClassPrefs::Paladin(ref prefs) = bot.settings.class_prefs {
-            if let Some(blessing) = prefs.blessing {
+    if bot.class == crate::bot::state::PlayerClass::Paladin
+        && let crate::bot::class_prefs::ClassPrefs::Paladin(ref prefs) = bot.settings.class_prefs
+            && let Some(blessing) = prefs.blessing {
                 let ranks = blessing.ranks();
                 if let Some(&spell_id) = ranks.first() {
                     gs.coordination.set_paladin_blessing(bot.handle, spell_id);
                 }
             }
-        }
-    }
 
     // Sync heal priority — ensure main tank is always heal_priority[0].
-    if let Some(mt) = gs.coordination.main_tank() {
-        if gs.coordination.heal_priority[0] != mt {
+    if let Some(mt) = gs.coordination.main_tank()
+        && gs.coordination.heal_priority[0] != mt {
             gs.coordination.heal_priority.rotate_right(1);
             gs.coordination.heal_priority[0] = mt;
         }
-    }
 
     // Periodic claim GC — every 5 seconds, sweep expired claims.
     // Cheap: iterates a 32-element array.
@@ -518,11 +512,10 @@ fn on_fsm_enter(bot: &mut BotState, new: ActiveFsm) {
     match new {
         ActiveFsm::Combat => {
             // Entering combat: release any stale heal claims so we start fresh.
-            if let Some(ref gh) = bot.group_state {
-                if let Ok(mut gs) = gh.state().try_write() {
+            if let Some(ref gh) = bot.group_state
+                && let Ok(mut gs) = gh.state().try_write() {
                     gs.encounter.claims.release_all(bot.handle);
                 }
-            }
         }
         ActiveFsm::Dead => {}
         ActiveFsm::World => {}
@@ -558,7 +551,7 @@ fn push_addon_state(bot: &BotState, _now_ms: u64) {
         let sub_str = bot
             .blackboard
             .get_u32(crate::engine::blackboard::Key::WorldSubState)
-            .map(|v| match v {
+            .map_or("n/a", |v| match v {
                 0 => "Follow",
                 1 => "Grind",
                 2 => "Quest",
@@ -569,8 +562,7 @@ fn push_addon_state(bot: &BotState, _now_ms: u64) {
                 7 => "Bg",
                 8 => "Travel",
                 _ => "?",
-            })
-            .unwrap_or("n/a");
+            });
         let msg = format_state_update(StateCategory::Fsm, &[("state", &fsm_str), ("sub", sub_str)]);
         for guid in subs.subscribers(StateCategory::Fsm) {
             bot.interface.tell_addon(guid, &msg);
@@ -597,15 +589,13 @@ fn push_addon_state(bot: &BotState, _now_ms: u64) {
     if subs.has_subscribers(StateCategory::Encounter) {
         let (boss, phase, active) = bot
             .encounter
-            .as_ref()
-            .map(|e| {
+            .as_ref().map_or_else(|| ("0".to_string(), "0".to_string(), "0"), |e| {
                 (
                     e.boss_entry().to_string(),
                     e.phase_id().to_string(),
                     if e.is_active() { "1" } else { "0" },
                 )
-            })
-            .unwrap_or_else(|| ("0".to_string(), "0".to_string(), "0"));
+            });
         let msg = format_state_update(
             StateCategory::Encounter,
             &[("boss", &boss), ("phase", &phase), ("active", active)],

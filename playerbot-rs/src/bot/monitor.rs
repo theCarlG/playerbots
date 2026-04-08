@@ -103,7 +103,7 @@ pub fn monitor_command_received(bot: &BotState, raw: &str, sender_guid: u64, ori
     );
 }
 
-/// Log the parsed BotCommand.
+/// Log the parsed `BotCommand`.
 pub fn monitor_command_parsed(bot: &BotState, raw: &str, cmd: &str) {
     monitor_log(bot, &format!("CMD PARSED: {raw} -> {cmd}"));
 }

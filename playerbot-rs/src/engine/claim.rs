@@ -96,8 +96,8 @@ impl ClaimTable {
 
         // Check for existing claim on the same subject.
         for slot in self.claims.iter_mut() {
-            if let Some(c) = slot {
-                if c.data.subject() == subject {
+            if let Some(c) = slot
+                && c.data.subject() == subject {
                     if c.claimant == claimant {
                         // Refresh our own claim.
                         c.claimed_at_ms = now_ms;
@@ -117,7 +117,6 @@ impl ClaimTable {
                     // Active claim by someone else — deny.
                     return false;
                 }
-            }
         }
 
         // No existing claim — find a free slot.
@@ -135,8 +134,8 @@ impl ClaimTable {
 
         // Table full — try to evict an expired claim.
         for slot in self.claims.iter_mut() {
-            if let Some(c) = slot {
-                if c.is_expired(now_ms) {
+            if let Some(c) = slot
+                && c.is_expired(now_ms) {
                     *slot = Some(Claim {
                         claimant,
                         claimed_at_ms: now_ms,
@@ -145,7 +144,6 @@ impl ClaimTable {
                     });
                     return true;
                 }
-            }
         }
 
         false // Table full, no expired slots.
@@ -173,11 +171,10 @@ impl ClaimTable {
     /// Release all claims held by `claimant`.
     pub fn release_all(&mut self, claimant: UnitHandle) {
         for slot in self.claims.iter_mut() {
-            if let Some(c) = slot {
-                if c.claimant == claimant {
+            if let Some(c) = slot
+                && c.claimant == claimant {
                     *slot = None;
                 }
-            }
         }
     }
 
@@ -185,23 +182,21 @@ impl ClaimTable {
     pub fn release(&mut self, claimant: UnitHandle, data: &ClaimData) {
         let subject = data.subject();
         for slot in self.claims.iter_mut() {
-            if let Some(c) = slot {
-                if c.claimant == claimant && c.data.subject() == subject {
+            if let Some(c) = slot
+                && c.claimant == claimant && c.data.subject() == subject {
                     *slot = None;
                     return;
                 }
-            }
         }
     }
 
     /// Garbage-collect expired claims.
     pub fn gc(&mut self, now_ms: u64) {
         for slot in self.claims.iter_mut() {
-            if let Some(c) = slot {
-                if c.is_expired(now_ms) {
+            if let Some(c) = slot
+                && c.is_expired(now_ms) {
                     *slot = None;
                 }
-            }
         }
     }
 

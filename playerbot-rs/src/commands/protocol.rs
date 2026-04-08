@@ -15,7 +15,7 @@ use crate::ffi::BotRole;
 /// Which transport a command arrived on. Determines how responses are routed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
-    /// SendAddonMessage on a registered prefix — silent, structured, batchable.
+    /// `SendAddonMessage` on a registered prefix — silent, structured, batchable.
     Addon,
     /// /whisper from a player.
     Whisper,
@@ -101,11 +101,10 @@ impl TargetSelector {
         }
 
         // Group selectors: @group1, @group1-3
-        if let Some(rest) = lower.strip_prefix("group") {
-            if let Some(range) = parse_group_range(rest) {
+        if let Some(rest) = lower.strip_prefix("group")
+            && let Some(range) = parse_group_range(rest) {
                 return Some(Self::ByGroup(range));
             }
-        }
 
         None
     }
@@ -203,7 +202,7 @@ fn parse_group_range(s: &str) -> Option<RangeInclusive<u8>> {
         }
     } else {
         let n: u8 = s.parse().ok()?;
-        if n >= 1 && n <= 8 { Some(n..=n) } else { None }
+        if (1..=8).contains(&n) { Some(n..=n) } else { None }
     }
 }
 
@@ -279,12 +278,11 @@ pub fn extract_chat_selectors<'a>(tokens: &'a [&'a str]) -> (Vec<TargetSelector>
     let mut selectors = Vec::new();
     let mut rest = Vec::new();
     for &token in tokens {
-        if token.starts_with('@') {
-            if let Some(sel) = TargetSelector::parse(token) {
+        if token.starts_with('@')
+            && let Some(sel) = TargetSelector::parse(token) {
                 selectors.push(sel);
                 continue;
             }
-        }
         rest.push(token);
     }
     (selectors, rest)
@@ -300,7 +298,7 @@ pub fn extract_chat_selectors<'a>(tokens: &'a [&'a str]) -> (Vec<TargetSelector>
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum StateCategory {
-    /// FSM state + WorldSub (changes only).
+    /// FSM state + `WorldSub` (changes only).
     Fsm = 0,
     /// Health/mana percentages (throttled, every ~2s).
     Vitals = 1,

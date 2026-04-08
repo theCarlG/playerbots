@@ -8,9 +8,9 @@ use crate::{
     engine::{
         aura_helpers::{FAERIE_FIRE_RANKS, INSECT_SWARM_RANKS, MOONFIRE_RANKS},
         bt::{
-            Bt::{self, *},
-            Op::*,
-            Resource::*,
+            Bt::{self, Cmp, CastOnSelf, InCombat, CastOnTarget},
+            Op::Below,
+            Resource::SelfHealthPct,
         },
         macro_fsm::ActiveFsm,
     },

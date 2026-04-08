@@ -26,7 +26,7 @@ pub enum PoisonKind {
     Crippling,
     /// Mind-numbing Poison — cast-time slow.
     MindNumbing,
-    /// Anesthetic Poison — dispels enrage (WotLK+).
+    /// Anesthetic Poison — dispels enrage (`WotLK`+).
     Anesthetic,
 }
 
@@ -323,7 +323,7 @@ pub enum ShamanImbue {
     Frostbrand,
     /// Windfury Weapon — extra-swing proc (enhancement signature).
     Windfury,
-    /// Earthliving Weapon — healing proc (WotLK+).
+    /// Earthliving Weapon — healing proc (`WotLK`+).
     Earthliving,
 }
 
@@ -547,7 +547,7 @@ pub enum HunterAspect {
     Wild,
     /// Mana-regen aspect (TBC+).
     Viper,
-    /// WotLK replacement for Hawk combined with melee bonus.
+    /// `WotLK` replacement for Hawk combined with melee bonus.
     Dragonhawk,
 }
 

@@ -2,12 +2,12 @@
 ///
 /// Single-phase fight. Key mechanics:
 ///   - **Gehennas' Curse** (19716): -75% healing curse, must be decursed.
-///   - **Rain of Fire** (19717): 15y AoE — ranged stay spread.
+///   - **Rain of Fire** (19717): 15y `AoE` — ranged stay spread.
 ///   - **Shadow Bolt** (19728): random target, unavoidable.
 /// Two Flamewaker adds should be killed first (handled by kill-order/RTI).
 /// Dispellers (mage/druid) priority-decurse the raid.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, IsRanged, MaintainRange};
 use crate::ffi::SpellId;
 use crate::{Sel, Seq};
 

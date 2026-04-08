@@ -5,7 +5,7 @@ use crate::{Sel, Seq};
 ///   fast heals → Chain Heal when multiple hurt → sustained heals → Purge
 use crate::{
     data::spells::vanilla::shaman::*,
-    engine::bt::Bt::{self, *},
+    engine::bt::Bt::{self, DropConfiguredTotems, GroupMembersBelow, CastOnSelf, HealLowest, HealInjuredParty, InCombat, CastOnTarget},
     engine::macro_fsm::ActiveFsm,
 };
 

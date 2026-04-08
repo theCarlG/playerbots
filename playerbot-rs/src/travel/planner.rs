@@ -1,9 +1,9 @@
 /// Travel planner — selects the best travel destination for a bot.
 ///
-/// PB2's TravelMgr evaluates all possible destinations (quest objectives,
+/// PB2's `TravelMgr` evaluates all possible destinations (quest objectives,
 /// grind spots, world buffs, vendors) and picks the highest-priority one
 /// the bot can reach. This module provides the Rust equivalent that works
-/// with the blackboard-based travel system and the TravelTarget FSM.
+/// with the blackboard-based travel system and the `TravelTarget` FSM.
 use crate::engine::blackboard::{Blackboard, Key, Value};
 use crate::travel::destination::{TravelDestination, TravelPurpose};
 use crate::travel::graph;

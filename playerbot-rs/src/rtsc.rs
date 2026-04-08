@@ -166,7 +166,7 @@ pub fn last(bot: &BotState) -> bool {
 ///
 /// - Stage one (no slots populated): queues [`RtscAction::Jump`] so
 ///   the next Aedm cast fills `"jump"`, and sets the `rtsc jump`
-///   strategy bit on the NonCombat slot. Stage two is filled by the
+///   strategy bit on the `NonCombat` slot. Stage two is filled by the
 ///   spell-land consumer automatically — the user does *not* type
 ///   `rtsc jump` a second time.
 /// - Stale state (`"jump"` populated but `"jump point"` missing):
@@ -270,7 +270,7 @@ pub fn on_spell_land(bot: &mut BotState, x: f32, y: f32, z: f32) {
 /// distinguish them but re-importing stale jump state is always
 /// wrong. The bot-name column is currently a static `"BOTNAME"`
 /// placeholder because no `bot_name` FFI exists yet; see the
-/// gotcha note in Part 5 Step 9 of PB2_PARITY_PLAN.md. Returns
+/// gotcha note in Part 5 Step 9 of `PB2_PARITY_PLAN.md`. Returns
 /// the number of rows written (for reply formatting) alongside
 /// the body string.
 pub fn serialize_waypoints(bot: &BotState, name_glob: &str) -> (String, usize) {

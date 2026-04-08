@@ -86,6 +86,10 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         names: &["cc"],
         parse: |_, a| {
+            // "cc ?" — query CC assignments.
+            if a.first().map(|s| &**s) == Some("?") {
+                return Some(BotCommand::CcQuery);
+            }
             // "cc skull" or "cc 8" — assign this bot to CC the marked mob.
             if a.is_empty() {
                 return Some(BotCommand::Unknown("cc: need target icon".into()));
@@ -357,7 +361,7 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         names: &["mail"],
         parse: |_, a| match a.first().copied() {
-            Some("take") | Some("takeall") | Some("all") => Some(BotCommand::MailTakeAll),
+            Some("take" | "takeall" | "all") => Some(BotCommand::MailTakeAll),
             _ => Some(BotCommand::MailSummary),
         },
     },
@@ -680,6 +684,10 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         names: &["tank"],
         parse: |_, a| {
+            // "tank ?" — query tank role and assigned targets.
+            if a.first().map(|s| &**s) == Some("?") {
+                return Some(BotCommand::TankQuery);
+            }
             // "tank skull" or "tank 8" — assign tank focus target.
             if a.is_empty() {
                 return Some(BotCommand::Unknown("tank: need target icon".into()));
@@ -970,11 +978,10 @@ fn parse_reactivity(args: &[&str]) -> Option<BotCommand> {
     //     `Reaction Strategies: ...` when trailing `,?`.
     //
     // Dispatch on the first token's sign prefix.
-    if let Some(first) = args.first().copied() {
-        if first.starts_with('+') || first.starts_with('-') {
+    if let Some(first) = args.first().copied()
+        && (first.starts_with('+') || first.starts_with('-')) {
             return parse_strategies(args, BotStateKind::Reaction);
         }
-    }
     match args.first().copied() {
         None | Some("?") => Some(BotCommand::QueryStrategies(BotStateKind::Reaction)),
         Some("passive") => Some(BotCommand::SetReactivity(Reactivity::Passive)),
@@ -1057,11 +1064,11 @@ fn parse_save(args: &[&str]) -> Option<BotCommand> {
         Some("mana") => match args.get(1).copied() {
             None => Some(BotCommand::ToggleSaveMana),
             Some("?") => Some(BotCommand::QuerySaveMana),
-            Some("on") | Some("yes") | Some("true") => Some(BotCommand::SetSaveMana(1)),
-            Some("off") | Some("0") | Some("no") | Some("false") => {
+            Some("on" | "yes" | "true") => Some(BotCommand::SetSaveMana(1)),
+            Some("off" | "0" | "no" | "false") => {
                 Some(BotCommand::SetSaveMana(0))
             }
-            Some("toggle") | Some("~") => Some(BotCommand::ToggleSaveMana),
+            Some("toggle" | "~") => Some(BotCommand::ToggleSaveMana),
             Some(n) => {
                 // Accept numeric levels 1-5.
                 match n.parse::<u8>() {
@@ -1115,7 +1122,7 @@ fn parse_rtsc(args: &[&str]) -> Option<BotCommand> {
                 let name = args.get(2).unwrap_or(&"default").to_string();
                 Some(BotCommand::RtscSaveHere(name))
             }
-            Some("exact") | Some("selected") => {
+            Some("exact" | "selected") => {
                 let name = args.get(2).unwrap_or(&"default").to_string();
                 Some(BotCommand::RtscSave(name))
             }
@@ -1511,7 +1518,7 @@ fn parse_chat(args: &[&str]) -> Option<BotCommand> {
         )));
     };
     let on = match args.get(1).copied() {
-        Some("off") | Some("no") | Some("0") => false,
+        Some("off" | "no" | "0") => false,
         _ => true,
     };
     Some(BotCommand::SetChatChannel { channel, on })
@@ -1522,7 +1529,7 @@ fn parse_rti_cmd(args: &[&str]) -> Option<BotCommand> {
     if args.first().copied() == Some("cc") {
         return match args.get(1).copied() {
             Some("?") => Some(BotCommand::QueryCcRti),
-            None | Some("clear") | Some("none") => Some(BotCommand::SetPreferredCcRti(None)),
+            None | Some("clear" | "none") => Some(BotCommand::SetPreferredCcRti(None)),
             Some(tok) => match parse_rti(tok) {
                 Some(icon) => Some(BotCommand::SetPreferredCcRti(Some(icon))),
                 None => Some(BotCommand::Unknown(format!("rti cc: unknown `{tok}`"))),
@@ -1531,7 +1538,7 @@ fn parse_rti_cmd(args: &[&str]) -> Option<BotCommand> {
     }
     match args.first().copied() {
         Some("?") => Some(BotCommand::QueryRti),
-        None | Some("clear") | Some("none") => Some(BotCommand::SetPreferredRti(None)),
+        None | Some("clear" | "none") => Some(BotCommand::SetPreferredRti(None)),
         Some(tok) => match parse_rti(tok) {
             Some(icon) => Some(BotCommand::SetPreferredRti(Some(icon))),
             None => Some(BotCommand::Unknown(format!("rti: unknown `{tok}`"))),
@@ -1748,18 +1755,15 @@ fn parse_duty(args: &[&str], kind: DutyKind) -> Option<BotCommand> {
     let Some(&tok) = args.first() else {
         return Some(BotCommand::ShowEncounterPrefs);
     };
-    match DutyMode::from_word(tok) {
-        Some(mode) => Some(match kind {
-            DutyKind::Suppression => BotCommand::SetSuppressionDuty(mode),
-            DutyKind::Douse => BotCommand::SetDouseDuty(mode),
-        }),
-        None => {
-            let label = match kind {
-                DutyKind::Suppression => "suppression",
-                DutyKind::Douse => "douse",
-            };
-            Some(BotCommand::Unknown(format!("{label}: unknown '{tok}'")))
-        }
+    if let Some(mode) = DutyMode::from_word(tok) { Some(match kind {
+        DutyKind::Suppression => BotCommand::SetSuppressionDuty(mode),
+        DutyKind::Douse => BotCommand::SetDouseDuty(mode),
+    }) } else {
+        let label = match kind {
+            DutyKind::Suppression => "suppression",
+            DutyKind::Douse => "douse",
+        };
+        Some(BotCommand::Unknown(format!("{label}: unknown '{tok}'")))
     }
 }
 
@@ -1785,7 +1789,7 @@ fn parse_forcestance(args: &[&str]) -> Option<BotCommand> {
 /// each; the Rust port uses `ClassPrefs` + `StrategyFlags`. This bridge maps
 /// the compound name to both:
 ///   - the base strategy flag (POISONS, TOTEMS, CURSE, etc.) — returned
-///   - an optional class-pref `BotCommand` (SetPoison, SetTotem, etc.) — returned
+///   - an optional class-pref `BotCommand` (`SetPoison`, `SetTotem`, etc.) — returned
 ///
 /// When the name matches, the caller should:
 ///   1. Insert the flag into add/remove/toggle as appropriate.

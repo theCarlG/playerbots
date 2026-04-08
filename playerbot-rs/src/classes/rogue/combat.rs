@@ -8,9 +8,9 @@ use crate::{
     engine::{
         aura_helpers::RUPTURE_RANKS,
         bt::{
-            Bt::{self, *},
-            Op::*,
-            Resource::*,
+            Bt::{self, InCombat, ApplyPoisons, StickToTarget, Cmp, CastOnSelf, TargetIsCasting, CastOnTarget},
+            Op::{Below, AtLeast, Above},
+            Resource::{SelfHealthPct, NearbyCount, SelfComboPoints},
         },
         macro_fsm::ActiveFsm,
     },

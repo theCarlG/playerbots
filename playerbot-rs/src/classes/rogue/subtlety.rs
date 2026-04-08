@@ -6,9 +6,9 @@ use crate::{Sel, Seq};
 use crate::{
     data::spells::vanilla::rogue::*,
     engine::bt::{
-        Bt::{self, *},
-        Op::*,
-        Resource::*,
+        Bt::{self, InCombat, ApplyPoisons, StickToTarget, Cmp, CastOnSelf, TargetIsCasting, CastOnTarget, KnowsSpell},
+        Op::{Below, Above},
+        Resource::{SelfHealthPct, SelfComboPoints},
     },
     engine::macro_fsm::ActiveFsm,
 };

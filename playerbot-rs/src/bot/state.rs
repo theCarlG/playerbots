@@ -87,7 +87,7 @@ pub enum PlayerSpec {
 impl PlayerSpec {
     /// The default `BotRole` for this spec (TANK / HEAL / DPS).
     pub fn default_role(self) -> BotRole {
-        use PlayerSpec::*;
+        use PlayerSpec::{WarriorProtection, PaladinProtection, DeathKnightBlood, PriestHoly, PriestDiscipline, PaladinHoly, ShamanRestoration, DruidRestoration};
         match self {
             WarriorProtection | PaladinProtection | DeathKnightBlood => BotRole::TANK,
             PriestHoly | PriestDiscipline | PaladinHoly | ShamanRestoration | DruidRestoration => {
@@ -201,7 +201,7 @@ pub struct BotState {
     /// from a different thread than `playerbot_update`.
     pub pending_commands: Mutex<VecDeque<PendingCommand>>,
 
-    /// Travel target — per-bot destination lifecycle (PB2 TravelTarget).
+    /// Travel target — per-bot destination lifecycle (PB2 `TravelTarget`).
     pub travel_target: TravelTarget,
 
     // ── Throttle timestamps ──────────────────────────────────────────────

@@ -1,4 +1,4 @@
-//! Factory InitInventoryTrade — mirrors `PlayerbotFactory::InitInventoryTrade`.
+//! Factory `InitInventoryTrade` — mirrors `PlayerbotFactory::InitInventoryTrade`.
 //!
 //! Picks one random trade good appropriate for the bot's level via
 //! `sRandomItemMgr.GetRandomTrade`, inspects the prototype quality, and

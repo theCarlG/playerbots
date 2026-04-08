@@ -237,10 +237,9 @@ where
     T: EncounterFsm + TryFrom<u32>,
 {
     fn set_boss_entry(&mut self, entry: u32) {
-        if !self
+        if self
             .active_boss
-            .as_ref()
-            .is_some_and(|b| b.boss_entry() == entry)
+            .as_ref().is_none_or(|b| b.boss_entry() != entry)
         {
             self.set_active_boss_by_entry(entry);
         }

@@ -9,7 +9,7 @@
 ///   - At 10% HP Golemagg enrages — burn phase.
 /// Ranged DPS can safely sit at max range. Melee stay on Golemagg.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, IsRanged, MaintainRange};
 use crate::ffi::SpellId;
 use crate::{Sel, Seq};
 

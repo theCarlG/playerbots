@@ -9,9 +9,9 @@ use crate::{
     engine::{
         aura_helpers::{DEMO_ROAR_RANKS, FAERIE_FIRE_RANKS, RAKE_RANKS, RIP_RANKS},
         bt::{
-            Bt::{self, *},
-            Op::*,
-            Resource::*,
+            Bt::{self, StickToTarget, IsTank, CastOnSelf, InCombat, Cmp, CastOnTarget},
+            Op::Below,
+            Resource::SelfHealthPct,
         },
         macro_fsm::ActiveFsm,
     },

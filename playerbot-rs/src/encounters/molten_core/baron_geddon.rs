@@ -13,7 +13,7 @@
 ///    - Others: flee 30 yards.
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::bot::state::PlayerClass;
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, IsClass, CastOnSelf, MoveAwayFromRaid, FleeToSafe};
 use crate::ffi::SpellId;
 use crate::{Sel, Seq};
 

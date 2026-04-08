@@ -42,7 +42,7 @@ pub fn buffs(_spec: PlayerSpec) -> &'static [GroupBuff] {
 
 /// Per-spec default combat strategy flags (PB2 `AiFactory.cpp` warlock branch).
 pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
-    use PlayerSpec::*;
+    use PlayerSpec::{WarlockAffliction, WarlockDemonology, WarlockDestruction};
     use StrategyFlags as F;
     let common = F::DPS_ASSIST
         | F::FLEE
@@ -63,7 +63,7 @@ pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
 
 /// Reverse-map strategy flags to a warlock `PlayerSpec`.
 pub fn spec_from_flags(flags: StrategyFlags) -> Option<PlayerSpec> {
-    use PlayerSpec::*;
+    use PlayerSpec::{WarlockAffliction, WarlockDemonology, WarlockDestruction};
     use StrategyFlags as F;
     if flags.contains(F::AFFLICTION) {
         return Some(WarlockAffliction);

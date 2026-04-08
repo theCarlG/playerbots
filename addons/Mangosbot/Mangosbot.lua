@@ -63,6 +63,30 @@ function SendBotAddonCommand(text, chat, lang, channel)
     SendBotCommand("#a " .. text, chat, lang, channel)
 end
 
+--- Send a PB:v1 protocol command. Pipe-batches multiple commands.
+--- @param cmds string|table  Single command string or list of command strings.
+--- @param chat string        "PARTY" or "WHISPER".
+--- @param target string|nil  Bot name (for WHISPER).
+function SendPB(cmds, chat, target)
+    -- WHISPER goes through SendChatMessage which parses "|" as an escape
+    -- code prefix.  Send each command individually to avoid the pipe batch
+    -- separator on that path.
+    if (chat == "WHISPER" and type(cmds) == "table") then
+        for _, cmd in pairs(cmds) do
+            SendBotCommand("PB:v1:" .. cmd, chat, nil, target)
+        end
+        return
+    end
+
+    local payload
+    if (type(cmds) == "table") then
+        payload = "PB:v1:" .. table.concat(cmds, "|")
+    else
+        payload = "PB:v1:" .. cmds
+    end
+    SendBotCommand(payload, chat, nil, target)
+end
+
 function CreateToolBar(frame, y, name, buttons, x, spacing, register)
     if (x == nil) then x = 5 end
     if (spacing == nil) then spacing = 5 end
@@ -166,6 +190,17 @@ function OnKeyBindingDown(button)
     end
 end
 
+--- Convert a legacy command string to PB:v1 format.
+--- Strips "#a " prefix and replaces spaces with colons.
+local function toPBCmd(cmd)
+    -- Strip "#a " addon prefix — PB protocol doesn't need it.
+    if (string.sub(cmd, 1, 3) == "#a ") then
+        cmd = string.sub(cmd, 4)
+    end
+    -- Replace spaces with colons for PB wire format.
+    return (string.gsub(cmd, " ", ":"))
+end
+
 function ToolBarButtonOnClick(btn, visual)
     if (btn["handler"] ~= nil) then
         btn["handler"]()
@@ -180,27 +215,18 @@ function ToolBarButtonOnClick(btn, visual)
         DoEmote(btn["emote"])
     end
 
+    -- Collect commands and convert to PB format.
+    local pbCmds = {}
+    for key, command in pairs(btn["command"]) do
+        table.insert(pbCmds, toPBCmd(command))
+    end
+
     if (btn["group"]) then
-        local delay = 0
-        local first = true
-        local combined = ""
-        for key, command in pairs(btn["command"]) do
-            combined = combined .. command .. CommandSeparator
-        end
-        combined = string.sub(combined, 1, string.len(combined) - 2)
-        wait(0, function(combined) SendBotCommand(combined, "PARTY") end, combined)
-        if (btn["tooltip"] ~= nil) then
-            wait(delay + 1, function(command) SendBotCommand("#a " .. command, "PARTY") end, btn["tooltip"])
-        end
+        wait(0, function(cmds) SendPB(cmds, "PARTY") end, pbCmds)
     else
         local bot = GetUnitName("target")
         if (bot == nil) then bot = CurrentBot end
-        local combined = ""
-        for key, command in pairs(btn["command"]) do
-            combined = combined .. command .. CommandSeparator
-        end
-        combined = string.sub(combined, 1, string.len(combined) - 2)
-        wait(0, function(combined, bot) SendBotCommand(combined, "WHISPER", nil, bot) end, combined, bot)
+        wait(0, function(cmds, bot) SendPB(cmds, "WHISPER", bot) end, pbCmds, bot)
     end
 end
 
@@ -968,6 +994,189 @@ function StartChat()
     editBox:SetText("/whisper " .. name .. " ")
 end
 
+-- Tank-capable WoW classes (can be assigned MT/OT).
+local TANK_CLASSES = { Warrior = true, Paladin = true, Druid = true }
+
+function CreateRoleAssignToolBar(frame, y, name, group, x, spacing, register)
+    return CreateToolBar(frame, -y, name, {
+        ["mt"] = {
+            icon = "role_tank",
+            command = { [0] = "set mt" },
+            tooltip = "Set as Main Tank",
+            tank_role = "mt",
+            index = 0,
+            group = group
+        },
+        ["ot"] = {
+            icon = "tank_assist",
+            command = { [0] = "set ot" },
+            tooltip = "Set as Off-Tank",
+            tank_role = "ot",
+            index = 1,
+            group = group
+        },
+        ["clear"] = {
+            icon = "close",
+            command = { [0] = "unset tank" },
+            tooltip = "Remove tank role",
+            index = 2,
+            group = group
+        }
+    }, x, spacing, register)
+end
+
+function CreateTankTargetToolBar(frame, y, name, group, x, spacing, register)
+    return CreateToolBar(frame, -y, name, {
+        ["tt_skull"] = {
+            icon = "rti_skull",
+            command = { [0] = "tank skull" },
+            tank_target = "skull",
+            tooltip = "Tank skull mark",
+            index = 0,
+            group = group
+        },
+        ["tt_cross"] = {
+            icon = "rti_cross",
+            command = { [0] = "tank cross" },
+            tank_target = "cross",
+            tooltip = "Tank cross mark",
+            index = 1,
+            group = group
+        },
+        ["tt_circle"] = {
+            icon = "rti_circle",
+            command = { [0] = "tank circle" },
+            tank_target = "circle",
+            tooltip = "Tank circle mark",
+            index = 2,
+            group = group
+        },
+        ["tt_star"] = {
+            icon = "rti_star",
+            command = { [0] = "tank star" },
+            tank_target = "star",
+            tooltip = "Tank star mark",
+            index = 3,
+            group = group
+        },
+        ["tt_square"] = {
+            icon = "rti_square",
+            command = { [0] = "tank square" },
+            tank_target = "square",
+            tooltip = "Tank square mark",
+            index = 4,
+            group = group
+        },
+        ["tt_triangle"] = {
+            icon = "rti_triangle",
+            command = { [0] = "tank triangle" },
+            tank_target = "triangle",
+            tooltip = "Tank triangle mark",
+            index = 5,
+            group = group
+        },
+        ["tt_diamond"] = {
+            icon = "rti_diamond",
+            command = { [0] = "tank diamond" },
+            tank_target = "diamond",
+            tooltip = "Tank diamond mark",
+            index = 6,
+            group = group
+        },
+        ["tt_moon"] = {
+            icon = "rti_moon",
+            command = { [0] = "tank moon" },
+            tank_target = "moon",
+            tooltip = "Tank moon mark",
+            index = 7,
+            group = group
+        },
+        ["tt_clear"] = {
+            icon = "close",
+            command = { [0] = "untank" },
+            tooltip = "Clear all tank target assignments",
+            index = 8,
+            group = group
+        }
+    }, x, spacing, register)
+end
+
+function CreateCcAssignToolBar(frame, y, name, group, x, spacing, register)
+    return CreateToolBar(frame, -y, name, {
+        ["ca_skull"] = {
+            icon = "cc_skull",
+            command = { [0] = "cc skull" },
+            cc_assign = "skull",
+            tooltip = "CC skull mark",
+            index = 0,
+            group = group
+        },
+        ["ca_cross"] = {
+            icon = "cc_cross",
+            command = { [0] = "cc cross" },
+            cc_assign = "cross",
+            tooltip = "CC cross mark",
+            index = 1,
+            group = group
+        },
+        ["ca_circle"] = {
+            icon = "cc_circle",
+            command = { [0] = "cc circle" },
+            cc_assign = "circle",
+            tooltip = "CC circle mark",
+            index = 2,
+            group = group
+        },
+        ["ca_star"] = {
+            icon = "cc_star",
+            command = { [0] = "cc star" },
+            cc_assign = "star",
+            tooltip = "CC star mark",
+            index = 3,
+            group = group
+        },
+        ["ca_square"] = {
+            icon = "cc_square",
+            command = { [0] = "cc square" },
+            cc_assign = "square",
+            tooltip = "CC square mark",
+            index = 4,
+            group = group
+        },
+        ["ca_triangle"] = {
+            icon = "cc_triangle",
+            command = { [0] = "cc triangle" },
+            cc_assign = "triangle",
+            tooltip = "CC triangle mark",
+            index = 5,
+            group = group
+        },
+        ["ca_diamond"] = {
+            icon = "cc_diamond",
+            command = { [0] = "cc diamond" },
+            cc_assign = "diamond",
+            tooltip = "CC diamond mark",
+            index = 6,
+            group = group
+        },
+        ["ca_moon"] = {
+            icon = "cc_moon",
+            command = { [0] = "cc moon" },
+            cc_assign = "moon",
+            tooltip = "CC moon mark",
+            index = 7,
+            group = group
+        },
+        ["ca_clear"] = {
+            icon = "close",
+            command = { [0] = "uncc" },
+            tooltip = "Clear CC assignment",
+            index = 8,
+            group = group
+        }
+    }, x, spacing, register)
+end
+
 function CreateSelectedBotPanel()
     local frame = CreateFrame("Frame", "SelectedBotPanel", UIParent)
     frame:Hide()
@@ -1211,6 +1420,15 @@ function CreateSelectedBotPanel()
 
     y = y + 25
     CreateStanceToolBar(frame, y, "stance", false, 5, 5, true)
+
+    y = y + 25
+    CreateRoleAssignToolBar(frame, y, "role_assign", false, 5, 5, true)
+
+    y = y + 25
+    CreateTankTargetToolBar(frame, y, "tank_targets", false, 5, 5, true)
+
+    y = y + 25
+    CreateCcAssignToolBar(frame, y, "cc_assign", false, 5, 5, true)
 
     y = y + 25
     CreateSaveManaToolBar(frame, y, "savemana", false, 5, 5, true)
@@ -2563,7 +2781,7 @@ function BotDebugTimer(self, elapsed)
         if total >= 1 then
             local name = GetUnitName("target")
             if (name) then
-                SendBotAddonCommand("debug action", "WHISPER", nil, name)
+                SendPB("debug:action", "WHISPER", name)
             end
             total = 0
         end
@@ -2783,36 +3001,22 @@ local function fmod(a, b)
 end
 
 function QueryBotParty()
-    wait(0.1,
-        function()
-            SendBotCommand(
-                "#a ll ?" ..
-                CommandSeparator ..
-                "#a formation ?" ..
-                CommandSeparator ..
-                "#a stance ?" ..
-                CommandSeparator ..
-                "#a co ?" .. CommandSeparator ..
-                "#a nc ?" .. CommandSeparator .. "#a save mana ?" .. CommandSeparator .. "#a react ?", "PARTY")
-        end)
+    wait(0.1, function()
+        SendPB({
+            "ll:?", "formation:?", "stance:?",
+            "co:?", "nc:?", "save mana:?", "react:?"
+        }, "PARTY")
+    end)
 end
 
 function QuerySelectedBot(name)
-    wait(0.1,
-        function()
-            SendBotCommand(
-                "#a formation ?" ..
-                CommandSeparator ..
-                "#a stance ?" ..
-                CommandSeparator ..
-                "#a ll ?" ..
-                CommandSeparator ..
-                "#a co ?" ..
-                CommandSeparator ..
-                "#a nc ?" .. CommandSeparator ..
-                "#a save mana ?" .. CommandSeparator .. "#a rti ?" .. CommandSeparator .. "#a react ?", "WHISPER", nil,
-                name)
-        end)
+    wait(0.1, function()
+        SendPB({
+            "formation:?", "stance:?", "ll:?",
+            "co:?", "nc:?", "save mana:?",
+            "rti:?", "react:?", "tank:?", "cc:?"
+        }, "WHISPER", name)
+    end)
 end
 
 function UpdateBotList(delay)
@@ -2954,7 +3158,7 @@ Mangosbot_EventFrame:SetScript("OnEvent", function(self)
                 end)
                 leaveBtn["key"] = key
                 leaveBtn:SetScript("OnClick", function()
-                    SendBotCommand("leave", "WHISPER", nil, leaveBtn["key"])
+                    SendPB("leave", "WHISPER", leaveBtn["key"])
                 end)
                 whisperBtn["key"] = key
                 whisperBtn:SetScript("OnClick", function()
@@ -2965,7 +3169,7 @@ Mangosbot_EventFrame:SetScript("OnEvent", function(self)
                 end)
                 summonBtn["key"] = key
                 summonBtn:SetScript("OnClick", function()
-                    SendBotCommand("summon", "WHISPER", nil, summonBtn["key"])
+                    SendPB("summon", "WHISPER", summonBtn["key"])
                 end)
                 menuBtn["key"] = key
                 menuBtn:SetScript("OnClick", function()
@@ -3052,7 +3256,7 @@ Mangosbot_EventFrame:SetScript("OnEvent", function(self)
             leaveAllBtn:SetScript("OnClick", function()
                 local timeout = 0.1
                 for key, bot in pairs(botTable) do
-                    wait(timeout, function(key) SendBotCommand("leave", "WHISPER", nil, key) end, key)
+                    wait(timeout, function(key) SendPB("leave", "WHISPER", key) end, key)
                     timeout = timeout + 0.1
                 end
             end)
@@ -3070,7 +3274,7 @@ Mangosbot_EventFrame:SetScript("OnEvent", function(self)
             summonAllBtn:SetScript("OnClick", function()
                 local timeout = 0.1
                 for key, bot in pairs(botTable) do
-                    wait(timeout, function(key) SendBotCommand("summon", "WHISPER", nil, key) end, key)
+                    wait(timeout, function(key) SendPB("summon", "WHISPER", key) end, key)
                     timeout = timeout + 0.1
                 end
             end)
@@ -3147,25 +3351,28 @@ Mangosbot_EventFrame:SetScript("OnEvent", function(self)
             --     QueryBotParty()
             -- end
             if (string.find(message, "Following") == 1 or string.find(message, "Staying") == 1 or string.find(message, "Fleeing") == 1) then
-                wait(0.1, function() SendBotAddonCommand("nc ?", "WHISPER", nil, sender) end)
+                wait(0.1, function(s) SendPB("nc:?", "WHISPER", s) end, sender)
             end
             if (string.find(message, "Formation set to") == 1) then
-                wait(0.1, function() SendBotAddonCommand("formation ?", "WHISPER", nil, sender) end)
+                wait(0.1, function(s) SendPB("formation:?", "WHISPER", s) end, sender)
             end
             if (string.find(message, "Stance set to") == 1) then
-                wait(0.1, function() SendBotAddonCommand("stance ?", "WHISPER", nil, sender) end)
+                wait(0.1, function(s) SendPB("stance:?", "WHISPER", s) end, sender)
             end
             if (string.find(message, "Loot strategy set to ") == 1) then
-                wait(0.1, function() SendBotAddonCommand("ll ?", "WHISPER", nil, sender) end)
+                wait(0.1, function(s) SendPB("ll:?", "WHISPER", s) end, sender)
             end
             if (string.find(message, "rti set to") == 1) then
-                wait(0.1, function() SendBotAddonCommand("rti ?", "WHISPER", nil, sender) end)
+                wait(0.1, function(s) SendPB("rti:?", "WHISPER", s) end, sender)
             end
             if (string.find(message, "rti cc set to") == 1) and (string.find(message, "rti cc set to ?") == 0) then
-                wait(0.1, function() SendBotAddonCommand("rti cc ?", "WHISPER", nil, sender) end)
+                wait(0.1, function(s) SendPB("rti:cc:?", "WHISPER", s) end, sender)
             end
             if (string.find(message, "save mana") == 1) then
-                wait(0.1, function() SendBotAddonCommand("save mana ?", "WHISPER", nil, sender) end)
+                wait(0.1, function(s) SendPB("save:mana:?", "WHISPER", s) end, sender)
+            end
+            if (string.find(message, "Main tank set") == 1 or string.find(message, "Off-tank set") == 1 or string.find(message, "Tank role removed") == 1) then
+                wait(0.1, function(s) SendPB("tank:?", "WHISPER", s) end, sender)
             end
             UpdateGroupToolBar()
         end
@@ -3196,6 +3403,24 @@ Mangosbot_EventFrame:SetScript("OnEvent", function(self)
                 local panelVisible = true
                 if (string.find(toolbarName, "CLASS_") == 1) then
                     if (string.find(string.sub(toolbarName, 7), class) == 1) then
+                        SelectedBotPanel.toolbar[toolbarName]:Show()
+                    else
+                        SelectedBotPanel.toolbar[toolbarName]:Hide()
+                        panelVisible = false
+                    end
+                end
+                -- Role assignment toolbar: only show for tank-capable classes.
+                if (toolbarName == "role_assign") then
+                    if (class and TANK_CLASSES[class]) then
+                        SelectedBotPanel.toolbar[toolbarName]:Show()
+                    else
+                        SelectedBotPanel.toolbar[toolbarName]:Hide()
+                        panelVisible = false
+                    end
+                end
+                -- Tank targets toolbar: only show when bot has a tank role.
+                if (toolbarName == "tank_targets") then
+                    if (bot["tank_role"] ~= nil) then
                         SelectedBotPanel.toolbar[toolbarName]:Show()
                     else
                         SelectedBotPanel.toolbar[toolbarName]:Hide()
@@ -3242,6 +3467,28 @@ Mangosbot_EventFrame:SetScript("OnEvent", function(self)
                     end
                     if (button["savemana"] ~= nil and bot["savemana"] ~= nil and string.find(bot["savemana"], button["savemana"]) ~= nil) then
                         toggle = true
+                    end
+                    -- Tank role toggle (MT/OT buttons).
+                    if (button["tank_role"] ~= nil and bot["tank_role"] ~= nil and bot["tank_role"] == button["tank_role"]) then
+                        toggle = true
+                    end
+                    -- Tank target toggle (RTI icons assigned to this tank).
+                    if (button["tank_target"] ~= nil and bot["tank_targets"] ~= nil) then
+                        for _, t in pairs(bot["tank_targets"]) do
+                            if (t == button["tank_target"]) then
+                                toggle = true
+                                break
+                            end
+                        end
+                    end
+                    -- CC assignment toggle.
+                    if (button["cc_assign"] ~= nil and bot["cc_targets"] ~= nil) then
+                        for _, t in pairs(bot["cc_targets"]) do
+                            if (string.find(t, button["cc_assign"]) ~= nil) then
+                                toggle = true
+                                break
+                            end
+                        end
                     end
                     ToggleButton(SelectedBotPanel, toolbarName, buttonName, toggle)
                     numButtons = numButtons + 1
@@ -3354,6 +3601,8 @@ function OnWhisper(message, sender)
     local type = "co"
     local validStrategy = false
     local bot = botTable[sender]
+    if (bot["tank_targets"] == nil) then bot["tank_targets"] = {} end
+    if (bot["cc_targets"] == nil) then bot["cc_targets"] = {} end
     local trm = 19
     if (string.find(message, 'Combat Strategies: ') == 1) then
         type = "co"
@@ -3408,6 +3657,59 @@ function OnWhisper(message, sender)
     end
     if (string.find(message, 'rti cc: ') == 1) then
         bot['rti_cc'] = string.sub(message, 5)
+    end
+
+    -- Tank role & target assignment responses.
+    if (message == 'Main tank set.') then
+        bot['tank_role'] = 'mt'
+    end
+    if (message == 'Off-tank set.') then
+        bot['tank_role'] = 'ot'
+    end
+    if (message == 'Tank role removed.') then
+        bot['tank_role'] = nil
+        bot['tank_targets'] = {}
+    end
+
+    -- Tank query response: "Tank: mt, targets: skull cross" or "Tank: none"
+    if (string.find(message, 'Tank: ') == 1) then
+        local rest = string.sub(message, 7)
+        local commaPos = string.find(rest, ', targets: ')
+        if (commaPos) then
+            bot['tank_role'] = string.sub(rest, 1, commaPos - 1)
+            local targets = string.sub(rest, commaPos + 11)
+            bot['tank_targets'] = splitString2(targets, " ")
+        else
+            bot['tank_role'] = rest
+            if (rest == 'none') then bot['tank_role'] = nil end
+            bot['tank_targets'] = {}
+        end
+    end
+
+    -- Tank target assignment confirmations.
+    if (string.find(message, 'Tank target assigned to icon') == 1) then
+        wait(0.1, function(s) SendPB("tank:?", "WHISPER", s) end, sender)
+    end
+    if (string.find(message, 'Tank target assignment removed') == 1) then
+        wait(0.1, function(s) SendPB("tank:?", "WHISPER", s) end, sender)
+    end
+
+    -- CC query response: "CC: moon diamond" or "CC: none"
+    if (string.find(message, 'CC: ') == 1) then
+        local rest = string.sub(message, 5)
+        if (rest == 'none') then
+            bot['cc_targets'] = {}
+        else
+            bot['cc_targets'] = splitString2(rest, " ")
+        end
+    end
+
+    -- CC assignment confirmations.
+    if (string.find(message, 'CC assigned to icon') == 1) then
+        wait(0.1, function(s) SendPB("cc:?", "WHISPER", s) end, sender)
+    end
+    if (string.find(message, 'CC assignment removed') == 1) then
+        wait(0.1, function(s) SendPB("cc:?", "WHISPER", s) end, sender)
     end
 end
 

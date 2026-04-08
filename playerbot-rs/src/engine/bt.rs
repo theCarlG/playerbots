@@ -32,9 +32,9 @@ use crate::ffi::{ItemId, SpellId, UnitHandle};
 use crate::noncombat::buffing::GroupBuff;
 
 /// Terse constructor for [`Bt::Seq`]. Accepts a comma-separated list of
-/// child nodes (trailing comma allowed). PascalCase matches the variant
+/// child nodes (trailing comma allowed). `PascalCase` matches the variant
 /// name for readability — Rust allows this since macros live in their own
-/// namespace and there is no snake_case lint on macro identifiers.
+/// namespace and there is no `snake_case` lint on macro identifiers.
 ///
 /// ```ignore
 /// Seq!(Bt::self_missing(SLICE_AND_DICE), CastOnSelf(SLICE_AND_DICE))
@@ -81,7 +81,7 @@ pub enum Resource {
     SelfRage,
     /// Bot's energy (0 unless primary power is energy).
     SelfEnergy,
-    /// Bot's runic power (0 unless primary power is runic power, WotLK DK).
+    /// Bot's runic power (0 unless primary power is runic power, `WotLK` DK).
     SelfRunicPower,
     /// Rogue/feral combo points on the current target.
     SelfComboPoints,
@@ -115,7 +115,7 @@ pub enum Op {
     AtMost(u32),
 }
 
-/// Weapon categories matching CMaNGOS `ITEM_SUBCLASS_WEAPON_*`. Used by the
+/// Weapon categories matching `CMaNGOS` `ITEM_SUBCLASS_WEAPON_*`. Used by the
 /// `MainHandIs` / `OffHandIs` / `RangedIs` BT nodes to gate class abilities
 /// that require a specific weapon (e.g. rogue Backstab requires Dagger).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,10 +145,10 @@ impl WeaponType {
     }
 }
 
-/// WoW reputation rank (0..=7). Used by [`Bt::RepWithFactionBelow`]. The
+/// `WoW` reputation rank (0..=7). Used by [`Bt::RepWithFactionBelow`]. The
 /// discriminant values match the server's `ReputationRank` enum — `Neutral`
 /// (3) is the fallback the C++ FFI returns for factions the bot has never
-/// touched, which mirrors how the WoW client displays unfilled entries.
+/// touched, which mirrors how the `WoW` client displays unfilled entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum ReputationRank {
@@ -358,7 +358,7 @@ pub enum Bt {
     MainHandEnchanted,
     /// Off-hand has a temporary enchant applied.
     OffHandEnchanted,
-    /// At least `n` death-knight rune slots are ready to use (WotLK only).
+    /// At least `n` death-knight rune slots are ready to use (`WotLK` only).
     /// Always fails on Classic/TBC.
     RunesReady(u8),
     /// A boolean setting is enabled.
@@ -500,11 +500,11 @@ pub enum Bt {
     /// PvP-only strategies (battleground stay-on-target, world-PvP
     /// opportunistic aggression).
     PvpFlagged,
-    /// Bot is in an active duel (duel_state == 2 — countdown has
+    /// Bot is in an active duel (`duel_state` == 2 — countdown has
     /// finished and the fight has started). Used to switch into
     /// dueling combat mode and suppress party-support reactions.
     InDuel,
-    /// Bot has an open duel request / countdown (duel_state == 1 —
+    /// Bot has an open duel request / countdown (`duel_state` == 1 —
     /// `Player::duel` is set but `startTime == 0`). Gate for the
     /// auto-accept / decline decision layered on top of the `accept
     /// duel` setting.
@@ -620,7 +620,7 @@ pub enum Bt {
     UseSpiritHealer,
     /// Check if any group member is alive (for waiting for rez).
     HasAliveGroupMember,
-    /// Record death timestamp if not already set (use in Seq with IsAlive.not()).
+    /// Record death timestamp if not already set (use in Seq with `IsAlive.not()`).
     RecordDeathTime,
     /// Check if the bot has been dead for less than N milliseconds.
     DeadForLessThan(u64),
@@ -680,7 +680,7 @@ pub enum Bt {
     /// Called each tick in the combat wrapper after targeting resolves.
     /// For ranged-equipped bots, calls `auto_shoot` to start/maintain
     /// Auto Shot (bow/gun/crossbow) or Shoot (wand). For melee bots
-    /// (or when auto_shoot fails), calls `auto_attack(true)` to engage
+    /// (or when `auto_shoot` fails), calls `auto_attack(true)` to engage
     /// melee swings. Always returns Success so it doesn't block the
     /// combat pipeline Seq.
     EngageTarget,
@@ -795,7 +795,7 @@ pub enum Bt {
     UseRacial(SpellId),
     /// Activate the trinket in equipment slot `slot` (0 = top trinket,
     /// 1 = bottom trinket). Delegates to `BotInterface::use_trinket`
-    /// which reads the equipped item, walks its OnUse spells, and
+    /// which reads the equipped item, walks its `OnUse` spells, and
     /// fires the first ready one. Failure when the slot is empty, the
     /// trinket has no on-use effect, or everything is on cooldown.
     /// Strategies usually wrap this in `Throttle` gated on combat
@@ -812,9 +812,9 @@ pub enum Bt {
     AcceptReadyCheck,
     /// Accept a pending trade window. Failure when no trade is pending.
     AcceptTradeRequest,
-    /// Accept an incoming duel request. Failure when duel_state != 1.
+    /// Accept an incoming duel request. Failure when `duel_state` != 1.
     AcceptDuelRequest,
-    /// Decline an incoming duel request. Failure when duel_state != 1.
+    /// Decline an incoming duel request. Failure when `duel_state` != 1.
     DeclineDuelRequest,
     /// Accept a pending warlock/meeting-stone summon.
     AcceptSummon,
@@ -861,15 +861,15 @@ pub enum Bt {
     RandomEmote,
     /// Say a random message (RP phrases, idle chatter).
     RandomSay,
-    /// Apply all missing world buffs from config (AddAura for each).
+    /// Apply all missing world buffs from config (`AddAura` for each).
     ApplyWorldBuffs,
     /// Travel to a world buff location for `buff_id`.
     WorldBuffTravel(SpellId),
     /// Consume the next entry in the RTSC move queue.
     RtscConsumeMoveQueue,
-    /// Join LFG queue (WotLK only).
+    /// Join LFG queue (`WotLK` only).
     LfgJoin,
-    /// Accept LFG proposal (WotLK only).
+    /// Accept LFG proposal (`WotLK` only).
     LfgAccept,
     /// Accept a pending battleground invite.
     AcceptBgInvite,
@@ -1134,8 +1134,8 @@ impl BtNode for Bt {
                         }
                     }
                 }
-                if let Some(ref trace) = ctx.monitor_trace {
-                    if res != BtResult::Failure {
+                if let Some(ref trace) = ctx.monitor_trace
+                    && res != BtResult::Failure {
                         // Reconstruct a combined trace showing all children.
                         // Format: "Seq[last] > child_trace" for the last
                         // child, with earlier children appended as
@@ -1162,7 +1162,6 @@ impl BtNode for Bt {
                         }
                         *trace.borrow_mut() = combined;
                     }
-                }
                 return res;
             }
             Bt::Sel(children) => {
@@ -1190,11 +1189,10 @@ impl BtNode for Bt {
                     BtResult::Failure => BtResult::Success,
                     other @ BtResult::Running => other,
                 };
-                if let Some(ref trace) = ctx.monitor_trace {
-                    if r != BtResult::Failure {
+                if let Some(ref trace) = ctx.monitor_trace
+                    && r != BtResult::Failure {
                         trace.borrow_mut().insert(0, "Not".to_string());
                     }
-                }
                 return r;
             }
             Bt::Optional(child) => {
@@ -1238,11 +1236,10 @@ impl BtNode for Bt {
                         ctx.throttles.set_running(*key, false);
                     }
                 }
-                if let Some(ref trace) = ctx.monitor_trace {
-                    if result != BtResult::Failure {
+                if let Some(ref trace) = ctx.monitor_trace
+                    && result != BtResult::Failure {
                         trace.borrow_mut().insert(0, "Throttle".to_string());
                     }
-                }
                 return result;
             }
 
@@ -1501,11 +1498,10 @@ impl BtNode for Bt {
             Bt::MaintainRange(min_range) => {
                 let (too_close, dist) = ctx
                     .current_target()
-                    .map(|t| {
+                    .map_or((false, 0.0), |t| {
                         let d = ctx.interface.unit_distance(t);
                         (d < *min_range, d)
-                    })
-                    .unwrap_or((false, 0.0));
+                    });
                 if !too_close {
                     return BtResult::Failure;
                 }
@@ -1581,14 +1577,11 @@ impl BtNode for Bt {
                 if ctx.settings.mode == BehaviorMode::Stay {
                     return BtResult::Failure;
                 }
-                let target = match ctx.current_target() {
-                    Some(t) => t,
-                    None => {
-                        ctx.monitor(format_args!(
-                            "MOVE: StickToTarget({range}) FAIL (no target)"
-                        ));
-                        return BtResult::Failure;
-                    }
+                let target = if let Some(t) = ctx.current_target() { t } else {
+                    ctx.monitor(format_args!(
+                        "MOVE: StickToTarget({range}) FAIL (no target)"
+                    ));
+                    return BtResult::Failure;
                 };
                 let dist = ctx.interface.unit_distance(target);
                 if dist <= *range {
@@ -1922,11 +1915,10 @@ impl BtNode for Bt {
         // Record the winning leaf for the monitor trace.
         // Compositors (Seq/Sel/Not/Throttle) return above and push their own
         // path segments. Everything that reaches here is a leaf or condition.
-        if let Some(ref trace) = ctx.monitor_trace {
-            if matches!(result, BtResult::Success | BtResult::Running) {
+        if let Some(ref trace) = ctx.monitor_trace
+            && matches!(result, BtResult::Success | BtResult::Running) {
                 trace.borrow_mut().push(format!("{self:?}"));
             }
-        }
         result
     }
 }
@@ -2751,7 +2743,7 @@ fn tick_loot_roll(ctx: &mut TickContext<'_>) -> BtResult {
     }
 }
 
-/// `Bt::AutoLootRoll`. Same as LootRoll but intended for the delayed-roll
+/// `Bt::AutoLootRoll`. Same as `LootRoll` but intended for the delayed-roll
 /// strategy (rolls after a short delay).
 fn tick_auto_loot_roll(ctx: &mut TickContext<'_>) -> BtResult {
     if ctx.interface.get_pending_roll_count() == 0 {
@@ -2987,7 +2979,7 @@ fn tick_choose_travel_target(ctx: &mut TickContext<'_>) -> BtResult {
 }
 
 /// `Bt::ApplyWorldBuffs`. Get the list of missing world buffs from the C++
-/// config system and directly apply each one via AddAura.
+/// config system and directly apply each one via `AddAura`.
 fn tick_apply_world_buffs(ctx: &mut TickContext<'_>) -> BtResult {
     let needed = ctx.interface.get_needed_world_buffs();
     if needed.is_empty() {
@@ -3254,24 +3246,22 @@ fn tick_dungeon_stay_near_tank(ctx: &mut TickContext<'_>) -> BtResult {
     let dist_sq = dx * dx + dy * dy;
 
     // Stay within 15 yards of the tank
-    if dist_sq > 15.0 * 15.0 {
-        if ctx.interface.move_to(tank_pos.x, tank_pos.y, tank_pos.z) {
+    if dist_sq > 15.0 * 15.0
+        && ctx.interface.move_to(tank_pos.x, tank_pos.y, tank_pos.z) {
             return BtResult::Running;
         }
-    }
 
     BtResult::Success
 }
 
 fn tick_dungeon_avoid_breaking_cc(ctx: &mut TickContext<'_>) -> BtResult {
     // Check nearby enemies for CC — if our current target is CC'd, switch targets
-    if let Some(target) = ctx.current_target() {
-        if ctx.interface.is_unit_cc(target) {
+    if let Some(target) = ctx.current_target()
+        && ctx.interface.is_unit_cc(target) {
             // Target is CC'd — stop attacking it
             ctx.interface.auto_attack(false);
             return BtResult::Success;
         }
-    }
     BtResult::Failure
 }
 
@@ -3507,11 +3497,10 @@ fn tick_heal_interrupt(ctx: &mut TickContext<'_>) -> BtResult {
         if snap.max_health > 0 {
             let pct = (snap.health as f32) / (snap.max_health as f32);
             // If the target is above 95% health, cancel the heal
-            if pct > 0.95 {
-                if ctx.interface.interrupt_own_cast() {
+            if pct > 0.95
+                && ctx.interface.interrupt_own_cast() {
                     return BtResult::Success;
                 }
-            }
         }
     }
 

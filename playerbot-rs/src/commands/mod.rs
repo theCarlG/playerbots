@@ -43,7 +43,7 @@ pub enum BotCommand {
     Attack(Option<UnitHandle>),
     /// `pull` / `pull rti` — pull master's current target (or RTI mob).
     /// Only executed when the bot has the PULL strategy flag.
-    /// If PULL_BACK is also enabled, the reactive BT subtree automatically
+    /// If `PULL_BACK` is also enabled, the reactive BT subtree automatically
     /// returns the bot to the group after pulling.
     Pull(Option<UnitHandle>),
     /// Attack the unit marked with a raid target icon (1 = star … 8 = skull).
@@ -99,7 +99,7 @@ pub enum BotCommand {
     RtscJumpReset,
     /// `rtsc file save <file> [name_glob] [bot_glob]` — serialize saved
     /// locations for this bot (or matching bots in the group) to a log
-    /// file under the server LogsDir. `name_glob == "*"` matches all
+    /// file under the server `LogsDir`. `name_glob == "*"` matches all
     /// saved locations. When `bot_glob` is `None` PB2 restricts the
     /// export to this bot only.
     RtscFileSave {
@@ -429,9 +429,9 @@ pub enum BotCommand {
     Batch(Vec<BotCommand>),
 
     // -- Group coordination --
-    /// `set mt` — assign this bot as main tank in GroupCoordination.
+    /// `set mt` — assign this bot as main tank in `GroupCoordination`.
     SetMainTank,
-    /// `set ot` — assign this bot as off-tank in GroupCoordination.
+    /// `set ot` — assign this bot as off-tank in `GroupCoordination`.
     SetOffTank,
     /// `unset mt` / `unset ot` — remove tank assignment.
     UnsetTank,
@@ -453,17 +453,21 @@ pub enum BotCommand {
     AssignTankTarget(u8),
     /// `untank` / `untank <rti_icon>` — remove tank target assignment.
     UnassignTankTarget(Option<u8>),
+    /// `tank ?` — query this bot's tank role and assigned target icons.
+    TankQuery,
+    /// `cc ?` — query this bot's CC assignments.
+    CcQuery,
 
     // -- Monitor --
     /// `monitor on|off` — toggle the debug monitor for this bot.
     SetMonitor(bool),
 
     // -- Debug sub-commands --
-    /// `debug fsm` — show FSM state + WorldSub.
+    /// `debug fsm` — show FSM state + `WorldSub`.
     DebugFsm,
-    /// `debug claims` — show active claims in the shared ClaimTable.
+    /// `debug claims` — show active claims in the shared `ClaimTable`.
     DebugClaims,
-    /// `debug coord` — show GroupCoordination (tank order, MA, CC).
+    /// `debug coord` — show `GroupCoordination` (tank order, MA, CC).
     DebugCoord,
     /// `debug bt` — show last BT path.
     DebugBt,
@@ -490,7 +494,7 @@ impl BotCommand {
     /// - `AllowAll`: destructive or account-level ops (reset, blacklist,
     ///   resurrect, economy) — master / same-account / GM only.
     pub fn required_security(&self) -> SecurityLevel {
-        use BotCommand::*;
+        use BotCommand::{Status, ListSettings, Where, Help, Ready, Unknown, Debug, CheckLos, ListQuests, ListTalents, ListSpells, ListReputation, ListSkills, MailSummary, QueryFormation, QueryStance, QueryStrategies, QueryReactivity, QueryRti, QueryCcRti, QuerySaveMana, QueryLootPolicy, DebugFsm, DebugClaims, DebugCoord, DebugBt, Subscribe, Unsubscribe, Reset, ResetStrategies, BlacklistSpell, UnblacklistSpell, SetCheatFlags, GuildLeave, SetMode, SetCombatStrategies, ApplyStrategies, SetReactivity, Focus, Attack, Pull, AttackRti, PullRti, CcRti, GoTo, Guard, ComeToMe, RtscSelect, RtscCancel, RtscToggle, RtscMove, RtscMoveExact, RtscSaveHere, RtscSave, RtscUnsave, RtscGo, RtscShow, RtscSpellPosition, RtscReset, RtscLast, RtscJump, RtscJumpReset, RtscFileSave, RtscFileLoad, Repair, Vendor, SetHealThreshold, Mount, Resurrect, Flee, Free, Summon, CastOne, CastByName, UseItemByName, EquipItemByName, SetFormation, TravelTo, SetRange, SetRangeQualified, QueryRange, ApplyStrategiesAll, Stop, SetStance, SetPositionStance, MaxDps, ToggleSaveMana, SetSaveMana, ToggleSelfRes, KeepItem, UnkeepItem, SetChatChannel, SetPreferredRti, SetPreferredCcRti, Emote, ReleaseSpirit, AcceptRevive, Jump, UseHearth, QuestAccept, QuestDrop, MailTakeAll, SetPoison, ShowPoisons, SetTotem, ShowTotems, SetShamanImbue, ShowShamanImbues, SetPaladinAura, SetPaladinBlessing, SetPaladinGreaterBlessing, ShowPaladinPrefs, SetHunterAspect, SetHunterTrap, SetHunterSting, ShowHunterPrefs, SetWarlockCurse, SetWarlockPet, ShowWarlockPrefs, SetWarriorForcedStance, ShowWarriorPrefs, SetSuppressionDuty, SetDouseDuty, ShowEncounterPrefs, ApplyLootPolicy, SetWaitForAttack, TankAttack, Loot, DestroyItem, SkipSpell, LootRoll, GiveLeader, InvitePlayer, Pet, BuffTarget, BoostTarget, ReviveTarget, FollowTarget, FocusHeal, MoveStyle, Talk, Trainer, Taxi, Craft, Outfit, LogLevel, ShareQuest, DoQuest, Bank, AuctionHouse, GuildCommand, BgFree, Flag, SendMail, PossibleAttackTargets, ShowAttackers, Buy, Buyback, UnequipItemByName, Trade, QuestReward, CustomStrategy, WhatToSell, Teleport, Speak, ShowFaction, SetValue, AiProfile, Lfg, SetMainTank, SetOffTank, UnsetTank, SetMainAssist, SetMainAssistByName, AssignCc, UnassignCc, AssignTankTarget, UnassignTankTarget, TankQuery, CcQuery, Preset, SetMonitor, Batch};
         match self {
             // Information queries — anyone who can talk to the bot.
             Status | ListSettings | Where | Help | Ready | Unknown(_) | Debug | CheckLos
@@ -500,6 +504,7 @@ impl BotCommand {
             | QueryFormation | QueryStance | QueryStrategies(_)
             | QueryReactivity | QueryRti | QueryCcRti | QuerySaveMana | QueryLootPolicy
             | DebugFsm | DebugClaims | DebugCoord | DebugBt
+            | TankQuery | CcQuery
             | Subscribe(_) | Unsubscribe(_) => SecurityLevel::Talk,
 
             // Destructive / account-level — master only.
@@ -687,26 +692,26 @@ impl SecurityLevel {
 
 /// The incoming chat channel and language a command arrived on.
 ///
-/// The addons (Mangosbot UI, RaidControl) send commands via five channels:
+/// The addons (Mangosbot UI, `RaidControl`) send commands via five channels:
 /// WHISPER (`SendChatMessage(cmd, "WHISPER", …)` or the spoofed
-/// `BOT\t`-prefixed whisper), PARTY, RAID, GUILD, and as CHAT_MSG_ADDON on
-/// LANG_ADDON (via `SendAddonMessage("BOT", …)`). Replies need to go back on
-/// the matching channel: debug / `#a ` queries reply on CHAT_MSG_ADDON /
-/// LANG_ADDON, everything else whispers the sender.
+/// `BOT\t`-prefixed whisper), PARTY, RAID, GUILD, and as `CHAT_MSG_ADDON` on
+/// `LANG_ADDON` (via `SendAddonMessage("BOT", …)`). Replies need to go back on
+/// the matching channel: debug / `#a ` queries reply on `CHAT_MSG_ADDON` /
+/// `LANG_ADDON`, everything else whispers the sender.
 ///
-/// Values mirror CMaNGOS `ChatMsg` and `Language` — we keep them as raw
+/// Values mirror `CMaNGOS` `ChatMsg` and `Language` — we keep them as raw
 /// `u32` on the Rust side so we don't couple to a core enum we don't own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChatOrigin {
-    /// CMaNGOS `ChatMsg` value (CHAT_MSG_WHISPER = 0x06, CHAT_MSG_SAY = 0x01,
-    /// CHAT_MSG_PARTY = 0x02, CHAT_MSG_RAID = 0x03, CHAT_MSG_GUILD = 0x04,
-    /// CHAT_MSG_YELL = 0x05, CHAT_MSG_CHANNEL = 0x11, …).
+    /// `CMaNGOS` `ChatMsg` value (`CHAT_MSG_WHISPER` = 0x06, `CHAT_MSG_SAY` = 0x01,
+    /// `CHAT_MSG_PARTY` = 0x02, `CHAT_MSG_RAID` = 0x03, `CHAT_MSG_GUILD` = 0x04,
+    /// `CHAT_MSG_YELL` = 0x05, `CHAT_MSG_CHANNEL` = 0x11, …).
     pub chat_type: u32,
-    /// CMaNGOS `Language` value. `LANG_ADDON` = `0xFFFFFFFE` (-2 as i32).
+    /// `CMaNGOS` `Language` value. `LANG_ADDON` = `0xFFFFFFFE` (-2 as i32).
     pub lang: u32,
 }
 
-/// CMaNGOS `LANG_ADDON` sentinel, used by addon-channel payloads.
+/// `CMaNGOS` `LANG_ADDON` sentinel, used by addon-channel payloads.
 pub const LANG_ADDON: u32 = 0xFFFF_FFFE;
 
 impl ChatOrigin {
@@ -722,8 +727,8 @@ impl ChatOrigin {
     };
 
     /// True iff the command arrived on an addon channel — either as
-    /// CHAT_MSG_ADDON or any chat channel with `LANG_ADDON`. Replies must
-    /// go back via CHAT_MSG_ADDON / LANG_ADDON so the Mangosbot UI parses
+    /// `CHAT_MSG_ADDON` or any chat channel with `LANG_ADDON`. Replies must
+    /// go back via `CHAT_MSG_ADDON` / `LANG_ADDON` so the Mangosbot UI parses
     /// them instead of the player seeing a whisper.
     pub fn is_addon(&self) -> bool {
         self.lang == LANG_ADDON
@@ -835,12 +840,11 @@ fn selectors_match(bot: &BotState, selectors: &[protocol::TargetSelector]) -> bo
         .group_state
         .as_ref()
         .and_then(|gh| gh.state().try_read().ok())
-        .map(|gs| {
+        .map_or((false, false), |gs| {
             let mt = gs.coordination.main_tank() == Some(bot.handle);
             let ot = gs.coordination.off_tanks().any(|h| h == bot.handle);
             (mt, ot)
-        })
-        .unwrap_or((false, false));
+        });
 
     let subgroup = bot.snap.subgroup;
 
@@ -880,9 +884,9 @@ fn class_cc_spell(class: crate::bot::state::PlayerClass) -> Option<SpellId> {
 ///
 /// * When the origin is an addon channel (`origin.is_addon()` → true for
 ///   `#a …` prefixed commands and any LANG_ADDON-tagged chat), reply via
-///   `tell_addon` so the packet comes back as CHAT_MSG_ADDON / LANG_ADDON
+///   `tell_addon` so the packet comes back as `CHAT_MSG_ADDON` / `LANG_ADDON`
 ///   with the `BOT\t` prefix. Mangosbot's event handler fires both
-///   CHAT_MSG_WHISPER and CHAT_MSG_ADDON through the same `OnWhisper`
+///   `CHAT_MSG_WHISPER` and `CHAT_MSG_ADDON` through the same `OnWhisper`
 ///   parser (`Mangosbot.lua:3129-3138`), so the UI-critical state-change
 ///   confirmation strings ("Following...", "Formation set to …", …) are
 ///   still recognised regardless of which wire they come back on.
@@ -1120,11 +1124,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 let new_combat = bot.settings.strategies.get(BotStateKind::Combat);
                 if let Some(new_spec) =
                     crate::bot::init::spec_from_strategy_flags(bot.class, new_combat)
-                {
-                    if new_spec != bot.spec {
+                    && new_spec != bot.spec {
                         crate::bot::init::rebuild_for_spec(bot, new_spec);
                     }
-                }
             }
         }
         BotCommand::ResetStrategies => {
@@ -1692,27 +1694,23 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 });
             let enc_info = bot
                 .encounter
-                .as_ref()
-                .map(|enc| {
+                .as_ref().map_or_else(|| "enc=none".to_string(), |enc| {
                     format!(
                         "enc=boss:{} phase:{} active:{}",
                         enc.boss_entry(),
                         enc.phase_id(),
                         enc.is_active()
                     )
-                })
-                .unwrap_or_else(|| "enc=none".to_string());
+                });
             let group_info = bot
                 .group_state
                 .as_ref()
-                .and_then(|gh| gh.state().try_read().ok())
-                .map(|gs| {
+                .and_then(|gh| gh.state().try_read().ok()).map_or_else(|| "grp=none".to_string(), |gs| {
                     let mt = gs.coordination.main_tank().unwrap_or(0);
                     let ma = gs.coordination.main_assist_target.unwrap_or(0);
                     let claims = gs.encounter.claims.active_count(bot.snap.server_time_ms);
                     format!("grp=mt:{:#x} ma:{:#x} claims:{}", mt, ma, claims)
-                })
-                .unwrap_or_else(|| "grp=none".to_string());
+                });
             let msg = format!(
                 "DBG fsm={:?}{} mode={} react={:?} {} {} co={:#x} nc={:#x}",
                 fsm,
@@ -1732,7 +1730,7 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 .blackboard
                 .get_u32(crate::engine::blackboard::Key::WorldSubState);
             let ws_name = ws_raw
-                .map(|v| match v {
+                .map_or("n/a", |v| match v {
                     0 => "Follow",
                     1 => "Grind",
                     2 => "Quest",
@@ -1743,20 +1741,17 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                     7 => "Bg",
                     8 => "Travel",
                     _ => "?",
-                })
-                .unwrap_or("n/a");
+                });
             let enc = bot
                 .encounter
-                .as_ref()
-                .map(|e| {
+                .as_ref().map_or_else(|| "none".to_string(), |e| {
                     format!(
                         "boss={} phase={} active={}",
                         e.boss_entry(),
                         e.phase_id(),
                         e.is_active()
                     )
-                })
-                .unwrap_or_else(|| "none".to_string());
+                });
             let msg = format!("FSM: {:?} sub={} enc={}", fsm, ws_name, enc);
             reply(bot, pc, &msg);
         }
@@ -1764,16 +1759,14 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             let info = bot
                 .group_state
                 .as_ref()
-                .and_then(|gh| gh.state().try_read().ok())
-                .map(|gs| {
+                .and_then(|gh| gh.state().try_read().ok()).map_or_else(|| "Claims: no group".to_string(), |gs| {
                     let count = gs.encounter.claims.active_count(bot.snap.server_time_ms);
                     if count == 0 {
                         "Claims: 0 active".to_string()
                     } else {
                         format!("Claims: {} active", count)
                     }
-                })
-                .unwrap_or_else(|| "Claims: no group".to_string());
+                });
             reply(bot, pc, &info);
         }
         BotCommand::DebugBt => {
@@ -1841,22 +1834,15 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             let info = bot
                 .group_state
                 .as_ref()
-                .and_then(|gh| gh.state().try_read().ok())
-                .map(|gs| {
+                .and_then(|gh| gh.state().try_read().ok()).map_or_else(|| "Coord: no group".to_string(), |gs| {
                     let c = &gs.coordination;
                     let mt = c
-                        .main_tank()
-                        .map(|h| format!("{:#x}", h))
-                        .unwrap_or_else(|| "-".into());
+                        .main_tank().map_or_else(|| "-".into(), |h| format!("{:#x}", h));
                     let at = c
-                        .active_tank()
-                        .map(|h| format!("{:#x}", h))
-                        .unwrap_or_else(|| "-".into());
+                        .active_tank().map_or_else(|| "-".into(), |h| format!("{:#x}", h));
                     let ots: Vec<String> = c.off_tanks().map(|h| format!("{:#x}", h)).collect();
                     let ma = c
-                        .main_assist_target
-                        .map(|h| format!("{:#x}", h))
-                        .unwrap_or_else(|| "-".into());
+                        .main_assist_target.map_or_else(|| "-".into(), |h| format!("{:#x}", h));
                     format!(
                         "Coord: MT={} AT={} OT=[{}] MA={}",
                         mt,
@@ -1864,8 +1850,7 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                         ots.join(","),
                         ma
                     )
-                })
-                .unwrap_or_else(|| "Coord: no group".to_string());
+                });
             reply(bot, pc, &info);
         }
         BotCommand::CheckLos => {
@@ -2487,13 +2472,10 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             }
         }
         BotCommand::MoveStyle(style) => {
-            match style.as_str() {
-                "walk" => {
-                    // No dedicated flag yet — silently accept, BT defaults to run.
-                }
-                "run" | _ => {
-                    // Default behavior.
-                }
+            if style.as_str() == "walk" {
+                // No dedicated flag yet — silently accept, BT defaults to run.
+            } else {
+                // Default behavior.
             }
         }
         BotCommand::Talk => {
@@ -2636,7 +2618,7 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             if name.is_empty() {
                 reply(bot, pc, "ue: specify item name");
             } else {
-                let item_id = bot.interface.resolve_item_by_name(&name);
+                let item_id = bot.interface.resolve_item_by_name(name);
                 if item_id == 0 {
                     reply(bot, pc, &format!("ue: unknown item `{name}`"));
                 } else {
@@ -2708,7 +2690,7 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                     bot.interface.do_text_emote(eid);
                 } else {
                     // Say the text.
-                    bot.interface.say(&text, 0);
+                    bot.interface.say(text, 0);
                 }
             }
         }
@@ -2843,6 +2825,60 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 reply(bot, pc, "Not in a group.");
             }
         }
+        BotCommand::TankQuery => {
+            if let Some(ref gh) = bot.group_state {
+                if let Ok(gs) = gh.state().try_read() {
+                    let role = if gs.coordination.main_tank() == Some(bot.handle) {
+                        "mt"
+                    } else if gs.coordination.off_tanks().any(|h| h == bot.handle) {
+                        "ot"
+                    } else {
+                        "none"
+                    };
+                    let mut targets = String::new();
+                    for &(tank, icon) in &gs.coordination.tank_focus_targets {
+                        if tank == bot.handle && icon != 0 {
+                            if !targets.is_empty() {
+                                targets.push(' ');
+                            }
+                            targets.push_str(rti_icon_name(Some(icon)));
+                        }
+                    }
+                    if targets.is_empty() {
+                        reply(bot, pc, &format!("Tank: {role}"));
+                    } else {
+                        reply(bot, pc, &format!("Tank: {role}, targets: {targets}"));
+                    }
+                }
+            } else {
+                reply(bot, pc, "Tank: none");
+            }
+        }
+        BotCommand::CcQuery => {
+            if let Some(ref gh) = bot.group_state {
+                if let Ok(gs) = gh.state().try_read() {
+                    let mut icons = String::new();
+                    for &(spell, caster, target) in &gs.coordination.cc_assignments {
+                        if caster == bot.handle && target != 0 {
+                            if !icons.is_empty() {
+                                icons.push(' ');
+                            }
+                            icons.push_str(rti_icon_name(Some(target as u8)));
+                            if let Some(s) = spell {
+                                icons.push_str(&format!("({})", s.0));
+                            }
+                        }
+                    }
+                    if icons.is_empty() {
+                        reply(bot, pc, "CC: none");
+                    } else {
+                        reply(bot, pc, &format!("CC: {icons}"));
+                    }
+                }
+            } else {
+                reply(bot, pc, "CC: none");
+            }
+        }
         BotCommand::SetMonitor(on) => {
             bot.monitor_active = *on;
             let msg = if *on { "Monitor ON." } else { "Monitor OFF." };
@@ -2959,40 +2995,34 @@ fn describe_with_class_prefs(
             }
         }
         ClassPrefs::Paladin(p) => {
-            if flags.contains(StrategyFlags::AURA) {
-                if let Some(aura) = p.aura {
+            if flags.contains(StrategyFlags::AURA)
+                && let Some(aura) = p.aura {
                     append(format!("aura {}", aura.as_str()));
                 }
-            }
-            if flags.contains(StrategyFlags::BLESSING) {
-                if let Some(bless) = p.blessing {
+            if flags.contains(StrategyFlags::BLESSING)
+                && let Some(bless) = p.blessing {
                     append(format!("blessing {}", bless.as_str()));
                 }
-            }
         }
         ClassPrefs::Hunter(h) => {
-            if flags.contains(StrategyFlags::ASPECT) {
-                if let Some(aspect) = h.aspect {
+            if flags.contains(StrategyFlags::ASPECT)
+                && let Some(aspect) = h.aspect {
                     append(format!("aspect {}", aspect.as_str()));
                 }
-            }
-            if flags.contains(StrategyFlags::STING) {
-                if let Some(sting) = h.sting {
+            if flags.contains(StrategyFlags::STING)
+                && let Some(sting) = h.sting {
                     append(format!("sting {}", sting.as_str()));
                 }
-            }
         }
         ClassPrefs::Warlock(w) => {
-            if flags.contains(StrategyFlags::CURSE) {
-                if let Some(curse) = w.curse {
+            if flags.contains(StrategyFlags::CURSE)
+                && let Some(curse) = w.curse {
                     append(format!("curse {}", curse.as_str()));
                 }
-            }
-            if flags.contains(StrategyFlags::PET) {
-                if let Some(pet) = w.pet {
+            if flags.contains(StrategyFlags::PET)
+                && let Some(pet) = w.pet {
                     append(format!("pet {}", pet.as_str()));
                 }
-            }
         }
         _ => {}
     }

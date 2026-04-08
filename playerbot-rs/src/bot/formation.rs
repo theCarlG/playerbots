@@ -22,7 +22,7 @@
 //! - [`FormationOutput::Position`] — absolute `(x, y, z)` to be passed to
 //!   `move_to` (matches `Formation::GetLocation` in PB2).
 //!
-//! Step 8 of PB2_PARITY_PLAN wires [`resolve_formation`] into
+//! Step 8 of `PB2_PARITY_PLAN` wires [`resolve_formation`] into
 //! `engine::bt::tick_follow`. This module is pure math — no FFI — so it
 //! can be unit-tested cheaply.
 //!
@@ -295,7 +295,7 @@ fn far(ctx: &FormationContext<'_>) -> FormationOutput {
 // ── Position-based formations ───────────────────────────────────────────────
 
 /// `NearFormation::GetLocationInternal` — Formations.cpp:141.
-/// Range = follow_range + bounding_radius, angle = group follow angle.
+/// Range = `follow_range` + `bounding_radius`, angle = group follow angle.
 fn near(ctx: &FormationContext<'_>) -> FormationOutput {
     let range = ctx.follow_range + ctx.bounding_radius;
     let angle = group_follow_angle(ctx);

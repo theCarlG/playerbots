@@ -82,7 +82,7 @@ pub struct GroupCoordination {
     pub cc_assignments: [(Option<SpellId>, UnitHandle, UnitHandle); 8],
 
     /// Blessing coordination: which paladin covers which blessing.
-    /// (paladin_handle, blessing_spell_id). Up to 4 paladins.
+    /// (`paladin_handle`, `blessing_spell_id`). Up to 4 paladins.
     pub paladin_blessings: [(UnitHandle, SpellId); 4],
 
     /// Tank focus target assignments: (bot handle, RTI icon 1..=8).
@@ -102,7 +102,7 @@ pub struct GroupCoordination {
 }
 
 impl GroupCoordination {
-    /// Returns the main tank (first entry in tank_order), if assigned.
+    /// Returns the main tank (first entry in `tank_order`), if assigned.
     pub fn main_tank(&self) -> Option<UnitHandle> {
         let h = self.tank_order[0];
         if h != 0 { Some(h) } else { None }
@@ -119,7 +119,7 @@ impl GroupCoordination {
         }
     }
 
-    /// Returns all assigned off-tanks (tank_order[1..] where non-zero).
+    /// Returns all assigned off-tanks (`tank_order`[1..] where non-zero).
     pub fn off_tanks(&self) -> impl Iterator<Item = UnitHandle> + '_ {
         self.tank_order[1..].iter().copied().filter(|h| *h != 0)
     }
@@ -195,11 +195,10 @@ impl GroupCoordination {
     pub fn unassign_cc(&mut self, caster: UnitHandle, icon: Option<u8>) {
         for slot in &mut self.cc_assignments {
             if slot.1 == caster && caster != 0 {
-                if let Some(i) = icon {
-                    if slot.2 != i as UnitHandle {
+                if let Some(i) = icon
+                    && slot.2 != i as UnitHandle {
                         continue;
                     }
-                }
                 *slot = (None, 0, 0);
             }
         }
@@ -228,11 +227,10 @@ impl GroupCoordination {
     pub fn unassign_tank_target(&mut self, tank: UnitHandle, icon: Option<u8>) {
         for slot in &mut self.tank_focus_targets {
             if slot.0 == tank && tank != 0 {
-                if let Some(i) = icon {
-                    if slot.1 != i {
+                if let Some(i) = icon
+                    && slot.1 != i {
                         continue;
                     }
-                }
                 *slot = (0, 0);
             }
         }

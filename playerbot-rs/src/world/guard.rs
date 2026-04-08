@@ -1,5 +1,5 @@
 /// Guard mode — stay near a position, fight hostiles in range.
-use crate::engine::bt::Bt::{self, *};
+use crate::engine::bt::Bt::{self, InCombat, GuardReturn, StopMoving};
 use crate::{Sel, Seq};
 
 pub fn guard_subtree() -> Bt {

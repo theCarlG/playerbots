@@ -26,7 +26,7 @@ pub fn create_bot(
     // `+return,+delayed roll` in nonCombat). This matches PB2's
     // `AiFactory::Add*Strategies` runtime composition — see `pb2_kit_strategies`
     // for the per-class breakdown ported from `AiFactory.cpp`.
-    let kit = pb2_kit_strategies(class, spec);
+    let kit = kit_strategies(class, spec);
     state.settings.strategies = kit;
     state.settings.init_strategies = kit;
     // Tanks default to marking targets with skull (icon 7). Non-tanks
@@ -54,13 +54,13 @@ pub fn create_bot(
 /// Returns a `StrategySet` with the global baseline from
 /// `PlayerbotAIConfig.cpp` plus every strategy name the PB2 kit for
 /// `(class, spec)` turns on by default. This is the data side of
-/// PARITY_PLAN §3.2.
+/// `PARITY_PLAN` §3.2.
 ///
 /// These flags are the single source of truth for both chat-filter/query
 /// responses and BT runtime gating. The old `CombatOrder` bitfield has
 /// been removed; `co` commands now read/write the Combat strategy slot
 /// directly.
-pub fn pb2_kit_strategies(class: PlayerClass, spec: PlayerSpec) -> StrategySet {
+pub fn kit_strategies(class: PlayerClass, spec: PlayerSpec) -> StrategySet {
     use BotStateKind::{Combat, NonCombat};
     use StrategyFlags as F;
 
@@ -86,7 +86,9 @@ pub fn pb2_kit_strategies(class: PlayerClass, spec: PlayerSpec) -> StrategySet {
 /// Dispatch to the class module's `default_strategies` for class-specific
 /// combat flags. Returns `StrategyFlags::NONE` for mismatched (class, spec).
 fn class_strategies(class: PlayerClass, spec: PlayerSpec) -> StrategyFlags {
-    use PlayerClass::*;
+    use PlayerClass::{
+        DeathKnight, Druid, Hunter, Mage, Paladin, Priest, Rogue, Shaman, Warlock, Warrior,
+    };
     match class {
         Warrior => classes::warrior::default_strategies(spec),
         Paladin => classes::paladin::default_strategies(spec),
@@ -102,11 +104,13 @@ fn class_strategies(class: PlayerClass, spec: PlayerSpec) -> StrategyFlags {
 }
 
 /// Try to derive a `PlayerSpec` from a strategy flag set. Used when the
-/// MangosBot addon sends `co +protection,?` to override the bot's spec at
+/// `MangosBot` addon sends `co +protection,?` to override the bot's spec at
 /// runtime. Returns `None` when no spec flag is present or the flag doesn't
 /// match the bot's class.
 pub fn spec_from_strategy_flags(class: PlayerClass, flags: StrategyFlags) -> Option<PlayerSpec> {
-    use PlayerClass::*;
+    use PlayerClass::{
+        DeathKnight, Druid, Hunter, Mage, Paladin, Priest, Rogue, Shaman, Warlock, Warrior,
+    };
     match class {
         Warrior => classes::warrior::spec_from_flags(flags),
         Paladin => classes::paladin::spec_from_flags(flags),
@@ -122,7 +126,7 @@ pub fn spec_from_strategy_flags(class: PlayerClass, flags: StrategyFlags) -> Opt
 }
 
 /// Rebuild the bot's behavior tree and strategies for a new spec.
-/// Called when the MangosBot addon sends a spec strategy flag toggle
+/// Called when the `MangosBot` addon sends a spec strategy flag toggle
 /// (e.g. `co +protection` on a warrior).
 pub fn rebuild_for_spec(bot: &mut BotState, new_spec: PlayerSpec) {
     if bot.spec == new_spec {
@@ -131,7 +135,7 @@ pub fn rebuild_for_spec(bot: &mut BotState, new_spec: PlayerSpec) {
     bot.spec = new_spec;
     bot.role = new_spec.default_role();
     bot.trees = build_bot_trees(bot.class, new_spec);
-    let kit = pb2_kit_strategies(bot.class, new_spec);
+    let kit = kit_strategies(bot.class, new_spec);
     bot.settings.strategies = kit;
     bot.settings.init_strategies = kit;
     bot.settings.class_prefs =
@@ -460,7 +464,7 @@ mod tests {
         ];
         let base = F::MOUNT | F::AVOID_MOBS | F::RACIALS | F::DEFAULT | F::DUEL | F::PVP;
         for (c, s) in combos {
-            let set = pb2_kit_strategies(*c, *s);
+            let set = kit_strategies(*c, *s);
             assert!(
                 set.has(BotStateKind::Combat, base),
                 "{:?}/{:?} missing all-bot combat base",
@@ -482,7 +486,7 @@ mod tests {
     /// Spot-check warrior kits against PB2 AiFactory.cpp §3.2 exactly.
     #[test]
     fn warrior_kit_strategies_match_pb2() {
-        let prot = pb2_kit_strategies(PlayerClass::Warrior, PlayerSpec::WarriorProtection);
+        let prot = kit_strategies(PlayerClass::Warrior, PlayerSpec::WarriorProtection);
         let combat = prot.get(BotStateKind::Combat);
         for f in [
             F::PROTECTION,
@@ -504,7 +508,7 @@ mod tests {
             assert!(combat.contains(f), "prot warrior missing {:?}", f);
         }
 
-        let arms = pb2_kit_strategies(PlayerClass::Warrior, PlayerSpec::WarriorArms);
+        let arms = kit_strategies(PlayerClass::Warrior, PlayerSpec::WarriorArms);
         for f in [
             F::ARMS,
             F::DPS_ASSIST,
@@ -529,24 +533,24 @@ mod tests {
     /// but each has its own spec flag and off-spec crossover.
     #[test]
     fn priest_kit_strategies_match_pb2() {
-        let disc = pb2_kit_strategies(PlayerClass::Priest, PlayerSpec::PriestDiscipline);
+        let disc = kit_strategies(PlayerClass::Priest, PlayerSpec::PriestDiscipline);
         let disc_c = disc.get(BotStateKind::Combat);
         assert!(disc_c.contains(F::DISCIPLINE));
         assert!(disc_c.contains(F::OFFHEAL));
         assert!(disc_c.contains(F::DPS_ASSIST | F::FLEE | F::CURE | F::RANGED));
 
-        let holy = pb2_kit_strategies(PlayerClass::Priest, PlayerSpec::PriestHoly);
+        let holy = kit_strategies(PlayerClass::Priest, PlayerSpec::PriestHoly);
         assert!(holy.get(BotStateKind::Combat).contains(F::HOLY));
         assert!(holy.get(BotStateKind::Combat).contains(F::OFFDPS));
 
-        let shadow = pb2_kit_strategies(PlayerClass::Priest, PlayerSpec::PriestShadow);
+        let shadow = kit_strategies(PlayerClass::Priest, PlayerSpec::PriestShadow);
         assert!(shadow.get(BotStateKind::Combat).contains(F::SHADOW));
         assert!(shadow.get(BotStateKind::Combat).contains(F::OFFHEAL));
     }
 
     #[test]
     fn hunter_kit_strategies_match_pb2() {
-        let surv = pb2_kit_strategies(PlayerClass::Hunter, PlayerSpec::HunterSurvival);
+        let surv = kit_strategies(PlayerClass::Hunter, PlayerSpec::HunterSurvival);
         let c = surv.get(BotStateKind::Combat);
         for f in [
             F::SURVIVAL,
@@ -566,7 +570,7 @@ mod tests {
 
     #[test]
     fn rogue_kit_has_stealth_poisons_and_behind() {
-        let sub = pb2_kit_strategies(PlayerClass::Rogue, PlayerSpec::RogueSubtlety);
+        let sub = kit_strategies(PlayerClass::Rogue, PlayerSpec::RogueSubtlety);
         let c = sub.get(BotStateKind::Combat);
         assert!(c.contains(F::SUBTLETY));
         assert!(c.contains(F::STEALTH));
@@ -577,13 +581,13 @@ mod tests {
 
     #[test]
     fn deathknight_kit_has_dksquest_and_spec_aoe() {
-        let frost = pb2_kit_strategies(PlayerClass::DeathKnight, PlayerSpec::DeathKnightFrost);
+        let frost = kit_strategies(PlayerClass::DeathKnight, PlayerSpec::DeathKnightFrost);
         let c = frost.get(BotStateKind::Combat);
         assert!(c.contains(F::FROST));
         assert!(c.contains(F::FROST_AOE));
         assert!(c.contains(F::DKSQUEST));
 
-        let unh = pb2_kit_strategies(PlayerClass::DeathKnight, PlayerSpec::DeathKnightUnholy);
+        let unh = kit_strategies(PlayerClass::DeathKnight, PlayerSpec::DeathKnightUnholy);
         assert!(unh.get(BotStateKind::Combat).contains(F::UNHOLY));
         assert!(unh.get(BotStateKind::Combat).contains(F::UNHOLY_AOE));
     }

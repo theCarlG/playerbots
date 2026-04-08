@@ -1,6 +1,6 @@
 //! Factory reputation initialization — mirrors
 //! `PlayerbotFactory::InitReputations`. At level 60+ the bot is granted
-//! "honored"-cap standing (42000) with a fixed list of neutral and PvP
+//! "honored"-cap standing (42000) with a fixed list of neutral and `PvP`
 //! factions, split by team. TBC/WotLK builds add an extra pack of outland
 //! factions behind the expansion feature gate.
 //!
@@ -10,7 +10,7 @@
 use crate::ffi::interface::BotInterface;
 
 /// Minimum level before any reputation is granted. Matches the C++ source,
-/// which gated both the neutral and PvP factions behind `level >= 60`.
+/// which gated both the neutral and `PvP` factions behind `level >= 60`.
 const MIN_LEVEL: u32 = 60;
 
 /// Hard-coded "honored" cap value used by the C++ source. Preserved verbatim.

@@ -1,11 +1,11 @@
-//! Factory InitSkills — mirrors `PlayerbotFactory::InitSkills`.
+//! Factory `InitSkills` — mirrors `PlayerbotFactory::InitSkills`.
 //!
 //! Three sub-policies run in sequence:
 //!
 //!   1. `bot_update_skills_for_level` — refreshes the innate level-scaled
 //!      skills (languages, racials, …). Matches `Player::UpdateSkillsForLevel`.
 //!   2. Riding skill — granted based on level, with thresholds that vary
-//!      per expansion (classic 40/60, TBC 30/60/68/70, WotLK 20/40/60/70).
+//!      per expansion (classic 40/60, TBC 30/60/68/70, `WotLK` 20/40/60/70).
 //!   3. Weapon + armor skills — a random-roll table keyed on class. Weapon
 //!      skills are rolled with `SetRandomSkill`, picking a value inside
 //!      `[maxValue - level, maxValue]` and only upgrading if higher than
@@ -52,7 +52,7 @@ const CLASS_MAGE: u8 = 8;
 const CLASS_WARLOCK: u8 = 9;
 const CLASS_DRUID: u8 = 11;
 
-/// Run the factory InitSkills step.
+/// Run the factory `InitSkills` step.
 pub fn init_skills(iface: &dyn BotInterface, class_id: u8, level: u32) {
     iface.bot_update_skills_for_level();
 

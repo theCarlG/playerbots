@@ -7,7 +7,7 @@ use crate::{
     bot::settings::StrategyFlags,
     bot::state::PlayerSpec,
     engine::{
-        bt::Bt::{self, *},
+        bt::Bt::{self, StrategyEnabled, InCombat},
         macro_fsm::ActiveFsm,
     },
     noncombat::GroupBuff,
@@ -47,7 +47,7 @@ pub fn buffs(_spec: PlayerSpec) -> &'static [GroupBuff] {
 
 /// Per-spec default combat strategy flags (PB2 `AiFactory.cpp` DK branch).
 pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
-    use PlayerSpec::*;
+    use PlayerSpec::{DeathKnightBlood, DeathKnightFrost, DeathKnightUnholy};
     use StrategyFlags as F;
     let common = F::DKSQUEST | F::DPS_ASSIST | F::FLEE | F::CLOSE | F::CC;
     match spec {
@@ -60,7 +60,7 @@ pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
 
 /// Reverse-map strategy flags to a death knight `PlayerSpec`.
 pub fn spec_from_flags(flags: StrategyFlags) -> Option<PlayerSpec> {
-    use PlayerSpec::*;
+    use PlayerSpec::{DeathKnightBlood, DeathKnightFrost, DeathKnightUnholy};
     use StrategyFlags as F;
     if flags.contains(F::BLOOD) {
         return Some(DeathKnightBlood);

@@ -6,9 +6,9 @@ use crate::{Sel, Seq};
 use crate::{
     data::spells::vanilla::mage::*,
     engine::bt::{
-        Bt::{self, *},
-        Op::*,
-        Resource::*,
+        Bt::{self, MaintainRange, Cmp, CastOnSelf, InCombat, TargetIsCasting, CastOnTarget},
+        Op::{Below, AtLeast},
+        Resource::{SelfHealthPct, SelfManaPct, TargetHealthPct, NearbyCount},
     },
     engine::macro_fsm::ActiveFsm,
 };

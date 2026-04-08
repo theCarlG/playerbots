@@ -50,7 +50,7 @@ pub fn buffs(spec: PlayerSpec) -> &'static [GroupBuff] {
 
 /// Per-spec default combat strategy flags (PB2 `AiFactory.cpp` shaman branch).
 pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
-    use PlayerSpec::*;
+    use PlayerSpec::{ShamanElemental, ShamanEnhancement, ShamanRestoration};
     use StrategyFlags as F;
     match spec {
         ShamanElemental => {
@@ -95,7 +95,7 @@ pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
 
 /// Reverse-map strategy flags to a shaman `PlayerSpec`.
 pub fn spec_from_flags(flags: StrategyFlags) -> Option<PlayerSpec> {
-    use PlayerSpec::*;
+    use PlayerSpec::{ShamanElemental, ShamanEnhancement, ShamanRestoration};
     use StrategyFlags as F;
     if flags.contains(F::ELEMENTAL) {
         return Some(ShamanElemental);

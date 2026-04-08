@@ -6,9 +6,9 @@ use crate::{Sel, Seq};
 use crate::{
     data::spells::vanilla::druid::*,
     engine::bt::{
-        Bt::{self, *},
-        Op::*,
-        Resource::*,
+        Bt::{self, IsClass, ResurrectParty, Cmp, CastOnSelf, HealLowest, HealInjuredParty, GroupMembersBelow},
+        Op::{Below, AtLeast},
+        Resource::{SelfManaPct, SelfHealthPct, AttackerCount},
     },
     engine::macro_fsm::ActiveFsm,
 };

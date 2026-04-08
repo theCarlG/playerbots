@@ -1,6 +1,6 @@
 use crate::bot::settings::StrategyFlags;
 use crate::engine::bt::Bt;
-use crate::{Sel, Seq};
+use crate::Seq;
 
 /// Ranged strategy — maintain distance from the current target.
 /// Used by ranged DPS/healers to stay out of melee/cleave range.

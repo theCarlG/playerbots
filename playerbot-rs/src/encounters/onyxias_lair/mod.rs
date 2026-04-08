@@ -5,7 +5,7 @@
 ///   Phase 2 (65%→40%): Air. Melee hold, dodge Deep Breath, ranged normal.
 ///   Phase 3 (<40%): Ground again + whelp spawns.
 use super::{EncounterEvent, EncounterFsm};
-use crate::engine::bt::Bt::{self, *};
+use crate::engine::bt::Bt::{self, FleeToSafe, IsMeleeDps, HoldPosition, MoveBehind};
 use crate::ffi::SpellId;
 use crate::{Sel, Seq};
 

@@ -48,7 +48,7 @@ pub struct TickContext<'a> {
     /// Raw `ObjectGuid` of the player that commands this bot (master).
     /// `None` means the bot is solo / unclaimed — Follow falls back to RPG
     /// behaviour, and stranger whispers get the `INVITE` security tier so
-    /// that RaidControl commands can still claim the bot.
+    /// that `RaidControl` commands can still claim the bot.
     pub master_guid: Option<UnitHandle>,
 
     // ── FSM state ──────────────────────────────────────────────────────
@@ -188,22 +188,20 @@ impl<'a> TickContext<'a> {
     /// Get the group's main tank. Checks `GroupCoordination.tank_order` first,
     /// then falls back to the FFI `group_get_tank()` (C++ server-side role).
     pub fn group_tank(&self) -> Option<UnitHandle> {
-        if let Some(gs) = self.group_state {
-            if let Some(mt) = gs.coordination.main_tank() {
+        if let Some(gs) = self.group_state
+            && let Some(mt) = gs.coordination.main_tank() {
                 return Some(mt);
             }
-        }
         self.interface.group_get_tank()
     }
 
     /// Get the group's active tank (for tank-swap awareness).
     /// Falls back to `group_tank()` if no active tank is set.
     pub fn active_tank(&self) -> Option<UnitHandle> {
-        if let Some(gs) = self.group_state {
-            if let Some(at) = gs.coordination.active_tank() {
+        if let Some(gs) = self.group_state
+            && let Some(at) = gs.coordination.active_tank() {
                 return Some(at);
             }
-        }
         self.group_tank()
     }
 

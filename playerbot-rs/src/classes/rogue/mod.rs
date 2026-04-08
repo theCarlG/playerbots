@@ -46,7 +46,7 @@ pub fn buffs(_spec: PlayerSpec) -> &'static [GroupBuff] {
 
 /// Per-spec default combat strategy flags (PB2 `AiFactory.cpp` rogue branch).
 pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
-    use PlayerSpec::*;
+    use PlayerSpec::{RogueAssassination, RogueCombat, RogueSubtlety};
     use StrategyFlags as F;
     let common = F::DPS_ASSIST
         | F::AOE
@@ -67,7 +67,7 @@ pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
 
 /// Reverse-map strategy flags to a rogue `PlayerSpec`.
 pub fn spec_from_flags(flags: StrategyFlags) -> Option<PlayerSpec> {
-    use PlayerSpec::*;
+    use PlayerSpec::{RogueAssassination, RogueCombat, RogueSubtlety};
     use StrategyFlags as F;
     if flags.contains(F::ASSASSINATION) {
         return Some(RogueAssassination);

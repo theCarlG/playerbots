@@ -1,4 +1,4 @@
-//! Factory InitTaxiNodes — mirrors `PlayerbotFactory::InitTaxiNodes`.
+//! Factory `InitTaxiNodes` — mirrors `PlayerbotFactory::InitTaxiNodes`.
 //!
 //! The C++ source iterates `PlayerbotFactory::overworldTaxiNodeLevelsA/H`,
 //! static tables populated at startup from `sTaxiNodesStore` and filtered

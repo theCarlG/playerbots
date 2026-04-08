@@ -6,7 +6,7 @@
 use crate::ffi::SpellId;
 use crate::travel::destination::{TravelDestination, TravelKind, TravelPurpose};
 
-/// Known world buff locations. Each entry is a (spell_id, map, x, y, z).
+/// Known world buff locations. Each entry is a (`spell_id`, map, x, y, z).
 /// Coordinates are approximate (near the NPC / object that grants the buff).
 const WORLD_BUFF_LOCATIONS: &[(u32, u32, f32, f32, f32)] = &[
     // Rallying Cry of the Dragonslayer (Onyxia head, Stormwind)

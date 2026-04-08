@@ -42,7 +42,7 @@ pub fn buffs(_spec: PlayerSpec) -> &'static [GroupBuff] {
 
 /// Per-spec default combat strategy flags (PB2 `AiFactory.cpp` hunter branch).
 pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
-    use PlayerSpec::*;
+    use PlayerSpec::{HunterBeastMastery, HunterMarksmanship, HunterSurvival};
     use StrategyFlags as F;
     let common = F::DPS_ASSIST
         | F::RANGED
@@ -63,7 +63,7 @@ pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
 
 /// Reverse-map strategy flags to a hunter `PlayerSpec`.
 pub fn spec_from_flags(flags: StrategyFlags) -> Option<PlayerSpec> {
-    use PlayerSpec::*;
+    use PlayerSpec::{HunterBeastMastery, HunterMarksmanship, HunterSurvival};
     use StrategyFlags as F;
     if flags.contains(F::BEAST_MASTERY) {
         return Some(HunterBeastMastery);

@@ -1,4 +1,4 @@
-//! Factory InitTalents — mirrors `PlayerbotFactory::InitTalents(specNo)`.
+//! Factory `InitTalents` — mirrors `PlayerbotFactory::InitTalents(specNo)`.
 //!
 //! The C++ source walks `sTalentStore`, keeps rows whose `TalentTab` matches
 //! `spec_no` and whose `ClassMask` covers the bot's class, groups them by

@@ -15,7 +15,7 @@
 ///   - DPS phase: normal rotation (no override).
 ///   - Dance phase: move to safe zone based on eruption tracking.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::engine::bt::Bt::{self, *};
+use crate::engine::bt::Bt::{self, MoveToSafeZone};
 use crate::ffi::SpellId;
 
 pub const SPELL_ERUPTION_ZONE1: SpellId = SpellId(29998);

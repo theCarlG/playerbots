@@ -26,21 +26,21 @@
 //!
 //! | PB2 filter         | Tags                                                                                                     |
 //! |--------------------|----------------------------------------------------------------------------------------------------------|
-//! | StrategyChatFilter | `@nc=` `@nonc=` `@co=` `@noco=` `@react=` `@noreact=` `@dead=` `@nodead=`                                |
-//! | RoleChatFilter     | `@tank` `@dps` `@heal[er]` `@notank` `@nodps` `@noheal` `@ranged` `@melee`                               |
-//! | ClassChatFilter    | `@warrior` `@paladin` `@hunter` `@rogue` `@priest` `@shaman` `@mage` `@warlock` `@druid` `@deathknight`  |
-//! | RtiChatFilter      | `@star` `@circle` `@diamond` `@triangle` `@moon` `@square` `@cross` `@skull`                             |
-//! | CombatTypeChat     | `@ranged` `@melee` (class + role table)                                                                  |
-//! | LevelChatFilter    | `@60` `@10-20`                                                                                           |
-//! | GroupChatFilter    | `@group` `@nogroup` `@group2` `@group4-6` `@leader` `@raid` `@noraid` `@rleader`                         |
-//! | GuildChatFilter    | `@guild` `@guild=<name>` `@noguild` `@gleader` `@rank=<name>`                                            |
-//! | StateChatFilter    | `@needrepair` `@bagfull` `@bagalmostfull` `@inside` `@outside`                                           |
-//! | UsageChatFilter    | `@use=[link]` `@sell=[link]` `@need=[link]` `@greed=[link]`                                              |
-//! | TalentSpecChat     | `@arms` `@fury` `@protection` `@holy` `@frost` … (via `spec_name`)                                       |
-//! | LocationChatFilter | `@<mapname>` `@<areaname>` (lowercased)                                                                  |
-//! | RandomChatFilter   | `@random` `@random=25` `@fixedrandom` `@fixedrandom=25`                                                  |
-//! | GearChatFilter     | `@tier1` `@tier2-3`                                                                                      |
-//! | QuestChatFilter    | `@quest=<id>` `@quest=[link]`                                                                            |
+//! | `StrategyChatFilter` | `@nc=` `@nonc=` `@co=` `@noco=` `@react=` `@noreact=` `@dead=` `@nodead=`                                |
+//! | `RoleChatFilter`     | `@tank` `@dps` `@heal[er]` `@notank` `@nodps` `@noheal` `@ranged` `@melee`                               |
+//! | `ClassChatFilter`    | `@warrior` `@paladin` `@hunter` `@rogue` `@priest` `@shaman` `@mage` `@warlock` `@druid` `@deathknight`  |
+//! | `RtiChatFilter`      | `@star` `@circle` `@diamond` `@triangle` `@moon` `@square` `@cross` `@skull`                             |
+//! | `CombatTypeChat`     | `@ranged` `@melee` (class + role table)                                                                  |
+//! | `LevelChatFilter`    | `@60` `@10-20`                                                                                           |
+//! | `GroupChatFilter`    | `@group` `@nogroup` `@group2` `@group4-6` `@leader` `@raid` `@noraid` `@rleader`                         |
+//! | `GuildChatFilter`    | `@guild` `@guild=<name>` `@noguild` `@gleader` `@rank=<name>`                                            |
+//! | `StateChatFilter`    | `@needrepair` `@bagfull` `@bagalmostfull` `@inside` `@outside`                                           |
+//! | `UsageChatFilter`    | `@use=[link]` `@sell=[link]` `@need=[link]` `@greed=[link]`                                              |
+//! | `TalentSpecChat`     | `@arms` `@fury` `@protection` `@holy` `@frost` … (via `spec_name`)                                       |
+//! | `LocationChatFilter` | `@<mapname>` `@<areaname>` (lowercased)                                                                  |
+//! | `RandomChatFilter`   | `@random` `@random=25` `@fixedrandom` `@fixedrandom=25`                                                  |
+//! | `GearChatFilter`     | `@tier1` `@tier2-3`                                                                                      |
+//! | `QuestChatFilter`    | `@quest=<id>` `@quest=[link]`                                                                            |
 //!
 //! Reference: `/home/cg/Code/gitea/Karatefylla/mangos/classic/source/src/modules/PB2/playerbot/ChatFilter.cpp`.
 
@@ -230,7 +230,7 @@ fn head_token(msg: &str) -> &str {
 }
 
 /// Decode a fixed-size NUL-terminated C char buffer from the snapshot
-/// into a `&str`. CMaNGOS DBC strings and guild names are ASCII; any
+/// into a `&str`. `CMaNGOS` DBC strings and guild names are ASCII; any
 /// non-UTF-8 bytes after the first NUL (trailing zero padding) are
 /// ignored. Invalid UTF-8 before the NUL falls back to empty string.
 fn c_str_field(buf: &[std::ffi::c_char]) -> &str {
@@ -370,7 +370,7 @@ fn combat_type_filter(class: PlayerClass, role: BotRole, msg: &str) -> Option<St
         return Some(msg.to_string());
     }
 
-    use PlayerClass::*;
+    use PlayerClass::{Warrior, Paladin, Rogue, DeathKnight, Hunter, Priest, Mage, Warlock, Druid, Shaman};
     let drop = match class {
         Warrior | Paladin | Rogue | DeathKnight => ranged, // melee-only
         Hunter | Priest | Mage | Warlock => melee,         // ranged-only
@@ -425,7 +425,7 @@ fn class_filter(class: PlayerClass, msg: &str) -> Option<String> {
 // different filter's tag, not ours).
 
 fn spec_name(spec: PlayerSpec) -> &'static str {
-    use PlayerSpec::*;
+    use PlayerSpec::{WarriorArms, WarriorFury, WarriorProtection, PaladinHoly, PaladinProtection, PaladinRetribution, PriestDiscipline, PriestHoly, PriestShadow, DruidBalance, DruidFeral, DruidRestoration, HunterBeastMastery, HunterMarksmanship, HunterSurvival, MageArcane, MageFire, MageFrost, RogueAssassination, RogueCombat, RogueSubtlety, ShamanElemental, ShamanEnhancement, ShamanRestoration, WarlockAffliction, WarlockDemonology, WarlockDestruction, DeathKnightBlood, DeathKnightFrost, DeathKnightUnholy};
     match spec {
         WarriorArms => "arms",
         WarriorFury => "fury",
@@ -862,7 +862,7 @@ fn extract_quest_link_ids(value: &str, out: &mut Vec<u32>) {
         let after = &cursor[idx + "|Hquest:".len()..];
         // Id is up to the next ':' or '|'.
         let end = after
-            .find(|c: char| c == ':' || c == '|')
+            .find([':', '|'])
             .unwrap_or(after.len());
         if let Ok(id) = after[..end].parse::<u32>() {
             out.push(id);
@@ -942,7 +942,7 @@ fn gear_filter(snap: &BotWorldSnapshot, msg: &str) -> String {
     }
 }
 
-/// Average-ilvl-to-tier bands, copy-pasted from PB2's GearChatFilter.
+/// Average-ilvl-to-tier bands, copy-pasted from PB2's `GearChatFilter`.
 fn ilvl_to_tier(gs: u32) -> u32 {
     match gs {
         61..=69 => 1,
@@ -1034,12 +1034,12 @@ fn pseudo_rand_0_99() -> u32 {
 ///
 /// **Deliberate divergence from PB2's byte-exact output:** we don't
 /// pull in `std::mt19937` (no crate dependency wanted for this one
-/// site). Instead we run a SplitMix64 mixer on `typeNumber` to get a
+/// site). Instead we run a `SplitMix64` mixer on `typeNumber` to get a
 /// per-slot "seed" constant, then follow the same `+ guid_low + cycle`
 /// structure. The semantic contract is preserved: stable per bot,
 /// varies across bots, rotates at the requested rate, uniform modulo
 /// distribution. Because the pool of bots that passes a given
-/// `@fixedrandom=NN` is now determined by SplitMix instead of MT19937,
+/// `@fixedrandom=NN` is now determined by `SplitMix` instead of MT19937,
 /// the *identity* of the passing subset differs from PB2, but the
 /// *size* and *stability* of the subset match. No callers compare
 /// across the Rust/PB2 boundary so byte parity is not required.

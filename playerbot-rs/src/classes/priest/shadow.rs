@@ -6,9 +6,9 @@ use crate::{Sel, Seq};
 use crate::{
     data::spells::vanilla::priest::*,
     engine::bt::{
-        Bt::{self, *},
-        Op::*,
-        Resource::*,
+        Bt::{self, CastOnSelf, Cmp, InCombat, CastOnTarget},
+        Op::{AtLeast, Below},
+        Resource::{AttackerCount, SelfHealthPct},
     },
     engine::macro_fsm::ActiveFsm,
     ffi::SpellId,

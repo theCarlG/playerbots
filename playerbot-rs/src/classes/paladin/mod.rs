@@ -64,7 +64,7 @@ pub fn buffs(spec: PlayerSpec) -> &'static [GroupBuff] {
 
 /// Per-spec default combat strategy flags (PB2 `AiFactory.cpp` paladin branch).
 pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
-    use PlayerSpec::*;
+    use PlayerSpec::{PaladinProtection, PaladinHoly, PaladinRetribution};
     use StrategyFlags as F;
     match spec {
         PaladinProtection => {
@@ -115,7 +115,7 @@ pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
 
 /// Reverse-map strategy flags to a paladin `PlayerSpec`.
 pub fn spec_from_flags(flags: StrategyFlags) -> Option<PlayerSpec> {
-    use PlayerSpec::*;
+    use PlayerSpec::{PaladinProtection, PaladinHoly, PaladinRetribution};
     use StrategyFlags as F;
     if flags.contains(F::PROTECTION) {
         return Some(PaladinProtection);

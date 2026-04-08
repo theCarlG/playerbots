@@ -47,7 +47,7 @@ fn ammo_for_weapon(weapon_subclass: u32, class_id: u8) -> Option<u32> {
     }
 }
 
-/// Run the factory InitAmmo step for a bot.
+/// Run the factory `InitAmmo` step for a bot.
 ///
 /// `class_id`, `level` come from `BotWorldSnapshot.self` — the dispatcher
 /// snapshots these once and passes them in, avoiding a repeated FFI call.

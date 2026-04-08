@@ -1,6 +1,6 @@
 /// Travel graph — pathfinding between zones/maps.
 ///
-/// PB2's TravelNodeMap maintains a precomputed graph of flight paths, portals,
+/// PB2's `TravelNodeMap` maintains a precomputed graph of flight paths, portals,
 /// zone connections, and boats/zeppelins. This module provides the same
 /// abstraction. For now it operates as a simple same-map distance check;
 /// cross-map pathing (flight paths, boats) will be added incrementally.

@@ -13,7 +13,7 @@
 /// run to the corner. Burning Adrenaline on the tank = tank swap (handled
 /// by reactive layer picking up a new MT target).
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, MoveAwayFromRaid};
 use crate::ffi::SpellId;
 use crate::{Sel, Seq};
 

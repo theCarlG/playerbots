@@ -6,7 +6,7 @@
 ///   Phase 2 (< 25%): same as Ground, adds spawn continuously.
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::Seq;
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, AttackNearest, IsRanged, MaintainRange};
 use crate::ffi::SpellId;
 
 pub const ENTRY_SON_OF_FLAME: u32 = 12143;

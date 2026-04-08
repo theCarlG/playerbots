@@ -51,7 +51,7 @@ pub fn buffs(_spec: PlayerSpec) -> &'static [GroupBuff] {
 
 /// Per-spec default combat strategy flags (PB2 `AiFactory.cpp` mage branch).
 pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
-    use PlayerSpec::*;
+    use PlayerSpec::{MageArcane, MageFire, MageFrost};
     use StrategyFlags as F;
     let common =
         F::DPS_ASSIST | F::FLEE | F::CURE | F::RANGED | F::CC | F::BUFF | F::AOE | F::BOOST;
@@ -65,7 +65,7 @@ pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
 
 /// Reverse-map strategy flags to a mage `PlayerSpec`.
 pub fn spec_from_flags(flags: StrategyFlags) -> Option<PlayerSpec> {
-    use PlayerSpec::*;
+    use PlayerSpec::{MageArcane, MageFire, MageFrost};
     use StrategyFlags as F;
     if flags.contains(F::ARCANE) {
         return Some(MageArcane);

@@ -9,10 +9,10 @@
 ///   - **Teleport** (20618): random teleport to Majordomo, threat reset.
 ///   - **Magic Reflection** (20619): 10s shield on 2 adds — stop casting.
 ///   - **Damage Reflection** (21075): 10s shield on 2 adds — stop melee.
-///   - Adds should be tanked spread to avoid AoE chaining.
+///   - Adds should be tanked spread to avoid `AoE` chaining.
 /// Interrupt priority on healers; DPS assists RTI marks.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, TargetCastingInterruptible, Interrupt, IsRanged, MaintainRange};
 use crate::ffi::SpellId;
 use crate::{Sel, Seq};
 

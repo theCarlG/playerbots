@@ -9,12 +9,12 @@
 ///     and becomes attackable. Standard tank-and-spank with:
 ///     - **War Stomp** (25188): PBAOE stun — melee spreads
 ///     - **Fireball Volley** (22425): unavoidable raid damage
-///     - **Conflagration** (23023): targeted fire DoT
+///     - **Conflagration** (23023): targeted fire `DoT`
 ///
 /// The MC controller is human — bots focus on add management in P1 and
 /// DPS in P2.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, IsRanged, MaintainRange, IsMeleeDps, MoveBehind};
 use crate::ffi::SpellId;
 use crate::{Sel, Seq};
 

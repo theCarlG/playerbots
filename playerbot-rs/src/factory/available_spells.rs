@@ -1,11 +1,11 @@
-//! Factory InitAvailableSpells — mirrors
+//! Factory `InitAvailableSpells` — mirrors
 //! `PlayerbotFactory::InitAvailableSpells`.
 //!
 //! Two steps:
 //!
 //! 1. Call `learnDefaultSpells()` + `learnClassLevelSpells(true)` on the bot
 //!    via the FFI — the heavy lifting (race/class starter spells and every
-//!    class spell at the current level) is done by CMaNGOS itself.
+//!    class spell at the current level) is done by `CMaNGOS` itself.
 //! 2. Top up a handful of spells the C++ source hard-codes as "always
 //!    present" but that the class-level spellbook does not cover: extra
 //!    paladin strikes (TBC/classic), mage polymorph variants at 60,
@@ -28,7 +28,7 @@ const CLASS_MAGE: u8 = 8;
 const CLASS_WARLOCK: u8 = 9;
 const CLASS_DRUID: u8 = 11;
 
-/// Run both CMaNGOS spellbook helpers and top up the hard-coded extras
+/// Run both `CMaNGOS` spellbook helpers and top up the hard-coded extras
 /// that `PlayerbotFactory::InitAvailableSpells` adds.
 pub fn init_available_spells(iface: &dyn BotInterface, class_id: u8, level: u32) {
     // Step 1 — let CMaNGOS fill the default + class-level spellbook.

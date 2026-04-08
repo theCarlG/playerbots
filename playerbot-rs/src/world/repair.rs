@@ -1,6 +1,6 @@
 use crate::Seq;
 /// Repair behavior — find repair NPC and repair all equipment.
-use crate::engine::bt::Bt::{self, *};
+use crate::engine::bt::Bt::{self, InCombat, SettingEnabled, DurabilityBelow, RepairEquipment};
 use crate::engine::bt::Setting;
 
 pub fn repair_subtree() -> Bt {

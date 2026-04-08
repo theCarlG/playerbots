@@ -33,7 +33,7 @@ use ffi::{
 pub extern "C" fn playerbot_init() {}
 
 /// Install (or clear, with null) the global log sink that bridges Rust log
-/// calls into CMaNGOS `sLog`. Safe to call before `playerbot_init`.
+/// calls into `CMaNGOS` `sLog`. Safe to call before `playerbot_init`.
 ///
 /// # Safety
 /// `sink` must either be null or a valid `extern "C" fn(u8, *const c_char)`
@@ -317,7 +317,7 @@ pub unsafe extern "C" fn playerbot_damage_taken(
 /// say, etc.). `sender_guid` is the `ObjectGuid` raw value of the
 /// commanding player (0 = internal/system, bypasses gating). `security`
 /// is a `commands::SecurityLevel` byte computed by `PlayerbotRust::
-/// ComputeSenderSecurity` (DENY_ALL/TALK/INVITE/ALLOW_ALL); each
+/// ComputeSenderSecurity` (`DENY_ALL/TALK/INVITE/ALLOW_ALL`); each
 /// `BotCommand` declares the minimum level it requires.
 ///
 /// # Safety
@@ -484,7 +484,7 @@ unsafe fn packet_bytes(data: *const u8, len: u32) -> Vec<u8> {
 }
 
 fn class_from_id(class_id: u8) -> bot::state::PlayerClass {
-    use bot::state::PlayerClass::*;
+    use bot::state::PlayerClass::{Warrior, Paladin, Hunter, Rogue, Priest, DeathKnight, Shaman, Mage, Warlock, Druid};
     match class_id {
         1 => Warrior,
         2 => Paladin,
@@ -502,11 +502,11 @@ fn class_from_id(class_id: u8) -> bot::state::PlayerClass {
 
 /// Map a (class, talent-tab-index) pair to the concrete `PlayerSpec`.
 ///
-/// Talent tab indices (0/1/2) follow the WoW DBC `TalentTab` ordering.
+/// Talent tab indices (0/1/2) follow the `WoW` DBC `TalentTab` ordering.
 /// The stored `specNo` from `sRandomPlayerbotMgr` uses the same numbering.
 fn spec_from_class_and_tab(class: bot::state::PlayerClass, tab: u32) -> bot::state::PlayerSpec {
-    use bot::state::PlayerClass::*;
-    use bot::state::PlayerSpec::*;
+    use bot::state::PlayerClass::{Warrior, Paladin, Hunter, Rogue, Priest, DeathKnight, Shaman, Mage, Warlock, Druid};
+    use bot::state::PlayerSpec::{WarriorArms, WarriorFury, WarriorProtection, PaladinHoly, PaladinProtection, PaladinRetribution, HunterBeastMastery, HunterMarksmanship, HunterSurvival, RogueAssassination, RogueCombat, RogueSubtlety, PriestDiscipline, PriestHoly, PriestShadow, DeathKnightBlood, DeathKnightFrost, DeathKnightUnholy, ShamanElemental, ShamanEnhancement, ShamanRestoration, MageArcane, MageFire, MageFrost, WarlockAffliction, WarlockDemonology, WarlockDestruction, DruidBalance, DruidFeral, DruidRestoration};
     match (class, tab) {
         (Warrior, 0) => WarriorArms,
         (Warrior, 1) => WarriorFury,

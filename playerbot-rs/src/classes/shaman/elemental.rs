@@ -6,9 +6,9 @@ use crate::{Sel, Seq};
 use crate::{
     data::spells::vanilla::shaman::*,
     engine::bt::{
-        Bt::{self, *},
-        Op::*,
-        Resource::*,
+        Bt::{self, MaintainRange, DropConfiguredTotems, InCombat, TargetIsCasting, CastOnTarget, Cmp},
+        Op::AtLeast,
+        Resource::NearbyCount,
     },
     engine::macro_fsm::ActiveFsm,
 };

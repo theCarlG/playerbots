@@ -16,7 +16,7 @@
 ///   - KT active: dodge Shadow Fissure (flee if debuffed).
 ///   - Adds + portal: non-tanks switch to adds, tanks stay on KT.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::engine::bt::Bt::{self, *};
+use crate::engine::bt::Bt::{self, AttackNearest, FleeToSafe, IsTank};
 use crate::ffi::SpellId;
 use crate::{Sel, Seq};
 

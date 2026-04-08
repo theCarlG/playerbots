@@ -8,9 +8,9 @@ use crate::{
     engine::{
         aura_helpers::DEMORALIZING_SHOUT_RANKS,
         bt::{
-            Bt::{self, *},
-            Op::*,
-            Resource::*,
+            Bt::{self, Cmp, CastOnSelf, InShapeshift, CastOnTarget, StickToTarget, InCombat, Not},
+            Op::Below,
+            Resource::SelfHealthPct,
         },
         macro_fsm::ActiveFsm,
     },

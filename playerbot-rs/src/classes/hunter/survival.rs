@@ -8,9 +8,9 @@ use crate::{
     engine::{
         aura_helpers::{HUNTERS_MARK_RANKS, SERPENT_STING_RANKS},
         bt::{
-            Bt::{self, *},
-            Op::*,
-            Resource::*,
+            Bt::{self, MaintainRange, Cmp, CastOnSelf, InCombat, CastOnTarget, TargetIsCasting},
+            Op::Below,
+            Resource::{SelfHealthPct, TargetDistance},
         },
         macro_fsm::ActiveFsm,
     },

@@ -56,7 +56,7 @@ pub fn buffs(_spec: PlayerSpec) -> &'static [GroupBuff] {
 
 /// Per-spec default combat strategy flags (PB2 `AiFactory.cpp` warrior branch).
 pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
-    use PlayerSpec::*;
+    use PlayerSpec::{WarriorProtection, WarriorArms, WarriorFury};
     use StrategyFlags as F;
     match spec {
         WarriorProtection => {
@@ -79,7 +79,7 @@ pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
 
 /// Reverse-map strategy flags to a warrior `PlayerSpec`.
 pub fn spec_from_flags(flags: StrategyFlags) -> Option<PlayerSpec> {
-    use PlayerSpec::*;
+    use PlayerSpec::{WarriorArms, WarriorFury, WarriorProtection};
     use StrategyFlags as F;
     if flags.contains(F::ARMS) {
         return Some(WarriorArms);

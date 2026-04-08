@@ -8,9 +8,9 @@ use crate::{
     engine::{
         aura_helpers::{BATTLE_SHOUT_RANKS, REND_RANKS},
         bt::{
-            Bt::{self, *},
-            Op::*,
-            Resource::*,
+            Bt::{self, InShapeshift, CastOnTarget, StickToTarget, InCombat, Not, CastOnSelf, Cmp},
+            Op::Below,
+            Resource::{SelfHealthPct, TargetHealthPct},
         },
         macro_fsm::ActiveFsm,
     },

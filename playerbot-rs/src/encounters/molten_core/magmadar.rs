@@ -5,7 +5,7 @@
 ///   - Tanks: taunt after Panic fear breaks.
 ///   - Melee DPS: normal rotation.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, IsRanged, MaintainRange, IsTank, Taunt};
 use crate::ffi::SpellId;
 use crate::{Sel, Seq};
 

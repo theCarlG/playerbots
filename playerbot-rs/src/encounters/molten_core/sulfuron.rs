@@ -8,7 +8,7 @@
 /// The encounter is largely add-management. Once adds die, Sulfuron
 /// is straightforward tank-and-spank.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, TargetCastingInterruptible, Interrupt, IsRanged, MaintainRange};
 use crate::ffi::SpellId;
 use crate::{Sel, Seq};
 

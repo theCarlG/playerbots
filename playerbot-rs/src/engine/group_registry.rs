@@ -81,8 +81,8 @@ impl Drop for GroupHandle {
         // in between the check and the removal: any such `acquire` would
         // block on the mutex, and once it runs it will find the entry gone
         // and re-insert a fresh one.
-        if Arc::strong_count(&self.arc) == 1 {
-            if let Ok(mut map) = registry().lock() {
+        if Arc::strong_count(&self.arc) == 1
+            && let Ok(mut map) = registry().lock() {
                 // Defensive: only remove if the entry's weak points at our
                 // arc. If someone else already replaced it, leave their
                 // entry alone.
@@ -92,7 +92,6 @@ impl Drop for GroupHandle {
                     map.remove(&self.key);
                 }
             }
-        }
     }
 }
 

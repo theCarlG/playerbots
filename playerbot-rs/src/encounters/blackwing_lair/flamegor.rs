@@ -4,7 +4,7 @@
 /// Flame Buffet). **Distinct**: Flamegor casts `Frenzy` periodically;
 /// a hunter Tranquilizing Shot must dispel it.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::engine::bt::Bt::{self, *};
+use crate::engine::bt::Bt::{self, IsMeleeDps, MoveBehind, IsRanged, MaintainRange};
 use crate::ffi::SpellId;
 use crate::{Sel, Seq};
 

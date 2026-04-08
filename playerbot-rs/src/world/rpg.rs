@@ -1,7 +1,7 @@
 /// RPG mode — wander town, interact with NPCs, emote.
 ///
 /// Low-intensity behavior for idle bots that should look like real players.
-use crate::engine::bt::Bt::{self, *};
+use crate::engine::bt::Bt::{self, InCombat, RpgInteractNpc, RpgEmote, RpgWander, StopMoving};
 use crate::{Sel, Seq};
 
 pub fn rpg_subtree() -> Bt {

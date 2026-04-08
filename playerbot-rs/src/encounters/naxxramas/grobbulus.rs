@@ -12,7 +12,7 @@
 ///   - Otherwise: normal rotation.
 use super::super::{EncounterEvent, EncounterFsm};
 use crate::Seq;
-use crate::engine::bt::Bt::{self, *};
+use crate::engine::bt::Bt::{self, MoveAwayFromRaid};
 use crate::ffi::SpellId;
 
 pub const AURA_MUTATING_INJECTION: SpellId = SpellId(28169);

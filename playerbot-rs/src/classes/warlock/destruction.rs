@@ -6,9 +6,9 @@ use crate::{Sel, Seq};
 use crate::{
     data::spells::vanilla::warlock::*,
     engine::bt::{
-        Bt::{self, *},
-        Op::*,
-        Resource::*,
+        Bt::{self, MaintainRange, CastOnSelf, Cmp, Not, InCombat, CastOnTarget},
+        Op::Below,
+        Resource::{SelfManaPct, SelfHealthPct, TargetHealthPct},
     },
     engine::macro_fsm::ActiveFsm,
     ffi::SpellId,

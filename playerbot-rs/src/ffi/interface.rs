@@ -67,11 +67,11 @@ pub trait BotInterface: Send {
     fn bot_weapon_enchanted(&self, _slot: u8) -> bool {
         false
     }
-    /// Bitmask of ready death-knight rune slots (WotLK only; bits 0–5).
+    /// Bitmask of ready death-knight rune slots (`WotLK` only; bits 0–5).
     fn bot_runes_ready_mask(&self) -> u8 {
         0
     }
-    /// True if the bot has learned `spell_id` (Player::HasSpell). Does not
+    /// True if the bot has learned `spell_id` (`Player::HasSpell`). Does not
     /// check cooldown or power cost — use `can_cast` for full castability.
     /// Default `true` so existing mocks stay happy; real impl calls C.
     fn knows_spell(&self, _spell_id: SpellId) -> bool {
@@ -107,7 +107,7 @@ pub trait BotInterface: Send {
     fn cast_spell_pos(&self, spell_id: SpellId, x: f32, y: f32, z: f32) -> bool;
     fn move_to(&self, x: f32, y: f32, z: f32) -> bool;
     fn follow(&self, target: UnitHandle, dist: f32, angle: f32) -> bool;
-    /// Chase a unit in combat using MoveChase — smoothly tracks the target
+    /// Chase a unit in combat using `MoveChase` — smoothly tracks the target
     /// at the given distance and angle without restarting splines every tick.
     /// Default falls back to `follow` so test mocks don't need updating.
     fn chase(&self, target: UnitHandle, dist: f32, angle: f32) -> bool {
@@ -140,8 +140,8 @@ pub trait BotInterface: Send {
     fn tell_player(&self, _target_guid: u64, _msg: &str) -> bool {
         false
     }
-    /// Addon-channel reply: send a message back over CHAT_MSG_ADDON /
-    /// LANG_ADDON to the requester so the Mangosbot / RaidControl UI's
+    /// Addon-channel reply: send a message back over `CHAT_MSG_ADDON` /
+    /// `LANG_ADDON` to the requester so the Mangosbot / `RaidControl` UI's
     /// addon-message listener consumes it. Used when the incoming command
     /// arrived via the addon wire (`#a` prefix, `SendAddonMessage("BOT",…)`,
     /// or the `debug …` shortcut). Mirrors PB2 `PlayerbotAI.cpp:3475-3485`.
@@ -184,7 +184,7 @@ pub trait BotInterface: Send {
     /// Assign raid target icon `icon` (0..=7, raw `Group::SetTargetIcon`
     /// indexing — star=0, circle=1, diamond=2, triangle=3, moon=4,
     /// square=5, cross=6, skull=7) to `target`. Broadcasts
-    /// MSG_RAID_TARGET_UPDATE to every group member so Mangosbot
+    /// `MSG_RAID_TARGET_UPDATE` to every group member so Mangosbot
     /// marker UI and other clients redraw. Returns `false` when the
     /// bot is ungrouped, the icon is out of range, or the target
     /// cannot be resolved. Passing `target = 0` clears the icon.
@@ -357,8 +357,8 @@ pub trait BotInterface: Send {
     /// Activate the trinket equipped in `slot` (0 = top trinket /
     /// `EQUIPMENT_SLOT_TRINKET1`, 1 = bottom trinket /
     /// `EQUIPMENT_SLOT_TRINKET2`). Resolves the item slot, walks its
-    /// OnUse spell list, and fires the first ready one. Returns `false`
-    /// when the slot is empty, the item has no OnUse effect, every OnUse
+    /// `OnUse` spell list, and fires the first ready one. Returns `false`
+    /// when the slot is empty, the item has no `OnUse` effect, every `OnUse`
     /// spell is on cooldown, or the cast fails. Used by the
     /// `Bt::UseTrinket(slot)` BT leaf (11h). Default stub returns
     /// `false` so existing mocks stay happy.
@@ -385,7 +385,7 @@ pub trait BotInterface: Send {
     fn accept_trade(&self) -> bool {
         false
     }
-    /// Accept an incoming duel request (duel_state == 1).
+    /// Accept an incoming duel request (`duel_state` == 1).
     fn accept_duel(&self) -> bool {
         false
     }
@@ -404,7 +404,7 @@ pub trait BotInterface: Send {
 
     /* ── PvP / duel / faction (11d) ──────────────────────────────────── */
 
-    /// True when the bot currently has the PvP flag set
+    /// True when the bot currently has the `PvP` flag set
     /// (`Player::IsPvP`). Used by `PvpFlagged` BT condition to gate
     /// PvP-only strategies.
     fn is_pvp_flagged(&self) -> bool {
@@ -488,7 +488,7 @@ pub trait BotInterface: Send {
     fn gameobject_position(&self, _handle: u64) -> BotPosition {
         BotPosition::default()
     }
-    /// Find the nearest spawned GameObject with `entry` within `range` yards.
+    /// Find the nearest spawned `GameObject` with `entry` within `range` yards.
     /// Returns the packed GUID, or `None` if no matching GO is in range.
     /// Used by instance FSMs for mechanics like BWL Suppression Devices and
     /// MC pre-Majordomo rune dousing.
@@ -638,13 +638,13 @@ pub trait BotInterface: Send {
         false
     }
 
-    /// Resolve a player name (case-insensitive) to their ObjectGuid.
+    /// Resolve a player name (case-insensitive) to their `ObjectGuid`.
     /// Returns 0 when no player matches.
     fn resolve_player_by_name(&self, _name: &str) -> UnitHandle {
         0
     }
 
-    /// Unequip the item with the given item_id from equipped slots, moving it to bags.
+    /// Unequip the item with the given `item_id` from equipped slots, moving it to bags.
     /// Returns true if the item was successfully unequipped.
     fn unequip_item(&self, _item_id: ItemId) -> bool {
         false
@@ -660,7 +660,7 @@ pub trait BotInterface: Send {
         false
     }
 
-    /// Share a quest with the party. quest_id=0 means first shareable quest.
+    /// Share a quest with the party. `quest_id=0` means first shareable quest.
     fn share_quest(&self, _quest_id: u32) -> bool {
         false
     }
@@ -836,7 +836,7 @@ pub trait BotInterface: Send {
     }
 
     /// Take all money and items from every mail in the inbox. Requires the
-    /// bot to be next to a mailbox GameObject.
+    /// bot to be next to a mailbox `GameObject`.
     fn bot_mail_take_all(&self) -> bool {
         false
     }
@@ -1045,7 +1045,7 @@ pub trait BotInterface: Send {
     }
 
     /// Get the position of a BG objective.
-    /// `objective_type`: 0=defend, 1=assault, 2=flag, 3=return_flag.
+    /// `objective_type`: 0=defend, 1=assault, 2=flag, `3=return_flag`.
     fn get_bg_objective_pos(&self, _objective_type: u8) -> BotPosition {
         BotPosition {
             x: 0.0,
@@ -1058,12 +1058,12 @@ pub trait BotInterface: Send {
 
     /* ── LFG ─────────────────────────────────────────────────────────── */
 
-    /// Join the LFG queue (WotLK only).
+    /// Join the LFG queue (`WotLK` only).
     fn lfg_join(&self) -> bool {
         false
     }
 
-    /// Accept a pending LFG proposal (WotLK only).
+    /// Accept a pending LFG proposal (`WotLK` only).
     fn lfg_accept(&self) -> bool {
         false
     }
@@ -1228,7 +1228,7 @@ impl BotInterface for RealInterface {
         let len = unsafe {
             (self.cbs.get_spell_name.unwrap())(
                 spell_id.raw(),
-                buf.as_mut_ptr() as *mut i8,
+                buf.as_mut_ptr().cast::<i8>(),
                 buf.len() as u32,
             )
         };
@@ -1805,7 +1805,7 @@ impl BotInterface for RealInterface {
 
     fn bot_learn_class_level_spells(&self, include_quest_rewards: bool) {
         unsafe {
-            (self.cbs.bot_learn_class_level_spells.unwrap())(self.handle, include_quest_rewards)
+            (self.cbs.bot_learn_class_level_spells.unwrap())(self.handle, include_quest_rewards);
         }
     }
 

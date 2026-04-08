@@ -598,13 +598,13 @@ impl StrategySet {
     /// strategies on top):
     ///
     /// - `combatStrategies       = ""`                        → empty
-    /// - `nonCombatStrategies    = "+return,+delayed roll"`  → RETURN | DELAYED_ROLL
+    /// - `nonCombatStrategies    = "+return,+delayed roll"`  → RETURN | `DELAYED_ROLL`
     /// - `reactStrategies        = ""`                        → empty
     /// - `deadStrategies         = ""`                        → empty
     ///
     /// Per-class layering (warrior+`mount avoid mobs racials default
     /// duel`, priest+`discipline dps assist flee …`, etc., all documented
-    /// in PARITY_PLAN §3.2) happens at `AiFactory::kit` time and is NOT
+    /// in `PARITY_PLAN` §3.2) happens at `AiFactory::kit` time and is NOT
     /// in this baseline. This matches PB2's two-layer composition where
     /// `AiFactory::AddDefaultCombatStrategies` runs after the config
     /// string is parsed.

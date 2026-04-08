@@ -10,7 +10,7 @@
 /// selector containing both `Bt` enum nodes and the class rotation.
 use crate::bot::settings::StrategyFlags;
 use crate::bot::state::PlayerClass;
-use crate::engine::bt::Bt::{self, *};
+use crate::engine::bt::Bt::{self, ShouldFlee, FleeToSafe, TargetCastingInterruptible, Interrupt, IsClass, DispelParty, ResurrectParty, IsTank, InCombat, PullingAggro, ThreatDump, StrategyEnabled, PullBack, PreHeal, HealInterrupt, KiteFromTarget, CloseToTarget, MaintainRange, MoveBehind, MarkRtiPreferred, HasFocusTarget, FocusAttack, TankPickupAdds, AssistLeader, ProtectAttacker, ReactivityIs, AttackNearest, HasAttackers};
 use crate::{Sel, Seq};
 
 /// Flee on an explicit `flee` command or when HP drops below the bot's
@@ -59,7 +59,7 @@ pub fn threat_subtree() -> Bt {
 }
 
 /// Pull-back after pulling — return to the group. Gated on the
-/// PULL_BACK strategy flag (tanks only). Once the tank is back near
+/// `PULL_BACK` strategy flag (tanks only). Once the tank is back near
 /// the group, the subtree completes and the normal combat pipeline
 /// takes over (targeting, positioning, rotation).
 pub fn pull_back_subtree() -> Bt {
@@ -112,7 +112,7 @@ pub fn behind_subtree() -> Bt {
 }
 
 /// Mark the current target with the bot's preferred raid target icon.
-/// Gated on TANK_ASSIST — only tanks/leaders should mark targets.
+/// Gated on `TANK_ASSIST` — only tanks/leaders should mark targets.
 /// When `preferred_rti_icon` is `None`, the subtree does nothing (the user
 /// can clear it with `rti clear` to stop marking entirely).
 pub fn mark_rti_subtree() -> Bt {

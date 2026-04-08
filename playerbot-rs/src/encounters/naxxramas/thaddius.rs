@@ -13,7 +13,7 @@
 ///   - Polarity: check own charge, move to correct side of room.
 ///   - Normal (Thaddius, no shift): normal rotation.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::engine::bt::Bt::{self, *};
+use crate::engine::bt::Bt::{self, AttackNearest, MoveToSafeZone};
 use crate::ffi::SpellId;
 use crate::{Sel, Seq};
 

@@ -45,7 +45,7 @@ pub fn buffs(_spec: PlayerSpec) -> &'static [GroupBuff] {
 
 /// Per-spec default combat strategy flags (PB2 `AiFactory.cpp` druid branch).
 pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
-    use PlayerSpec::*;
+    use PlayerSpec::{DruidBalance, DruidFeral, DruidRestoration};
     use StrategyFlags as F;
     match spec {
         DruidBalance => {
@@ -90,7 +90,7 @@ pub fn default_strategies(spec: PlayerSpec) -> StrategyFlags {
 
 /// Reverse-map strategy flags to a druid `PlayerSpec`.
 pub fn spec_from_flags(flags: StrategyFlags) -> Option<PlayerSpec> {
-    use PlayerSpec::*;
+    use PlayerSpec::{DruidBalance, DruidFeral, DruidRestoration};
     use StrategyFlags as F;
     if flags.contains(F::BALANCE) {
         return Some(DruidBalance);

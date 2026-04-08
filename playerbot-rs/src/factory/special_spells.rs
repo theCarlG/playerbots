@@ -1,4 +1,4 @@
-//! Factory InitSpecialSpells — mirrors `PlayerbotFactory::InitSpecialSpells`.
+//! Factory `InitSpecialSpells` — mirrors `PlayerbotFactory::InitSpecialSpells`.
 //!
 //! Iterates the config-driven `randomBotSpellIds` list (default entry on
 //! TBC/WotLK: `54197` Cold Weather Flying) and teaches every valid entry

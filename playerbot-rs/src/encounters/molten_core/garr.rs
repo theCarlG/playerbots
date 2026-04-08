@@ -10,7 +10,7 @@
 /// Strategy: everyone stays spread (Eruption `AoE`). Melee pull out when a
 /// Firesworn crosses ~15% to avoid Eruption. Mages/shamans purge frenzy.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, *};
+use crate::encounters::bt::Bt::{self, IsRanged, MaintainRange};
 use crate::ffi::SpellId;
 use crate::{Sel, Seq};
 
