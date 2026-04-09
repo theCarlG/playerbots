@@ -48,6 +48,7 @@ namespace BotBridge
     uint32_t    CB_SpellCooldownMs(BotHandle bot, uint32_t spell_id);
     bool        CB_HasLos(BotHandle bot, UnitHandle target);
     UnitHandle* CB_GetNearbyUnits(BotHandle bot, float range, bool hostile, uint32_t* out_count);
+    UnitHandle* CB_GetAttackers(BotHandle bot, uint32_t* out_count);
     void        CB_FreeUnitList(UnitHandle* list);
     bool        CB_BotIsBehind(BotHandle bot, UnitHandle target);
     uint32_t    CB_BotEquippedWeaponSubclass(BotHandle bot, uint8_t slot);
@@ -64,6 +65,7 @@ namespace BotBridge
     BotPosition     CB_GetSpreadPosition(BotHandle bot, UnitHandle center, float radius,
                                           uint8_t idx, uint8_t total);
     bool            CB_CanReach(BotHandle bot, float x, float y, float z);
+    bool            CB_CanPathfindTo(BotHandle bot, float x, float y, float z);
 
     // ── Commands ───────────────────────────────────────────────────────────
     bool CB_CastSpell(BotHandle bot, uint32_t spell_id, UnitHandle target);
@@ -84,6 +86,10 @@ namespace BotBridge
     bool CB_TeleportTo(BotHandle bot, uint32_t map_id, float x, float y, float z, float o);
     bool CB_GetPlayerPosition(BotHandle bot, uint64_t player_guid, BotPosition* out_pos);
     bool CB_SummonToPlayer(BotHandle bot, uint64_t requester_guid);
+
+    /// Clear the per-bot movement dedup cache. Called from HandleTeleportAck
+    /// so the next follow/chase after teleport isn't falsely deduped.
+    void ClearMoveState(BotHandle bot);
 
     // ── Group / raid ────────────────────────────────────────────────────────
     UnitHandle CB_GroupGetTank(BotHandle bot);

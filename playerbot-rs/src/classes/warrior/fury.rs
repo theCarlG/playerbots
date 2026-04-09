@@ -29,15 +29,14 @@ fn combat_tree() -> Bt {
         super::boost(),
         // Gap closers: Intercept (Berserker), Charge (Battle). Melee
         // approach handled by combat_wrapper's close_subtree.
-        Seq!(InShapeshift(19), CastOnTarget(INTERCEPT)),
-        Seq!(InShapeshift(17), CastOnTarget(CHARGE)),
+        Seq!(InShapeshift(FORM_BERSERKER_STANCE), CastOnTarget(INTERCEPT)),
+        Seq!(InShapeshift(FORM_BATTLE_STANCE), CastOnTarget(CHARGE)),
         Seq!(
             InCombat,
             Sel!(
                 // Switch to Berserker Stance for our core rotation.
-                // InShapeshift(19) = Berserker Stance.
                 Seq!(
-                    Not(Box::new(InShapeshift(19))),
+                    Not(Box::new(InShapeshift(FORM_BERSERKER_STANCE))),
                     CastOnSelf(BERSERKER_STANCE)
                 ),
                 // Emergency fear.

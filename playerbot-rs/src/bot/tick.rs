@@ -33,9 +33,7 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
 
     // 2. Throttled attacker/nearby refresh
     if !minimal && now_ms.saturating_sub(bot.last_attackers_refresh_ms) >= cfg.attacker_refresh_ms {
-        bot.attackers = bot
-            .interface
-            .get_nearby_units(cfg.attacker_scan_range, true);
+        bot.attackers = bot.interface.get_attackers();
         bot.last_attackers_refresh_ms = now_ms;
     }
     if !minimal && now_ms.saturating_sub(bot.last_nearby_refresh_ms) >= cfg.nearby_refresh_ms {
@@ -80,6 +78,16 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     // 5. Determine ActiveFsm (Dead > Combat > World)
     // A focus_target (from pull/attack commands) also triggers Combat so
     // the bot approaches and engages rather than staying in Follow mode.
+    //
+    // Validate the focus target first — a stale or dead target must be
+    // cleared here because TickContext only has a shared ref to settings
+    // and can't mutate it. Without this, the bot gets stuck in Combat
+    // FSM forever with a non-attackable focus target.
+    if let Some(focus) = bot.settings.focus_target {
+        if !bot.interface.is_attackable(focus) {
+            bot.settings.focus_target = None;
+        }
+    }
     let has_engagement = !bot.attackers.is_empty() || bot.settings.focus_target.is_some();
     let active_fsm = ActiveFsm::determine(
         bot.snap.self_.is_alive,
@@ -524,6 +532,7 @@ fn on_fsm_exit(bot: &mut BotState, prev: ActiveFsm) {
             // transient targeting state so the bot returns to Follow.
             use crate::engine::blackboard::Key;
             bot.blackboard.clear(Key::LastAttackTarget);
+            bot.blackboard.clear(Key::IsPulling);
             bot.settings.focus_target = None;
         }
         ActiveFsm::Dead => {

@@ -9,10 +9,15 @@ use crate::ffi::SpellId;
 pub mod warrior {
     use super::SpellId;
 
-    // Stances
+    // Stances (spell IDs)
     pub const BATTLE_STANCE: SpellId = SpellId(2457);
     pub const BERSERKER_STANCE: SpellId = SpellId(2458);
     pub const DEFENSIVE_STANCE: SpellId = SpellId(71);
+
+    // Shapeshift form IDs (BotUnitSnapshot.shapeshift_form, not spell IDs)
+    pub const FORM_BATTLE_STANCE: u8 = 17;
+    pub const FORM_DEFENSIVE_STANCE: u8 = 18;
+    pub const FORM_BERSERKER_STANCE: u8 = 19;
 
     // Shouts
     pub const BATTLE_SHOUT: SpellId = SpellId(11551); // rank 6
@@ -59,8 +64,8 @@ pub mod warrior {
     pub const CONCUSSION_BLOW: SpellId = SpellId(12809); // Protection talent
     pub const DEVASTATE: SpellId = SpellId(20243); // (not in vanilla; placeholder)
 
-    // Consumables / utility
-    pub const PUMMEL: SpellId = SpellId(6552); // rank 2
+    // Interrupts / utility
+    pub const PUMMEL: SpellId = SpellId(6552); // rank 2 (Berserker Stance)
 }
 
 // ── Paladin ───────────────────────────────────────────────────────────────

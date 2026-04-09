@@ -358,24 +358,24 @@ fn combat_wrapper(class_rotation: Bt) -> Bt {
                 Sel!(
                     // BEHIND melee (rogues, feral cat): position behind.
                     // MoveBehind returns Running while moving, Failure
-                    // when already behind + in range. Noop catches the
-                    // in-range case so the Sel arm always succeeds and
-                    // we never fall through to CLOSE or FaceTarget.
+                    // when already behind + in range. FaceTarget ensures
+                    // the bot faces its target when already in position.
                     Seq!(
                         Bt::StrategyEnabled(StrategyFlags::BEHIND),
-                        Sel!(reactive::behind_subtree(), Bt::StickToTarget(5.0), Bt::Noop),
+                        Sel!(reactive::behind_subtree(), Bt::StickToTarget(5.0), Bt::FaceTarget),
                     ),
                     // CLOSE melee (warriors, paladins, enh shaman, feral
                     // bear): approach from front. Re-issued every tick so
-                    // the bot keeps tracking after spell casts.
+                    // the bot keeps tracking after spell casts. FaceTarget
+                    // fires when already in melee range.
                     Seq!(
                         Bt::StrategyEnabled(StrategyFlags::CLOSE),
-                        Sel!(Bt::StickToTarget(5.0), Bt::Noop),
+                        Sel!(Bt::StickToTarget(5.0), Bt::FaceTarget),
                     ),
                     // RANGED: keep distance + close if too far.
                     Seq!(
                         Bt::StrategyEnabled(StrategyFlags::RANGED),
-                        Sel!(reactive::ranged_subtree(), Bt::Noop),
+                        Sel!(reactive::ranged_subtree(), Bt::FaceTarget),
                     ),
                     // Fallback (healers etc): just face the target.
                     Bt::FaceTarget,
@@ -472,10 +472,12 @@ fn maintenance_subtree(buffs: &'static [GroupBuff]) -> Bt {
         world::mount::mount_subtree(),
         world::vendor::vendor_subtree(),
         world::repair::repair_subtree(),
-        // Follow as absolute fallback — but not during combat (would fight
-        // with combat positioning, causing the bot to ping-pong between
-        // following master and closing to target).
-        Seq!(InCombat.not(), Bt::throttle(2_000, Follow)),
+        // Follow as absolute fallback — but not during combat FSM (would
+        // fight with combat positioning, causing the bot to ping-pong
+        // between following master and closing to target). Uses
+        // InCombatFsm (not InCombat) because the server combat flag can
+        // briefly drop while the bot still has attackers.
+        Seq!(Bt::InCombatFsm.not(), Bt::throttle(2_000, Follow)),
     )
 }
 

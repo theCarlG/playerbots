@@ -44,6 +44,11 @@ pub trait BotInterface: Send {
     fn spell_cooldown_ms(&self, spell_id: SpellId) -> u32;
     fn has_los(&self, target: UnitHandle) -> bool;
     fn get_nearby_units(&self, range: f32, hostile: bool) -> Vec<UnitHandle>;
+    /// Units that have this bot on their threat list (actual attackers).
+    /// Unlike `get_nearby_units(hostile=true)`, only returns mobs fighting the bot.
+    fn get_attackers(&self) -> Vec<UnitHandle> {
+        Vec::new()
+    }
     /// True if the bot is currently positioned in `target`'s rear arc.
     /// Used to gate abilities like Backstab that require being behind.
     fn bot_is_behind(&self, _target: UnitHandle) -> bool {
@@ -98,8 +103,15 @@ pub trait BotInterface: Send {
         idx: u8,
         total: u8,
     ) -> BotPosition;
-    /// Returns true if the bot can pathfind to (x, y, z).
+    /// Returns true if the bot has line-of-sight to (x, y, z).
     fn can_reach(&self, x: f32, y: f32, z: f32) -> bool;
+    /// Returns true if the bot can reach (x, y, z) via navmesh pathfinding
+    /// (not just line-of-sight). More expensive than `can_reach` but
+    /// respects walls, terrain boundaries, and obstacles.
+    fn can_pathfind_to(&self, x: f32, y: f32, z: f32) -> bool {
+        // Default: fall back to LoS check for test mocks.
+        self.can_reach(x, y, z)
+    }
 
     /* ── Commands ────────────────────────────────────────────────────── */
 
@@ -1101,6 +1113,34 @@ pub struct QuestInfo {
     pub complete: bool,
 }
 
+// ── FFI helpers ─────────────────────────────────────────────────────────────
+
+/// Copy a C-allocated array into a `Vec` and free the source pointer.
+/// Monomorphized per `T` — zero-cost after inlining.
+///
+/// # Safety
+/// - `ptr` must be a valid C-allocated array of `count` elements, or null.
+/// - `free` must be the matching deallocator for `ptr`.
+#[inline(always)]
+unsafe fn collect_ffi_list<T: Copy>(
+    ptr: *mut T,
+    count: u32,
+    free: unsafe extern "C" fn(*mut T),
+) -> Vec<T> {
+    if ptr.is_null() || count == 0 {
+        return Vec::new();
+    }
+    let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
+    unsafe { free(ptr) };
+    vec
+}
+
+/// Convert a raw `UnitHandle` (0 = none) into `Option<UnitHandle>`.
+#[inline(always)]
+const fn handle_option(h: UnitHandle) -> Option<UnitHandle> {
+    if h == 0 { None } else { Some(h) }
+}
+
 // ── Production implementation ─────────────────────────────────────────────
 
 /// Wraps the C `BotCallbacks` function-pointer table.
@@ -1142,24 +1182,14 @@ impl BotInterface for RealInterface {
     fn get_auras(&self, unit: UnitHandle) -> Vec<BotAuraInfo> {
         let mut count: u32 = 0;
         let ptr = unsafe { (self.cbs.get_auras.unwrap())(self.handle, unit, &mut count) };
-        if ptr.is_null() || count == 0 {
-            return Vec::new();
-        }
-        let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
-        unsafe { (self.cbs.free_aura_list.unwrap())(ptr) };
-        vec
+        unsafe { collect_ffi_list(ptr, count, self.cbs.free_aura_list.unwrap()) }
     }
 
     fn get_threat_list(&self, target_unit: UnitHandle) -> Vec<BotThreatEntry> {
         let mut count: u32 = 0;
         let ptr =
             unsafe { (self.cbs.get_threat_list.unwrap())(self.handle, target_unit, &mut count) };
-        if ptr.is_null() || count == 0 {
-            return Vec::new();
-        }
-        let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
-        unsafe { (self.cbs.free_threat_list.unwrap())(ptr) };
-        vec
+        unsafe { collect_ffi_list(ptr, count, self.cbs.free_threat_list.unwrap()) }
     }
 
     fn get_unit_threat(&self, target_unit: UnitHandle, from_unit: UnitHandle) -> f32 {
@@ -1187,12 +1217,15 @@ impl BotInterface for RealInterface {
         let ptr = unsafe {
             (self.cbs.get_nearby_units.unwrap())(self.handle, range, hostile, &mut count)
         };
-        if ptr.is_null() || count == 0 {
-            return Vec::new();
-        }
-        let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
-        unsafe { (self.cbs.free_unit_list.unwrap())(ptr) };
-        vec
+        unsafe { collect_ffi_list(ptr, count, self.cbs.free_unit_list.unwrap()) }
+    }
+
+    fn get_attackers(&self) -> Vec<UnitHandle> {
+        let mut count: u32 = 0;
+        let ptr = unsafe {
+            (self.cbs.get_attackers.unwrap())(self.handle, &mut count)
+        };
+        unsafe { collect_ffi_list(ptr, count, self.cbs.free_unit_list.unwrap()) }
     }
 
     fn bot_is_behind(&self, target: UnitHandle) -> bool {
@@ -1269,6 +1302,10 @@ impl BotInterface for RealInterface {
 
     fn can_reach(&self, x: f32, y: f32, z: f32) -> bool {
         unsafe { (self.cbs.can_reach.unwrap())(self.handle, x, y, z) }
+    }
+
+    fn can_pathfind_to(&self, x: f32, y: f32, z: f32) -> bool {
+        unsafe { (self.cbs.can_pathfind_to.unwrap())(self.handle, x, y, z) }
     }
 
     fn cast_spell(&self, spell_id: SpellId, target: UnitHandle) -> bool {
@@ -1351,13 +1388,11 @@ impl BotInterface for RealInterface {
     }
 
     fn group_get_tank(&self) -> Option<UnitHandle> {
-        let h = unsafe { (self.cbs.group_get_tank.unwrap())(self.handle) };
-        if h == 0 { None } else { Some(h) }
+        handle_option(unsafe { (self.cbs.group_get_tank.unwrap())(self.handle) })
     }
 
     fn group_get_healer(&self) -> Option<UnitHandle> {
-        let h = unsafe { (self.cbs.group_get_healer.unwrap())(self.handle) };
-        if h == 0 { None } else { Some(h) }
+        handle_option(unsafe { (self.cbs.group_get_healer.unwrap())(self.handle) })
     }
 
     fn group_get_role(&self, member: UnitHandle) -> BotRole {
@@ -1365,8 +1400,7 @@ impl BotInterface for RealInterface {
     }
 
     fn get_unit_with_raid_icon(&self, icon: u8) -> Option<UnitHandle> {
-        let h = unsafe { (self.cbs.get_unit_with_raid_icon.unwrap())(self.handle, icon) };
-        if h == 0 { None } else { Some(h) }
+        handle_option(unsafe { (self.cbs.get_unit_with_raid_icon.unwrap())(self.handle, icon) })
     }
 
     fn group_set_target_icon(&self, target: UnitHandle, icon: u8) -> bool {
@@ -1420,12 +1454,7 @@ impl BotInterface for RealInterface {
         let mut count: u32 = 0;
         let ptr =
             unsafe { (self.cbs.get_nearby_lootable.unwrap())(self.handle, range, &mut count) };
-        if ptr.is_null() || count == 0 {
-            return Vec::new();
-        }
-        let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
-        unsafe { (self.cbs.free_unit_list.unwrap())(ptr) };
-        vec
+        unsafe { collect_ffi_list(ptr, count, self.cbs.free_unit_list.unwrap()) }
     }
 
     fn open_loot(&self, target: UnitHandle) -> bool {
@@ -1443,12 +1472,7 @@ impl BotInterface for RealInterface {
         let ptr = unsafe {
             (self.cbs.get_nearby_npcs.unwrap())(self.handle, range, npc_flags, &mut count)
         };
-        if ptr.is_null() || count == 0 {
-            return Vec::new();
-        }
-        let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
-        unsafe { (self.cbs.free_unit_list.unwrap())(ptr) };
-        vec
+        unsafe { collect_ffi_list(ptr, count, self.cbs.free_unit_list.unwrap()) }
     }
 
     fn interact_npc(&self, npc: UnitHandle) -> bool {
@@ -1556,8 +1580,7 @@ impl BotInterface for RealInterface {
     }
 
     fn find_dead_party_member(&self) -> Option<UnitHandle> {
-        let h = unsafe { (self.cbs.find_dead_party_member.unwrap())(self.handle) };
-        if h == 0 { None } else { Some(h) }
+        handle_option(unsafe { (self.cbs.find_dead_party_member.unwrap())(self.handle) })
     }
 
     fn find_potion_in_bags(&self, category: u8) -> ItemId {
@@ -1648,12 +1671,7 @@ impl BotInterface for RealInterface {
     fn get_nearby_enemies(&self, range: f32) -> Vec<UnitHandle> {
         let mut count: u32 = 0;
         let ptr = unsafe { (self.cbs.get_nearby_enemies.unwrap())(self.handle, range, &mut count) };
-        if ptr.is_null() || count == 0 {
-            return Vec::new();
-        }
-        let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
-        unsafe { (self.cbs.free_unit_list.unwrap())(ptr) };
-        vec
+        unsafe { collect_ffi_list(ptr, count, self.cbs.free_unit_list.unwrap()) }
     }
 
     /* ── RPG / social ───────────────────────────────────────────────── */
@@ -1681,12 +1699,7 @@ impl BotInterface for RealInterface {
         let mut count: u32 = 0;
         let ptr =
             unsafe { (self.cbs.get_nearby_gossip_npcs.unwrap())(self.handle, range, &mut count) };
-        if ptr.is_null() || count == 0 {
-            return Vec::new();
-        }
-        let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
-        unsafe { (self.cbs.free_unit_list.unwrap())(ptr) };
-        vec
+        unsafe { collect_ffi_list(ptr, count, self.cbs.free_unit_list.unwrap()) }
     }
 
     /* ── Gathering ──────────────────────────────────────────────────── */
@@ -1699,12 +1712,7 @@ impl BotInterface for RealInterface {
         let mut count: u32 = 0;
         let ptr =
             unsafe { (self.cbs.get_nearby_gatherables.unwrap())(self.handle, range, &mut count) };
-        if ptr.is_null() || count == 0 {
-            return Vec::new();
-        }
-        let vec = unsafe { std::slice::from_raw_parts(ptr, count as usize).to_vec() };
-        unsafe { (self.cbs.free_gatherable_list.unwrap())(ptr) };
-        vec
+        unsafe { collect_ffi_list(ptr, count, self.cbs.free_gatherable_list.unwrap()) }
     }
 
     fn gather_node(&self, handle: u64) -> bool {
@@ -1817,13 +1825,7 @@ impl BotInterface for RealInterface {
     fn get_bot_spells(&self) -> Vec<u32> {
         let mut count: u32 = 0;
         let ptr = unsafe { (self.cbs.get_bot_spells.unwrap())(self.handle, &mut count) };
-        if ptr.is_null() || count == 0 {
-            return Vec::new();
-        }
-        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
-        let out = slice.to_vec();
-        unsafe { (self.cbs.free_bot_spells.unwrap())(ptr) };
-        out
+        unsafe { collect_ffi_list(ptr, count, self.cbs.free_bot_spells.unwrap()) }
     }
 
     fn resolve_spell_by_name(&self, name: &str) -> u32 {
@@ -1924,27 +1926,15 @@ impl BotInterface for RealInterface {
     fn get_random_bot_spell_ids(&self) -> Vec<u32> {
         let mut count: u32 = 0;
         let ptr = unsafe { (self.cbs.get_random_bot_spell_ids.unwrap())(self.handle, &mut count) };
-        if ptr.is_null() || count == 0 {
-            return Vec::new();
-        }
-        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
-        let out = slice.to_vec();
         // Reuses free_bot_spells — same malloc/free contract (uint32_t array).
-        unsafe { (self.cbs.free_bot_spells.unwrap())(ptr) };
-        out
+        unsafe { collect_ffi_list(ptr, count, self.cbs.free_bot_spells.unwrap()) }
     }
 
     fn get_overworld_taxi_nodes(&self, team: u8) -> Vec<BotTaxiNode> {
         let mut count: u32 = 0;
         let ptr =
             unsafe { (self.cbs.get_overworld_taxi_nodes.unwrap())(self.handle, team, &mut count) };
-        if ptr.is_null() || count == 0 {
-            return Vec::new();
-        }
-        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
-        let out = slice.to_vec();
-        unsafe { (self.cbs.free_taxi_nodes.unwrap())(ptr) };
-        out
+        unsafe { collect_ffi_list(ptr, count, self.cbs.free_taxi_nodes.unwrap()) }
     }
 
     fn bot_set_taxi_node(&self, node_index: u32) {
@@ -1955,13 +1945,7 @@ impl BotInterface for RealInterface {
         let mut count: u32 = 0;
         let ptr =
             unsafe { (self.cbs.get_class_talents.unwrap())(self.handle, spec_no, &mut count) };
-        if ptr.is_null() || count == 0 {
-            return Vec::new();
-        }
-        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
-        let out = slice.to_vec();
-        unsafe { (self.cbs.free_class_talents.unwrap())(ptr) };
-        out
+        unsafe { collect_ffi_list(ptr, count, self.cbs.free_class_talents.unwrap()) }
     }
 
     fn bot_free_talent_points(&self) -> u32 {
@@ -1993,25 +1977,13 @@ impl BotInterface for RealInterface {
     fn bot_get_reputation_list(&self) -> Vec<BotReputationEntry> {
         let mut count: u32 = 0;
         let ptr = unsafe { (self.cbs.bot_get_reputation_list.unwrap())(self.handle, &mut count) };
-        if ptr.is_null() || count == 0 {
-            return Vec::new();
-        }
-        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
-        let out = slice.to_vec();
-        unsafe { (self.cbs.bot_free_reputation_list.unwrap())(ptr) };
-        out
+        unsafe { collect_ffi_list(ptr, count, self.cbs.bot_free_reputation_list.unwrap()) }
     }
 
     fn bot_get_learned_skills(&self) -> Vec<BotSkillEntry> {
         let mut count: u32 = 0;
         let ptr = unsafe { (self.cbs.bot_get_learned_skills.unwrap())(self.handle, &mut count) };
-        if ptr.is_null() || count == 0 {
-            return Vec::new();
-        }
-        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
-        let out = slice.to_vec();
-        unsafe { (self.cbs.bot_free_skill_list.unwrap())(ptr) };
-        out
+        unsafe { collect_ffi_list(ptr, count, self.cbs.bot_free_skill_list.unwrap()) }
     }
 
     fn bot_quest_accept_from(&self, npc: UnitHandle) -> bool {
@@ -2139,13 +2111,7 @@ impl BotInterface for RealInterface {
                 &mut count,
             )
         };
-        if ptr.is_null() || count == 0 {
-            return vec![];
-        }
-        let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
-        let result = slice.to_vec();
-        unsafe { (self.cbs.bot_free_travel_dests.unwrap())(ptr) };
-        result
+        unsafe { collect_ffi_list(ptr, count, self.cbs.bot_free_travel_dests.unwrap()) }
     }
 
     fn add_aura(&self, spell_id: u32) -> bool {
@@ -2189,59 +2155,27 @@ impl BotInterface for RealInterface {
     }
 
     fn bot_get_inventory(&self) -> Vec<BotInventoryItem> {
-        unsafe {
-            let mut count = 0u32;
-            let ptr = (self.cbs.bot_get_inventory.unwrap())(self.handle, &mut count);
-            if ptr.is_null() || count == 0 {
-                return Vec::new();
-            }
-            let slice = std::slice::from_raw_parts(ptr, count as usize);
-            let v = slice.to_vec();
-            (self.cbs.bot_free_inventory_list.unwrap())(ptr);
-            v
-        }
+        let mut count = 0u32;
+        let ptr = unsafe { (self.cbs.bot_get_inventory.unwrap())(self.handle, &mut count) };
+        unsafe { collect_ffi_list(ptr, count, self.cbs.bot_free_inventory_list.unwrap()) }
     }
 
     fn bot_get_equipped(&self) -> Vec<BotInventoryItem> {
-        unsafe {
-            let mut count = 0u32;
-            let ptr = (self.cbs.bot_get_equipped.unwrap())(self.handle, &mut count);
-            if ptr.is_null() || count == 0 {
-                return Vec::new();
-            }
-            let slice = std::slice::from_raw_parts(ptr, count as usize);
-            let v = slice.to_vec();
-            (self.cbs.bot_free_inventory_list.unwrap())(ptr);
-            v
-        }
+        let mut count = 0u32;
+        let ptr = unsafe { (self.cbs.bot_get_equipped.unwrap())(self.handle, &mut count) };
+        unsafe { collect_ffi_list(ptr, count, self.cbs.bot_free_inventory_list.unwrap()) }
     }
 
     fn bot_get_bank_items(&self) -> Vec<BotInventoryItem> {
-        unsafe {
-            let mut count = 0u32;
-            let ptr = (self.cbs.bot_get_bank_items.unwrap())(self.handle, &mut count);
-            if ptr.is_null() || count == 0 {
-                return Vec::new();
-            }
-            let slice = std::slice::from_raw_parts(ptr, count as usize);
-            let v = slice.to_vec();
-            (self.cbs.bot_free_inventory_list.unwrap())(ptr);
-            v
-        }
+        let mut count = 0u32;
+        let ptr = unsafe { (self.cbs.bot_get_bank_items.unwrap())(self.handle, &mut count) };
+        unsafe { collect_ffi_list(ptr, count, self.cbs.bot_free_inventory_list.unwrap()) }
     }
 
     fn bot_get_mail_items(&self) -> Vec<BotInventoryItem> {
-        unsafe {
-            let mut count = 0u32;
-            let ptr = (self.cbs.bot_get_mail_items.unwrap())(self.handle, &mut count);
-            if ptr.is_null() || count == 0 {
-                return Vec::new();
-            }
-            let slice = std::slice::from_raw_parts(ptr, count as usize);
-            let v = slice.to_vec();
-            (self.cbs.bot_free_inventory_list.unwrap())(ptr);
-            v
-        }
+        let mut count = 0u32;
+        let ptr = unsafe { (self.cbs.bot_get_mail_items.unwrap())(self.handle, &mut count) };
+        unsafe { collect_ffi_list(ptr, count, self.cbs.bot_free_inventory_list.unwrap()) }
     }
 
     fn sell_item(&self, item_id: ItemId) -> bool {

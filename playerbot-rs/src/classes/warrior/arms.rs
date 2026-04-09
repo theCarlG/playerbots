@@ -8,9 +8,9 @@ use crate::{
     engine::{
         aura_helpers::{BATTLE_SHOUT_RANKS, REND_RANKS},
         bt::{
-            Bt::{self, InShapeshift, CastOnTarget, InCombat, Not, CastOnSelf, Cmp},
-            Op::{Below, AtLeast},
-            Resource::{SelfHealthPct, TargetHealthPct, NearbyCount, SelfRage},
+            Bt::{self, CastOnSelf, CastOnTarget, Cmp, InCombat, InShapeshift, Not},
+            Op::{AtLeast, Below},
+            Resource::{NearbyCount, SelfHealthPct, SelfRage, TargetHealthPct},
         },
         macro_fsm::ActiveFsm,
     },
@@ -30,14 +30,13 @@ fn combat_tree() -> Bt {
         super::boost(),
         // Gap closer: Charge in Battle Stance. Melee approach is handled
         // by combat_wrapper's close_subtree (StrategyFlags::CLOSE).
-        Seq!(InShapeshift(17), CastOnTarget(CHARGE)),
+        Seq!(InShapeshift(FORM_BATTLE_STANCE), CastOnTarget(CHARGE)),
         // In-combat rotation.
         Seq!(
             InCombat,
             Sel!(
                 // Switch to Battle Stance for Arms rotation.
-                // InShapeshift(17) = Battle Stance.
-                Seq!(Not(Box::new(InShapeshift(17))), CastOnSelf(BATTLE_STANCE)),
+                Seq!(Not(Box::new(InShapeshift(FORM_BATTLE_STANCE))), CastOnSelf(BATTLE_STANCE)),
                 // Emergency fear at very low HP.
                 Seq!(
                     Cmp(SelfHealthPct, Below(15)),

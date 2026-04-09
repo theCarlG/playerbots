@@ -3,62 +3,54 @@
 /// These prevent accidentally mixing spell IDs with item IDs, zone IDs, etc.
 /// All are `#[repr(transparent)]` so they have identical layout to the inner type.
 
-/// A `WoW` spell ID (e.g. Mortal Strike = 21553).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
-#[repr(transparent)]
-pub struct SpellId(pub u32);
+/// Generate a zero-cost newtype ID wrapper with standard derives, `NONE`
+/// sentinel, `raw()` accessor, bidirectional `From<u32>` conversions, and
+/// a `Display` impl. The macro is `#[repr(transparent)]` so the generated
+/// type is ABI-compatible with `u32` across FFI.
+macro_rules! define_id {
+    ($(#[$meta:meta])* $name:ident) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
+        #[repr(transparent)]
+        pub struct $name(pub u32);
 
-impl SpellId {
-    pub const NONE: SpellId = SpellId(0);
+        impl $name {
+            pub const NONE: $name = $name(0);
 
-    /// Raw u32 value — use at the FFI boundary only.
-    #[inline]
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
+            /// Raw u32 value — use at the FFI boundary only.
+            #[inline]
+            pub const fn raw(self) -> u32 {
+                self.0
+            }
+        }
+
+        impl From<u32> for $name {
+            #[inline]
+            fn from(v: u32) -> Self {
+                Self(v)
+            }
+        }
+
+        impl From<$name> for u32 {
+            #[inline]
+            fn from(v: $name) -> Self {
+                v.0
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}({})", stringify!($name), self.0)
+            }
+        }
+    };
 }
 
-impl From<u32> for SpellId {
-    #[inline]
-    fn from(v: u32) -> Self {
-        Self(v)
-    }
-}
+define_id!(/// A `WoW` spell ID (e.g. Mortal Strike = 21553).
+SpellId);
 
-impl From<SpellId> for u32 {
-    #[inline]
-    fn from(v: SpellId) -> Self {
-        v.0
-    }
-}
-
-/// A `WoW` item ID (e.g. Hearthstone = 6948).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
-#[repr(transparent)]
-pub struct ItemId(pub u32);
-
-impl ItemId {
-    pub const NONE: ItemId = ItemId(0);
-
-    #[inline]
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
-}
-
-impl From<u32> for ItemId {
-    #[inline]
-    fn from(v: u32) -> Self {
-        Self(v)
-    }
-}
-
-impl From<ItemId> for u32 {
-    #[inline]
-    fn from(v: ItemId) -> Self {
-        v.0
-    }
-}
+define_id!(/// A `WoW` item ID (e.g. Hearthstone = 6948).
+ItemId);
 
 /// Role bitmask — matches the `role` field in `BotUnitSnapshot`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -78,17 +70,5 @@ impl BotRole {
     }
     pub fn is_dps(self) -> bool {
         self.0 & 4 != 0
-    }
-}
-
-impl std::fmt::Display for SpellId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SpellId({})", self.0)
-    }
-}
-
-impl std::fmt::Display for ItemId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ItemId({})", self.0)
     }
 }

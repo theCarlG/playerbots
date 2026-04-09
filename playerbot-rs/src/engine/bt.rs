@@ -306,8 +306,14 @@ pub enum Bt {
     // ── Conditions — general ─────────────────────────────────────────────
     /// No-op: always succeeds, consumes the tick.
     Noop,
-    /// Bot is currently in combat.
+    /// Bot is currently in combat (server flag only — does NOT account for
+    /// engagement via attackers list). For FSM-aware combat checks, use
+    /// `InCombatFsm` which is true whenever the tick's `ActiveFsm` is Combat.
     InCombat,
+    /// True when the bot's active FSM state is `Combat`. Unlike `InCombat`
+    /// (which only checks the server combat flag), this also covers cases
+    /// where the bot has attackers but the server hasn't set the flag yet.
+    InCombatFsm,
     /// Bot is alive (not dead/ghost).
     IsAlive,
     /// Bot is a ghost (released spirit, corpse running).
@@ -771,6 +777,11 @@ pub enum Bt {
     RtiCcTargetSelect,
 
     // ── Actions — Step 13: cross-class reactive combat ─────────────────
+    /// Check whether the bot is in the "just pulled" phase (blackboard
+    /// `IsPulling` flag is set). Clears the flag when any attacker reaches
+    /// melee range (≤ 8y), so `PullBack` only runs between the pull
+    /// command and the mob arriving.
+    IsPulling,
     /// Return to the pull-back position after pulling a mob.
     /// The pull-back point is typically the group's position or the
     /// tank's pre-pull location. Used by tank specs that have the
@@ -1306,6 +1317,7 @@ impl BtNode for Bt {
             // ── Conditions — general ─────────────────────────────────────
             Bt::Noop => BtResult::Success,
             Bt::InCombat => ok(ctx.in_combat()),
+            Bt::InCombatFsm => ok(ctx.active_fsm == crate::engine::macro_fsm::ActiveFsm::Combat),
             Bt::IsAlive => ok(ctx.snap.self_.is_alive),
             Bt::IsGhost => ok(ctx.snap.self_.is_ghost),
             Bt::OnTaxi => ok(ctx.snap.self_.on_taxi),
@@ -1404,7 +1416,7 @@ impl BtNode for Bt {
                 ok((icon as usize) < 8 && ctx.snap.group_raid_target_icons[icon as usize] != 0)
             }
             Bt::PartyNoTank => {
-                ok(ctx.snap.group_size > 0 && ctx.interface.group_get_tank().is_none())
+                ok(ctx.snap.group_size > 0 && ctx.group_tank().is_none())
             }
             Bt::PartyNoHealer => {
                 ok(ctx.snap.group_size > 0 && ctx.interface.group_get_healer().is_none())
@@ -1423,7 +1435,7 @@ impl BtNode for Bt {
                 if ctx.settings.mode != BehaviorMode::Follow {
                     return BtResult::Failure;
                 }
-                match ctx.interface.group_get_tank() {
+                match ctx.group_tank() {
                     Some(t) if t != ctx.bot_handle => BtResult::Success,
                     _ => BtResult::Failure,
                 }
@@ -1581,9 +1593,19 @@ impl BtNode for Bt {
                 {
                     return BtResult::Failure;
                 }
-                // Use chase with angle=PI to smoothly track behind the target
-                // instead of move_to which restarts splines every tick.
-                if ctx.interface.chase(target, *distance, std::f32::consts::PI) {
+                // Validate the behind position is reachable via navmesh before
+                // issuing chase with PI angle. In tight dungeon geometry (e.g.
+                // Molten Core corridors) the point behind the target can be
+                // inside a wall, causing MoveChase to walk through geometry.
+                let behind = ctx.interface.get_behind_position(target, *distance);
+                if ctx.interface.can_pathfind_to(behind.x, behind.y, behind.z) {
+                    if ctx.interface.chase(target, *distance, std::f32::consts::PI) {
+                        return BtResult::Running;
+                    }
+                }
+                // Behind unreachable — fall back to front approach so the bot
+                // still closes to melee range instead of walking through walls.
+                if ctx.interface.chase(target, *distance, 0.0) {
                     BtResult::Running
                 } else {
                     BtResult::Failure
@@ -1889,6 +1911,7 @@ impl BtNode for Bt {
             }
 
             // ── Actions — Step 13: cross-class reactive combat ────────
+            Bt::IsPulling => tick_is_pulling(ctx),
             Bt::PullBack => tick_pull_back(ctx),
             Bt::WaitForAttack => tick_wait_for_attack(ctx),
             Bt::PreHeal => tick_preheal(ctx),
@@ -2369,7 +2392,7 @@ fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
 /// Pick the follow target handle per PB2's tank → master → peer order.
 /// Excludes `bot_handle` (a bot never follows itself).
 fn pick_follow_target(ctx: &TickContext<'_>) -> Option<UnitHandle> {
-    if let Some(tank) = ctx.interface.group_get_tank()
+    if let Some(tank) = ctx.group_tank()
         && tank != ctx.bot_handle
     {
         return Some(tank);
@@ -2576,8 +2599,7 @@ fn find_buff_target(ctx: &mut TickContext<'_>, buff: &GroupBuff) -> Option<u64> 
             }
         }
         BuffTarget::Tank => ctx
-            .interface
-            .group_get_tank()
+            .group_tank()
             .filter(|&t| !has_any_rank(ctx.interface, t, buff.aura_ranks)),
         BuffTarget::Healer => ctx
             .interface
@@ -2599,6 +2621,7 @@ fn find_buff_target(ctx: &mut TickContext<'_>, buff: &GroupBuff) -> Option<u64> 
 // Interrupt spells per class
 const KICK: SpellId = SpellId(1766);
 const PUMMEL: SpellId = SpellId(6552);
+const SHIELD_BASH_INTERRUPT: SpellId = SpellId(11972);
 const COUNTERSPELL: SpellId = SpellId(2139);
 const EARTH_SHOCK: SpellId = SpellId(8042);
 const FERAL_CHARGE: SpellId = SpellId(16979);
@@ -2630,28 +2653,32 @@ fn tick_interrupt(ctx: &mut TickContext<'_>) -> BtResult {
     if !ctx.interface.is_casting_interruptible(target) {
         return BtResult::Failure;
     }
-    let spell = match ctx.class {
-        PlayerClass::Rogue => KICK,
-        PlayerClass::Warrior => PUMMEL,
-        PlayerClass::Mage => COUNTERSPELL,
-        PlayerClass::Shaman => EARTH_SHOCK,
-        PlayerClass::Druid => FERAL_CHARGE,
+    // Warriors have two interrupts: Shield Bash (Battle/Defensive Stance)
+    // and Pummel (Berserker Stance). Try both so the prot warrior in
+    // Defensive Stance can interrupt without switching stances.
+    let spells: &[SpellId] = match ctx.class {
+        PlayerClass::Rogue => &[KICK],
+        PlayerClass::Warrior => &[SHIELD_BASH_INTERRUPT, PUMMEL],
+        PlayerClass::Mage => &[COUNTERSPELL],
+        PlayerClass::Shaman => &[EARTH_SHOCK],
+        PlayerClass::Druid => &[FERAL_CHARGE],
         _ => return BtResult::Failure,
     };
-    if ctx.interface.can_cast(spell, target) && ctx.interface.cast_spell(spell, target) {
-        ctx.timers.on_spell_cast(spell, ctx.server_time_ms);
-        let name = ctx.spell_name(spell);
-        ctx.monitor(format_args!("REACTIVE: Interrupt {name} on 0x{target:X}"));
-        BtResult::Success
-    } else {
-        let name = ctx.spell_name(spell);
-        let can = ctx.interface.can_cast(spell, target);
-        let dist = ctx.interface.unit_distance(target);
-        ctx.monitor(format_args!(
-            "REACTIVE: Interrupt {name} FAIL can_cast={can} dist={dist:.1}y on 0x{target:X}",
-        ));
-        BtResult::Failure
+    for &spell in spells {
+        if ctx.interface.can_cast(spell, target) && ctx.interface.cast_spell(spell, target) {
+            ctx.timers.on_spell_cast(spell, ctx.server_time_ms);
+            let name = ctx.spell_name(spell);
+            ctx.monitor(format_args!("REACTIVE: Interrupt {name} on 0x{target:X}"));
+            return BtResult::Success;
+        }
     }
+    let name = ctx.spell_name(spells[0]);
+    let can = ctx.interface.can_cast(spells[0], target);
+    let dist = ctx.interface.unit_distance(target);
+    ctx.monitor(format_args!(
+        "REACTIVE: Interrupt {name} FAIL can_cast={can} dist={dist:.1}y on 0x{target:X}",
+    ));
+    BtResult::Failure
 }
 
 fn tick_dispel(ctx: &mut TickContext<'_>) -> BtResult {
@@ -3690,6 +3717,35 @@ fn tick_pull_target(ctx: &mut TickContext<'_>) -> BtResult {
 
 // ── Step 13: cross-class reactive combat helpers ──────────────────────────
 
+/// `Bt::IsPulling`. Returns Success if the blackboard `IsPulling` flag is set,
+/// meaning the bot recently issued a Pull command and the mob hasn't arrived yet.
+/// Auto-clears the flag when any attacker is within melee range (≤ 8y), so
+/// PullBack stops running once the mob reaches the group.
+fn tick_is_pulling(ctx: &mut TickContext<'_>) -> BtResult {
+    use crate::engine::blackboard::{Key, Value};
+
+    let pulling = ctx
+        .blackboard
+        .get_u32(Key::IsPulling)
+        .unwrap_or(0)
+        != 0;
+    if !pulling {
+        return BtResult::Failure;
+    }
+
+    // Check if any attacker is within melee range — if so, pull phase is over.
+    let mob_arrived = ctx.attackers.iter().any(|&attacker| {
+        ctx.interface.unit_distance(attacker) <= 8.0
+    });
+    if mob_arrived {
+        ctx.blackboard.set(Key::IsPulling, Value::U32(0));
+        ctx.monitor(format_args!("PULL_BACK: mob arrived in melee — pull phase complete"));
+        return BtResult::Failure;
+    }
+
+    BtResult::Success
+}
+
 /// `Bt::PullBack`. After pulling a mob, return to the group's position.
 /// Uses `follow(master)` to move back toward the master/leader. Returns
 /// Running while the bot is moving back, Failure once close enough or
@@ -3834,7 +3890,9 @@ fn tick_auto_cc(ctx: &mut TickContext<'_>) -> BtResult {
         PlayerClass::Warlock => SpellId(710),     // Banish
         PlayerClass::Priest => SpellId(10955),    // Shackle Undead
         PlayerClass::Druid => SpellId(2637),      // Hibernate
-        PlayerClass::Hunter => SpellId(1499),     // Freezing Trap
+        // Hunter Freezing Trap is ground-targeted (placed at feet), not
+        // usable as ranged CC like Polymorph. Skip hunters in AutoCc.
+        // PlayerClass::Hunter => SpellId(1499),
         PlayerClass::Paladin => SpellId(20066),   // Repentance
         PlayerClass::Rogue => SpellId(6770),      // Sap
         _ => return BtResult::Failure,

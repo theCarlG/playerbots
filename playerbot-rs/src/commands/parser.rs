@@ -39,27 +39,20 @@ const COMMANDS: &[CommandSpec] = &[
         ],
         parse: |cmd, _| BehaviorMode::from_str(cmd).map(BotCommand::SetMode),
     },
-    // -- Combat orders / strategies / reactivity --
-    CommandSpec {
-        names: &["co"],
-        parse: |_, a| parse_combat_order(a),
-    },
-    CommandSpec {
-        names: &["nc"],
-        parse: |_, a| parse_strategies(a, BotStateKind::NonCombat),
-    },
+    // -- Reactivity --
     CommandSpec {
         names: &["react"],
         parse: |_, a| parse_reactivity(a),
     },
-    // PB2 4-state model: each of `co` / `nc` / `react` / `de` targets
-    // its own strategy engine. `de +spec,?` toggles *dead-state*
-    // strategies; the other three are handled by their own parsers
-    // (`co` routes to `parse_combat_order`, `react` routes to
-    // `parse_reactivity`).
+    // -- Spec selection --
     CommandSpec {
-        names: &["de"],
-        parse: |_, a| parse_strategies(a, BotStateKind::Dead),
+        names: &["spec"],
+        parse: |_, a| parse_spec_cmd(a),
+    },
+    // -- Unified strategy toggles --
+    CommandSpec {
+        names: &["strat"],
+        parse: |_, a| parse_strat_cmd(a),
     },
     CommandSpec {
         names: &["ll"],
@@ -234,11 +227,6 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         names: &["range", "ra"],
         parse: |_, a| parse_range(a),
-    },
-    // `all +strat,-strat` — apply strategies to all 4 PB2 state engines.
-    CommandSpec {
-        names: &["all"],
-        parse: |_, a| parse_all(a),
     },
     // `stop` — stop current action / go passive.
     CommandSpec {
@@ -841,30 +829,43 @@ pub fn parse(text: &str) -> Option<BotCommand> {
 /// This is the unified path: `co` now reads/writes the same `StrategyFlags`
 /// bitfield that the BT's `StrategyEnabled` checks use, eliminating the old
 /// `CombatOrder` ↔ `StrategyFlags` split.
-fn parse_combat_order(args: &[&str]) -> Option<BotCommand> {
+/// `react passive|defensive|aggressive` — set bot reactivity level.
+fn parse_reactivity(args: &[&str]) -> Option<BotCommand> {
+    match args.first().copied() {
+        None | Some("?") => Some(BotCommand::Unknown(
+            "react: need level (passive/defensive/aggressive)".into(),
+        )),
+        Some("passive") => Some(BotCommand::SetReactivity(Reactivity::Passive)),
+        Some("defensive") => Some(BotCommand::SetReactivity(Reactivity::Defensive)),
+        Some("aggressive") => Some(BotCommand::SetReactivity(Reactivity::Aggressive)),
+        _ => Some(BotCommand::Unknown(
+            "react: unknown level (passive/defensive/aggressive)".into(),
+        )),
+    }
+}
+
+/// `spec <name>` — set the bot's specialization.
+/// Examples: `spec arms`, `spec holy`, `spec feral`, `spec protection`
+///
+/// The spec name is stored as a raw string and resolved at execution time
+/// using the bot's class, so ambiguous names like "holy" (priest/paladin)
+/// or "protection" (warrior/paladin) work correctly for any class.
+fn parse_spec_cmd(args: &[&str]) -> Option<BotCommand> {
     if args.is_empty() || args == ["?"] {
-        return Some(BotCommand::QueryStrategies(BotStateKind::Combat));
+        return Some(BotCommand::Unknown("spec: need a spec name".into()));
     }
+    let name = args.join(" ").to_lowercase();
+    Some(BotCommand::SetSpec(name))
+}
 
+/// `strat [+/-/~]flag,flag,...[,?]` — unified strategy toggle.
+/// Applies to all state slots (combat, noncombat, reaction, dead).
+/// Examples: `strat ~aoe,?`, `strat +cc`, `strat -stealth,+close`
+fn parse_strat_cmd(args: &[&str]) -> Option<BotCommand> {
+    if args.is_empty() || args == ["?"] {
+        return Some(BotCommand::QueryAllStrategies);
+    }
     let joined = args.join(" ");
-    let signed = joined.contains('+') || joined.contains('-') || joined.contains('~');
-
-    // Bare form: single flag, full replacement.
-    if !signed {
-        let name = joined.trim();
-        return match StrategyFlags::parse_name(name) {
-            Some(flag) => Some(BotCommand::SetCombatStrategies(flag)),
-            // PB2 silently ignores unknown strategy names.
-            None => Some(BotCommand::SetCombatStrategies(StrategyFlags::NONE)),
-        };
-    }
-
-    // Signed form: walk tokens, each sign (+/-/~) starts a new flag.
-    // Multi-word names are matched greedily (try 3-word, 2-word, 1-word).
-    // Commas are treated as token separators alongside spaces.
-    //
-    // This mirrors the old CombatOrder parser's greedy multi-word logic
-    // while using StrategyFlags::parse_name for the actual lookup.
     let normalized = joined.replace(',', " ");
     let tokens: Vec<&str> = normalized.split_whitespace().collect();
 
@@ -872,7 +873,6 @@ fn parse_combat_order(args: &[&str]) -> Option<BotCommand> {
     let mut remove = StrategyFlags::NONE;
     let mut toggle = StrategyFlags::NONE;
     let mut query = false;
-    let mut side_effects: Vec<BotCommand> = Vec::new();
 
     let mut i = 0;
     while i < tokens.len() {
@@ -904,7 +904,6 @@ fn parse_combat_order(args: &[&str]) -> Option<BotCommand> {
             let mut name_parts = vec![first_word];
             for j in 1..window_len {
                 let next = tokens[i + j];
-                // Stop if the next token starts a new signed flag or is a query marker.
                 if next.starts_with('+')
                     || next.starts_with('-')
                     || next.starts_with('~')
@@ -928,69 +927,13 @@ fn parse_combat_order(args: &[&str]) -> Option<BotCommand> {
                 matched = true;
                 break;
             }
-            // Try class-pref strategy pattern (e.g. "poison main deadly").
-            if let Some((flag, cmd)) = try_parse_class_pref_strategy(&candidate) {
-                match sign {
-                    1 => add.insert(flag),
-                    -1 => remove.insert(flag),
-                    _ => toggle.insert(flag),
-                }
-                if let Some(c) = cmd {
-                    side_effects.push(c);
-                }
-                i += window_len;
-                matched = true;
-                break;
-            }
         }
         if !matched {
-            i += 1; // skip unknown
+            i += 1;
         }
     }
 
-    let strat_cmd = BotCommand::ApplyStrategies {
-        state: BotStateKind::Combat,
-        add,
-        remove,
-        toggle,
-        query,
-    };
-    if side_effects.is_empty() {
-        Some(strat_cmd)
-    } else {
-        side_effects.insert(0, strat_cmd);
-        Some(BotCommand::Batch(side_effects))
-    }
-}
-
-fn parse_reactivity(args: &[&str]) -> Option<BotCommand> {
-    // `react` has two totally disjoint forms in the addon vocabulary:
-    //
-    //   * plain level setter — `react passive|defensive|aggressive` — adjusts
-    //     the bot's passive/defensive/aggressive stance (Rust's native
-    //     `Reactivity` setting).
-    //
-    //   * PB2 signed strategy list — `react +tank feral,?` — toggles
-    //     strategies in the `Reaction` BotState slot. PB2 uses a dedicated
-    //     reaction engine per bot; the Rust port now mirrors that with
-    //     `BotStateKind::Reaction`, so a signed `react` command routes to
-    //     `parse_strategies` with the `Reaction` slot, and emits
-    //     `Reaction Strategies: ...` when trailing `,?`.
-    //
-    // Dispatch on the first token's sign prefix.
-    if let Some(first) = args.first().copied()
-        && (first.starts_with('+') || first.starts_with('-') || first.starts_with('~')) {
-            return parse_strategies(args, BotStateKind::Reaction);
-        }
-    match args.first().copied() {
-        None | Some("?") => Some(BotCommand::QueryStrategies(BotStateKind::Reaction)),
-        Some("passive") => Some(BotCommand::SetReactivity(Reactivity::Passive)),
-        Some("defensive") => Some(BotCommand::SetReactivity(Reactivity::Defensive)),
-        Some("aggressive") => Some(BotCommand::SetReactivity(Reactivity::Aggressive)),
-        _ => Some(BotCommand::Unknown(
-            "react: missing level (passive/defensive/aggressive)".into(),
-        )),
-    }
+    Some(BotCommand::ToggleStrategies { add, remove, toggle, query })
 }
 
 /// `ll` — loot list / policy.
@@ -1238,112 +1181,6 @@ fn parse_pull(args: &[&str]) -> Option<BotCommand> {
     }
 }
 
-/// `nc +a,-b c,+d e` — comma-separated list of ±strategy names. Multi-word
-/// names ("rpg bg", "rpg maintenance") are one token per chunk.
-///
-/// A bare `?` chunk (`nc +dps assist,?`) is Mangosbot's apply-and-query
-/// shorthand — stripped here and surfaced as `query=true` on the emitted
-/// command so the handler whispers the new state after applying.
-fn parse_strategies(args: &[&str], state: BotStateKind) -> Option<BotCommand> {
-    let _cmd_name = state.addon_command(); // kept for future error messages
-    if args.is_empty() || args == ["?"] {
-        return Some(BotCommand::QueryStrategies(state));
-    }
-    let joined = args.join(" ");
-    let mut add = StrategyFlags::NONE;
-    let mut remove = StrategyFlags::NONE;
-    let mut toggle = StrategyFlags::NONE;
-    let mut query = false;
-    let mut side_effects: Vec<BotCommand> = Vec::new();
-
-    for chunk in joined.split(',') {
-        let chunk = chunk.trim();
-        if chunk.is_empty() {
-            continue;
-        }
-        if chunk == "?" {
-            query = true;
-            continue;
-        }
-
-        let (sign, name): (i8, &str) = match chunk.chars().next() {
-            Some('+') => (1, chunk[1..].trim()),
-            Some('-') => (-1, chunk[1..].trim()),
-            Some('~') => (0, chunk[1..].trim()),
-            _ => {
-                // PB2 silently ignores unknown prefixes.
-                continue;
-            }
-        };
-
-        // Try standard strategy flags first.
-        if let Some(flag) = StrategyFlags::parse_name(name) {
-            match sign {
-                1 => add.insert(flag),
-                -1 => remove.insert(flag),
-                _ => toggle.insert(flag),
-            }
-        } else if let Some((flag, cmd)) = try_parse_class_pref_strategy(name) {
-            // Class-pref strategy name (e.g. "poison main deadly", "totem earth strength").
-            // Add the base flag and queue the class-pref command as a side-effect.
-            match sign {
-                1 => add.insert(flag),
-                -1 => remove.insert(flag),
-                _ => toggle.insert(flag),
-            }
-            if let Some(c) = cmd {
-                side_effects.push(c);
-            }
-        }
-    }
-
-    let strat_cmd = BotCommand::ApplyStrategies {
-        state,
-        add,
-        remove,
-        toggle,
-        query,
-    };
-    if side_effects.is_empty() {
-        Some(strat_cmd)
-    } else {
-        side_effects.insert(0, strat_cmd);
-        Some(BotCommand::Batch(side_effects))
-    }
-}
-
-/// `all +strat,-strat` — apply strategies to ALL four state engines.
-/// PB2's `ChangeAllStrategyAction` iterates all four `BotState` values.
-fn parse_all(args: &[&str]) -> Option<BotCommand> {
-    if args.is_empty() {
-        return Some(BotCommand::Unknown("all: need +/-/~strategy args".into()));
-    }
-    let joined = args.join(" ");
-    let mut add = StrategyFlags::NONE;
-    let mut remove = StrategyFlags::NONE;
-
-    for chunk in joined.split(',') {
-        let chunk = chunk.trim();
-        if chunk.is_empty() {
-            continue;
-        }
-        let (sign, name): (i8, &str) = match chunk.chars().next() {
-            Some('+') => (1, chunk[1..].trim()),
-            Some('-') => (-1, chunk[1..].trim()),
-            Some('~') => (1, chunk[1..].trim()), // toggle → treat as add for `all`
-            _ => continue,
-        };
-        if let Some(flag) = StrategyFlags::parse_name(name) {
-            if sign > 0 {
-                add.insert(flag);
-            } else {
-                remove.insert(flag);
-            }
-        }
-    }
-
-    Some(BotCommand::ApplyStrategiesAll { add, remove })
-}
 
 /// `cast <spell name>` or `cast self <spell name>`. Uses the spell-name
 /// table in `data::spells` — anything not there falls through to FFI.
@@ -1794,94 +1631,6 @@ fn parse_forcestance(args: &[&str]) -> Option<BotCommand> {
 /// When the name matches, the caller should:
 ///   1. Insert the flag into add/remove/toggle as appropriate.
 ///   2. Emit the class-pref command alongside the `ApplyStrategies`.
-///
-/// Returns `None` when the name doesn't match any class-pref pattern.
-pub(super) fn try_parse_class_pref_strategy(
-    name: &str,
-) -> Option<(StrategyFlags, Option<BotCommand>)> {
-    let words: Vec<&str> = name.split_whitespace().collect();
-    if words.is_empty() {
-        return None;
-    }
-
-    match words[0] {
-        // `poison main deadly` → POISONS + SetPoison { MainHand, Deadly }
-        "poison" if words.len() == 3 => {
-            let hand = WeaponHand::from_token(words[1])?;
-            let kind = PoisonKind::from_token(words[2]);
-            Some((
-                StrategyFlags::POISONS,
-                Some(BotCommand::SetPoison { hand, kind }),
-            ))
-        }
-
-        // `totem earth strength` → TOTEMS + SetTotem { Earth, StrengthOfEarth }
-        "totem" if words.len() == 3 => {
-            let slot = TotemSlot::from_token(words[1])?;
-            let role = TotemRole::from_token(words[2]);
-            Some((
-                StrategyFlags::TOTEMS,
-                Some(BotCommand::SetTotem { slot, role }),
-            ))
-        }
-
-        // `curse agony` → CURSE + SetWarlockCurse(Agony)
-        "curse" if words.len() == 2 => {
-            let curse = WarlockCurse::from_token(words[1])?;
-            Some((
-                StrategyFlags::CURSE,
-                Some(BotCommand::SetWarlockCurse(Some(curse))),
-            ))
-        }
-
-        // `aura devotion` → AURA + SetPaladinAura(Devotion)
-        "aura" if words.len() == 2 => {
-            let aura = PaladinAura::from_token(words[1])?;
-            Some((
-                StrategyFlags::AURA,
-                Some(BotCommand::SetPaladinAura(Some(aura))),
-            ))
-        }
-
-        // `blessing might` → BLESSING + SetPaladinBlessing(Might)
-        "blessing" if words.len() == 2 => {
-            let bless = PaladinBlessing::from_token(words[1])?;
-            Some((
-                StrategyFlags::BLESSING,
-                Some(BotCommand::SetPaladinBlessing(Some(bless))),
-            ))
-        }
-
-        // `aspect hawk` → ASPECT + SetHunterAspect(Hawk)
-        "aspect" if words.len() == 2 => {
-            let aspect = HunterAspect::from_token(words[1])?;
-            Some((
-                StrategyFlags::ASPECT,
-                Some(BotCommand::SetHunterAspect(Some(aspect))),
-            ))
-        }
-
-        // `sting serpent` → STING + SetHunterSting(Serpent)
-        "sting" if words.len() == 2 => {
-            let sting = HunterSting::from_token(words[1])?;
-            Some((
-                StrategyFlags::STING,
-                Some(BotCommand::SetHunterSting(Some(sting))),
-            ))
-        }
-
-        // `pet imp` → PET + SetWarlockPet(Imp)
-        "pet" if words.len() == 2 => {
-            let pet = WarlockPet::from_token(words[1])?;
-            Some((
-                StrategyFlags::PET,
-                Some(BotCommand::SetWarlockPet(Some(pet))),
-            ))
-        }
-
-        _ => None,
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -1909,95 +1658,49 @@ mod tests {
     }
 
     #[test]
-    fn parse_combat_orders_bare() {
-        use crate::bot::settings::StrategyFlags as F;
-        assert_eq!(
-            parse("co tank"),
-            Some(BotCommand::SetCombatStrategies(F::TANK))
-        );
-        assert_eq!(
-            parse("co assist"),
-            Some(BotCommand::SetCombatStrategies(F::ASSIST))
-        );
-        assert_eq!(
-            parse("co protect"),
-            Some(BotCommand::SetCombatStrategies(F::PROTECT))
-        );
-        assert_eq!(
-            parse("co pull"),
-            Some(BotCommand::SetCombatStrategies(F::PULL))
-        );
+    fn spec_command() {
+        // SetSpec now carries the raw name string; resolution is deferred to
+        // execution time using the bot's class.
+        assert_eq!(parse("spec arms"), Some(BotCommand::SetSpec("arms".into())));
+        assert_eq!(parse("spec fury"), Some(BotCommand::SetSpec("fury".into())));
+        assert_eq!(parse("spec feral"), Some(BotCommand::SetSpec("feral".into())));
+        assert_eq!(parse("spec shadow"), Some(BotCommand::SetSpec("shadow".into())));
+        assert_eq!(parse("spec beast mastery"), Some(BotCommand::SetSpec("beast mastery".into())));
+        // Even unknown names pass through — the resolution happens at execution time.
+        assert_eq!(parse("spec bogus"), Some(BotCommand::SetSpec("bogus".into())));
     }
 
     #[test]
-    fn parse_combat_orders_signed() {
-        use crate::bot::settings::{BotStateKind, StrategyFlags as F};
-        // Simple additive.
+    fn strat_command() {
+        use crate::bot::settings::StrategyFlags as F;
         assert_eq!(
-            parse("co +tank"),
-            Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat,
-                query: false,
-                add: F::TANK,
+            parse("strat +aoe"),
+            Some(BotCommand::ToggleStrategies {
+                add: F::AOE,
                 remove: F::NONE,
                 toggle: F::NONE,
+                query: false,
             }),
         );
-        // Subtractive.
         assert_eq!(
-            parse("co -threat"),
-            Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat,
-                query: false,
+            parse("strat ~threat,?"),
+            Some(BotCommand::ToggleStrategies {
                 add: F::NONE,
-                remove: F::THREAT,
-                toggle: F::NONE,
-            }),
-        );
-        // Multi-word flag.
-        assert_eq!(
-            parse("co +tank assist"),
-            Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat,
-                query: false,
-                add: F::TANK_ASSIST,
                 remove: F::NONE,
-                toggle: F::NONE,
+                toggle: F::THREAT,
+                query: true,
             }),
         );
-        // Comma-separated mixed.
         assert_eq!(
-            parse("co -tank assist,+dps assist"),
-            Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat,
-                query: false,
-                add: F::DPS_ASSIST,
-                remove: F::TANK_ASSIST,
+            parse("strat -close,+ranged"),
+            Some(BotCommand::ToggleStrategies {
+                add: F::RANGED,
+                remove: F::CLOSE,
                 toggle: F::NONE,
+                query: false,
             }),
         );
-        // Space-separated mixed, multi-flag.
-        assert_eq!(
-            parse("co -threat -dps assist -close +tank assist"),
-            Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat,
-                query: false,
-                add: F::TANK_ASSIST,
-                remove: F::THREAT | F::DPS_ASSIST | F::CLOSE,
-                toggle: F::NONE,
-            }),
-        );
-        // pull back — two-word flag in subtractive form.
-        assert_eq!(
-            parse("co -pull back"),
-            Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat,
-                query: false,
-                add: F::NONE,
-                remove: F::PULL_BACK,
-                toggle: F::NONE,
-            }),
-        );
+        assert_eq!(parse("strat ?"), Some(BotCommand::QueryAllStrategies));
     }
 
     #[test]
@@ -2155,95 +1858,32 @@ mod tests {
             Some(BotCommand::SetMode(BehaviorMode::Follow))
         );
         assert_eq!(
-            parse("Co Tank"),
-            Some(BotCommand::SetCombatStrategies(StrategyFlags::TANK))
+            parse("React Passive"),
+            Some(BotCommand::SetReactivity(Reactivity::Passive))
         );
     }
 
     #[test]
-    fn nc_strategy_toggles() {
+    fn strat_multi_word_and_toggle() {
+        use crate::bot::settings::StrategyFlags as F;
+        // Multi-word flag.
         assert_eq!(
-            parse("nc +rtsc"),
-            Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::NonCombat,
+            parse("strat +tank assist"),
+            Some(BotCommand::ToggleStrategies {
+                add: F::TANK_ASSIST,
+                remove: F::NONE,
+                toggle: F::NONE,
                 query: false,
-                add: StrategyFlags::RTSC,
-                remove: StrategyFlags::NONE,
-                toggle: StrategyFlags::NONE,
             }),
         );
+        // Comma-separated mixed.
         assert_eq!(
-            parse("nc -rpg bg"),
-            Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::NonCombat,
+            parse("strat -tank assist,+dps assist"),
+            Some(BotCommand::ToggleStrategies {
+                add: F::DPS_ASSIST,
+                remove: F::TANK_ASSIST,
+                toggle: F::NONE,
                 query: false,
-                add: StrategyFlags::NONE,
-                remove: StrategyFlags::RPG_BG,
-                toggle: StrategyFlags::NONE,
-            }),
-        );
-        assert_eq!(
-            parse("nc +rtsc,-rpg,-rpg bg,-rpg explore"),
-            Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::NonCombat,
-                query: false,
-                add: StrategyFlags::RTSC,
-                remove: StrategyFlags::RPG | StrategyFlags::RPG_BG | StrategyFlags::RPG_EXPLORE,
-                toggle: StrategyFlags::NONE,
-            }),
-        );
-        // PB2 silently ignores unknown strategy names — no error returned.
-        assert_eq!(
-            parse("nc +bogus"),
-            Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::NonCombat,
-                query: false,
-                add: StrategyFlags::NONE,
-                remove: StrategyFlags::NONE,
-                toggle: StrategyFlags::NONE,
-            }),
-        );
-        // `de` targets the Dead-state engine in PB2's 4-state model.
-        assert_eq!(
-            parse("de +rtsc"),
-            Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Dead,
-                query: false,
-                add: StrategyFlags::RTSC,
-                remove: StrategyFlags::NONE,
-                toggle: StrategyFlags::NONE,
-            }),
-        );
-        // `react +flee` routes to the Reaction slot (PB2 parity).
-        assert_eq!(
-            parse("react +flee"),
-            Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Reaction,
-                query: false,
-                add: StrategyFlags::FLEE,
-                remove: StrategyFlags::NONE,
-                toggle: StrategyFlags::NONE,
-            }),
-        );
-        // Toggle with ~ prefix.
-        assert_eq!(
-            parse("nc ~rpg,?"),
-            Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::NonCombat,
-                query: true,
-                add: StrategyFlags::NONE,
-                remove: StrategyFlags::NONE,
-                toggle: StrategyFlags::RPG,
-            }),
-        );
-        assert_eq!(
-            parse("co ~threat,?"),
-            Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat,
-                query: true,
-                add: StrategyFlags::NONE,
-                remove: StrategyFlags::NONE,
-                toggle: StrategyFlags::THREAT,
             }),
         );
     }
@@ -2448,28 +2088,11 @@ mod tests {
     }
 
     #[test]
-    fn mangosbot_probe_query_commands() {
-        // Mangosbot addon probes every setting via the `?` query operator.
-        // Each of these must yield a Query* variant (never Unknown) so the
-        // addon's probe loop sees a valid response.
+    fn probe_query_commands() {
+        // Addon probes every setting via the `?` query operator.
         assert_eq!(parse("formation ?"), Some(BotCommand::QueryFormation));
         assert_eq!(parse("stance ?"), Some(BotCommand::QueryStance));
-        assert_eq!(
-            parse("co ?"),
-            Some(BotCommand::QueryStrategies(BotStateKind::Combat))
-        );
-        assert_eq!(
-            parse("nc ?"),
-            Some(BotCommand::QueryStrategies(BotStateKind::NonCombat))
-        );
-        assert_eq!(
-            parse("de ?"),
-            Some(BotCommand::QueryStrategies(BotStateKind::Dead))
-        );
-        assert_eq!(
-            parse("react ?"),
-            Some(BotCommand::QueryStrategies(BotStateKind::Reaction))
-        );
+        assert_eq!(parse("strat ?"), Some(BotCommand::QueryAllStrategies));
         assert_eq!(parse("rti ?"), Some(BotCommand::QueryRti));
         assert_eq!(parse("ll ?"), Some(BotCommand::QueryLootPolicy));
         assert_eq!(parse("save mana ?"), Some(BotCommand::QuerySaveMana));
@@ -2517,28 +2140,16 @@ mod tests {
     }
 
     #[test]
-    fn co_boost_flag_parses() {
-        use crate::bot::settings::{BotStateKind, StrategyFlags as F};
+    fn strat_boost_flag_parses() {
+        use crate::bot::settings::StrategyFlags as F;
         // RaidControl burst-cooldown keyword.
         assert_eq!(
-            parse("co +boost"),
-            Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat,
-                query: false,
+            parse("strat +boost"),
+            Some(BotCommand::ToggleStrategies {
                 add: F::BOOST,
                 remove: F::NONE,
                 toggle: F::NONE,
-            }),
-        );
-        // Mangosbot uses `i` as alias for boost.
-        assert_eq!(
-            parse("co +i"),
-            Some(BotCommand::ApplyStrategies {
-                state: BotStateKind::Combat,
                 query: false,
-                add: F::BOOST,
-                remove: F::NONE,
-                toggle: F::NONE,
             }),
         );
     }

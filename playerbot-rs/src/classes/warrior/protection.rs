@@ -26,8 +26,11 @@ pub fn build_tree(fsm: ActiveFsm) -> Bt {
 
 fn combat_tree() -> Bt {
     Sel!(
-        // `co +boost` burst cooldowns (warrior-wide list).
-        super::boost(),
+        // NOTE: no super::boost() here — the shared warrior boost uses
+        // Recklessness/Death Wish/Berserker Rage which require Berserker
+        // Stance and always fail for protection warriors in Defensive Stance.
+        // Bloodrage is already in the rotation below.
+        //
         // Emergency survival CDs.
         Seq!(
             Cmp(SelfHealthPct, Below(20)),
@@ -35,14 +38,13 @@ fn combat_tree() -> Bt {
         ),
         // Gap closer (Charge requires Battle Stance). Melee approach
         // handled by combat_wrapper's close_subtree.
-        Seq!(InShapeshift(17), CastOnTarget(CHARGE)),
+        Seq!(InShapeshift(FORM_BATTLE_STANCE), CastOnTarget(CHARGE)),
         Seq!(
             InCombat,
             Sel!(
                 // Switch to Defensive Stance for Prot rotation.
-                // InShapeshift(18) = Defensive Stance.
                 Seq!(
-                    Not(Box::new(InShapeshift(18))),
+                    Not(Box::new(InShapeshift(FORM_DEFENSIVE_STANCE))),
                     CastOnSelf(DEFENSIVE_STANCE)
                 ),
                 // Taunt is gated by can_cast (only fires on aggro loss).

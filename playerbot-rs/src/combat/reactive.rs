@@ -59,11 +59,20 @@ pub fn threat_subtree() -> Bt {
 }
 
 /// Pull-back after pulling — return to the group. Gated on the
-/// `PULL_BACK` strategy flag (tanks only). Once the tank is back near
-/// the group, the subtree completes and the normal combat pipeline
-/// takes over (targeting, positioning, rotation).
+/// `PULL_BACK` strategy flag (tanks only) AND on the bot having recently
+/// issued a pull (blackboard flag). Once the tank is back near the group
+/// AND at least one attacker is within melee range, the pull-back phase
+/// ends and the normal combat pipeline takes over.
+///
+/// Without the `IsPulling` gate, PullBack fires every combat tick and
+/// fights with StickToTarget, causing the tank to ping-pong between
+/// master and target ("back and forth" bug).
 pub fn pull_back_subtree() -> Bt {
-    Seq!(StrategyEnabled(StrategyFlags::PULL_BACK), PullBack,)
+    Seq!(
+        StrategyEnabled(StrategyFlags::PULL_BACK),
+        Bt::IsPulling,
+        PullBack,
+    )
 }
 
 /// Pre-heal: healers cast a heal on an injured party member as combat

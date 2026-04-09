@@ -14,7 +14,7 @@ use crate::bot::settings::{
     BehaviorMode, BotSettings, BotStateKind, ChatChannel, PositionStance, Reactivity, RtscAction,
     StrategyFlags,
 };
-use crate::bot::state::BotState;
+use crate::bot::state::{BotState, PlayerClass, PlayerSpec};
 use crate::ffi::{ItemId, SpellId, UnitHandle};
 
 /// All bot commands, parsed from chat text.
@@ -37,6 +37,23 @@ pub enum BotCommand {
     /// Reset every strategy slot back to the default loadout (`reset ai`).
     ResetStrategies,
     SetReactivity(Reactivity),
+    /// `spec <name>` — switch the bot's spec and rebuild its behavior tree.
+    /// Clean replacement for the old 4-command `co +spec / nc +spec / de +spec / react +spec`.
+    /// The name is resolved at execution time based on the bot's class, so
+    /// ambiguous names like "holy" (priest/paladin) or "protection" (warrior/paladin)
+    /// work correctly for any class.
+    SetSpec(String),
+    /// `strat <+/-/~>flag,?` — unified strategy toggle across all state slots.
+    /// Replaces the per-slot `co/nc/de/react +flag` commands. Flags are
+    /// automatically routed to the correct slot(s) based on their category.
+    ToggleStrategies {
+        add: StrategyFlags,
+        remove: StrategyFlags,
+        toggle: StrategyFlags,
+        query: bool,
+    },
+    /// Query all strategies across all slots.
+    QueryAllStrategies,
 
     // -- Targeting --
     Focus(Option<UnitHandle>),
@@ -494,7 +511,37 @@ impl BotCommand {
     /// - `AllowAll`: destructive or account-level ops (reset, blacklist,
     ///   resurrect, economy) — master / same-account / GM only.
     pub fn required_security(&self) -> SecurityLevel {
-        use BotCommand::{Status, ListSettings, Where, Help, Ready, Unknown, Debug, CheckLos, ListQuests, ListTalents, ListSpells, ListReputation, ListSkills, MailSummary, QueryFormation, QueryStance, QueryStrategies, QueryReactivity, QueryRti, QueryCcRti, QuerySaveMana, QueryLootPolicy, DebugFsm, DebugClaims, DebugCoord, DebugBt, Subscribe, Unsubscribe, Reset, ResetStrategies, BlacklistSpell, UnblacklistSpell, SetCheatFlags, GuildLeave, SetMode, SetCombatStrategies, ApplyStrategies, SetReactivity, Focus, Attack, Pull, AttackRti, PullRti, CcRti, GoTo, Guard, ComeToMe, RtscSelect, RtscCancel, RtscToggle, RtscMove, RtscMoveExact, RtscSaveHere, RtscSave, RtscUnsave, RtscGo, RtscShow, RtscSpellPosition, RtscReset, RtscLast, RtscJump, RtscJumpReset, RtscFileSave, RtscFileLoad, Repair, Vendor, SetHealThreshold, Mount, Resurrect, Flee, Free, Summon, CastOne, CastByName, UseItemByName, EquipItemByName, SetFormation, TravelTo, SetRange, SetRangeQualified, QueryRange, ApplyStrategiesAll, Stop, SetStance, SetPositionStance, MaxDps, ToggleSaveMana, SetSaveMana, ToggleSelfRes, KeepItem, UnkeepItem, SetChatChannel, SetPreferredRti, SetPreferredCcRti, Emote, ReleaseSpirit, AcceptRevive, Jump, UseHearth, QuestAccept, QuestDrop, MailTakeAll, SetPoison, ShowPoisons, SetTotem, ShowTotems, SetShamanImbue, ShowShamanImbues, SetPaladinAura, SetPaladinBlessing, SetPaladinGreaterBlessing, ShowPaladinPrefs, SetHunterAspect, SetHunterTrap, SetHunterSting, ShowHunterPrefs, SetWarlockCurse, SetWarlockPet, ShowWarlockPrefs, SetWarriorForcedStance, ShowWarriorPrefs, SetSuppressionDuty, SetDouseDuty, ShowEncounterPrefs, ApplyLootPolicy, SetWaitForAttack, TankAttack, Loot, DestroyItem, SkipSpell, LootRoll, GiveLeader, InvitePlayer, Pet, BuffTarget, BoostTarget, ReviveTarget, FollowTarget, FocusHeal, MoveStyle, Talk, Trainer, Taxi, Craft, Outfit, LogLevel, ShareQuest, DoQuest, Bank, AuctionHouse, GuildCommand, BgFree, Flag, SendMail, PossibleAttackTargets, ShowAttackers, Buy, Buyback, UnequipItemByName, Trade, QuestReward, CustomStrategy, WhatToSell, Teleport, Speak, ShowFaction, SetValue, AiProfile, Lfg, SetMainTank, SetOffTank, UnsetTank, SetMainAssist, SetMainAssistByName, AssignCc, UnassignCc, AssignTankTarget, UnassignTankTarget, TankQuery, CcQuery, Preset, SetMonitor, Batch};
+        use BotCommand::{
+            AcceptRevive, AiProfile, ApplyLootPolicy, ApplyStrategies, ApplyStrategiesAll,
+            AssignCc, AssignTankTarget, Attack, AttackRti, AuctionHouse, Bank, Batch, BgFree,
+            BlacklistSpell, BoostTarget, BuffTarget, Buy, Buyback, CastByName, CastOne, CcQuery,
+            CcRti, CheckLos, ComeToMe, Craft, CustomStrategy, Debug, DebugBt, DebugClaims,
+            DebugCoord, DebugFsm, DestroyItem, DoQuest, Emote, EquipItemByName, Flag, Flee, Focus,
+            FocusHeal, FollowTarget, Free, GiveLeader, GoTo, Guard, GuildCommand, GuildLeave, Help,
+            InvitePlayer, Jump, KeepItem, Lfg, ListQuests, ListReputation, ListSettings,
+            ListSkills, ListSpells, ListTalents, LogLevel, Loot, LootRoll, MailSummary,
+            MailTakeAll, MaxDps, Mount, MoveStyle, Outfit, Pet, PossibleAttackTargets, Preset,
+            Pull, PullRti, QueryAllStrategies, QueryCcRti, QueryFormation, QueryLootPolicy,
+            QueryRange, QueryReactivity, QueryRti, QuerySaveMana, QueryStance, QueryStrategies,
+            QuestAccept, QuestDrop, QuestReward, Ready, ReleaseSpirit, Repair, Reset,
+            ResetStrategies, Resurrect, ReviveTarget, RtscCancel, RtscFileLoad, RtscFileSave,
+            RtscGo, RtscJump, RtscJumpReset, RtscLast, RtscMove, RtscMoveExact, RtscReset,
+            RtscSave, RtscSaveHere, RtscSelect, RtscShow, RtscSpellPosition, RtscToggle,
+            RtscUnsave, SendMail, SetChatChannel, SetCheatFlags, SetCombatStrategies, SetDouseDuty,
+            SetFormation, SetHealThreshold, SetHunterAspect, SetHunterSting, SetHunterTrap,
+            SetMainAssist, SetMainAssistByName, SetMainTank, SetMode, SetMonitor, SetOffTank,
+            SetPaladinAura, SetPaladinBlessing, SetPaladinGreaterBlessing, SetPoison,
+            SetPositionStance, SetPreferredCcRti, SetPreferredRti, SetRange, SetRangeQualified,
+            SetReactivity, SetSaveMana, SetShamanImbue, SetSpec, SetStance, SetSuppressionDuty,
+            SetTotem, SetValue, SetWaitForAttack, SetWarlockCurse, SetWarlockPet,
+            SetWarriorForcedStance, ShareQuest, ShowAttackers, ShowEncounterPrefs, ShowFaction,
+            ShowHunterPrefs, ShowPaladinPrefs, ShowPoisons, ShowShamanImbues, ShowTotems,
+            ShowWarlockPrefs, ShowWarriorPrefs, SkipSpell, Speak, Status, Stop, Subscribe, Summon,
+            Talk, TankAttack, TankQuery, Taxi, Teleport, ToggleSaveMana, ToggleSelfRes,
+            ToggleStrategies, Trade, Trainer, TravelTo, UnassignCc, UnassignTankTarget,
+            UnblacklistSpell, UnequipItemByName, UnkeepItem, Unknown, UnsetTank, Unsubscribe,
+            UseHearth, UseItemByName, Vendor, WhatToSell, Where,
+        };
         match self {
             // Information queries — anyone who can talk to the bot.
             Status | ListSettings | Where | Help | Ready | Unknown(_) | Debug | CheckLos
@@ -516,6 +563,9 @@ impl BotCommand {
             | SetCombatStrategies(_)
             | ApplyStrategies { .. }
             | SetReactivity(_)
+            | SetSpec(_)
+            | ToggleStrategies { .. }
+            | QueryAllStrategies
             | Focus(_)
             | Attack(_)
             | Pull(_)
@@ -882,6 +932,58 @@ fn class_cc_spell(class: crate::bot::state::PlayerClass) -> Option<SpellId> {
 /// Reply to the sender of `pc`, routing on the channel the command
 /// arrived on.
 ///
+/// Resolve a spec name string to a `PlayerSpec`, using the bot's class to
+/// disambiguate names that exist across multiple classes (e.g. "protection"
+/// for warrior vs paladin, "holy" for priest vs paladin, "restoration" for
+/// druid vs shaman, "frost" for mage vs death knight).
+fn resolve_spec_name(class: PlayerClass, name: &str) -> Option<PlayerSpec> {
+    use PlayerClass::*;
+    use PlayerSpec::*;
+    match (class, name.as_ref()) {
+        // ── Warrior ──
+        (Warrior, "arms") => Some(WarriorArms),
+        (Warrior, "fury") => Some(WarriorFury),
+        (Warrior, "protection" | "prot") => Some(WarriorProtection),
+        // ── Paladin ──
+        (Paladin, "retribution" | "ret") => Some(PaladinRetribution),
+        (Paladin, "holy") => Some(PaladinHoly),
+        (Paladin, "protection" | "prot") => Some(PaladinProtection),
+        // ── Priest ──
+        (Priest, "discipline" | "disc") => Some(PriestDiscipline),
+        (Priest, "shadow") => Some(PriestShadow),
+        (Priest, "holy") => Some(PriestHoly),
+        // ── Druid ──
+        (Druid, "balance" | "boomkin" | "moonkin") => Some(DruidBalance),
+        (Druid, "feral" | "feral combat" | "tank feral" | "dps feral") => Some(DruidFeral),
+        (Druid, "restoration" | "resto") => Some(DruidRestoration),
+        // ── Hunter ──
+        (Hunter, "beast mastery" | "bm") => Some(HunterBeastMastery),
+        (Hunter, "marksmanship" | "marks" | "mm") => Some(HunterMarksmanship),
+        (Hunter, "survival" | "surv") => Some(HunterSurvival),
+        // ── Mage ──
+        (Mage, "arcane") => Some(MageArcane),
+        (Mage, "fire") => Some(MageFire),
+        (Mage, "frost") => Some(MageFrost),
+        // ── Rogue ──
+        (Rogue, "assassination" | "assa") => Some(RogueAssassination),
+        (Rogue, "combat") => Some(RogueCombat),
+        (Rogue, "subtlety" | "sub") => Some(RogueSubtlety),
+        // ── Shaman ──
+        (Shaman, "elemental" | "ele") => Some(ShamanElemental),
+        (Shaman, "enhancement" | "enh") => Some(ShamanEnhancement),
+        (Shaman, "restoration" | "resto") => Some(ShamanRestoration),
+        // ── Warlock ──
+        (Warlock, "affliction" | "aff") => Some(WarlockAffliction),
+        (Warlock, "demonology" | "demo") => Some(WarlockDemonology),
+        (Warlock, "destruction" | "destro") => Some(WarlockDestruction),
+        // ── Death Knight ──
+        (DeathKnight, "blood") => Some(DeathKnightBlood),
+        (DeathKnight, "unholy") => Some(DeathKnightUnholy),
+        (DeathKnight, "frost") => Some(DeathKnightFrost),
+        _ => None,
+    }
+}
+
 /// * When the origin is an addon channel (`origin.is_addon()` → true for
 ///   `#a …` prefixed commands and any LANG_ADDON-tagged chat), reply via
 ///   `tell_addon` so the packet comes back as `CHAT_MSG_ADDON` / `LANG_ADDON`
@@ -1143,9 +1245,10 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 let new_combat = bot.settings.strategies.get(BotStateKind::Combat);
                 if let Some(new_spec) =
                     crate::bot::init::spec_from_strategy_flags(bot.class, new_combat)
-                    && new_spec != bot.spec {
-                        crate::bot::init::rebuild_for_spec(bot, new_spec);
-                    }
+                    && new_spec != bot.spec
+                {
+                    crate::bot::init::rebuild_for_spec(bot, new_spec);
+                }
             }
         }
         BotCommand::ResetStrategies => {
@@ -1154,6 +1257,79 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         }
         BotCommand::SetReactivity(level) => {
             s.reactivity = *level;
+        }
+        BotCommand::SetSpec(name) => {
+            match resolve_spec_name(bot.class, name) {
+                Some(spec) => {
+                    crate::bot::init::rebuild_for_spec(bot, spec);
+                    reply(bot, pc, &format!("Spec set to {:?}.", spec));
+                }
+                None => {
+                    reply(
+                        bot,
+                        pc,
+                        &format!("Unknown spec '{}' for {:?}.", name, bot.class),
+                    );
+                }
+            }
+        }
+        BotCommand::ToggleStrategies {
+            add,
+            remove,
+            toggle,
+            query,
+        } => {
+            // Unified strategy toggle — apply to all relevant slots.
+            for state in [
+                BotStateKind::Combat,
+                BotStateKind::NonCombat,
+                BotStateKind::Reaction,
+                BotStateKind::Dead,
+            ] {
+                let slot = s.strategies.get_mut(state);
+                slot.insert(*add);
+                slot.remove(*remove);
+                // Toggle: for each bit in `toggle`, flip it in the slot.
+                // StrategyFlags doesn't have XOR, so use raw u128 ops.
+                let t0 = toggle.0;
+                let t1 = toggle.1;
+                slot.0 ^= t0;
+                slot.1 ^= t1;
+            }
+            if *query {
+                let desc = describe_with_class_prefs(
+                    s.strategies.get(BotStateKind::Combat),
+                    &s.class_prefs,
+                );
+                reply(bot, pc, &format!("Strategies: {desc}"));
+            }
+            // Check if a spec flag was added — if so, rebuild the behavior
+            // tree for the new spec. Mirrors the same check in ApplyStrategies.
+            {
+                let new_combat = bot.settings.strategies.get(BotStateKind::Combat);
+                if let Some(new_spec) =
+                    crate::bot::init::spec_from_strategy_flags(bot.class, new_combat)
+                    && new_spec != bot.spec
+                {
+                    crate::bot::init::rebuild_for_spec(bot, new_spec);
+                }
+            }
+        }
+        BotCommand::QueryAllStrategies => {
+            let mut msgs = Vec::new();
+            for state in [
+                BotStateKind::Combat,
+                BotStateKind::NonCombat,
+                BotStateKind::Reaction,
+                BotStateKind::Dead,
+            ] {
+                let desc = describe_with_class_prefs(s.strategies.get(state), &s.class_prefs);
+                msgs.push(format!("{}: {desc}", state.reply_prefix()));
+            }
+            let _ = s; // release mutable borrow
+            for msg in &msgs {
+                reply(bot, pc, msg);
+            }
         }
         BotCommand::Focus(target) => {
             // If no target provided, use master's target, then bot's own.
@@ -1218,6 +1394,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             });
             if let Some(unit) = t {
                 s.focus_target = Some(unit);
+                // Mark the bot as "pulling" so PullBack knows to activate.
+                use crate::engine::blackboard::{Key, Value};
+                bot.blackboard.set(Key::IsPulling, Value::U32(1));
                 // Try ranged pull first (auto-shot), fall back to taunt,
                 // then plain attack.
                 if !bot.interface.auto_shoot(unit) && !bot.interface.taunt(unit) {
@@ -1262,119 +1441,24 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             s.mode = BehaviorMode::Follow;
         }
 
-        // -- RTSC commands -- (see `crate::rtsc` for the backing module.)
-        BotCommand::RtscSelect => {
-            crate::rtsc::select(bot);
-        }
-        BotCommand::RtscCancel => {
-            crate::rtsc::cancel(bot);
-        }
-        BotCommand::RtscToggle => {
-            crate::rtsc::toggle(bot);
-        }
-        BotCommand::RtscMove => {
-            crate::rtsc::ensure_spell_learned(bot);
-            bot.settings.rtsc_pending_action = Some(RtscAction::Move { exact: false });
-        }
-        BotCommand::RtscMoveExact => {
-            crate::rtsc::ensure_spell_learned(bot);
-            bot.settings.rtsc_pending_action = Some(RtscAction::Move { exact: true });
-        }
-        BotCommand::RtscSaveHere(name) => {
-            crate::rtsc::save_here(bot, name.clone());
-        }
-        BotCommand::RtscSave(name) => {
-            crate::rtsc::ensure_spell_learned(bot);
-            bot.settings.rtsc_pending_action = Some(RtscAction::Save { name: name.clone() });
-        }
-        BotCommand::RtscUnsave(name) => {
-            bot.settings.rtsc_waypoints.remove(name);
-        }
-        BotCommand::RtscGo(name) => {
-            crate::rtsc::ensure_spell_learned(bot);
-            if let Some(&(x, y, z)) = bot.settings.rtsc_waypoints.get(name) {
-                bot.interface.move_to(x, y, z);
-                bot.settings.guard_position = Some((x, y, z));
-                bot.settings.mode = BehaviorMode::Guard;
-            }
-        }
-        BotCommand::RtscShow => {
-            crate::rtsc::ensure_spell_learned(bot);
-            let names: Vec<&str> = bot
-                .settings
-                .rtsc_waypoints
-                .keys()
-                .filter(|n| {
-                    n.as_str() != crate::rtsc::JUMP_SLOT
-                        && n.as_str() != crate::rtsc::JUMP_POINT_SLOT
-                })
-                .map(|s| s.as_str())
-                .collect();
-            let msg = if names.is_empty() {
-                "No saved waypoints.".to_string()
-            } else {
-                format!("Waypoints: {}", names.join(", "))
-            };
-            reply(bot, pc, &msg);
-        }
-        BotCommand::RtscSpellPosition(x, y, z) => {
-            crate::rtsc::on_spell_land(bot, *x, *y, *z);
-        }
-        BotCommand::RtscReset => {
-            crate::rtsc::reset(bot);
-        }
-        BotCommand::RtscLast => {
-            crate::rtsc::ensure_spell_learned(bot);
-            if !crate::rtsc::last(bot) {
-                reply(bot, pc, "No RTSC cast recorded yet.");
-            }
-        }
-        BotCommand::RtscJump => match crate::rtsc::jump_command(bot) {
-            crate::rtsc::JumpCommandResult::StageOneQueued => {}
-            crate::rtsc::JumpCommandResult::StaleCancelled => {
-                reply(bot, pc, "Can't finish previous jump! Cancelling...");
-            }
-            crate::rtsc::JumpCommandResult::AlreadyInProgress => {
-                reply(
-                    bot,
-                    pc,
-                    "Another jump is in process! Use 'rtsc jump reset' to stop it",
-                );
-            }
-        },
-        BotCommand::RtscJumpReset => {
-            crate::rtsc::jump_reset(bot);
-        }
-        BotCommand::RtscFileSave {
-            file,
-            name_glob,
-            bot_glob: _,
-        } => {
-            crate::rtsc::ensure_spell_learned(bot);
-            let (body, n) = crate::rtsc::serialize_waypoints(bot, name_glob);
-            let ok = bot.interface.bot_write_log_file(file, &body);
-            let msg = if ok {
-                format!("Saved {n} waypoint(s) to {file}.")
-            } else {
-                format!("Failed to write {file}.")
-            };
-            reply(bot, pc, &msg);
-        }
-        BotCommand::RtscFileLoad {
-            file,
-            name_glob,
-            bot_glob: _,
-        } => {
-            crate::rtsc::ensure_spell_learned(bot);
-            let msg = match bot.interface.bot_read_log_file(file) {
-                Some(body) => {
-                    let n = crate::rtsc::deserialize_waypoints(bot, &body, name_glob);
-                    format!("Loaded {n} waypoint(s) from {file}.")
-                }
-                None => format!("Failed to read {file}."),
-            };
-            reply(bot, pc, &msg);
-        }
+        // RTSC commands — delegated to `apply_rtsc_command`.
+        BotCommand::RtscSelect
+        | BotCommand::RtscCancel
+        | BotCommand::RtscToggle
+        | BotCommand::RtscMove
+        | BotCommand::RtscMoveExact
+        | BotCommand::RtscSaveHere(_)
+        | BotCommand::RtscSave(_)
+        | BotCommand::RtscUnsave(_)
+        | BotCommand::RtscGo(_)
+        | BotCommand::RtscShow
+        | BotCommand::RtscSpellPosition(..)
+        | BotCommand::RtscReset
+        | BotCommand::RtscLast
+        | BotCommand::RtscJump
+        | BotCommand::RtscJumpReset
+        | BotCommand::RtscFileSave { .. }
+        | BotCommand::RtscFileLoad { .. } => apply_rtsc_command(bot, pc),
         BotCommand::Repair => {
             bot.interface.repair_all();
         }
@@ -1711,25 +1795,30 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                         _ => None,
                     }
                 });
-            let enc_info = bot
-                .encounter
-                .as_ref().map_or_else(|| "enc=none".to_string(), |enc| {
+            let enc_info = bot.encounter.as_ref().map_or_else(
+                || "enc=none".to_string(),
+                |enc| {
                     format!(
                         "enc=boss:{} phase:{} active:{}",
                         enc.boss_entry(),
                         enc.phase_id(),
                         enc.is_active()
                     )
-                });
+                },
+            );
             let group_info = bot
                 .group_state
                 .as_ref()
-                .and_then(|gh| gh.state().try_read().ok()).map_or_else(|| "grp=none".to_string(), |gs| {
-                    let mt = gs.coordination.main_tank().unwrap_or(0);
-                    let ma = gs.coordination.main_assist_target.unwrap_or(0);
-                    let claims = gs.encounter.claims.active_count(bot.snap.server_time_ms);
-                    format!("grp=mt:{:#x} ma:{:#x} claims:{}", mt, ma, claims)
-                });
+                .and_then(|gh| gh.state().try_read().ok())
+                .map_or_else(
+                    || "grp=none".to_string(),
+                    |gs| {
+                        let mt = gs.coordination.main_tank().unwrap_or(0);
+                        let ma = gs.coordination.main_assist_target.unwrap_or(0);
+                        let claims = gs.encounter.claims.active_count(bot.snap.server_time_ms);
+                        format!("grp=mt:{:#x} ma:{:#x} claims:{}", mt, ma, claims)
+                    },
+                );
             let msg = format!(
                 "DBG fsm={:?}{} mode={} react={:?} {} {} co={:#x} nc={:#x}",
                 fsm,
@@ -1748,29 +1837,29 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             let ws_raw = bot
                 .blackboard
                 .get_u32(crate::engine::blackboard::Key::WorldSubState);
-            let ws_name = ws_raw
-                .map_or("n/a", |v| match v {
-                    0 => "Follow",
-                    1 => "Grind",
-                    2 => "Quest",
-                    3 => "Rest",
-                    4 => "Guard",
-                    5 => "Rpg",
-                    6 => "Stay",
-                    7 => "Bg",
-                    8 => "Travel",
-                    _ => "?",
-                });
-            let enc = bot
-                .encounter
-                .as_ref().map_or_else(|| "none".to_string(), |e| {
+            let ws_name = ws_raw.map_or("n/a", |v| match v {
+                0 => "Follow",
+                1 => "Grind",
+                2 => "Quest",
+                3 => "Rest",
+                4 => "Guard",
+                5 => "Rpg",
+                6 => "Stay",
+                7 => "Bg",
+                8 => "Travel",
+                _ => "?",
+            });
+            let enc = bot.encounter.as_ref().map_or_else(
+                || "none".to_string(),
+                |e| {
                     format!(
                         "boss={} phase={} active={}",
                         e.boss_entry(),
                         e.phase_id(),
                         e.is_active()
                     )
-                });
+                },
+            );
             let msg = format!("FSM: {:?} sub={} enc={}", fsm, ws_name, enc);
             reply(bot, pc, &msg);
         }
@@ -1778,14 +1867,18 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             let info = bot
                 .group_state
                 .as_ref()
-                .and_then(|gh| gh.state().try_read().ok()).map_or_else(|| "Claims: no group".to_string(), |gs| {
-                    let count = gs.encounter.claims.active_count(bot.snap.server_time_ms);
-                    if count == 0 {
-                        "Claims: 0 active".to_string()
-                    } else {
-                        format!("Claims: {} active", count)
-                    }
-                });
+                .and_then(|gh| gh.state().try_read().ok())
+                .map_or_else(
+                    || "Claims: no group".to_string(),
+                    |gs| {
+                        let count = gs.encounter.claims.active_count(bot.snap.server_time_ms);
+                        if count == 0 {
+                            "Claims: 0 active".to_string()
+                        } else {
+                            format!("Claims: {} active", count)
+                        }
+                    },
+                );
             reply(bot, pc, &info);
         }
         BotCommand::DebugBt => {
@@ -1853,23 +1946,30 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             let info = bot
                 .group_state
                 .as_ref()
-                .and_then(|gh| gh.state().try_read().ok()).map_or_else(|| "Coord: no group".to_string(), |gs| {
-                    let c = &gs.coordination;
-                    let mt = c
-                        .main_tank().map_or_else(|| "-".into(), |h| format!("{:#x}", h));
-                    let at = c
-                        .active_tank().map_or_else(|| "-".into(), |h| format!("{:#x}", h));
-                    let ots: Vec<String> = c.off_tanks().map(|h| format!("{:#x}", h)).collect();
-                    let ma = c
-                        .main_assist_target.map_or_else(|| "-".into(), |h| format!("{:#x}", h));
-                    format!(
-                        "Coord: MT={} AT={} OT=[{}] MA={}",
-                        mt,
-                        at,
-                        ots.join(","),
-                        ma
-                    )
-                });
+                .and_then(|gh| gh.state().try_read().ok())
+                .map_or_else(
+                    || "Coord: no group".to_string(),
+                    |gs| {
+                        let c = &gs.coordination;
+                        let mt = c
+                            .main_tank()
+                            .map_or_else(|| "-".into(), |h| format!("{:#x}", h));
+                        let at = c
+                            .active_tank()
+                            .map_or_else(|| "-".into(), |h| format!("{:#x}", h));
+                        let ots: Vec<String> = c.off_tanks().map(|h| format!("{:#x}", h)).collect();
+                        let ma = c
+                            .main_assist_target
+                            .map_or_else(|| "-".into(), |h| format!("{:#x}", h));
+                        format!(
+                            "Coord: MT={} AT={} OT=[{}] MA={}",
+                            mt,
+                            at,
+                            ots.join(","),
+                            ma
+                        )
+                    },
+                );
             reply(bot, pc, &info);
         }
         BotCommand::CheckLos => {
@@ -1989,236 +2089,29 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             }
         }
 
-        BotCommand::SetPoison { hand, kind } => {
-            if let Some(r) = s.class_prefs.as_rogue_mut() {
-                match hand {
-                    WeaponHand::MainHand => r.mh = *kind,
-                    WeaponHand::OffHand => r.oh = *kind,
-                }
-                let label = kind.map_or("cleared", |k| k.as_str());
-                reply(bot, pc, &format!("poison {}: {label}", hand.as_str()));
-            } else {
-                reply(bot, pc, "poison: not a rogue");
-            }
-        }
-        BotCommand::ShowPoisons => {
-            let msg = match s.class_prefs.as_rogue() {
-                Some(r) => format!(
-                    "poisons: mh={} oh={}",
-                    r.mh.map_or("none", |k| k.as_str()),
-                    r.oh.map_or("none", |k| k.as_str()),
-                ),
-                None => "poisons: not a rogue".into(),
-            };
-            reply(bot, pc, &msg);
-        }
-        BotCommand::SetTotem { slot, role } => {
-            // Validate slot/role match up front — the parser already enforces
-            // this, but belt-and-suspenders against future internal callers.
-            if let Some(r) = role
-                && r.slot() != *slot
-            {
-                reply(
-                    bot,
-                    pc,
-                    &format!("totem: {} is not a {} totem", r.as_str(), slot.as_str()),
-                );
-            } else if let Some(sh) = s.class_prefs.as_shaman_mut() {
-                sh.set(*slot, *role);
-                let label = role.map_or("cleared", |r| r.as_str());
-                reply(bot, pc, &format!("totem {}: {label}", slot.as_str()));
-            } else {
-                reply(bot, pc, "totem: not a shaman");
-            }
-        }
-        BotCommand::ShowTotems => {
-            let msg = match s.class_prefs.as_shaman() {
-                Some(sh) => format!(
-                    "totems: earth={} fire={} water={} air={}",
-                    sh.earth.map_or("none", |r| r.as_str()),
-                    sh.fire.map_or("none", |r| r.as_str()),
-                    sh.water.map_or("none", |r| r.as_str()),
-                    sh.air.map_or("none", |r| r.as_str()),
-                ),
-                None => "totems: not a shaman".into(),
-            };
-            reply(bot, pc, &msg);
-        }
-
-        BotCommand::SetShamanImbue { hand, imbue } => {
-            if let Some(sh) = s.class_prefs.as_shaman_mut() {
-                match hand {
-                    WeaponHand::MainHand => sh.mh_imbue = *imbue,
-                    WeaponHand::OffHand => sh.oh_imbue = *imbue,
-                }
-                let label = imbue.map_or("cleared", |i| i.as_str());
-                reply(bot, pc, &format!("imbue {}: {label}", hand.as_str()));
-            } else {
-                reply(bot, pc, "imbue: not a shaman");
-            }
-        }
-        BotCommand::ShowShamanImbues => {
-            let msg = match s.class_prefs.as_shaman() {
-                Some(sh) => format!(
-                    "imbues: mh={} oh={}",
-                    sh.mh_imbue.map_or("none", |i| i.as_str()),
-                    sh.oh_imbue.map_or("none", |i| i.as_str()),
-                ),
-                None => "imbues: not a shaman".into(),
-            };
-            reply(bot, pc, &msg);
-        }
-
-        BotCommand::SetPaladinAura(aura) => {
-            if let Some(p) = s.class_prefs.as_paladin_mut() {
-                p.aura = *aura;
-                let label = aura.map_or("cleared", |a| a.as_str());
-                reply(bot, pc, &format!("aura: {label}"));
-            } else {
-                reply(bot, pc, "aura: not a paladin");
-            }
-        }
-        BotCommand::SetPaladinBlessing(blessing) => {
-            if let Some(p) = s.class_prefs.as_paladin_mut() {
-                p.blessing = *blessing;
-                let label = blessing.map_or("cleared", |b| b.as_str());
-                reply(bot, pc, &format!("blessing: {label}"));
-            } else {
-                reply(bot, pc, "blessing: not a paladin");
-            }
-        }
-        BotCommand::SetPaladinGreaterBlessing(flag) => {
-            if let Some(p) = s.class_prefs.as_paladin_mut() {
-                p.use_greater = *flag;
-                reply(
-                    bot,
-                    pc,
-                    &format!("greater blessing: {}", if *flag { "on" } else { "off" }),
-                );
-            } else {
-                reply(bot, pc, "blessing: not a paladin");
-            }
-        }
-        BotCommand::ShowPaladinPrefs => {
-            let msg = match s.class_prefs.as_paladin() {
-                Some(p) => format!(
-                    "paladin: aura={} blessing={} greater={}",
-                    p.aura.map_or("none", |a| a.as_str()),
-                    p.blessing.map_or("none", |b| b.as_str()),
-                    if p.use_greater { "on" } else { "off" },
-                ),
-                None => "paladin: not a paladin".into(),
-            };
-            reply(bot, pc, &msg);
-        }
-
-        BotCommand::SetHunterAspect(aspect) => {
-            if let Some(h) = s.class_prefs.as_hunter_mut() {
-                h.aspect = *aspect;
-                let label = aspect.map_or("cleared", |a| a.as_str());
-                reply(bot, pc, &format!("aspect: {label}"));
-            } else {
-                reply(bot, pc, "aspect: not a hunter");
-            }
-        }
-        BotCommand::SetHunterTrap(trap) => {
-            if let Some(h) = s.class_prefs.as_hunter_mut() {
-                h.trap = *trap;
-                let label = trap.map_or("cleared", |t| t.as_str());
-                reply(bot, pc, &format!("trap: {label}"));
-            } else {
-                reply(bot, pc, "trap: not a hunter");
-            }
-        }
-        BotCommand::SetHunterSting(sting) => {
-            if let Some(h) = s.class_prefs.as_hunter_mut() {
-                h.sting = *sting;
-                let label = sting.map_or("cleared", |st| st.as_str());
-                reply(bot, pc, &format!("sting: {label}"));
-            } else {
-                reply(bot, pc, "sting: not a hunter");
-            }
-        }
-        BotCommand::ShowHunterPrefs => {
-            let msg = match s.class_prefs.as_hunter() {
-                Some(h) => format!(
-                    "hunter: aspect={} trap={} sting={}",
-                    h.aspect.map_or("none", |a| a.as_str()),
-                    h.trap.map_or("none", |t| t.as_str()),
-                    h.sting.map_or("none", |st| st.as_str()),
-                ),
-                None => "hunter: not a hunter".into(),
-            };
-            reply(bot, pc, &msg);
-        }
-
-        BotCommand::SetWarlockCurse(curse) => {
-            if let Some(w) = s.class_prefs.as_warlock_mut() {
-                w.curse = *curse;
-                let label = curse.map_or("cleared", |c| c.as_str());
-                reply(bot, pc, &format!("curse: {label}"));
-            } else {
-                reply(bot, pc, "curse: not a warlock");
-            }
-        }
-        BotCommand::SetWarlockPet(pet) => {
-            if let Some(w) = s.class_prefs.as_warlock_mut() {
-                w.pet = *pet;
-                let label = pet.map_or("cleared", |p| p.as_str());
-                reply(bot, pc, &format!("pet: {label}"));
-            } else {
-                reply(bot, pc, "pet: not a warlock");
-            }
-        }
-        BotCommand::ShowWarlockPrefs => {
-            let msg = match s.class_prefs.as_warlock() {
-                Some(w) => format!(
-                    "warlock: curse={}, pet={}",
-                    w.curse.map_or("none", |c| c.as_str()),
-                    w.pet.map_or("none", |p| p.as_str()),
-                ),
-                None => "warlock: not a warlock".into(),
-            };
-            reply(bot, pc, &msg);
-        }
-
-        BotCommand::SetWarriorForcedStance(stance) => {
-            if let Some(w) = s.class_prefs.as_warrior_mut() {
-                w.forced_stance = *stance;
-                let label = stance.map_or("cleared", |st| st.as_str());
-                reply(bot, pc, &format!("forcestance: {label}"));
-            } else {
-                reply(bot, pc, "forcestance: not a warrior");
-            }
-        }
-        BotCommand::ShowWarriorPrefs => {
-            let msg = match s.class_prefs.as_warrior() {
-                Some(w) => format!(
-                    "warrior: forcestance={}",
-                    w.forced_stance.map_or("none", |st| st.as_str())
-                ),
-                None => "warrior: not a warrior".into(),
-            };
-            reply(bot, pc, &msg);
-        }
-
-        BotCommand::SetSuppressionDuty(mode) => {
-            bot.settings.encounter_prefs.suppression_duty = *mode;
-            reply(bot, pc, &format!("suppression: {}", mode.as_word()));
-        }
-        BotCommand::SetDouseDuty(mode) => {
-            bot.settings.encounter_prefs.douse_duty = *mode;
-            reply(bot, pc, &format!("douse: {}", mode.as_word()));
-        }
-        BotCommand::ShowEncounterPrefs => {
-            let p = &bot.settings.encounter_prefs;
-            let msg = format!(
-                "encounter: suppression={} douse={}",
-                p.suppression_duty.as_word(),
-                p.douse_duty.as_word()
-            );
-            reply(bot, pc, &msg);
-        }
+        // Class preferences — delegated to `apply_class_prefs_command`.
+        BotCommand::SetPoison { .. }
+        | BotCommand::ShowPoisons
+        | BotCommand::SetTotem { .. }
+        | BotCommand::ShowTotems
+        | BotCommand::SetShamanImbue { .. }
+        | BotCommand::ShowShamanImbues
+        | BotCommand::SetPaladinAura(_)
+        | BotCommand::SetPaladinBlessing(_)
+        | BotCommand::SetPaladinGreaterBlessing(_)
+        | BotCommand::ShowPaladinPrefs
+        | BotCommand::SetHunterAspect(_)
+        | BotCommand::SetHunterTrap(_)
+        | BotCommand::SetHunterSting(_)
+        | BotCommand::ShowHunterPrefs
+        | BotCommand::SetWarlockCurse(_)
+        | BotCommand::SetWarlockPet(_)
+        | BotCommand::ShowWarlockPrefs
+        | BotCommand::SetWarriorForcedStance(_)
+        | BotCommand::ShowWarriorPrefs
+        | BotCommand::SetSuppressionDuty(_)
+        | BotCommand::SetDouseDuty(_)
+        | BotCommand::ShowEncounterPrefs => apply_class_prefs_command(bot, pc),
 
         BotCommand::ApplyLootPolicy {
             add,
@@ -2964,6 +2857,355 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
     }
 }
 
+/// Handle all RTSC (Real-Time Strategy Control) commands.
+fn apply_rtsc_command(bot: &mut BotState, pc: &PendingCommand) {
+    match &pc.command {
+        BotCommand::RtscSelect => {
+            crate::rtsc::select(bot);
+        }
+        BotCommand::RtscCancel => {
+            crate::rtsc::cancel(bot);
+        }
+        BotCommand::RtscToggle => {
+            crate::rtsc::toggle(bot);
+        }
+        BotCommand::RtscMove => {
+            crate::rtsc::ensure_spell_learned(bot);
+            bot.settings.rtsc_pending_action = Some(RtscAction::Move { exact: false });
+        }
+        BotCommand::RtscMoveExact => {
+            crate::rtsc::ensure_spell_learned(bot);
+            bot.settings.rtsc_pending_action = Some(RtscAction::Move { exact: true });
+        }
+        BotCommand::RtscSaveHere(name) => {
+            crate::rtsc::save_here(bot, name.clone());
+        }
+        BotCommand::RtscSave(name) => {
+            crate::rtsc::ensure_spell_learned(bot);
+            bot.settings.rtsc_pending_action = Some(RtscAction::Save { name: name.clone() });
+        }
+        BotCommand::RtscUnsave(name) => {
+            bot.settings.rtsc_waypoints.remove(name);
+        }
+        BotCommand::RtscGo(name) => {
+            crate::rtsc::ensure_spell_learned(bot);
+            if let Some(&(x, y, z)) = bot.settings.rtsc_waypoints.get(name) {
+                bot.interface.move_to(x, y, z);
+                bot.settings.guard_position = Some((x, y, z));
+                bot.settings.mode = BehaviorMode::Guard;
+            }
+        }
+        BotCommand::RtscShow => {
+            crate::rtsc::ensure_spell_learned(bot);
+            let names: Vec<&str> = bot
+                .settings
+                .rtsc_waypoints
+                .keys()
+                .filter(|n| {
+                    n.as_str() != crate::rtsc::JUMP_SLOT
+                        && n.as_str() != crate::rtsc::JUMP_POINT_SLOT
+                })
+                .map(|s| s.as_str())
+                .collect();
+            let msg = if names.is_empty() {
+                "No saved waypoints.".to_string()
+            } else {
+                format!("Waypoints: {}", names.join(", "))
+            };
+            reply(bot, pc, &msg);
+        }
+        BotCommand::RtscSpellPosition(x, y, z) => {
+            crate::rtsc::on_spell_land(bot, *x, *y, *z);
+        }
+        BotCommand::RtscReset => {
+            crate::rtsc::reset(bot);
+        }
+        BotCommand::RtscLast => {
+            crate::rtsc::ensure_spell_learned(bot);
+            if !crate::rtsc::last(bot) {
+                reply(bot, pc, "No RTSC cast recorded yet.");
+            }
+        }
+        BotCommand::RtscJump => match crate::rtsc::jump_command(bot) {
+            crate::rtsc::JumpCommandResult::StageOneQueued => {}
+            crate::rtsc::JumpCommandResult::StaleCancelled => {
+                reply(bot, pc, "Can't finish previous jump! Cancelling...");
+            }
+            crate::rtsc::JumpCommandResult::AlreadyInProgress => {
+                reply(
+                    bot,
+                    pc,
+                    "Another jump is in process! Use 'rtsc jump reset' to stop it",
+                );
+            }
+        },
+        BotCommand::RtscJumpReset => {
+            crate::rtsc::jump_reset(bot);
+        }
+        BotCommand::RtscFileSave {
+            file,
+            name_glob,
+            bot_glob: _,
+        } => {
+            crate::rtsc::ensure_spell_learned(bot);
+            let (body, n) = crate::rtsc::serialize_waypoints(bot, name_glob);
+            let ok = bot.interface.bot_write_log_file(file, &body);
+            let msg = if ok {
+                format!("Saved {n} waypoint(s) to {file}.")
+            } else {
+                format!("Failed to write {file}.")
+            };
+            reply(bot, pc, &msg);
+        }
+        BotCommand::RtscFileLoad {
+            file,
+            name_glob,
+            bot_glob: _,
+        } => {
+            crate::rtsc::ensure_spell_learned(bot);
+            let msg = match bot.interface.bot_read_log_file(file) {
+                Some(body) => {
+                    let n = crate::rtsc::deserialize_waypoints(bot, &body, name_glob);
+                    format!("Loaded {n} waypoint(s) from {file}.")
+                }
+                None => format!("Failed to read {file}."),
+            };
+            reply(bot, pc, &msg);
+        }
+        _ => unreachable!("apply_rtsc_command called with non-RTSC command"),
+    }
+}
+
+/// Handle all class-preference commands (poisons, totems, auras, blessings, etc.).
+fn apply_class_prefs_command(bot: &mut BotState, pc: &PendingCommand) {
+    let s = &mut bot.settings;
+    match &pc.command {
+        BotCommand::SetPoison { hand, kind } => {
+            if let Some(r) = s.class_prefs.as_rogue_mut() {
+                match hand {
+                    WeaponHand::MainHand => r.mh = *kind,
+                    WeaponHand::OffHand => r.oh = *kind,
+                }
+                let label = kind.map_or("cleared", |k| k.as_str());
+                reply(bot, pc, &format!("poison {}: {label}", hand.as_str()));
+            } else {
+                reply(bot, pc, "poison: not a rogue");
+            }
+        }
+        BotCommand::ShowPoisons => {
+            let msg = match s.class_prefs.as_rogue() {
+                Some(r) => format!(
+                    "poisons: mh={} oh={}",
+                    r.mh.map_or("none", |k| k.as_str()),
+                    r.oh.map_or("none", |k| k.as_str()),
+                ),
+                None => "poisons: not a rogue".into(),
+            };
+            reply(bot, pc, &msg);
+        }
+        BotCommand::SetTotem { slot, role } => {
+            if let Some(r) = role
+                && r.slot() != *slot
+            {
+                reply(
+                    bot,
+                    pc,
+                    &format!("totem: {} is not a {} totem", r.as_str(), slot.as_str()),
+                );
+            } else if let Some(sh) = s.class_prefs.as_shaman_mut() {
+                sh.set(*slot, *role);
+                let label = role.map_or("cleared", |r| r.as_str());
+                reply(bot, pc, &format!("totem {}: {label}", slot.as_str()));
+            } else {
+                reply(bot, pc, "totem: not a shaman");
+            }
+        }
+        BotCommand::ShowTotems => {
+            let msg = match s.class_prefs.as_shaman() {
+                Some(sh) => format!(
+                    "totems: earth={} fire={} water={} air={}",
+                    sh.earth.map_or("none", |r| r.as_str()),
+                    sh.fire.map_or("none", |r| r.as_str()),
+                    sh.water.map_or("none", |r| r.as_str()),
+                    sh.air.map_or("none", |r| r.as_str()),
+                ),
+                None => "totems: not a shaman".into(),
+            };
+            reply(bot, pc, &msg);
+        }
+        BotCommand::SetShamanImbue { hand, imbue } => {
+            if let Some(sh) = s.class_prefs.as_shaman_mut() {
+                match hand {
+                    WeaponHand::MainHand => sh.mh_imbue = *imbue,
+                    WeaponHand::OffHand => sh.oh_imbue = *imbue,
+                }
+                let label = imbue.map_or("cleared", |i| i.as_str());
+                reply(bot, pc, &format!("imbue {}: {label}", hand.as_str()));
+            } else {
+                reply(bot, pc, "imbue: not a shaman");
+            }
+        }
+        BotCommand::ShowShamanImbues => {
+            let msg = match s.class_prefs.as_shaman() {
+                Some(sh) => format!(
+                    "imbues: mh={} oh={}",
+                    sh.mh_imbue.map_or("none", |i| i.as_str()),
+                    sh.oh_imbue.map_or("none", |i| i.as_str()),
+                ),
+                None => "imbues: not a shaman".into(),
+            };
+            reply(bot, pc, &msg);
+        }
+        BotCommand::SetPaladinAura(aura) => {
+            if let Some(p) = s.class_prefs.as_paladin_mut() {
+                p.aura = *aura;
+                let label = aura.map_or("cleared", |a| a.as_str());
+                reply(bot, pc, &format!("aura: {label}"));
+            } else {
+                reply(bot, pc, "aura: not a paladin");
+            }
+        }
+        BotCommand::SetPaladinBlessing(blessing) => {
+            if let Some(p) = s.class_prefs.as_paladin_mut() {
+                p.blessing = *blessing;
+                let label = blessing.map_or("cleared", |b| b.as_str());
+                reply(bot, pc, &format!("blessing: {label}"));
+            } else {
+                reply(bot, pc, "blessing: not a paladin");
+            }
+        }
+        BotCommand::SetPaladinGreaterBlessing(flag) => {
+            if let Some(p) = s.class_prefs.as_paladin_mut() {
+                p.use_greater = *flag;
+                reply(
+                    bot,
+                    pc,
+                    &format!("greater blessing: {}", if *flag { "on" } else { "off" }),
+                );
+            } else {
+                reply(bot, pc, "blessing: not a paladin");
+            }
+        }
+        BotCommand::ShowPaladinPrefs => {
+            let msg = match s.class_prefs.as_paladin() {
+                Some(p) => format!(
+                    "paladin: aura={} blessing={} greater={}",
+                    p.aura.map_or("none", |a| a.as_str()),
+                    p.blessing.map_or("none", |b| b.as_str()),
+                    if p.use_greater { "on" } else { "off" },
+                ),
+                None => "paladin: not a paladin".into(),
+            };
+            reply(bot, pc, &msg);
+        }
+        BotCommand::SetHunterAspect(aspect) => {
+            if let Some(h) = s.class_prefs.as_hunter_mut() {
+                h.aspect = *aspect;
+                let label = aspect.map_or("cleared", |a| a.as_str());
+                reply(bot, pc, &format!("aspect: {label}"));
+            } else {
+                reply(bot, pc, "aspect: not a hunter");
+            }
+        }
+        BotCommand::SetHunterTrap(trap) => {
+            if let Some(h) = s.class_prefs.as_hunter_mut() {
+                h.trap = *trap;
+                let label = trap.map_or("cleared", |t| t.as_str());
+                reply(bot, pc, &format!("trap: {label}"));
+            } else {
+                reply(bot, pc, "trap: not a hunter");
+            }
+        }
+        BotCommand::SetHunterSting(sting) => {
+            if let Some(h) = s.class_prefs.as_hunter_mut() {
+                h.sting = *sting;
+                let label = sting.map_or("cleared", |st| st.as_str());
+                reply(bot, pc, &format!("sting: {label}"));
+            } else {
+                reply(bot, pc, "sting: not a hunter");
+            }
+        }
+        BotCommand::ShowHunterPrefs => {
+            let msg = match s.class_prefs.as_hunter() {
+                Some(h) => format!(
+                    "hunter: aspect={} trap={} sting={}",
+                    h.aspect.map_or("none", |a| a.as_str()),
+                    h.trap.map_or("none", |t| t.as_str()),
+                    h.sting.map_or("none", |st| st.as_str()),
+                ),
+                None => "hunter: not a hunter".into(),
+            };
+            reply(bot, pc, &msg);
+        }
+        BotCommand::SetWarlockCurse(curse) => {
+            if let Some(w) = s.class_prefs.as_warlock_mut() {
+                w.curse = *curse;
+                let label = curse.map_or("cleared", |c| c.as_str());
+                reply(bot, pc, &format!("curse: {label}"));
+            } else {
+                reply(bot, pc, "curse: not a warlock");
+            }
+        }
+        BotCommand::SetWarlockPet(pet) => {
+            if let Some(w) = s.class_prefs.as_warlock_mut() {
+                w.pet = *pet;
+                let label = pet.map_or("cleared", |p| p.as_str());
+                reply(bot, pc, &format!("pet: {label}"));
+            } else {
+                reply(bot, pc, "pet: not a warlock");
+            }
+        }
+        BotCommand::ShowWarlockPrefs => {
+            let msg = match s.class_prefs.as_warlock() {
+                Some(w) => format!(
+                    "warlock: curse={}, pet={}",
+                    w.curse.map_or("none", |c| c.as_str()),
+                    w.pet.map_or("none", |p| p.as_str()),
+                ),
+                None => "warlock: not a warlock".into(),
+            };
+            reply(bot, pc, &msg);
+        }
+        BotCommand::SetWarriorForcedStance(stance) => {
+            if let Some(w) = s.class_prefs.as_warrior_mut() {
+                w.forced_stance = *stance;
+                let label = stance.map_or("cleared", |st| st.as_str());
+                reply(bot, pc, &format!("forcestance: {label}"));
+            } else {
+                reply(bot, pc, "forcestance: not a warrior");
+            }
+        }
+        BotCommand::ShowWarriorPrefs => {
+            let msg = match s.class_prefs.as_warrior() {
+                Some(w) => format!(
+                    "warrior: forcestance={}",
+                    w.forced_stance.map_or("none", |st| st.as_str())
+                ),
+                None => "warrior: not a warrior".into(),
+            };
+            reply(bot, pc, &msg);
+        }
+        BotCommand::SetSuppressionDuty(mode) => {
+            s.encounter_prefs.suppression_duty = *mode;
+            reply(bot, pc, &format!("suppression: {}", mode.as_word()));
+        }
+        BotCommand::SetDouseDuty(mode) => {
+            s.encounter_prefs.douse_duty = *mode;
+            reply(bot, pc, &format!("douse: {}", mode.as_word()));
+        }
+        BotCommand::ShowEncounterPrefs => {
+            let p = &s.encounter_prefs;
+            let msg = format!(
+                "encounter: suppression={} douse={}",
+                p.suppression_duty.as_word(),
+                p.douse_duty.as_word()
+            );
+            reply(bot, pc, &msg);
+        }
+        _ => unreachable!("apply_class_prefs_command called with non-class-prefs command"),
+    }
+}
+
 /// Build a strategy description that includes compound class-pref names.
 ///
 /// The Mangosbot addon matches compound strategy names like `"poison main
@@ -3020,33 +3262,39 @@ fn describe_with_class_prefs(
         }
         ClassPrefs::Paladin(p) => {
             if flags.contains(StrategyFlags::AURA)
-                && let Some(aura) = p.aura {
-                    append(format!("aura {}", aura.as_str()));
-                }
+                && let Some(aura) = p.aura
+            {
+                append(format!("aura {}", aura.as_str()));
+            }
             if flags.contains(StrategyFlags::BLESSING)
-                && let Some(bless) = p.blessing {
-                    append(format!("blessing {}", bless.as_str()));
-                }
+                && let Some(bless) = p.blessing
+            {
+                append(format!("blessing {}", bless.as_str()));
+            }
         }
         ClassPrefs::Hunter(h) => {
             if flags.contains(StrategyFlags::ASPECT)
-                && let Some(aspect) = h.aspect {
-                    append(format!("aspect {}", aspect.as_str()));
-                }
+                && let Some(aspect) = h.aspect
+            {
+                append(format!("aspect {}", aspect.as_str()));
+            }
             if flags.contains(StrategyFlags::STING)
-                && let Some(sting) = h.sting {
-                    append(format!("sting {}", sting.as_str()));
-                }
+                && let Some(sting) = h.sting
+            {
+                append(format!("sting {}", sting.as_str()));
+            }
         }
         ClassPrefs::Warlock(w) => {
             if flags.contains(StrategyFlags::CURSE)
-                && let Some(curse) = w.curse {
-                    append(format!("curse {}", curse.as_str()));
-                }
+                && let Some(curse) = w.curse
+            {
+                append(format!("curse {}", curse.as_str()));
+            }
             if flags.contains(StrategyFlags::PET)
-                && let Some(pet) = w.pet {
-                    append(format!("pet {}", pet.as_str()));
-                }
+                && let Some(pet) = w.pet
+            {
+                append(format!("pet {}", pet.as_str()));
+            }
         }
         _ => {}
     }

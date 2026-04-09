@@ -18,6 +18,7 @@
 #include "Guilds/GuildMgr.h"
 #include "MotionGenerators/MotionMaster.h"
 #include "MotionGenerators/MovementGenerator.h"
+#include "BotBridge.h"
 #include "Spells/Spell.h"
 
 // Spell id used by the RTSC "Aedm" marker to encode ground-targeted positions.
@@ -385,6 +386,10 @@ void PlayerbotRust::StopMoving()
         return;
     mm->Clear();
     mm->MoveIdle();
+    // Also stop the movement spline so the bot doesn't continue gliding
+    // in its pre-stop direction. Without this, mm->Clear() removes the
+    // generator but the active spline keeps running.
+    m_bot->StopMoving();
 }
 
 void PlayerbotRust::TellPlayer(Player* target, const std::string& msg)
@@ -404,6 +409,13 @@ void PlayerbotRust::HandleTeleportAck()
         return;
 
     StopMoving();
+
+    // Clear the movement dedup cache so the next follow/chase after
+    // teleport isn't falsely deduped against the pre-teleport state.
+    // Without this, the bot arrives at its new position with no active
+    // movement generator but the dedup thinks it's already following,
+    // leaving the bot stranded (or gliding on a stale spline).
+    BotBridge::ClearMoveState(m_bot->GetObjectGuid().GetRawValue());
 
     if (m_bot->IsBeingTeleportedNear())
     {

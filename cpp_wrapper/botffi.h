@@ -280,6 +280,10 @@ typedef struct BotCallbacks {
     uint32_t    (*spell_cooldown_ms)(BotHandle bot, uint32_t spell_id);
     bool        (*has_los)(BotHandle bot, UnitHandle target);
     UnitHandle* (*get_nearby_units)(BotHandle bot, float range, bool hostile, uint32_t* out_count);
+    /* Units that have this bot on their threat list (actual attackers).
+     * Unlike get_nearby_units(hostile=true), this only returns mobs
+     * currently fighting the bot — not every hostile in range. */
+    UnitHandle* (*get_attackers)(BotHandle bot, uint32_t* out_count);
     void        (*free_unit_list)(UnitHandle* list);
     /* True if the bot is currently positioned in the rear arc of `target`
      * (gates abilities like Backstab that require being behind). */
@@ -321,6 +325,9 @@ typedef struct BotCallbacks {
     BotPosition     (*get_spread_position)(BotHandle bot, UnitHandle center, float radius,
                                            uint8_t idx, uint8_t total);
     bool            (*can_reach)(BotHandle bot, float x, float y, float z);
+    /* Returns true if the bot can reach (x,y,z) via navmesh pathfinding
+     * (not just line-of-sight). Uses PathFinder + PATHFIND_NORMAL check. */
+    bool            (*can_pathfind_to)(BotHandle bot, float x, float y, float z);
 
     /* ── Bot commands (all return true on success) ───────────────────── */
     bool (*cast_spell)(BotHandle bot, uint32_t spell_id, UnitHandle target);

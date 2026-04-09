@@ -38,6 +38,7 @@
 #include "Spells/SpellAuras.h"
 #include "Maps/Map.h"
 #include "MotionGenerators/MotionMaster.h"
+#include "MotionGenerators/PathFinder.h"
 #include "Globals/ObjectMgr.h"
 #include "Loot/LootMgr.h"
 #include "Grids/GridNotifiers.h"
@@ -215,6 +216,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.spell_cooldown_ms   = CB_SpellCooldownMs;
     cbs.has_los             = CB_HasLos;
     cbs.get_nearby_units    = CB_GetNearbyUnits;
+    cbs.get_attackers       = CB_GetAttackers;
     cbs.free_unit_list      = CB_FreeUnitList;
     cbs.bot_is_behind               = CB_BotIsBehind;
     cbs.bot_equipped_weapon_subclass = CB_BotEquippedWeaponSubclass;
@@ -230,6 +232,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.get_safe_position   = CB_GetSafePosition;
     cbs.get_spread_position = CB_GetSpreadPosition;
     cbs.can_reach           = CB_CanReach;
+    cbs.can_pathfind_to     = CB_CanPathfindTo;
 
     // Commands
     cbs.cast_spell          = CB_CastSpell;
@@ -970,6 +973,34 @@ UnitHandle* BotBridge::CB_GetNearbyUnits(BotHandle bot, float range, bool hostil
     return arr;
 }
 
+UnitHandle* BotBridge::CB_GetAttackers(BotHandle bot, uint32_t* out_count)
+{
+    *out_count = 0;
+    Player* b = FindBot(bot);
+    if (!b || !b->GetCombatData())
+        return nullptr;
+
+    // HostileRefManager tracks units that have the bot on their threat list —
+    // i.e., mobs (or players) actively fighting the bot.
+    HostileRefManager& hrm = b->getHostileRefManager();
+    std::vector<UnitHandle> handles;
+    for (HostileReference* ref = hrm.getFirst(); ref; ref = ref->next())
+    {
+        Unit* attacker = ref->getSource()->getOwner();
+        if (!attacker || !attacker->IsAlive())
+            continue;
+        handles.push_back(attacker->GetObjectGuid().GetRawValue());
+    }
+
+    if (handles.empty())
+        return nullptr;
+
+    UnitHandle* arr = new UnitHandle[handles.size()];
+    std::copy(handles.begin(), handles.end(), arr);
+    *out_count = static_cast<uint32_t>(handles.size());
+    return arr;
+}
+
 void BotBridge::CB_FreeUnitList(UnitHandle* list)
 {
     delete[] list;
@@ -1004,6 +1035,8 @@ BotSafePosition BotBridge::CB_GetSafePosition(BotHandle bot, float search_radius
     float by = b->GetPositionY();
     float bz = b->GetPositionZ();
 
+    PathFinder pathfinder(b);
+
     // Try 8 directions at search_radius
     for (int i = 0; i < 8; ++i)
     {
@@ -1013,7 +1046,10 @@ BotSafePosition BotBridge::CB_GetSafePosition(BotHandle bot, float search_radius
         float cz = bz;
         b->UpdateGroundPositionZ(cx, cy, cz);
 
-        if (b->GetMap()->IsInLineOfSight(bx, by, bz, cx, cy, cz, false))
+        // Validate with navmesh pathfinding — LoS alone passes through
+        // thin dungeon walls, causing bots to walk through geometry.
+        pathfinder.calculate(cx, cy, cz, false);
+        if (pathfinder.getPathType() & PATHFIND_NORMAL)
         {
             result.x     = cx;
             result.y     = cy;
@@ -1049,6 +1085,17 @@ bool BotBridge::CB_CanReach(BotHandle bot, float x, float y, float z)
         return false;
     return b->GetMap()->IsInLineOfSight(b->GetPositionX(), b->GetPositionY(),
                                          b->GetPositionZ(), x, y, z, false);
+}
+
+bool BotBridge::CB_CanPathfindTo(BotHandle bot, float x, float y, float z)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    PathFinder pathfinder(b);
+    pathfinder.calculate(x, y, z, false);
+    return (pathfinder.getPathType() & PATHFIND_NORMAL) != 0;
 }
 
 // ── Movement de-duplication state (used by CB_CastSpell and movement callbacks) ──
@@ -1110,6 +1157,24 @@ bool BotBridge::CB_CastSpell(BotHandle bot, uint32_t spell_id, UnitHandle target
         b->GetMotionMaster()->MoveIdle();
         // Invalidate move state so the next chase/follow call isn't deduped.
         s_moveState.erase(bot);
+    }
+
+    // Face the target before casting. PB2 always called SetFacingTo before
+    // spell casts — without this the server rejects most spells because the
+    // bot isn't oriented toward the target (SPELL_FAILED_UNIT_NOT_INFRONT).
+    if (t != b && !b->HasInArc(t, M_PI))
+    {
+        float angle = b->GetAngle(t);
+        if (b->IsStopped())
+        {
+            b->SetOrientation(angle);
+            b->SendHeartBeat();
+        }
+        else
+        {
+            b->SetFacingTo(angle);
+        }
+        b->SetInFront(t);
     }
 
     // Pre-validate with CheckCast so we don't trigger a GCD on the Rust side
@@ -1268,12 +1333,26 @@ bool BotBridge::CB_StopMoving(BotHandle bot)
     return true;
 }
 
+void BotBridge::ClearMoveState(BotHandle bot)
+{
+    s_moveState.erase(bot);
+}
+
 bool BotBridge::CB_Attack(BotHandle bot, UnitHandle target)
 {
     Player* b = FindBot(bot);
     Unit* t   = FindUnit(bot, target);
     if (!b || !t)
         return false;
+
+    // Face the target before attacking.
+    if (!b->HasInArc(t, M_PI))
+    {
+        float angle = b->GetAngle(t);
+        b->SetOrientation(angle);
+        b->SendHeartBeat();
+        b->SetInFront(t);
+    }
 
     return b->Attack(t, true);
 }
@@ -1323,32 +1402,62 @@ bool BotBridge::CB_AutoShoot(BotHandle bot, UnitHandle target)
     switch (proto->SubClass)
     {
         case ITEM_SUBCLASS_WEAPON_BOW:
+            // Hunters use Auto Shot (75); everyone else uses Shoot Bow (2480).
+            spell_id = b->HasSpell(75) ? 75 : 2480;
+            break;
         case ITEM_SUBCLASS_WEAPON_GUN:
+            spell_id = b->HasSpell(75) ? 75 : 7918;  // Shoot Gun
+            break;
         case ITEM_SUBCLASS_WEAPON_CROSSBOW:
-            spell_id = 75;    // Auto Shot (hunter only — HasSpell gate below enforces)
+            spell_id = b->HasSpell(75) ? 75 : 7919;  // Shoot Crossbow
+            break;
+        case ITEM_SUBCLASS_WEAPON_THROWN:
+            spell_id = 2764;  // Throw
             break;
         case ITEM_SUBCLASS_WEAPON_WAND:
-            spell_id = 5019;  // Shoot (wand) — learned by every wand-capable class
+            spell_id = 5019;  // Shoot (wand)
             break;
         default:
             return false;
     }
 
-    if (!b->HasSpell(spell_id) || !b->IsSpellReady(spell_id))
+    if (!b->HasSpell(spell_id))
         return false;
 
-    // Check if we're already casting / channeling this spell — don't restart.
-    // Auto Shot (75) and Shoot (5019) are channeled/auto-repeat, so
-    // re-issuing them would cancel the current volley and restart from scratch.
+    // Check if we're already auto-shooting BEFORE the IsSpellReady gate.
+    // Auto Shot (75) has a brief cooldown between each volley; during that
+    // window IsSpellReady returns false. If we checked ready-state first,
+    // we'd return false and the Rust caller would fall through to melee
+    // auto_attack, which cancels the ranged auto-repeat — causing the
+    // hunter to toggle between ranged and melee every tick.
     if (Spell* current = b->GetCurrentSpell(CURRENT_AUTOREPEAT_SPELL))
     {
         if (current->m_spellInfo->Id == spell_id)
             return true; // already auto-shooting — idempotent success
     }
 
+    if (!b->IsSpellReady(spell_id))
+        return false;
+
     SpellEntry const* spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(spell_id);
     if (!spellInfo)
         return false;
+
+    // Face target before starting auto-shoot (same reason as CB_CastSpell).
+    if (!b->HasInArc(t, M_PI))
+    {
+        float angle = b->GetAngle(t);
+        if (b->IsStopped())
+        {
+            b->SetOrientation(angle);
+            b->SendHeartBeat();
+        }
+        else
+        {
+            b->SetFacingTo(angle);
+        }
+        b->SetInFront(t);
+    }
 
     Spell* spell = new Spell(b, spellInfo, false);
     SpellCastTargets targets;
@@ -3030,9 +3139,11 @@ BotSafePosition BotBridge::CB_GetRandomPointNearby(BotHandle bot, float range)
 
     b->UpdateGroundPositionZ(x, y, z);
 
-    // Verify line of sight
-    if (b->GetMap()->IsInLineOfSight(b->GetPositionX(), b->GetPositionY(),
-                                      b->GetPositionZ(), x, y, z, false))
+    // Validate with navmesh pathfinding — LoS alone passes through
+    // thin dungeon walls, causing bots to walk through geometry.
+    PathFinder pathfinder(b);
+    pathfinder.calculate(x, y, z, false);
+    if (pathfinder.getPathType() & PATHFIND_NORMAL)
     {
         result.x = x;
         result.y = y;

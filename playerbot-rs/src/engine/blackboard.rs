@@ -65,6 +65,9 @@ pub enum Key {
     TankRotationIdx,      // u32: index into this bot's tank_focus_targets list
     TankRotationSwitchMs, // u64: server_time_ms when we last switched rotation target
 
+    // ── Pull-back state ─────────────────────────────────────────────
+    IsPulling, // u32(1) when the bot has just pulled and is returning to group
+
     // Add new keys above this line. Keep count accurate.
     _Count,
 }
