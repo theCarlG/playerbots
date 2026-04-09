@@ -245,4 +245,15 @@ pub fn monitor_tick_summary(bot: &BotState) {
     if let Some(p) = bot.settings.protect_target {
         monitor_log(bot, &format!("  PROTECT: 0x{p:X}"));
     }
+    // Log BDI/GOAP state.
+    let desire = bot.bdi.active_desire();
+    let forced = if bot.bdi.forced_intention.is_some() { " [forced]" } else { "" };
+    let plan = &bot.bdi.plan_cache.plan;
+    monitor_log(
+        bot,
+        &format!(
+            "  BDI: desire={:?}{} intention={:?} plan={}/{} lod={:?}",
+            desire, forced, bot.bdi.intention.desire, plan.current_step, plan.len, bot.lod,
+        ),
+    );
 }

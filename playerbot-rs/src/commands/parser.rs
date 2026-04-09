@@ -415,6 +415,11 @@ const COMMANDS: &[CommandSpec] = &[
         names: &["douse"],
         parse: |_, a| parse_duty(a, DutyKind::Douse),
     },
+    // -- BDI personality --
+    CommandSpec {
+        names: &["personality"],
+        parse: |_, a| parse_personality(a),
+    },
     // -- PB2 parity: remaining commands --
     // Single-letter shortcuts from PB2
     CommandSpec {
@@ -1641,6 +1646,25 @@ enum DutyKind {
 
 /// `suppression` / `douse` (no args)      → `ShowEncounterPrefs`
 /// `suppression auto|forbid|force`        → `SetSuppressionDuty(..)`
+/// `personality ?`                         → `ShowPersonality`
+/// `personality aggression 0.8`            → `SetPersonality { dimension, value }`
+fn parse_personality(args: &[&str]) -> Option<BotCommand> {
+    match args {
+        [] | ["?"] => Some(BotCommand::ShowPersonality),
+        [dim, val] => {
+            if let Ok(v) = val.parse::<f32>() {
+                Some(BotCommand::SetPersonality {
+                    dimension: dim.to_lowercase(),
+                    value: v.clamp(0.0, 1.0),
+                })
+            } else {
+                Some(BotCommand::Unknown(format!("personality: invalid value '{val}'")))
+            }
+        }
+        _ => Some(BotCommand::Unknown("personality: usage: personality <dimension> <value>".into())),
+    }
+}
+
 /// `douse auto|forbid|force`              → `SetDouseDuty(..)`
 fn parse_duty(args: &[&str], kind: DutyKind) -> Option<BotCommand> {
     use crate::bot::encounter_prefs::DutyMode;

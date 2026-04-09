@@ -357,6 +357,12 @@ pub enum BotCommand {
     /// Reply with the current `encounter_prefs`.
     ShowEncounterPrefs,
 
+    // -- Personality (BDI) --
+    /// `personality <dimension> <value>` — set a BDI personality weight.
+    SetPersonality { dimension: String, value: f32 },
+    /// `personality ?` — whisper current personality weights.
+    ShowPersonality,
+
     // -- Loot policy (Mangosbot `ll` command) --
     /// Toggle (`ll ~equip`), set (`ll +equip`), or clear (`ll -equip`) one
     /// or more loot-policy categories. The dispatcher applies XORs before
@@ -553,8 +559,9 @@ impl BotCommand {
             SetPositionStance, SetPreferredCcRti, SetPreferredRti, SetRange, SetRangeQualified,
             SetReactivity, SetSaveMana, SetShamanImbue, SetSpec, SetStance, SetSuppressionDuty,
             SetTotem, SetValue, SetWaitForAttack, SetWarlockCurse, SetWarlockPet,
-            SetWarriorForcedStance, ShareQuest, ShowAttackers, ShowEncounterPrefs, ShowFaction,
-            ShowHunterPrefs, ShowPaladinPrefs, ShowPoisons, ShowShamanImbues, ShowTotems,
+            SetPersonality, SetWarriorForcedStance, ShareQuest, ShowAttackers, ShowEncounterPrefs,
+            ShowFaction, ShowHunterPrefs, ShowPaladinPrefs, ShowPersonality, ShowPoisons,
+            ShowShamanImbues, ShowTotems,
             ShowWarlockPrefs, ShowWarriorPrefs, SkipSpell, Speak, Status, Stop, Subscribe, Summon,
             Talk, TankAttack, TankQuery, Taxi, Teleport, ToggleSaveMana, ToggleSelfRes,
             ToggleStrategies, Trade, TradeAddItem, Trainer, TravelTo, UnassignCc, UnassignTankTarget,
@@ -674,6 +681,8 @@ impl BotCommand {
             | SetSuppressionDuty(_)
             | SetDouseDuty(_)
             | ShowEncounterPrefs
+            | SetPersonality { .. }
+            | ShowPersonality
             | ApplyLootPolicy { .. }
             | SetWaitForAttack(_)
             | TankAttack
@@ -1441,7 +1450,7 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         }
         BotCommand::Focus(target) => {
             // If no target provided, use master's target, then bot's own.
-            s.focus_target = target.or_else(|| {
+            let resolved = target.or_else(|| {
                 if let Some(master) = bot.master_guid.filter(|&g| g != 0) {
                     let ms = bot.interface.get_unit_snapshot(master);
                     if ms.current_target != 0 {
@@ -1451,6 +1460,15 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 let t = bot.snap.self_.current_target;
                 if t != 0 { Some(t) } else { None }
             });
+            s.focus_target = resolved;
+            // Set forced intention so BDI commits to killing this target.
+            if resolved.is_some() {
+                bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention {
+                    desire: crate::bdi::desires::DesireKind::KillTarget,
+                    target: resolved,
+                });
+                bot.bdi.intention_changed = true;
+            }
         }
         BotCommand::Attack(target) => {
             // Clear pull state — a direct attack command should bypass pull mode.
@@ -1490,6 +1508,12 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 if !has_tank_assignments {
                     s.focus_target = Some(unit);
                 }
+                // Set forced intention so BDI commits to killing this target.
+                bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention {
+                    desire: crate::bdi::desires::DesireKind::KillTarget,
+                    target: Some(unit),
+                });
+                bot.bdi.intention_changed = true;
             }
         }
         BotCommand::Pull(target) => {
@@ -1534,6 +1558,12 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 if !bot.interface.auto_shoot(unit) && !bot.interface.taunt(unit) {
                     bot.interface.attack(unit);
                 }
+                // Set forced intention so BDI commits to pulling.
+                bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention {
+                    desire: crate::bdi::desires::DesireKind::PullMobs,
+                    target: Some(unit),
+                });
+                bot.bdi.intention_changed = true;
             }
         }
         BotCommand::AttackRti(icon) => {
@@ -1543,6 +1573,11 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             if let Some(unit) = bot.interface.get_unit_with_raid_icon(*icon) {
                 bot.interface.attack(unit);
                 s.focus_target = Some(unit);
+                bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention {
+                    desire: crate::bdi::desires::DesireKind::KillTarget,
+                    target: Some(unit),
+                });
+                bot.bdi.intention_changed = true;
             }
         }
         BotCommand::PullRti(icon) => {
@@ -1559,6 +1594,11 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 if !bot.interface.auto_shoot(unit) && !bot.interface.taunt(unit) {
                     bot.interface.attack(unit);
                 }
+                bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention {
+                    desire: crate::bdi::desires::DesireKind::PullMobs,
+                    target: Some(unit),
+                });
+                bot.bdi.intention_changed = true;
             }
         }
         BotCommand::CcRti(icon) => {
@@ -1569,6 +1609,11 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 && bot.interface.can_cast(spell, unit)
             {
                 bot.interface.cast_spell(spell, unit);
+                bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention {
+                    desire: crate::bdi::desires::DesireKind::CrowdControl,
+                    target: Some(unit),
+                });
+                bot.bdi.intention_changed = true;
             }
         }
         BotCommand::BlacklistSpell(spell) => {
@@ -1617,13 +1662,21 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             s.heal_party_threshold = *pct;
         }
         BotCommand::Status => {
+            let desire = bot.bdi.active_desire();
+            let plan_step = bot.bdi.plan_cache.plan.current_step;
+            let plan_len = bot.bdi.plan_cache.plan.len;
+            let forced = if bot.bdi.forced_intention.is_some() { " [forced]" } else { "" };
             let msg = format!(
-                "Mode:{} CO:[{}] React:{:?} HP:{:.0}% MP:{:.0}%",
+                "Mode:{} CO:[{}] React:{:?} HP:{:.0}% MP:{:.0}% | BDI:{:?}{} GOAP:{}/{}",
                 s.mode.as_str(),
                 s.strategies.get(BotStateKind::Combat).describe(),
                 s.reactivity,
                 bot.snap.self_.health as f32 / bot.snap.self_.max_health.max(1) as f32 * 100.0,
                 bot.snap.self_.mana as f32 / bot.snap.self_.max_mana.max(1) as f32 * 100.0,
+                desire,
+                forced,
+                plan_step,
+                plan_len,
             );
             reply(bot, pc, &msg);
         }
@@ -1700,6 +1753,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             s.focus_target = None;
             s.protect_target = None;
             s.guard_position = None;
+            // Clear forced intention — return to autonomous BDI evaluation.
+            bot.bdi.forced_intention = None;
+            bot.bdi.intention_changed = true;
             // Leave mode alone — "free" clears overrides, doesn't reset everything.
         }
         BotCommand::Summon => {
@@ -1843,6 +1899,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         BotCommand::Stop => {
             // PB2 stop = cancel current action, brief passive
             s.reactivity = Reactivity::Passive;
+            // Clear forced intention — return to autonomous BDI evaluation.
+            bot.bdi.forced_intention = None;
+            bot.bdi.intention_changed = true;
         }
         BotCommand::SetStance(st) => {
             s.stance = *st;
@@ -2292,6 +2351,24 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         | BotCommand::SetSuppressionDuty(_)
         | BotCommand::SetDouseDuty(_)
         | BotCommand::ShowEncounterPrefs => apply_class_prefs_command(bot, pc),
+
+        BotCommand::SetPersonality { dimension, value } => {
+            if bot.bdi.personality.set_dimension(dimension, *value) {
+                reply(bot, pc, &format!("personality {dimension} = {value:.2}"));
+            } else {
+                reply(bot, pc, &format!(
+                    "unknown dimension '{dimension}'. valid: aggression, caution, helpfulness, discipline, initiative"
+                ));
+            }
+        }
+        BotCommand::ShowPersonality => {
+            let p = &bot.bdi.personality;
+            let msg = format!(
+                "personality: aggression={:.2} caution={:.2} helpfulness={:.2} discipline={:.2} initiative={:.2}",
+                p.aggression, p.caution, p.helpfulness, p.discipline, p.initiative
+            );
+            reply(bot, pc, &msg);
+        }
 
         BotCommand::ApplyLootPolicy {
             add,

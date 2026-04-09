@@ -31,12 +31,24 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     // previous group.
     bot.refresh_group_membership();
 
+    // 1b. Determine AI LOD tier — scales processing depth with human proximity.
+    bot.lod = crate::bot::lod::determine_lod(bot);
+
+    // 1c. LOD tick-skip — Background/Dormant bots skip most ticks entirely.
+    if bot.lod.should_skip_tick(bot.handle as u64, now_ms) {
+        bot.timers.advance(now_ms);
+        return;
+    }
+
     // 2. Throttled attacker/nearby refresh
     if !minimal && now_ms.saturating_sub(bot.last_attackers_refresh_ms) >= cfg.attacker_refresh_ms {
         bot.attackers = bot.interface.get_attackers();
         bot.last_attackers_refresh_ms = now_ms;
     }
-    if !minimal && now_ms.saturating_sub(bot.last_nearby_refresh_ms) >= cfg.nearby_refresh_ms {
+    // Skip nearby scan for Background/Dormant — biggest CPU savings.
+    if !minimal && bot.lod.should_scan_nearby()
+        && now_ms.saturating_sub(bot.last_nearby_refresh_ms) >= cfg.nearby_refresh_ms
+    {
         bot.nearby_units = bot.interface.get_nearby_units(cfg.nearby_scan_range, false);
         bot.last_nearby_refresh_ms = now_ms;
     }
@@ -85,15 +97,18 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         .is_some_and(|e| e.is_active());
 
     // 4.8 BDI: evaluate desires and select/maintain intention.
-    //     Time-sliced: only 1/5 of bots per tick (~360 bots/tick).
+    //     Gated by LOD tier interval (Full: 500ms, Active: 2s, Background: 5s, Dormant: never).
     let encounter_active = bot.bdi.beliefs.encounter_active;
-    if !minimal && crate::bdi::should_evaluate(bot.handle as u64, now_ms) {
+    let bdi_interval = bot.lod.bdi_interval_ms();
+    let bdi_due = now_ms.saturating_sub(bot.bdi.last_eval_ms) >= bdi_interval;
+    if !minimal && bdi_due {
         crate::bdi::evaluate(
             &mut bot.bdi,
             bot.class,
             bot.role,
             encounter_active,
             now_ms,
+            bot.settings.mode,
         );
     }
 
@@ -111,9 +126,13 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         }
     }
 
-    // 4.10 Write BDI/GOAP state to blackboard.
+    // 4.10 Write BDI/GOAP/LOD state to blackboard.
     crate::bdi::write_to_blackboard(&bot.bdi, &mut bot.blackboard);
     crate::goap::write_to_blackboard(&bot.bdi.plan_cache, &mut bot.blackboard);
+    {
+        use crate::engine::blackboard::{Key, Value};
+        bot.blackboard.set(Key::AiLodTier, Value::U32(bot.lod as u32));
+    }
     let goap_flags = bot.bdi.goap_strategy_flags();
 
     // ── End BDI + GOAP ───────────────────────────────────────────────
@@ -129,6 +148,11 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     if let Some(focus) = bot.settings.focus_target {
         if !bot.interface.is_attackable(focus) {
             bot.settings.focus_target = None;
+            // If the forced intention targeted this unit, clear it too.
+            if bot.bdi.forced_intention.is_some_and(|fi| fi.target == Some(focus)) {
+                bot.bdi.forced_intention = None;
+                bot.bdi.intention_changed = true;
+            }
         }
     }
     let has_engagement = !bot.attackers.is_empty() || bot.settings.focus_target.is_some();
