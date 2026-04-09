@@ -54,6 +54,7 @@ typedef struct {
     UnitHandle current_target;  /* 0 = no target */
     uint32_t  aura_state_mask;  /* CMaNGOS AuraState bitmask for quick checks */
     uint32_t  npc_entry;        /* Creature::GetEntry() for NPCs, 0 for players */
+    bool      is_mounted;       /* Unit::IsMounted() */
 } BotUnitSnapshot;
 
 typedef struct {
@@ -628,6 +629,8 @@ typedef struct BotCallbacks {
     /* ── Factory: misc pre/post init ─────────────────────────────────── */
     /* Remove every aura (buffs & debuffs) currently on the bot. */
     void (*bot_remove_all_auras)(BotHandle bot);
+    /* Remove all aura stacks of a specific spell from the bot. */
+    void (*bot_remove_aura_by_id)(BotHandle bot, uint32_t spell_id);
     /* True if the bot has `skill_id` learned at any rank. */
     bool (*bot_has_skill)(BotHandle bot, uint32_t skill_id);
     /* Teach the bot a spell (Player::learnSpell with dependent=false).
@@ -824,6 +827,14 @@ typedef struct BotCallbacks {
      * `target_guid` is the sender (master) ObjectGuid; the packet is
      * delivered directly to that player so only they receive it. */
     bool            (*bot_tell_addon)(BotHandle bot, uint64_t target_guid, const char* msg);
+
+    /* ── Group addon broadcast ──────────────────────────────────────────
+     * Broadcast an addon message to the bot's group/raid. Wire format is
+     * "PREFIX\tBODY" sent as CHAT_MSG_PARTY/RAID + LANG_ADDON — identical
+     * to what the client's SendAddonMessage() produces. Used for protocols
+     * like KLHThreatMeter where the bot must appear as a normal addon
+     * user to all group members. */
+    bool            (*bot_send_group_addon)(BotHandle bot, const char* prefix, const char* msg);
 
     /* ── Travel destination queries ─────────────────────────────────────
      * These allow the Rust travel planner to query the server for nearby
@@ -1025,6 +1036,16 @@ typedef struct BotCallbacks {
     bool (*bot_mail_take_index)(BotHandle bot, uint32_t mail_index);
     /* Send a specific item (by ID) from bags to the master via mail. */
     bool (*send_mail_item)(BotHandle bot, uint32_t item_id);
+    /* Add an item to the bot's trade window (by item ID, count stacks).
+     * count=0 means 1 stack. Returns true on success. */
+    bool (*trade_add_item)(BotHandle bot, uint32_t item_id, uint32_t count);
+    /* Look up the item ID created by a tradeskill spell.
+     * Returns 0 if the spell doesn't create an item. */
+    uint32_t (*get_spell_craft_item)(uint32_t spell_id);
+    /* Look up basic item info by ID. Writes name (null-terminated, up to
+     * name_buf_len) and quality. Returns false if the item doesn't exist. */
+    bool (*get_item_info)(uint32_t item_id, char* name_buf, uint32_t name_buf_len,
+                          uint8_t* out_quality);
 } BotCallbacks;
 
 /* ── Rust exports (entry points CMaNGOS calls into Rust) ─────────────────── */

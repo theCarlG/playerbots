@@ -441,7 +441,23 @@ const COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         names: &["t", "nt"],
-        parse: |_, _| Some(BotCommand::Trade),
+        parse: |_, a| {
+            if a.is_empty() {
+                return Some(BotCommand::Trade);
+            }
+            // `t <itemlink> [count]` — add item to trade window.
+            // Last arg may be a count (e.g. "6" for all stacks).
+            let last = a.last().unwrap();
+            let (name_args, count) = if let Ok(n) = last.parse::<u32>() {
+                if a.len() > 1 { (&a[..a.len()-1], n) } else { (a, 0u32) }
+            } else {
+                (a, 0u32)
+            };
+            Some(BotCommand::TradeAddItem {
+                name: name_args.join(" "),
+                count,
+            })
+        },
     },
     CommandSpec {
         names: &["ue"],

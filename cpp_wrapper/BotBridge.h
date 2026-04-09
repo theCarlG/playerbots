@@ -82,6 +82,7 @@ namespace BotBridge
     bool CB_Whisper(BotHandle bot, uint64_t target_guid, const char* msg);
     bool CB_TellPlayer(BotHandle bot, uint64_t target_guid, const char* msg);
     bool CB_TellAddon(BotHandle bot, uint64_t target_guid, const char* msg);
+    bool CB_SendGroupAddonMessage(BotHandle bot, const char* prefix, const char* msg);
     bool CB_UseItem(BotHandle bot, uint32_t item_id, UnitHandle target);
     uint32_t CB_FindFoodDrinkInBags(BotHandle bot, uint32_t category);
     bool CB_Taunt(BotHandle bot, UnitHandle target);
@@ -214,6 +215,7 @@ namespace BotBridge
 
     // ── Factory: misc pre/post init ────────────────────────────────────────
     void CB_BotRemoveAllAuras(BotHandle bot);
+    void CB_BotRemoveAuraById(BotHandle bot, uint32_t spell_id);
     bool CB_BotHasSkill(BotHandle bot, uint32_t skill_id);
     void CB_BotLearnSpell(BotHandle bot, uint32_t spell_id);
     void CB_BotRemoveSpell(BotHandle bot, uint32_t spell_id);
@@ -363,6 +365,9 @@ namespace BotBridge
     bool CB_BankWithdrawItem(BotHandle bot, uint32_t item_id);
     bool CB_BotMailTakeIndex(BotHandle bot, uint32_t mail_index);
     bool CB_SendMailItem(BotHandle bot, uint32_t item_id);
+    bool CB_TradeAddItem(BotHandle bot, uint32_t item_id, uint32_t count);
+    static uint32_t CB_GetSpellCraftItem(uint32_t spell_id);
+    static bool CB_GetItemInfo(uint32_t item_id, char* name_buf, uint32_t name_buf_len, uint8_t* out_quality);
 
     // ── Internal helpers ────────────────────────────────────────────────────
     Player* FindBot(BotHandle bot);

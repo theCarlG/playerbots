@@ -434,6 +434,8 @@ pub enum BotCommand {
     UnequipItemByName(String),
     /// `t` / `nt` — accept/initiate trade.
     Trade,
+    /// `t <itemlink> [count]` — add item to trade window.
+    TradeAddItem { name: String, count: u32 },
     /// `quest reward` / `reward` / `r` — choose quest reward.
     QuestReward,
     /// `cs <strategy>` — custom strategy definition.
@@ -555,7 +557,7 @@ impl BotCommand {
             ShowHunterPrefs, ShowPaladinPrefs, ShowPoisons, ShowShamanImbues, ShowTotems,
             ShowWarlockPrefs, ShowWarriorPrefs, SkipSpell, Speak, Status, Stop, Subscribe, Summon,
             Talk, TankAttack, TankQuery, Taxi, Teleport, ToggleSaveMana, ToggleSelfRes,
-            ToggleStrategies, Trade, Trainer, TravelTo, UnassignCc, UnassignTankTarget,
+            ToggleStrategies, Trade, TradeAddItem, Trainer, TravelTo, UnassignCc, UnassignTankTarget,
             UnblacklistSpell, UnequipItemByName, UnkeepItem, Unknown, UnsetTank, Unsubscribe,
             SellItemByName, UseHearth, UseItemByName, Vendor, WhatToSell, Where,
         };
@@ -711,6 +713,7 @@ impl BotCommand {
             | Buyback
             | UnequipItemByName(_)
             | Trade
+            | TradeAddItem { .. }
             | QuestReward
             | CustomStrategy(_)
             | WhatToSell
@@ -1378,30 +1381,45 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 slot.0 ^= t0;
                 slot.1 ^= t1;
             }
-            if *query {
-                let desc = describe_with_class_prefs(
-                    s.strategies.get(BotStateKind::Combat),
-                    &s.class_prefs,
-                );
-                reply(bot, pc, &format!("Strategies: {desc}"));
-            }
+            let strat_query = *query;
             // When MARK_RTI is removed, also clear the preferred RTI icon
             // so the bot stops marking even if the icon was set at init time.
             {
-                let new_combat = bot.settings.strategies.get(BotStateKind::Combat);
+                let new_combat = s.strategies.get(BotStateKind::Combat);
                 if !new_combat.contains(StrategyFlags::MARK_RTI) {
-                    bot.settings.preferred_rti_icon = None;
+                    s.preferred_rti_icon = None;
                 }
             }
             // Check if a spec flag was added — if so, rebuild the behavior
             // tree for the new spec. Mirrors the same check in ApplyStrategies.
             {
-                let new_combat = bot.settings.strategies.get(BotStateKind::Combat);
+                let new_combat = s.strategies.get(BotStateKind::Combat);
                 if let Some(new_spec) =
                     crate::bot::init::spec_from_strategy_flags(bot.class, new_combat)
                     && new_spec != bot.spec
                 {
                     crate::bot::init::rebuild_for_spec(bot, new_spec);
+                }
+            }
+            // Send strategy replies after all mutations are done (releases `s` borrow).
+            if strat_query {
+                let msgs: Vec<String> = [
+                    BotStateKind::Combat,
+                    BotStateKind::NonCombat,
+                    BotStateKind::Reaction,
+                    BotStateKind::Dead,
+                ]
+                .iter()
+                .map(|state| {
+                    let desc = describe_with_class_prefs(
+                        bot.settings.strategies.get(*state),
+                        &bot.settings.class_prefs,
+                    );
+                    format!("{}: {desc}", state.reply_prefix())
+                })
+                .collect();
+                for msg in &msgs {
+                    reply(bot, pc, msg);
                 }
             }
         }
@@ -1435,6 +1453,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             });
         }
         BotCommand::Attack(target) => {
+            // Clear pull state — a direct attack command should bypass pull mode.
+            use crate::engine::blackboard::{Key, Value};
+            bot.blackboard.set(Key::IsPulling, Value::U32(0));
             let t = target.or_else(|| {
                 // PB2 parity: resolve master's target first, then bot's own.
                 if let Some(master) = bot.master_guid.filter(|&g| g != 0) {
@@ -1507,6 +1528,7 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 bot.blackboard.set(Key::PullBackZ, Value::F32(pos.z));
                 // Mark the bot as "pulling" so PullBack knows to activate.
                 bot.blackboard.set(Key::IsPulling, Value::U32(1));
+                bot.blackboard.set(Key::PullStartTime, Value::U32(0));
                 // Try ranged pull first (auto-shot), fall back to taunt,
                 // then plain attack.
                 if !bot.interface.auto_shoot(unit) && !bot.interface.taunt(unit) {
@@ -1515,6 +1537,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             }
         }
         BotCommand::AttackRti(icon) => {
+            // Clear pull state — a direct attack command should bypass pull mode.
+            use crate::engine::blackboard::{Key, Value};
+            bot.blackboard.set(Key::IsPulling, Value::U32(0));
             if let Some(unit) = bot.interface.get_unit_with_raid_icon(*icon) {
                 bot.interface.attack(unit);
                 s.focus_target = Some(unit);
@@ -1530,6 +1555,7 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 bot.blackboard.set(Key::PullBackY, Value::F32(pos.y));
                 bot.blackboard.set(Key::PullBackZ, Value::F32(pos.z));
                 bot.blackboard.set(Key::IsPulling, Value::U32(1));
+                bot.blackboard.set(Key::PullStartTime, Value::U32(0));
                 if !bot.interface.auto_shoot(unit) && !bot.interface.taunt(unit) {
                     bot.interface.attack(unit);
                 }
@@ -2117,9 +2143,22 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             reply(bot, pc, &msg);
         }
         BotCommand::ListSpells => {
-            let n = bot.interface.get_bot_spells().len();
-            let msg = format!("Spells known: {n}");
-            reply(bot, pc, &msg);
+            // EngBags expects `=== Spells ===` header followed by tradeskill
+            // recipe items: `(xN) |cCOLOR|Hitem:ID:0:0:0|h[Name]|h|r`
+            reply(bot, pc, "=== Spells ===");
+            for spell_id in bot.interface.get_bot_spells() {
+                let item_id = bot.interface.get_spell_craft_item(spell_id);
+                if item_id == 0 {
+                    continue;
+                }
+                if let Some((name, quality)) = bot.interface.get_item_info(item_id) {
+                    let color = quality_color(quality);
+                    let msg = format!(
+                        "(x1) |c{color}|Hitem:{item_id}:0:0:0|h[{name}]|h|r"
+                    );
+                    reply(bot, pc, &msg);
+                }
+            }
         }
         BotCommand::ListInventory => {
             let items = bot.interface.bot_get_inventory();
@@ -2709,6 +2748,12 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             // PB2 "t"/"nt" — accept pending trade. Uses existing FFI.
             bot.interface.accept_trade();
         }
+        BotCommand::TradeAddItem { name, count } => {
+            let item_id = bot.interface.resolve_item_by_name(name);
+            if item_id != 0 {
+                bot.interface.trade_add_item(ItemId(item_id), *count);
+            }
+        }
         BotCommand::QuestReward => {
             // PB2 "r"/"reward"/"quest reward" — auto-pick quest reward.
             // Quest reward selection is handled by the C++ side when
@@ -3010,8 +3055,13 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             if bot.monitor_active {
                 crate::bot::monitor::monitor_log(bot, &format!("UNKNOWN COMMAND: {text}"));
             }
-            let msg = format!("Unknown command: {text}");
-            reply(bot, pc, &msg);
+            // Don't spam "unknown command" for addon traffic (BigWigs, KTM,
+            // DBM, etc.) — only reply when the command came from a player
+            // typing in chat, not from an addon channel.
+            if !pc.is_addon() {
+                let msg = format!("Unknown command: {text}");
+                reply(bot, pc, &msg);
+            }
         }
     }
 }

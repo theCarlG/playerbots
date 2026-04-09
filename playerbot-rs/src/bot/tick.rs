@@ -274,8 +274,55 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         bot.last_addon_push_ms = now_ms;
     }
 
-    // 8. Advance timers
+    // 8. KLHThreatMeter broadcast — send threat to group so human players
+    //    with KTM installed can see bot threat values.
+    broadcast_ktm_threat(bot, now_ms);
+
+    // 9. Advance timers
     bot.timers.advance(now_ms);
+}
+
+/// Broadcast this bot's threat to the group via the KLHThreatMeter addon
+/// protocol. Mirrors the update cadence from `KTM_Net.lua:updatethreattoraid`:
+///   - 500ms when threat is changing
+///   - 5000ms when stable
+///   - skip entirely when threat is 0 and was already 0
+fn broadcast_ktm_threat(bot: &mut BotState, now_ms: u64) {
+    // Only broadcast when grouped with a human player.
+    if bot.master_guid.is_none() || bot.snap.group_size == 0 {
+        return;
+    }
+
+    // Determine current threat on our target.
+    let target = bot.snap.self_.current_target;
+    let threat_int = if target != 0 && bot.snap.self_.in_combat {
+        bot.interface
+            .get_unit_threat(target, bot.handle as u64)
+            as i64
+    } else {
+        0
+    };
+
+    // Don't send when threat is 0 and was already 0.
+    if threat_int == 0 && bot.last_ktm_threat_sent == 0 {
+        return;
+    }
+
+    // Throttle: 500ms if value changed, 5000ms if stable.
+    let interval = if threat_int != bot.last_ktm_threat_sent {
+        500
+    } else {
+        5000
+    };
+    if now_ms.saturating_sub(bot.last_ktm_threat_time_ms) < interval {
+        return;
+    }
+
+    // Send the update.
+    let msg = format!("t {}", threat_int);
+    bot.interface.send_group_addon("KLHTM", &msg);
+    bot.last_ktm_threat_sent = threat_int;
+    bot.last_ktm_threat_time_ms = now_ms;
 }
 
 fn process_events(bot: &mut BotState, _now_ms: u64) {
@@ -534,6 +581,16 @@ fn on_fsm_exit(bot: &mut BotState, prev: ActiveFsm) {
             bot.blackboard.clear(Key::LastAttackTarget);
             bot.blackboard.clear(Key::IsPulling);
             bot.settings.focus_target = None;
+
+            // Cancel feign death if the hunter is still lying down.
+            // Feign death applies an aura that persists until manually
+            // cancelled — without this the hunter stays "dead" forever.
+            if bot.class == crate::bot::state::PlayerClass::Hunter {
+                use crate::data::spells::vanilla::hunter::FEIGN_DEATH;
+                if bot.interface.has_aura(bot.handle as u64, FEIGN_DEATH) {
+                    bot.interface.remove_aura(FEIGN_DEATH);
+                }
+            }
         }
         ActiveFsm::Dead => {
             // Revived: clear death-related state.

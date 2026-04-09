@@ -66,10 +66,11 @@ pub enum Key {
     TankRotationSwitchMs, // u64: server_time_ms when we last switched rotation target
 
     // ── Pull-back state ─────────────────────────────────────────────
-    IsPulling,    // u32(1) when the bot has just pulled and is returning to group
-    PullBackX,    // f32: pre-pull position to return to during pull-back
-    PullBackY,    // f32
-    PullBackZ,    // f32
+    IsPulling,      // u32(1) when the bot has just pulled and is returning to group
+    PullBackX,      // f32: pre-pull position to return to during pull-back
+    PullBackY,      // f32
+    PullBackZ,      // f32
+    PullStartTime,  // u32: server_time_ms when IsPulling was set (for timeout)
 
     // Add new keys above this line. Keep count accurate.
     _Count,

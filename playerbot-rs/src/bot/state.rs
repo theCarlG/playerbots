@@ -225,6 +225,12 @@ pub struct BotState {
     pub addon_subs: crate::commands::protocol::AddonSubscriptions,
     /// Last time addon state pushes were sent (throttle to ~2s).
     pub last_addon_push_ms: u64,
+
+    // ── KLHThreatMeter broadcast ───────────────────────────────────────
+    /// Last threat value sent via KLHTM addon protocol.
+    pub last_ktm_threat_sent: i64,
+    /// Server time (ms) when the last KLHTM threat update was sent.
+    pub last_ktm_threat_time_ms: u64,
 }
 
 impl BotState {
@@ -272,6 +278,8 @@ impl BotState {
             last_monitor_in_combat: false,
             addon_subs: Default::default(),
             last_addon_push_ms: 0,
+            last_ktm_threat_sent: 0,
+            last_ktm_threat_time_ms: 0,
         }
     }
 

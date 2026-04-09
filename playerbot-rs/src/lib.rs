@@ -174,7 +174,19 @@ pub unsafe extern "C" fn playerbot_destroy(state: *mut ()) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn playerbot_update(state: *mut (), elapsed_ms: u32, minimal: bool) {
     let bot = unsafe { &mut *state.cast::<BotState>() };
-    bot::tick::tick(bot, elapsed_ms, minimal);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        bot::tick::tick(bot, elapsed_ms, minimal);
+    }));
+    if let Err(e) = result {
+        let msg = if let Some(s) = e.downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = e.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "unknown panic".to_string()
+        };
+        log_error!("playerbot_update panic: {msg}");
+    }
 }
 
 // ── Packet events ─────────────────────────────────────────────────────────

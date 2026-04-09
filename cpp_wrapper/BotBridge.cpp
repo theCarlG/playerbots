@@ -173,6 +173,8 @@ BotUnitSnapshot BotBridge::FillUnitSnapshot(Unit* unit)
     // treats it opaquely and matches on raw u8 values.
     s.shapeshift_form = static_cast<uint8_t>(unit->GetShapeshiftForm());
 
+    s.is_mounted = unit->IsMounted();
+
     // NPC entry for creature identification (boss detection, etc.)
     if (Creature* c = unit->ToCreature())
     {
@@ -369,6 +371,7 @@ BotCallbacks BotBridge::MakeCallbacks()
 
     // Factory: misc pre/post init
     cbs.bot_remove_all_auras                = CB_BotRemoveAllAuras;
+    cbs.bot_remove_aura_by_id               = CB_BotRemoveAuraById;
     cbs.bot_has_skill                       = CB_BotHasSkill;
     cbs.bot_learn_spell                     = CB_BotLearnSpell;
     cbs.bot_remove_spell                    = CB_BotRemoveSpell;
@@ -429,6 +432,7 @@ BotCallbacks BotBridge::MakeCallbacks()
 
     // Addon-channel reply routing
     cbs.bot_tell_addon                      = CB_TellAddon;
+    cbs.bot_send_group_addon                = CB_SendGroupAddonMessage;
 
     // Loot rolling — PB2 handles this via packet interception in
     // PlayerbotMgr::HandleMasterIncomingPacket (CMSG_LOOT_ROLL),
@@ -514,6 +518,9 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.bank_withdraw_item                  = CB_BankWithdrawItem;
     cbs.bot_mail_take_index                 = CB_BotMailTakeIndex;
     cbs.send_mail_item                      = CB_SendMailItem;
+    cbs.trade_add_item                      = CB_TradeAddItem;
+    cbs.get_spell_craft_item                = CB_GetSpellCraftItem;
+    cbs.get_item_info                       = CB_GetItemInfo;
 
     return cbs;
 }
@@ -1566,6 +1573,33 @@ bool BotBridge::CB_TellAddon(BotHandle bot, uint64_t target_guid, const char* ms
     ChatHandler::BuildChatPacket(data, CHAT_MSG_PARTY, payload.c_str(), LANG_ADDON,
                                  CHAT_TAG_NONE, b->GetObjectGuid(), b->GetName());
     target->GetSession()->SendPacket(data);
+    return true;
+}
+
+// Broadcast an addon message to the bot's group/raid. Used for protocols
+// like KLHThreatMeter where the bot must appear as a normal addon user.
+// Wire format: "PREFIX\tBODY" sent as CHAT_MSG_PARTY/RAID + LANG_ADDON.
+bool BotBridge::CB_SendGroupAddonMessage(BotHandle bot, const char* prefix, const char* msg)
+{
+    Player* b = FindBot(bot);
+    if (!b || !prefix || !msg)
+        return false;
+
+    Group* group = b->GetGroup();
+    if (!group)
+        return false;
+
+    std::string payload;
+    payload.reserve(strlen(prefix) + 1 + strlen(msg));
+    payload.append(prefix);
+    payload.push_back('\t');
+    payload.append(msg);
+
+    const ChatMsg msgType = group->IsRaidGroup() ? CHAT_MSG_RAID : CHAT_MSG_PARTY;
+    WorldPacket data;
+    ChatHandler::BuildChatPacket(data, msgType, payload.c_str(), LANG_ADDON,
+                                 CHAT_TAG_NONE, b->GetObjectGuid(), b->GetName());
+    group->BroadcastPacket(data, false);
     return true;
 }
 
@@ -3707,6 +3741,14 @@ void BotBridge::CB_BotRemoveAllAuras(BotHandle bot)
     if (!b)
         return;
     b->RemoveAllAuras();
+}
+
+void BotBridge::CB_BotRemoveAuraById(BotHandle bot, uint32_t spell_id)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+    b->RemoveAurasDueToSpell(spell_id);
 }
 
 bool BotBridge::CB_BotHasSkill(BotHandle bot, uint32_t skill_id)
@@ -6262,4 +6304,97 @@ bool BotBridge::CB_SendMailItem(BotHandle bot, uint32_t item_id)
     }
 
     return false;
+}
+
+bool BotBridge::CB_TradeAddItem(BotHandle bot, uint32_t item_id, uint32_t count)
+{
+    Player* b = FindBot(bot);
+    if (!b || item_id == 0)
+        return false;
+
+    if (!b->GetTrader())
+        return false;
+
+    TradeData* pTrade = b->GetTradeData();
+    if (!pTrade)
+        return false;
+
+    uint32_t added = 0;
+    uint32_t wanted = (count == 0) ? 1 : count;
+
+    // Search backpack
+    for (int i = INVENTORY_SLOT_ITEM_START; i < INVENTORY_SLOT_ITEM_END && added < wanted; ++i)
+    {
+        Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, i);
+        if (!item || item->GetEntry() != item_id || item->IsInTrade())
+            continue;
+
+        // Find a free trade slot
+        for (uint8 slot = 0; slot < TRADE_SLOT_TRADED_COUNT; ++slot)
+        {
+            if (pTrade->GetItem(TradeSlots(slot)) == nullptr)
+            {
+                pTrade->SetItem(TradeSlots(slot), item);
+                ++added;
+                break;
+            }
+        }
+    }
+
+    // Extra bags
+    for (int bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END && added < wanted; ++bag)
+    {
+        Bag* pBag = dynamic_cast<Bag*>(b->GetItemByPos(INVENTORY_SLOT_BAG_0, bag));
+        if (!pBag) continue;
+        for (uint32 slot = 0; slot < pBag->GetBagSize() && added < wanted; ++slot)
+        {
+            Item* item = b->GetItemByPos(bag, slot);
+            if (!item || item->GetEntry() != item_id || item->IsInTrade())
+                continue;
+
+            for (uint8 ts = 0; ts < TRADE_SLOT_TRADED_COUNT; ++ts)
+            {
+                if (pTrade->GetItem(TradeSlots(ts)) == nullptr)
+                {
+                    pTrade->SetItem(TradeSlots(ts), item);
+                    ++added;
+                    break;
+                }
+            }
+        }
+    }
+
+    return added > 0;
+}
+
+uint32_t BotBridge::CB_GetSpellCraftItem(uint32_t spell_id)
+{
+    SpellEntry const* spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(spell_id);
+    if (!spellInfo)
+        return 0;
+
+    for (int i = 0; i < MAX_EFFECT_INDEX; ++i)
+    {
+        if (spellInfo->Effect[i] == SPELL_EFFECT_CREATE_ITEM && spellInfo->EffectItemType[i] != 0)
+            return spellInfo->EffectItemType[i];
+    }
+
+    return 0;
+}
+
+bool BotBridge::CB_GetItemInfo(uint32_t item_id, char* name_buf, uint32_t name_buf_len, uint8_t* out_quality)
+{
+    ItemPrototype const* proto = sItemStorage.LookupEntry<ItemPrototype>(item_id);
+    if (!proto)
+        return false;
+
+    if (name_buf && name_buf_len > 0)
+    {
+        strncpy(name_buf, proto->Name1, name_buf_len - 1);
+        name_buf[name_buf_len - 1] = '\0';
+    }
+    if (out_quality)
+        *out_quality = proto->Quality;
+
+    return true;
 }

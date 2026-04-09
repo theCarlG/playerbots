@@ -64,13 +64,11 @@ pub fn threat_subtree() -> Bt {
 ///
 /// When `PULL_BACK` is enabled, the bot first returns to its pre-pull
 /// position (saved by the pull command). Otherwise, it holds its current
-/// position. In both cases, the bot retries `PullTarget` (auto-shoot /
-/// taunt) each tick so the mob keeps coming.
+/// position and retries `PullTarget` (auto-shoot / taunt) each tick.
 ///
-/// Returns non-Failure while pulling, which blocks the combat pipeline's
-/// positioning (StickToTarget / MoveBehind) from walking the bot toward
-/// the mob. Once `IsPulling` clears (mob arrived), the Seq fails and
-/// normal combat takes over.
+/// If the bot has no ranged pull ability (PullTarget fails), the Seq
+/// fails and normal combat positioning takes over — the bot walks to
+/// the target instead of standing still doing nothing.
 pub fn pull_phase_subtree() -> Bt {
     Seq!(
         Bt::IsPulling,
@@ -79,14 +77,9 @@ pub fn pull_phase_subtree() -> Bt {
             // PullBack returns Running while moving, Failure when arrived.
             Seq!(StrategyEnabled(StrategyFlags::PULL_BACK), PullBack),
             // At position (or no PULL_BACK): retry ranged pull.
+            // If PullTarget fails (no ranged weapon, taunt on CD),
+            // the whole subtree fails and normal combat takes over.
             Bt::PullTarget,
-            // Hold position even if pull attempt fails this tick
-            // (out of range, GCD, etc.). StopMoving cancels any
-            // server-side auto-attack chase that the initial pull
-            // command may have started, then returns Success so
-            // the outer Seq blocks the combat pipeline from issuing
-            // chase commands.
-            Bt::StopMoving,
         ),
     )
 }

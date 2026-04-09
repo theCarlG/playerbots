@@ -163,6 +163,12 @@ pub trait BotInterface: Send {
     fn tell_addon(&self, _target_guid: u64, _msg: &str) -> bool {
         false
     }
+    /// Broadcast an addon message to the bot's group/raid. Wire format is
+    /// `"PREFIX\tBODY"` — identical to the client's `SendAddonMessage()`.
+    /// Used for protocols like KLHThreatMeter.
+    fn send_group_addon(&self, _prefix: &str, _msg: &str) -> bool {
+        false
+    }
     fn use_item(&self, item_id: ItemId, target: UnitHandle) -> bool;
     fn taunt(&self, target: UnitHandle) -> bool;
 
@@ -600,6 +606,9 @@ pub trait BotInterface: Send {
     /// Strip every aura (buffs and debuffs) currently on the bot.
     fn bot_remove_all_auras(&self) {}
 
+    /// Remove all stacks of a specific spell's aura from the bot.
+    fn remove_aura(&self, _spell_id: SpellId) {}
+
     /// Whether the bot has the given skill learned (at any rank).
     fn bot_has_skill(&self, _skill_id: u32) -> bool {
         false
@@ -1031,6 +1040,21 @@ pub trait BotInterface: Send {
         false
     }
 
+    /// Add an item to the bot's trade window. count=0 means 1 stack.
+    fn trade_add_item(&self, _item_id: ItemId, _count: u32) -> bool {
+        false
+    }
+
+    /// Look up the item ID created by a tradeskill spell.
+    fn get_spell_craft_item(&self, _spell_id: u32) -> u32 {
+        0
+    }
+
+    /// Look up item name and quality by ID. Returns `(name, quality)` or None.
+    fn get_item_info(&self, _item_id: u32) -> Option<(String, u8)> {
+        None
+    }
+
     /* ── Auction house ───────────────────────────────────────────────── */
 
     /// Post items on the auction house.
@@ -1379,6 +1403,18 @@ impl BotInterface for RealInterface {
     fn tell_addon(&self, target_guid: u64, msg: &str) -> bool {
         let c_str = std::ffi::CString::new(msg).unwrap_or_default();
         unsafe { (self.cbs.bot_tell_addon.unwrap())(self.handle, target_guid, c_str.as_ptr()) }
+    }
+
+    fn send_group_addon(&self, prefix: &str, msg: &str) -> bool {
+        let c_prefix = std::ffi::CString::new(prefix).unwrap_or_default();
+        let c_msg = std::ffi::CString::new(msg).unwrap_or_default();
+        unsafe {
+            (self.cbs.bot_send_group_addon.unwrap())(
+                self.handle,
+                c_prefix.as_ptr(),
+                c_msg.as_ptr(),
+            )
+        }
     }
 
     fn use_item(&self, item_id: ItemId, target: UnitHandle) -> bool {
@@ -1821,6 +1857,10 @@ impl BotInterface for RealInterface {
         unsafe { (self.cbs.bot_remove_all_auras.unwrap())(self.handle) }
     }
 
+    fn remove_aura(&self, spell_id: SpellId) {
+        unsafe { (self.cbs.bot_remove_aura_by_id.unwrap())(self.handle, spell_id.raw()) }
+    }
+
     fn bot_has_skill(&self, skill_id: u32) -> bool {
         unsafe { (self.cbs.bot_has_skill.unwrap())(self.handle, skill_id) }
     }
@@ -2222,6 +2262,33 @@ impl BotInterface for RealInterface {
 
     fn send_mail_item(&self, item_id: ItemId) -> bool {
         unsafe { (self.cbs.send_mail_item.unwrap())(self.handle, item_id.0) }
+    }
+
+    fn trade_add_item(&self, item_id: ItemId, count: u32) -> bool {
+        unsafe { (self.cbs.trade_add_item.unwrap())(self.handle, item_id.0, count) }
+    }
+
+    fn get_spell_craft_item(&self, spell_id: u32) -> u32 {
+        unsafe { (self.cbs.get_spell_craft_item.unwrap())(spell_id) }
+    }
+
+    fn get_item_info(&self, item_id: u32) -> Option<(String, u8)> {
+        let mut name_buf = [0u8; 80];
+        let mut quality = 0u8;
+        let ok = unsafe {
+            (self.cbs.get_item_info.unwrap())(
+                item_id,
+                name_buf.as_mut_ptr() as *mut core::ffi::c_char,
+                name_buf.len() as u32,
+                &mut quality,
+            )
+        };
+        if !ok {
+            return None;
+        }
+        let end = name_buf.iter().position(|&b| b == 0).unwrap_or(name_buf.len());
+        let name = core::str::from_utf8(&name_buf[..end]).unwrap_or("?").to_string();
+        Some((name, quality))
     }
 
     fn ah_post(&self) -> bool {

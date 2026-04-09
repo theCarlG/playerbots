@@ -435,6 +435,8 @@ pub enum Bt {
     PartyNoTank,
     /// Bot is in a group with no healer assigned.
     PartyNoHealer,
+    /// Bot's master is mounted. Fails when no master is set.
+    MasterIsMounted,
     /// Bot's master is within line of sight (`has_los`). Fails when no
     /// master is set.
     InLosOfMaster,
@@ -1429,6 +1431,10 @@ impl BtNode for Bt {
             Bt::PartyNoHealer => {
                 ok(ctx.snap.group_size > 0 && ctx.interface.group_get_healer().is_none())
             }
+            Bt::MasterIsMounted => match ctx.master_guid {
+                Some(m) if m != 0 => ok(ctx.interface.get_unit_snapshot(m).is_mounted),
+                _ => BtResult::Failure,
+            },
             Bt::InLosOfMaster => match ctx.master_guid {
                 Some(m) if m != 0 => ok(ctx.interface.has_los(m)),
                 _ => BtResult::Failure,
@@ -3864,6 +3870,11 @@ fn tick_pull_target(ctx: &mut TickContext<'_>) -> BtResult {
         ctx.monitor(format_args!("PULL: taunt on 0x{target:X}"));
         return BtResult::Success;
     }
+    // No ranged pull available — clear IsPulling so the bot commits to a
+    // direct engage instead of looping walk-then-try-pull every tick.
+    use crate::engine::blackboard::{Key, Value};
+    ctx.blackboard.set(Key::IsPulling, Value::U32(0));
+    ctx.monitor(format_args!("PULL: no ranged pull available — falling through to direct engage"));
     BtResult::Failure
 }
 
@@ -3885,12 +3896,39 @@ fn tick_is_pulling(ctx: &mut TickContext<'_>) -> BtResult {
         return BtResult::Failure;
     }
 
+    // Clear pull state if focus target is dead or gone.
+    if let Some(ft) = ctx.settings.focus_target {
+        let snap = ctx.interface.get_unit_snapshot(ft);
+        if !snap.is_alive || snap.max_health == 0 {
+            ctx.blackboard.set(Key::IsPulling, Value::U32(0));
+            ctx.monitor(format_args!("PULL: focus target dead/invalid — clearing pull"));
+            return BtResult::Failure;
+        }
+    } else {
+        // No focus target — nothing to pull.
+        ctx.blackboard.set(Key::IsPulling, Value::U32(0));
+        return BtResult::Failure;
+    }
+
+    // Timeout: clear pull state after 15 seconds to prevent getting stuck.
+    let pull_start = ctx.blackboard.get_u32(Key::PullStartTime).unwrap_or(0);
+    let now = ctx.snap.server_time_ms as u32;
+    if pull_start == 0 {
+        ctx.blackboard.set(Key::PullStartTime, Value::U32(now));
+    } else if now.wrapping_sub(pull_start) > 15_000 {
+        ctx.blackboard.set(Key::IsPulling, Value::U32(0));
+        ctx.blackboard.set(Key::PullStartTime, Value::U32(0));
+        ctx.monitor(format_args!("PULL: timeout after 15s — clearing pull"));
+        return BtResult::Failure;
+    }
+
     // Check if any attacker is within melee range — if so, pull phase is over.
     let mob_arrived = ctx.attackers.iter().any(|&attacker| {
         ctx.interface.unit_distance(attacker) <= 8.0
     });
     if mob_arrived {
         ctx.blackboard.set(Key::IsPulling, Value::U32(0));
+        ctx.blackboard.set(Key::PullStartTime, Value::U32(0));
         ctx.monitor(format_args!("PULL_BACK: mob arrived in melee — pull phase complete"));
         return BtResult::Failure;
     }
