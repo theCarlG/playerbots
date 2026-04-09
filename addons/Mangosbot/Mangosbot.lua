@@ -765,7 +765,7 @@ function CreateMovementToolBar(frame, y, name, group, x, spacing, register)
     if (group) then
         tb["loot"] = {
             icon = "loot",
-            command = { [0] = "d add all loot", [1] = "d loot" },
+            command = { [0] = "add all loot", [1] = "loot" },
             strategy = "",
             tooltip = "Loot everything",
             index = index,
@@ -986,6 +986,23 @@ function CreateGenericCombatToolBar(frame, y, name, group, x, spacing, register)
             tooltip = "Use crowd control abilities",
             index = 5,
             group = group
+        },
+        ["pull"] = {
+            icon = "pull",
+            command = { [0] = "strat ~pull,?" },
+            strategy = "pull",
+            tooltip =
+            "Set this bot to pull using the 'pull command'. Recommended to only have one bot with pull enabled.",
+            index = 6,
+            group = group
+        },
+        ["pull back"] = {
+            icon = "pull_back",
+            command = { [0] = "strat ~pull back,?" },
+            strategy = "pull back",
+            tooltip = "Pull back monsters back to the location where the 'pull command' was given.",
+            index = 7,
+            group = group
         }
     }, x, spacing, register)
 end
@@ -1198,7 +1215,7 @@ function CreateSelectedBotPanel()
         },
         ["loot"] = {
             icon = "loot",
-            command = { [0] = "d add all loot", [1] = "d loot" },
+            command = { [0] = "add all loot", [1] = "loot" },
             strategy = "",
             tooltip = "Loot everything",
             index = 2
@@ -1212,7 +1229,7 @@ function CreateSelectedBotPanel()
         },
         ["set_guard"] = {
             icon = "set_guard",
-            command = { [0] = "position guard set" },
+            command = { [0] = "guard" },
             strategy = "",
             tooltip = "Set guard position",
             index = 4
@@ -1226,7 +1243,7 @@ function CreateSelectedBotPanel()
         },
         ["revive"] = {
             icon = "revive",
-            command = { [0] = "revive", [1] = "d revive from corpse" },
+            command = { [0] = "revive", [1] = "release" },
             strategy = "",
             tooltip = "Revive at Spirit Healer",
             index = 6
@@ -1258,7 +1275,7 @@ function CreateSelectedBotPanel()
         },
         ["count"] = {
             icon = "count",
-            command = { [0] = "c" },
+            command = { [0] = "inventory" },
             strategy = "",
             tooltip = "Show inventory",
             index = 1
@@ -2886,7 +2903,7 @@ BotMenuItems_Current = {
 }
 BotMenuCommands_Current = {
     [1] = "accept *",
-    [2] = "d talk to quest giver",
+    [2] = "talk",
     [3] = "r ",
     [4] = "taxi ?",
     [5] = "home",
@@ -3381,14 +3398,10 @@ Mangosbot_EventFrame:SetScript("OnEvent", function(self)
                         panelVisible = false
                     end
                 end
-                -- Role assignment toolbar: only show for tank-capable classes.
+                -- Role assignment toolbar: show for all classes so any bot
+                -- can be assigned MT/OT (strategies are not role-gated).
                 if (toolbarName == "role_assign") then
-                    if (class and TANK_CLASSES[class]) then
-                        SelectedBotPanel.toolbar[toolbarName]:Show()
-                    else
-                        SelectedBotPanel.toolbar[toolbarName]:Hide()
-                        panelVisible = false
-                    end
+                    SelectedBotPanel.toolbar[toolbarName]:Show()
                 end
                 -- Tank targets toolbar: only show when bot has a tank role.
                 if (toolbarName == "tank_targets") then

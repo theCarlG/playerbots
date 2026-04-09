@@ -187,6 +187,7 @@ pub mod hunter {
     pub const BESTIAL_WRATH: SpellId = SpellId(19574);
     pub const RAPID_FIRE: SpellId = SpellId(3045);
     pub const PET_ATTACK: SpellId = SpellId(2641);
+    pub const MEND_PET: SpellId = SpellId(13544); // rank 5 (channeled HoT on pet)
 }
 
 // ── Mage ─────────────────────────────────────────────────────────────────
@@ -218,6 +219,18 @@ pub mod mage {
     pub const COMBUSTION: SpellId = SpellId(11129);
     pub const ARCANE_POWER: SpellId = SpellId(12042);
     pub const PRESENCE_OF_MIND: SpellId = SpellId(12043);
+
+    // Conjure spells (highest rank first — knows_spell checks exact rank).
+    // Conjure Food ranks: 587, 597, 990, 6129, 10144, 10145, 28612
+    pub const CONJURE_FOOD: &[SpellId] = &[
+        SpellId(28612), SpellId(10145), SpellId(10144), SpellId(6129),
+        SpellId(990), SpellId(597), SpellId(587),
+    ];
+    // Conjure Water ranks: 5504, 5505, 5506, 6127, 10138, 10139, 10140
+    pub const CONJURE_WATER: &[SpellId] = &[
+        SpellId(10140), SpellId(10139), SpellId(10138), SpellId(6127),
+        SpellId(5506), SpellId(5505), SpellId(5504),
+    ];
 }
 
 // ── Rogue ─────────────────────────────────────────────────────────────────

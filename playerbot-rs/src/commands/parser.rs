@@ -311,6 +311,10 @@ const COMMANDS: &[CommandSpec] = &[
         parse: |_, _| Some(BotCommand::ListSpells),
     },
     CommandSpec {
+        names: &["inventory", "inv", "count"],
+        parse: |_, _| Some(BotCommand::ListInventory),
+    },
+    CommandSpec {
         names: &["release"],
         parse: |_, _| Some(BotCommand::ReleaseSpirit),
     },
@@ -349,7 +353,16 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         names: &["mail"],
         parse: |_, a| match a.first().copied() {
-            Some("take" | "takeall" | "all") => Some(BotCommand::MailTakeAll),
+            Some("take" | "takeall" | "all") => {
+                // `mail take <N>` — take specific mail by 1-based index.
+                if let Some(idx_str) = a.get(1) {
+                    if let Ok(idx) = idx_str.parse::<u32>() {
+                        return Some(BotCommand::MailTakeIndex(idx));
+                    }
+                }
+                Some(BotCommand::MailTakeAll)
+            }
+            Some("?") => Some(BotCommand::ListMailItems),
             _ => Some(BotCommand::MailSummary),
         },
     },
@@ -406,7 +419,13 @@ const COMMANDS: &[CommandSpec] = &[
     // Single-letter shortcuts from PB2
     CommandSpec {
         names: &["s"],
-        parse: |_, _| Some(BotCommand::Vendor),
+        parse: |_, a| {
+            if a.is_empty() {
+                Some(BotCommand::Vendor)
+            } else {
+                Some(BotCommand::SellItemByName(a.join(" ")))
+            }
+        },
     }, // sell
     CommandSpec {
         names: &["b"],
@@ -545,7 +564,24 @@ const COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         names: &["bank", "gb", "gbank"],
-        parse: |_, _| Some(BotCommand::Bank),
+        parse: |_, a| {
+            if a.is_empty() {
+                return Some(BotCommand::Bank);
+            }
+            match a.first().copied() {
+                Some("?") => Some(BotCommand::ListBankItems),
+                Some(first) if first.starts_with('-') => {
+                    // bank -<itemlink> = withdraw
+                    let mut s = first[1..].to_string();
+                    for arg in &a[1..] {
+                        s.push(' ');
+                        s.push_str(arg);
+                    }
+                    Some(BotCommand::BankWithdrawItem(s))
+                }
+                _ => Some(BotCommand::BankDepositItem(a.join(" "))),
+            }
+        },
     },
     CommandSpec {
         names: &["ah"],
@@ -1214,6 +1250,9 @@ fn parse_use_item(args: &[&str]) -> Option<BotCommand> {
 fn parse_equip_item(args: &[&str]) -> Option<BotCommand> {
     if args.is_empty() {
         return Some(BotCommand::Unknown("equip: missing item name".into()));
+    }
+    if args == ["?"] {
+        return Some(BotCommand::ListEquipment);
     }
     let name = args.join(" ");
     Some(BotCommand::EquipItemByName(name))

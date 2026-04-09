@@ -15,7 +15,7 @@ use crate::bot::settings::{
     StrategyFlags,
 };
 use crate::bot::state::{BotState, PlayerClass, PlayerSpec};
-use crate::ffi::{ItemId, SpellId, UnitHandle};
+use crate::ffi::{BotInventoryItem, ItemId, SpellId, UnitHandle};
 
 /// All bot commands, parsed from chat text.
 #[derive(Debug, Clone, PartialEq)]
@@ -135,6 +135,12 @@ pub enum BotCommand {
     // -- Economy --
     Repair,
     Vendor,
+    /// `s <itemlink>` — sell a specific item by name/link.
+    SellItemByName(String),
+    /// `bank <itemlink>` — deposit item to bank.
+    BankDepositItem(String),
+    /// `bank -<itemlink>` — withdraw item from bank.
+    BankWithdrawItem(String),
 
     // -- Healing --
     SetHealThreshold(f32),
@@ -246,6 +252,14 @@ pub enum BotCommand {
     ListTalents,
     /// `spells` — whisper known spell count.
     ListSpells,
+    /// `inventory` / `inv` / `count` — whisper bag contents as item links.
+    ListInventory,
+    /// `e ?` — whisper equipped items as item links.
+    ListEquipment,
+    /// `bank ?` — whisper bank items as item links.
+    ListBankItems,
+    /// `mail ?` — whisper mail items as item links.
+    ListMailItems,
     /// `release` — release spirit / use spirit healer if dead.
     ReleaseSpirit,
     /// `revive` — accept a pending resurrection.
@@ -267,6 +281,8 @@ pub enum BotCommand {
     /// `mail take` — take all money and items from the inbox (needs a
     /// nearby mailbox).
     MailTakeAll,
+    /// `mail take <N>` — take items from a specific mail by index.
+    MailTakeIndex(u32),
     /// `leave` — leave the bot's current guild.
     GuildLeave,
 
@@ -514,13 +530,14 @@ impl BotCommand {
         use BotCommand::{
             AcceptRevive, AiProfile, ApplyLootPolicy, ApplyStrategies, ApplyStrategiesAll,
             AssignCc, AssignTankTarget, Attack, AttackRti, AuctionHouse, Bank, Batch, BgFree,
-            BlacklistSpell, BoostTarget, BuffTarget, Buy, Buyback, CastByName, CastOne, CcQuery,
+            BankDepositItem, BankWithdrawItem, BlacklistSpell, BoostTarget, BuffTarget, Buy, Buyback, CastByName, CastOne, CcQuery,
             CcRti, CheckLos, ComeToMe, Craft, CustomStrategy, Debug, DebugBt, DebugClaims,
             DebugCoord, DebugFsm, DestroyItem, DoQuest, Emote, EquipItemByName, Flag, Flee, Focus,
             FocusHeal, FollowTarget, Free, GiveLeader, GoTo, Guard, GuildCommand, GuildLeave, Help,
-            InvitePlayer, Jump, KeepItem, Lfg, ListQuests, ListReputation, ListSettings,
-            ListSkills, ListSpells, ListTalents, LogLevel, Loot, LootRoll, MailSummary,
-            MailTakeAll, MaxDps, Mount, MoveStyle, Outfit, Pet, PossibleAttackTargets, Preset,
+            InvitePlayer, Jump, KeepItem, Lfg, ListBankItems, ListEquipment, ListInventory, ListMailItems, ListQuests,
+            ListReputation, ListSettings, ListSkills, ListSpells, ListTalents, LogLevel,
+            Loot, LootRoll, MailSummary,
+            MailTakeAll, MailTakeIndex, MaxDps, Mount, MoveStyle, Outfit, Pet, PossibleAttackTargets, Preset,
             Pull, PullRti, QueryAllStrategies, QueryCcRti, QueryFormation, QueryLootPolicy,
             QueryRange, QueryReactivity, QueryRti, QuerySaveMana, QueryStance, QueryStrategies,
             QuestAccept, QuestDrop, QuestReward, Ready, ReleaseSpirit, Repair, Reset,
@@ -540,12 +557,14 @@ impl BotCommand {
             Talk, TankAttack, TankQuery, Taxi, Teleport, ToggleSaveMana, ToggleSelfRes,
             ToggleStrategies, Trade, Trainer, TravelTo, UnassignCc, UnassignTankTarget,
             UnblacklistSpell, UnequipItemByName, UnkeepItem, Unknown, UnsetTank, Unsubscribe,
-            UseHearth, UseItemByName, Vendor, WhatToSell, Where,
+            SellItemByName, UseHearth, UseItemByName, Vendor, WhatToSell, Where,
         };
         match self {
             // Information queries — anyone who can talk to the bot.
             Status | ListSettings | Where | Help | Ready | Unknown(_) | Debug | CheckLos
-            | ListQuests | ListTalents | ListSpells | ListReputation | ListSkills
+            | ListQuests | ListTalents | ListSpells | ListInventory | ListEquipment
+            | ListBankItems | ListMailItems
+            | ListReputation | ListSkills
             | MailSummary
             // Addon probes — must be readable by anyone who can whisper.
             | QueryFormation | QueryStance | QueryStrategies(_)
@@ -630,6 +649,7 @@ impl BotCommand {
             | QuestAccept
             | QuestDrop(_)
             | MailTakeAll
+            | MailTakeIndex(_)
             | SetPoison { .. }
             | ShowPoisons
             | SetTotem { .. }
@@ -677,6 +697,9 @@ impl BotCommand {
             | ShareQuest
             | DoQuest(_)
             | Bank
+            | BankDepositItem(_)
+            | BankWithdrawItem(_)
+            | SellItemByName(_)
             | AuctionHouse(_)
             | GuildCommand(_)
             | BgFree
@@ -981,6 +1004,65 @@ fn resolve_spec_name(class: PlayerClass, name: &str) -> Option<PlayerSpec> {
         (DeathKnight, "unholy") => Some(DeathKnightUnholy),
         (DeathKnight, "frost") => Some(DeathKnightFrost),
         _ => None,
+    }
+}
+
+/// Quality → WoW color code for item links.
+fn quality_color(quality: u8) -> &'static str {
+    match quality {
+        0 => "ff9d9d9d", // Poor (grey)
+        1 => "ffffffff", // Common (white)
+        2 => "ff1eff00", // Uncommon (green)
+        3 => "ff0070dd", // Rare (blue)
+        4 => "ffa335ee", // Epic (purple)
+        5 => "ffff8000", // Legendary (orange)
+        _ => "ffffffff",
+    }
+}
+
+/// Format a `BotInventoryItem` as a WoW item-link string compatible with
+/// EngBags.  Format: `|cCOLOR|Hitem:ID:ENCHANT:0:0|h[NAME]|h|rxCOUNT`
+/// with optional ` soulbound` suffix.
+fn format_item_link(item: &BotInventoryItem) -> String {
+    let color = quality_color(item.quality);
+    let name = {
+        let bytes = unsafe {
+            core::slice::from_raw_parts(item.name.as_ptr() as *const u8, item.name.len())
+        };
+        let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+        core::str::from_utf8(&bytes[..end]).unwrap_or("?")
+    };
+    let mut s = format!(
+        "|c{color}|Hitem:{}:{}:0:0|h[{name}]|h|r",
+        item.item_id, item.enchant_id,
+    );
+    if item.count > 1 {
+        use core::fmt::Write;
+        let _ = write!(s, "x{}", item.count);
+    }
+    if item.soulbound != 0 {
+        s.push_str(" soulbound");
+    }
+    s
+}
+
+/// Send an item list to the sender as individual whisper messages,
+/// prefixed with a header (e.g. `=== Inventory ===`).
+fn reply_item_list(
+    bot: &BotState,
+    pc: &PendingCommand,
+    header: &str,
+    items: &[BotInventoryItem],
+    mail_prefix: bool,
+) {
+    reply(bot, pc, header);
+    for item in items {
+        let msg = if mail_prefix && item.mail_index > 0 {
+            format!("#{} {}", item.mail_index, format_item_link(item))
+        } else {
+            format_item_link(item)
+        };
+        reply(bot, pc, &msg);
     }
 }
 
@@ -1303,6 +1385,14 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 );
                 reply(bot, pc, &format!("Strategies: {desc}"));
             }
+            // When MARK_RTI is removed, also clear the preferred RTI icon
+            // so the bot stops marking even if the icon was set at init time.
+            {
+                let new_combat = bot.settings.strategies.get(BotStateKind::Combat);
+                if !new_combat.contains(StrategyFlags::MARK_RTI) {
+                    bot.settings.preferred_rti_icon = None;
+                }
+            }
             // Check if a spec flag was added — if so, rebuild the behavior
             // tree for the new spec. Mirrors the same check in ApplyStrategies.
             {
@@ -1363,7 +1453,22 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             });
             if let Some(unit) = t {
                 bot.interface.attack(unit);
-                s.focus_target = Some(unit);
+                // For bots with tank rotation assignments, don't set
+                // focus_target — it overrides TankRotateTargets and
+                // makes the tank ignore its other assigned marks. The
+                // immediate attack() call engages the target this tick;
+                // on subsequent ticks TankRotateTargets handles rotation.
+                let has_tank_assignments = bot
+                    .group_state
+                    .as_ref()
+                    .and_then(|gh| gh.state().try_read().ok())
+                    .map_or(false, |gs| {
+                        let mut icons = [0u8; 8];
+                        gs.coordination.tank_target_icons(bot.handle, &mut icons) > 0
+                    });
+                if !has_tank_assignments {
+                    s.focus_target = Some(unit);
+                }
             }
         }
         BotCommand::Pull(target) => {
@@ -1394,8 +1499,13 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             });
             if let Some(unit) = t {
                 s.focus_target = Some(unit);
-                // Mark the bot as "pulling" so PullBack knows to activate.
+                // Save pre-pull position so PullBack can return here.
                 use crate::engine::blackboard::{Key, Value};
+                let pos = bot.snap.self_.pos;
+                bot.blackboard.set(Key::PullBackX, Value::F32(pos.x));
+                bot.blackboard.set(Key::PullBackY, Value::F32(pos.y));
+                bot.blackboard.set(Key::PullBackZ, Value::F32(pos.z));
+                // Mark the bot as "pulling" so PullBack knows to activate.
                 bot.blackboard.set(Key::IsPulling, Value::U32(1));
                 // Try ranged pull first (auto-shot), fall back to taunt,
                 // then plain attack.
@@ -1404,13 +1514,25 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 }
             }
         }
-        BotCommand::AttackRti(icon) | BotCommand::PullRti(icon) => {
-            // Same immediate behavior — just engage. The "pull" vs "attack"
-            // distinction matters for the assignment-tracking side (who is
-            // the puller), which GroupState tracks separately.
+        BotCommand::AttackRti(icon) => {
             if let Some(unit) = bot.interface.get_unit_with_raid_icon(*icon) {
                 bot.interface.attack(unit);
                 s.focus_target = Some(unit);
+            }
+        }
+        BotCommand::PullRti(icon) => {
+            if let Some(unit) = bot.interface.get_unit_with_raid_icon(*icon) {
+                s.focus_target = Some(unit);
+                // Save pre-pull position and set IsPulling, same as Pull.
+                use crate::engine::blackboard::{Key, Value};
+                let pos = bot.snap.self_.pos;
+                bot.blackboard.set(Key::PullBackX, Value::F32(pos.x));
+                bot.blackboard.set(Key::PullBackY, Value::F32(pos.y));
+                bot.blackboard.set(Key::PullBackZ, Value::F32(pos.z));
+                bot.blackboard.set(Key::IsPulling, Value::U32(1));
+                if !bot.interface.auto_shoot(unit) && !bot.interface.taunt(unit) {
+                    bot.interface.attack(unit);
+                }
             }
         }
         BotCommand::CcRti(icon) => {
@@ -1999,6 +2121,22 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             let msg = format!("Spells known: {n}");
             reply(bot, pc, &msg);
         }
+        BotCommand::ListInventory => {
+            let items = bot.interface.bot_get_inventory();
+            reply_item_list(bot, pc, "=== Inventory ===", &items, false);
+        }
+        BotCommand::ListEquipment => {
+            let items = bot.interface.bot_get_equipped();
+            reply_item_list(bot, pc, "=== Equipment ===", &items, false);
+        }
+        BotCommand::ListBankItems => {
+            let items = bot.interface.bot_get_bank_items();
+            reply_item_list(bot, pc, "=== Bank ===", &items, false);
+        }
+        BotCommand::ListMailItems => {
+            let items = bot.interface.bot_get_mail_items();
+            reply_item_list(bot, pc, "=== Mailbox ===", &items, true);
+        }
         BotCommand::ReleaseSpirit => {
             bot.interface.use_spirit_healer();
         }
@@ -2076,6 +2214,9 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 };
                 reply(bot, pc, msg);
             }
+        }
+        BotCommand::MailTakeIndex(idx) => {
+            bot.interface.bot_mail_take_index(*idx);
         }
         BotCommand::GuildLeave => {
             let ok = bot.interface.bot_guild_leave();
@@ -2464,6 +2605,24 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 .get_nearby_npcs(crate::config::get().nearby_scan_range, 0x20);
             if let Some(&npc) = npcs.first() {
                 bot.interface.interact_npc(npc);
+            }
+        }
+        BotCommand::BankDepositItem(name) => {
+            let item_id = bot.interface.resolve_item_by_name(name);
+            if item_id != 0 {
+                bot.interface.bank_deposit_item(ItemId(item_id));
+            }
+        }
+        BotCommand::BankWithdrawItem(name) => {
+            let item_id = bot.interface.resolve_item_by_name(name);
+            if item_id != 0 {
+                bot.interface.bank_withdraw_item(ItemId(item_id));
+            }
+        }
+        BotCommand::SellItemByName(name) => {
+            let item_id = bot.interface.resolve_item_by_name(name);
+            if item_id != 0 {
+                bot.interface.sell_item(ItemId(item_id));
             }
         }
         BotCommand::AuctionHouse(_args) => {

@@ -1,7 +1,7 @@
 use crate::{Sel, Seq};
 /// Frost Mage behavior tree (Classic / Vanilla).
 ///
-/// Priority: Ice Block → Evocation → Counterspell → Frost Nova + Blink (melee escape)
+/// Priority: Ice Block → Evocation → Counterspell → Frost Nova → turn + Blink
 ///   → Cone of Cold (on frozen target) → Fire Blast execute → Frostbolt
 use crate::{
     data::spells::vanilla::mage::*,
@@ -43,10 +43,15 @@ fn combat_tree() -> Bt {
                 ),
                 // Interrupt.
                 Seq!(TargetIsCasting, CastOnTarget(COUNTERSPELL)),
-                // Enemy in melee — Frost Nova then Blink away.
+                // Enemy in melee — Frost Nova to root, then turn 180° and
+                // Blink away. FaceAwayFromTarget sets orientation before
+                // Blink fires so the teleport goes away from the mob.
                 Seq!(
                     Cmp(TargetDistance, Below(5)),
-                    Sel!(CastOnTarget(FROST_NOVA), CastOnSelf(BLINK)),
+                    Sel!(
+                        CastOnTarget(FROST_NOVA),
+                        Seq!(Bt::FaceAwayFromTarget, CastOnSelf(BLINK)),
+                    ),
                 ),
                 // Cone of Cold shines while target is rooted by Nova.
                 Seq!(

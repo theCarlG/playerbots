@@ -339,6 +339,11 @@ typedef struct BotCallbacks {
      * splines every tick (unlike repeated move_to calls). */
     bool (*chase)(BotHandle bot, UnitHandle target, float dist, float angle);
     bool (*stop_moving)(BotHandle bot);
+    /* Set the bot's facing angle (radians, 0 = north, clockwise).
+     * Stops movement and sends a heartbeat so the server acknowledges
+     * the new orientation immediately. Used to face away from a target
+     * before casting Blink or other directional abilities. */
+    void (*set_facing)(BotHandle bot, float angle);
     bool (*attack)(BotHandle bot, UnitHandle target);
     bool (*auto_attack)(BotHandle bot, bool enable);
     /* Ranged auto-attack / wand-shoot pull. Inspects the bot's ranged slot
@@ -356,6 +361,10 @@ typedef struct BotCallbacks {
      * requester's ObjectGuid (used only for the whisper fallback). */
     bool (*tell_player)(BotHandle bot, uint64_t target_guid, const char* msg);
     bool (*use_item)(BotHandle bot, uint32_t item_id, UnitHandle target);
+    /* Find the best food or drink in the bot's bags for its level.
+     * category: 11 = food (HP regen), 59 = drink (mana regen).
+     * Returns the item_id, or 0 if nothing suitable found. */
+    uint32_t (*find_food_drink_in_bags)(BotHandle bot, uint32_t category);
     bool (*taunt)(BotHandle bot, UnitHandle target);
     /* Teleport the bot to (`map_id`, x, y, z, o). When `map_id` matches the
      * bot's current map, wraps `Player::NearTeleportTo`; otherwise wraps
@@ -465,6 +474,7 @@ typedef struct BotCallbacks {
     bool    (*has_pet)(BotHandle bot);
     bool    (*pet_is_alive)(BotHandle bot);
     uint8_t (*pet_happiness)(BotHandle bot);
+    uint8_t (*pet_health_pct)(BotHandle bot); /* 0..100, pet HP%, 0 if no pet or dead */
     bool    (*summon_pet)(BotHandle bot);
     bool    (*revive_pet)(BotHandle bot);
     bool    (*feed_pet)(BotHandle bot);

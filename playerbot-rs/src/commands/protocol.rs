@@ -69,6 +69,12 @@ pub enum TargetSelector {
     MainTank,
     /// Off tank(s): `@ot`.
     OffTank,
+    /// Ranged DPS/healer: `@ranged` — mage, warlock, hunter, shadow priest,
+    /// balance druid, elemental shaman (and healers).
+    Ranged,
+    /// Melee DPS: `@melee` — warrior, rogue, feral druid, ret paladin,
+    /// enhancement shaman, DK.
+    Melee,
 }
 
 impl TargetSelector {
@@ -87,6 +93,8 @@ impl TargetSelector {
             "dps" | "damage" => return Some(Self::ByRole(BotRole::DPS)),
             "mt" => return Some(Self::MainTank),
             "ot" => return Some(Self::OffTank),
+            "ranged" => return Some(Self::Ranged),
+            "melee" => return Some(Self::Melee),
             _ => {}
         }
 
@@ -129,7 +137,23 @@ impl TargetSelector {
             Self::ByGroup(range) => range.contains(&raid_group),
             Self::MainTank => is_main_tank,
             Self::OffTank => is_off_tank,
+            Self::Ranged => is_ranged_spec(class, spec),
+            Self::Melee => !is_ranged_spec(class, spec) && !role.is_heal(),
         }
+    }
+}
+
+/// Returns true if the bot's class/spec is ranged (caster DPS, hunter, or healer).
+fn is_ranged_spec(class: PlayerClass, spec: PlayerSpec) -> bool {
+    use PlayerClass::*;
+    use PlayerSpec::*;
+    match class {
+        Mage | Warlock | Hunter => true,
+        Priest => matches!(spec, PriestShadow | PriestDiscipline | PriestHoly),
+        Druid => matches!(spec, DruidBalance | DruidRestoration),
+        Shaman => matches!(spec, ShamanElemental | ShamanRestoration),
+        Paladin => matches!(spec, PaladinHoly),
+        _ => false,
     }
 }
 

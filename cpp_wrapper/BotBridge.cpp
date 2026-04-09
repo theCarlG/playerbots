@@ -241,6 +241,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.follow              = CB_Follow;
     cbs.chase               = CB_Chase;
     cbs.stop_moving         = CB_StopMoving;
+    cbs.set_facing          = CB_SetFacing;
     cbs.attack              = CB_Attack;
     cbs.auto_attack         = CB_AutoAttack;
     cbs.auto_shoot          = CB_AutoShoot;
@@ -248,6 +249,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.tell_player         = CB_TellPlayer;
     cbs.whisper             = CB_Whisper;
     cbs.use_item            = CB_UseItem;
+    cbs.find_food_drink_in_bags = CB_FindFoodDrinkInBags;
     cbs.taunt               = CB_Taunt;
     cbs.teleport_to         = CB_TeleportTo;
     cbs.get_player_position = CB_GetPlayerPosition;
@@ -301,6 +303,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.has_pet             = CB_HasPet;
     cbs.pet_is_alive        = CB_PetIsAlive;
     cbs.pet_happiness       = CB_PetHappiness;
+    cbs.pet_health_pct      = CB_PetHealthPct;
     cbs.summon_pet          = CB_SummonPet;
     cbs.revive_pet          = CB_RevivePet;
     cbs.feed_pet            = CB_FeedPet;
@@ -544,7 +547,11 @@ BotWorldSnapshot BotBridge::CB_GetSnapshot(BotHandle bot)
              ref = ref->next())
         {
             Player* member = ref->getSource();
-            if (member && member->IsInWorld())
+            // Include all group members, even those mid-teleport (!IsInWorld()).
+            // The previous IsInWorld() filter caused group membership to flicker
+            // when a bot was summoned/teleported, making the Rust side think the
+            // bot left the group and losing raid coordination state.
+            if (member)
             {
                 snap.group_members[count++] = member->GetGUID();
             }
@@ -1272,6 +1279,25 @@ bool BotBridge::CB_MoveTo(BotHandle bot, float x, float y, float z)
     return true;
 }
 
+void BotBridge::CB_SetFacing(BotHandle bot, float angle)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+
+    // Stop movement so the facing takes effect immediately.
+    if (!b->IsStopped())
+    {
+        b->StopMoving();
+        b->GetMotionMaster()->Clear(false);
+        b->GetMotionMaster()->MoveIdle();
+        s_moveState.erase(bot);
+    }
+
+    b->SetOrientation(angle);
+    b->SendHeartBeat();
+}
+
 bool BotBridge::CB_Follow(BotHandle bot, UnitHandle target, float dist, float angle)
 {
     Player* b = FindBot(bot);
@@ -1583,6 +1609,87 @@ bool BotBridge::CB_UseItem(BotHandle bot, uint32_t item_id, UnitHandle target)
     targets.setUnitTarget(t ? t : static_cast<Unit*>(b));
     spell->SpellStart(&targets);
     return true;
+}
+
+uint32_t BotBridge::CB_FindFoodDrinkInBags(BotHandle bot, uint32_t category)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+
+    // category: 11 = food (HP), 59 = drink (mana).
+    // Walk all bag items and pick the highest-level consumable matching the
+    // requested food category. WoW food/drink items have one of their spells
+    // with SpellCategory matching the food/drink category constants.
+    uint32_t bestItem = 0;
+    uint32_t bestLevel = 0;
+
+    for (uint8 bag = INVENTORY_SLOT_ITEM_START; bag < INVENTORY_SLOT_ITEM_END; ++bag)
+    {
+        Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, bag);
+        if (!item)
+            continue;
+        ItemPrototype const* proto = item->GetProto();
+        if (!proto || proto->Class != ITEM_CLASS_CONSUMABLE)
+            continue;
+
+        // Check if any item spell matches the requested food/drink category.
+        bool matches = false;
+        for (int i = 0; i < MAX_ITEM_PROTO_SPELLS; ++i)
+        {
+            if (proto->Spells[i].SpellId > 0 && proto->Spells[i].SpellCategory == category)
+            {
+                matches = true;
+                break;
+            }
+        }
+        if (!matches)
+            continue;
+
+        // Prefer higher item-level (better stat food restores more).
+        if (proto->RequiredLevel >= bestLevel)
+        {
+            bestLevel = proto->RequiredLevel;
+            bestItem = proto->ItemId;
+        }
+    }
+
+    // Also scan additional bag slots.
+    for (uint8 bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
+    {
+        Bag* pBag = reinterpret_cast<Bag*>(b->GetItemByPos(INVENTORY_SLOT_BAG_0, bag));
+        if (!pBag || !pBag->IsBag())
+            continue;
+        for (uint32 slot = 0; slot < pBag->GetBagSize(); ++slot)
+        {
+            Item* item = pBag->GetItemByPos(slot);
+            if (!item)
+                continue;
+            ItemPrototype const* proto = item->GetProto();
+            if (!proto || proto->Class != ITEM_CLASS_CONSUMABLE)
+                continue;
+
+            bool matches = false;
+            for (int i = 0; i < MAX_ITEM_PROTO_SPELLS; ++i)
+            {
+                if (proto->Spells[i].SpellId > 0 && proto->Spells[i].SpellCategory == category)
+                {
+                    matches = true;
+                    break;
+                }
+            }
+            if (!matches)
+                continue;
+
+            if (proto->RequiredLevel >= bestLevel)
+            {
+                bestLevel = proto->RequiredLevel;
+                bestItem = proto->ItemId;
+            }
+        }
+    }
+
+    return bestItem;
 }
 
 bool BotBridge::CB_UseTrinket(BotHandle bot, uint8_t slot)
@@ -2460,6 +2567,18 @@ uint8_t BotBridge::CB_PetHappiness(BotHandle bot)
     if (!pet)
         return 3;
     return static_cast<uint8_t>(pet->GetHappinessState());
+}
+
+uint8_t BotBridge::CB_PetHealthPct(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+    Pet* pet = b->GetPet();
+    if (!pet || !pet->IsAlive())
+        return 0;
+    return static_cast<uint8_t>(
+        (pet->GetHealth() * 100) / std::max(pet->GetMaxHealth(), uint32_t(1)));
 }
 
 bool BotBridge::CB_SummonPet(BotHandle bot)
@@ -3769,6 +3888,16 @@ uint32_t BotBridge::CB_ResolveItemByName(BotHandle bot, const char* name)
 {
     if (!name || !name[0])
         return 0;
+
+    // Check for WoW item link format: |cCOLOR|Hitem:ID:...|h[Name]|h|r
+    // Extract the item ID directly instead of doing a name search.
+    const char* hitem = strstr(name, "Hitem:");
+    if (hitem)
+    {
+        uint32 itemId = static_cast<uint32>(strtoul(hitem + 6, nullptr, 10));
+        if (itemId > 0)
+            return itemId;
+    }
 
     // Case-insensitive compare: lowercase the input once.
     std::string needle(name);

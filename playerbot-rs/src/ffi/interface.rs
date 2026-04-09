@@ -126,6 +126,9 @@ pub trait BotInterface: Send {
         self.follow(target, dist, angle)
     }
     fn stop_moving(&self) -> bool;
+    /// Set the bot's facing angle (radians). Stops movement and sends a
+    /// heartbeat so the server acknowledges the orientation immediately.
+    fn set_facing(&self, _angle: f32) {}
     fn attack(&self, target: UnitHandle) -> bool;
     fn auto_attack(&self, enable: bool) -> bool;
     /// Ranged auto-attack / wand-shoot pull. Inspects the bot's ranged
@@ -320,6 +323,9 @@ pub trait BotInterface: Send {
     fn pet_happiness(&self) -> u8 {
         3
     } // 1=unhappy, 2=content, 3=happy
+    fn pet_health_pct(&self) -> u8 {
+        0
+    } // 0..100, 0 if no pet or dead
     fn summon_pet(&self) -> bool {
         false
     }
@@ -355,6 +361,13 @@ pub trait BotInterface: Send {
     /// invulnerability, swiftness). Healing/mana potions are not covered
     /// here — they're selected via `factory_pick_potion_for_level`.
     fn find_potion_in_bags(&self, _category: u8) -> ItemId {
+        ItemId(0)
+    }
+
+    /// Find the best food or drink in the bot's bags for its level.
+    /// `category`: 11 = food (HP regen), 59 = drink (mana regen).
+    /// Returns `ItemId(0)` if nothing suitable found.
+    fn find_food_drink_in_bags(&self, _category: u32) -> ItemId {
         ItemId(0)
     }
 
@@ -1332,6 +1345,10 @@ impl BotInterface for RealInterface {
         unsafe { (self.cbs.stop_moving.unwrap())(self.handle) }
     }
 
+    fn set_facing(&self, angle: f32) {
+        unsafe { (self.cbs.set_facing.unwrap())(self.handle, angle) }
+    }
+
     fn attack(&self, target: UnitHandle) -> bool {
         unsafe { (self.cbs.attack.unwrap())(self.handle, target) }
     }
@@ -1555,6 +1572,10 @@ impl BotInterface for RealInterface {
         unsafe { (self.cbs.pet_happiness.unwrap())(self.handle) }
     }
 
+    fn pet_health_pct(&self) -> u8 {
+        unsafe { (self.cbs.pet_health_pct.unwrap())(self.handle) }
+    }
+
     fn summon_pet(&self) -> bool {
         unsafe { (self.cbs.summon_pet.unwrap())(self.handle) }
     }
@@ -1585,6 +1606,11 @@ impl BotInterface for RealInterface {
 
     fn find_potion_in_bags(&self, category: u8) -> ItemId {
         let id = unsafe { (self.cbs.find_potion_in_bags.unwrap())(self.handle, category) };
+        ItemId(id)
+    }
+
+    fn find_food_drink_in_bags(&self, category: u32) -> ItemId {
+        let id = unsafe { (self.cbs.find_food_drink_in_bags.unwrap())(self.handle, category) };
         ItemId(id)
     }
 

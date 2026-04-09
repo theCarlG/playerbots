@@ -58,20 +58,49 @@ pub fn threat_subtree() -> Bt {
     Seq!(IsTank.not(), InCombat, PullingAggro, ThreatDump)
 }
 
-/// Pull-back after pulling — return to the group. Gated on the
-/// `PULL_BACK` strategy flag (tanks only) AND on the bot having recently
-/// issued a pull (blackboard flag). Once the tank is back near the group
-/// AND at least one attacker is within melee range, the pull-back phase
-/// ends and the normal combat pipeline takes over.
+/// Pull phase — hold position and keep using ranged pull until the mob
+/// arrives. Gated on `IsPulling` (set by the `pull` command, cleared
+/// when any attacker reaches melee range).
 ///
-/// Without the `IsPulling` gate, PullBack fires every combat tick and
-/// fights with StickToTarget, causing the tank to ping-pong between
-/// master and target ("back and forth" bug).
-pub fn pull_back_subtree() -> Bt {
+/// When `PULL_BACK` is enabled, the bot first returns to its pre-pull
+/// position (saved by the pull command). Otherwise, it holds its current
+/// position. In both cases, the bot retries `PullTarget` (auto-shoot /
+/// taunt) each tick so the mob keeps coming.
+///
+/// Returns non-Failure while pulling, which blocks the combat pipeline's
+/// positioning (StickToTarget / MoveBehind) from walking the bot toward
+/// the mob. Once `IsPulling` clears (mob arrived), the Seq fails and
+/// normal combat takes over.
+pub fn pull_phase_subtree() -> Bt {
     Seq!(
-        StrategyEnabled(StrategyFlags::PULL_BACK),
         Bt::IsPulling,
-        PullBack,
+        Sel!(
+            // If PULL_BACK is enabled, move to pre-pull position first.
+            // PullBack returns Running while moving, Failure when arrived.
+            Seq!(StrategyEnabled(StrategyFlags::PULL_BACK), PullBack),
+            // At position (or no PULL_BACK): retry ranged pull.
+            Bt::PullTarget,
+            // Hold position even if pull attempt fails this tick
+            // (out of range, GCD, etc.). StopMoving cancels any
+            // server-side auto-attack chase that the initial pull
+            // command may have started, then returns Success so
+            // the outer Seq blocks the combat pipeline from issuing
+            // chase commands.
+            Bt::StopMoving,
+        ),
+    )
+}
+
+/// Wait-for-attack: bots hold off engaging until the pull target is
+/// within melee range (mob has arrived). Gated on the `WAIT_FOR_ATTACK`
+/// strategy flag. When active, this fires in the reactive layer and
+/// short-circuits the combat pipeline, preventing bots from charging
+/// into the pull. Can be set on any role including tanks (e.g. a tank
+/// waiting for mobs to arrive at a chokepoint after pulling back).
+pub fn wait_for_attack_subtree() -> Bt {
+    Seq!(
+        StrategyEnabled(StrategyFlags::WAIT_FOR_ATTACK),
+        Bt::WaitForAttack,
     )
 }
 
@@ -112,21 +141,27 @@ pub fn ranged_subtree() -> Bt {
     )
 }
 
-/// Stay behind the target. Gated on the BEHIND strategy flag.
+/// Stay behind the target. Gated on the BEHIND strategy flag AND
+/// `InCombatFsm` so the MoveBehind chase command does NOT fire
+/// out-of-combat. Without this gate the bot issues combat chase()
+/// calls while the world tree tries to Follow, causing rogues to
+/// "glide away" from the group as the two movement systems fight.
 pub fn behind_subtree() -> Bt {
     Seq!(
         StrategyEnabled(StrategyFlags::BEHIND),
+        Bt::InCombatFsm,
         Bt::throttle(1_000, MoveBehind(2.0)),
     )
 }
 
 /// Mark the current target with the bot's preferred raid target icon.
-/// Gated on `TANK_ASSIST` — only tanks/leaders should mark targets.
-/// When `preferred_rti_icon` is `None`, the subtree does nothing (the user
+/// Gated on `MARK_RTI` — the Mangosbot addon's "Mark current target"
+/// button toggles this flag via `strat ~mark rti`. When
+/// `preferred_rti_icon` is `None`, the subtree does nothing (the user
 /// can clear it with `rti clear` to stop marking entirely).
 pub fn mark_rti_subtree() -> Bt {
     Seq!(
-        StrategyEnabled(StrategyFlags::TANK_ASSIST),
+        StrategyEnabled(StrategyFlags::MARK_RTI),
         Bt::throttle(3_000, MarkRtiPreferred),
     )
 }
@@ -136,11 +171,12 @@ pub fn targeting_subtree() -> Bt {
     Sel!(
         // Focus target override — explicit "attack this" command.
         Seq!(HasFocusTarget, FocusAttack),
-        // Tank: rotate between assigned RTI focus targets.
-        // Reactivity gate upstream (ShouldEngage) already prevents
-        // tanks from pulling when passive/defensive with no attackers.
-        Seq!(StrategyEnabled(StrategyFlags::TANK), TankRotateTargets),
-        // Tank: pick up loose adds.
+        // Tank/off-tank: rotate between assigned RTI focus targets.
+        // No TANK flag gate — any bot with assigned tank targets
+        // (via `tank <icon>`) will rotate them. TankRotateTargets
+        // returns Failure when the bot has no assignments.
+        TankRotateTargets,
+        // Tank: pick up loose adds targeting non-tanks.
         Seq!(
             StrategyEnabled(StrategyFlags::TANK),
             Bt::throttle(1_000, TankPickupAdds),

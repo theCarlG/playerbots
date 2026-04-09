@@ -74,6 +74,7 @@ namespace BotBridge
     bool CB_Follow(BotHandle bot, UnitHandle target, float dist, float angle);
     bool CB_Chase(BotHandle bot, UnitHandle target, float dist, float angle);
     bool CB_StopMoving(BotHandle bot);
+    void CB_SetFacing(BotHandle bot, float angle);
     bool CB_Attack(BotHandle bot, UnitHandle target);
     bool CB_AutoAttack(BotHandle bot, bool enable);
     bool CB_AutoShoot(BotHandle bot, UnitHandle target);
@@ -82,6 +83,7 @@ namespace BotBridge
     bool CB_TellPlayer(BotHandle bot, uint64_t target_guid, const char* msg);
     bool CB_TellAddon(BotHandle bot, uint64_t target_guid, const char* msg);
     bool CB_UseItem(BotHandle bot, uint32_t item_id, UnitHandle target);
+    uint32_t CB_FindFoodDrinkInBags(BotHandle bot, uint32_t category);
     bool CB_Taunt(BotHandle bot, UnitHandle target);
     bool CB_TeleportTo(BotHandle bot, uint32_t map_id, float x, float y, float z, float o);
     bool CB_GetPlayerPosition(BotHandle bot, uint64_t player_guid, BotPosition* out_pos);
@@ -140,6 +142,7 @@ namespace BotBridge
     bool    CB_HasPet(BotHandle bot);
     bool    CB_PetIsAlive(BotHandle bot);
     uint8_t CB_PetHappiness(BotHandle bot);
+    uint8_t CB_PetHealthPct(BotHandle bot);
     bool    CB_SummonPet(BotHandle bot);
     bool    CB_RevivePet(BotHandle bot);
     bool    CB_FeedPet(BotHandle bot);

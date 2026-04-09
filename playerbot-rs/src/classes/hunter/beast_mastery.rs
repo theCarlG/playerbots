@@ -9,9 +9,9 @@ use crate::{
     engine::{
         aura_helpers::{HUNTERS_MARK_RANKS, SERPENT_STING_RANKS},
         bt::{
-            Bt::{self, Cmp, CastOnSelf, CastAoEOnTarget, InCombat, CastOnTarget},
+            Bt::{self, Cmp, CastOnSelf, CastAoEOnTarget, InCombat, CastOnTarget, HasPet, PetAlive},
             Op::{Below, AtLeast},
-            Resource::{SelfHealthPct, AttackerCount, TargetDistance},
+            Resource::{SelfHealthPct, AttackerCount, TargetDistance, PetHealthPct},
         },
         macro_fsm::ActiveFsm,
     },
@@ -31,6 +31,8 @@ fn combat_tree() -> Bt {
         super::boost(),
         // Emergency FD.
         Seq!(Cmp(SelfHealthPct, Below(15)), CastOnSelf(FEIGN_DEATH)),
+        // Mend Pet when pet HP drops below 50%.
+        Seq!(HasPet, PetAlive, Cmp(PetHealthPct, Below(50)), CastOnSelf(MEND_PET)),
         // Maintain Aspect of the Hawk.
         Seq!(
             Bt::self_missing(ASPECT_OF_THE_HAWK),

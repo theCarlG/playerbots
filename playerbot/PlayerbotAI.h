@@ -15,6 +15,9 @@
 
 #include "PlayerbotAIBase.h"
 #include "PlayerbotRust.h"
+#include "Entities/Player.h"
+#include "Server/WorldSession.h"
+#include "Server/Opcodes.h"
 
 class Player;
 class PlayerbotMgr;
@@ -47,9 +50,32 @@ public:
     bool CanEnterArea(AreaTrigger const* /*at*/) { return false; }
 
     // Outgoing packet hook: core WorldSession::SendPacket forwards every
-    // packet destined for this bot through here. The Rust AI does not
-    // consume raw packets yet, so this is a no-op.
-    void HandleBotOutgoingPacket(const WorldPacket& /*packet*/) {}
+    // packet destined for this bot through here.
+    void HandleBotOutgoingPacket(const WorldPacket& packet)
+    {
+        switch (packet.GetOpcode())
+        {
+            case SMSG_TRADE_STATUS:
+            {
+                Player* bot = GetBot();
+                if (!bot || !bot->GetTrader())
+                    break;
+
+                WorldPacket p(packet);
+                uint32 status;
+                p >> status;
+                p.resize(4);
+
+                if (status == TRADE_STATUS_BEGIN_TRADE)
+                    bot->GetSession()->HandleBeginTradeOpcode(p);
+                else if (status == TRADE_STATUS_TRADE_ACCEPT)
+                    bot->GetSession()->HandleAcceptTradeOpcode(p);
+                break;
+            }
+            default:
+                break;
+        }
+    }
 
     // Spell.cpp queries for bot-specific immunity overrides and for whether
     // the bot is carrying the items a spell requires. No Rust backing yet.

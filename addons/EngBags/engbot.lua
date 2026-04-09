@@ -874,9 +874,9 @@ function EngBot_ClearForMode(mode)
 end
 
 function EngBot_GetReloadQuery()
-    local query = "c"
+    local query = "inv"
     if (EngBot_Mode == "bot_bank_item") then
-        query = "bank";
+        query = "bank ?";
 	elseif (EngBot_Mode == "bot_equip_item") then
         query = "e ?";
     elseif (EngBot_Mode == "bot_mail_item") then

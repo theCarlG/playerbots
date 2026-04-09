@@ -100,6 +100,8 @@ pub enum Resource {
     AttackerCount,
     /// Current group/raid size including self (0 when solo).
     GroupSize,
+    /// Pet HP as integer percent (0..=100). Reads 0 when no pet or pet dead.
+    PetHealthPct,
 }
 
 /// Comparison operator for [`Bt::Cmp`].
@@ -706,6 +708,12 @@ pub enum Bt {
     /// MoveChase generator rotates the bot toward the target. Always
     /// returns Success (fire-and-forget) so it doesn't block the pipeline.
     FaceTarget,
+    /// Face 180 degrees away from the current target. Stops movement and
+    /// sets the bot's orientation to point directly away from the target.
+    /// Used before Blink or other directional abilities so the bot runs/
+    /// teleports away from the mob instead of through it. Returns Success
+    /// after setting facing, Failure if no target.
+    FaceAwayFromTarget,
     /// Stop auto-attack and disengage. Used when entering Passive mode
     /// so previously-engaged auto-attack doesn't keep swinging.
     Disengage,
@@ -1872,6 +1880,26 @@ impl BtNode for Bt {
                 }
                 BtResult::Success
             }
+            Bt::FaceAwayFromTarget => {
+                // Turn 180° from the current target. Computes the angle
+                // from target to bot and sets the bot's orientation to
+                // face directly away. Used before Blink.
+                let Some(target) = ctx.current_target() else {
+                    return BtResult::Failure;
+                };
+                let tgt = ctx.interface.get_unit_snapshot(target);
+                let bot = ctx.snap.self_.pos;
+                let dx = bot.x - tgt.pos.x;
+                let dy = bot.y - tgt.pos.y;
+                // atan2 gives the angle from target to bot — that's "away".
+                let away_angle = dy.atan2(dx);
+                ctx.interface.set_facing(away_angle);
+                ctx.monitor(format_args!(
+                    "FACE_AWAY: turned {:.1}° from target",
+                    away_angle.to_degrees()
+                ));
+                BtResult::Success
+            }
             Bt::Disengage => {
                 ctx.interface.auto_attack(false);
                 ctx.interface.stop_moving();
@@ -2131,6 +2159,7 @@ fn eval_cmp(ctx: &TickContext<'_>, res: Resource, op: Op) -> bool {
         Resource::NearbyCount => ctx.nearby.len() as u32,
         Resource::AttackerCount => ctx.attackers.len() as u32,
         Resource::GroupSize => u32::from(ctx.snap.group_size),
+        Resource::PetHealthPct => u32::from(ctx.interface.pet_health_pct()),
     };
     match op {
         Op::Above(n) => val > n,
@@ -2164,15 +2193,28 @@ fn retreat_dest(
     let tgt = ctx.interface.get_unit_snapshot(target_handle);
     let bot = ctx.snap.self_.pos;
 
-    // Prefer retreating toward the master/leader position.
+    // Prefer retreating toward the master/leader position, but ONLY if
+    // that doesn't require running through the target. If the bot is on
+    // the opposite side of the target from the master, retreat directly
+    // away from the target instead. This prevents ranged bots from
+    // running through mobs (and ninja-pulling) to reach the master.
     if let Some(master) = ctx.master_guid {
         let master_pos = ctx.interface.get_unit_snapshot(master).pos;
-        let dx = master_pos.x - tgt.pos.x;
-        let dy = master_pos.y - tgt.pos.y;
-        let len_sq = dx * dx + dy * dy;
-        if len_sq > 0.000_1 {
-            let inv = desired_dist / len_sq.sqrt();
-            return Some((tgt.pos.x + dx * inv, tgt.pos.y + dy * inv, bot.z));
+        let mx = master_pos.x - tgt.pos.x;
+        let my = master_pos.y - tgt.pos.y;
+        let m_len_sq = mx * mx + my * my;
+        if m_len_sq > 0.000_1 {
+            // Check if bot and master are on the same side of the target.
+            // dot(bot-target, master-target) > 0 means same side.
+            let bx = bot.x - tgt.pos.x;
+            let by = bot.y - tgt.pos.y;
+            let dot = bx * mx + by * my;
+            if dot > 0.0 {
+                // Same side — safe to retreat toward master.
+                let inv = desired_dist / m_len_sq.sqrt();
+                return Some((tgt.pos.x + mx * inv, tgt.pos.y + my * inv, bot.z));
+            }
+            // Opposite side — fall through to direct-away retreat below.
         }
     }
 
@@ -2389,14 +2431,12 @@ fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
     BtResult::Success
 }
 
-/// Pick the follow target handle per PB2's tank → master → peer order.
-/// Excludes `bot_handle` (a bot never follows itself).
+/// Pick the follow target handle. Bots always follow their master (the
+/// real player who claimed them). Only fall back to a group peer when no
+/// master is set (solo random bots). Tanks are never followed — during
+/// pulls they run to the mob and back; the raid should stay with the
+/// master, not chase the tank.
 fn pick_follow_target(ctx: &TickContext<'_>) -> Option<UnitHandle> {
-    if let Some(tank) = ctx.group_tank()
-        && tank != ctx.bot_handle
-    {
-        return Some(tank);
-    }
     if let Some(master) = ctx.master_guid
         && master != 0
         && master != ctx.bot_handle
@@ -2532,6 +2572,11 @@ const HP_FULL_THRESHOLD: f32 = 0.90;
 const MANA_DRINK_THRESHOLD: f32 = 0.40;
 const MANA_FULL_THRESHOLD: f32 = 0.80;
 
+/// Food category constants matching WoW's `SpellCategory` field on
+/// consumable item spells.
+const FOOD_CATEGORY_FOOD: u32 = 11;
+const FOOD_CATEGORY_DRINK: u32 = 59;
+
 fn tick_consumables(ctx: &mut TickContext<'_>) -> BtResult {
     let uses_mana = ctx.snap.self_.power_type == 0;
     let hp_low = ctx.self_hp_pct() < HP_EAT_THRESHOLD;
@@ -2549,7 +2594,52 @@ fn tick_consumables(ctx: &mut TickContext<'_>) -> BtResult {
     }
 
     ctx.interface.stop_moving();
+
+    // Don't interrupt an in-progress eat/drink channel.
+    if ctx.snap.self_.is_channeling {
+        return BtResult::Running;
+    }
+
+    // Intelligently pick and use the best food/drink from bags.
+    // The C++ side scans bags and returns the highest-level consumable
+    // matching the requested category, so we always use the best available.
+    if hp_low {
+        let food = ctx.interface.find_food_drink_in_bags(FOOD_CATEGORY_FOOD);
+        if food.0 != 0 {
+            ctx.interface.use_item(food, ctx.bot_handle);
+        } else if ctx.class == crate::bot::state::PlayerClass::Mage {
+            // Mage has no food — try to conjure some.
+            if let Some(spell) = mage_conjure_spell(ctx, true) {
+                ctx.interface.cast_spell(spell, ctx.bot_handle);
+                return BtResult::Running;
+            }
+        }
+    }
+    if mana_low {
+        let drink = ctx.interface.find_food_drink_in_bags(FOOD_CATEGORY_DRINK);
+        if drink.0 != 0 {
+            ctx.interface.use_item(drink, ctx.bot_handle);
+        } else if ctx.class == crate::bot::state::PlayerClass::Mage {
+            // Mage has no water — try to conjure some.
+            if let Some(spell) = mage_conjure_spell(ctx, false) {
+                ctx.interface.cast_spell(spell, ctx.bot_handle);
+                return BtResult::Running;
+            }
+        }
+    }
+
     BtResult::Running
+}
+
+/// Find the highest-rank conjure food/water spell the mage knows.
+/// `food` = true → Conjure Food, false → Conjure Water.
+fn mage_conjure_spell(
+    ctx: &TickContext<'_>,
+    food: bool,
+) -> Option<crate::ffi::SpellId> {
+    use crate::data::spells::vanilla::mage::{CONJURE_FOOD, CONJURE_WATER};
+    let list = if food { CONJURE_FOOD } else { CONJURE_WATER };
+    list.iter().copied().find(|&s| ctx.interface.knows_spell(s))
 }
 
 // ── Buffing ─────────────────────────────────────────────────────────────────
@@ -2846,14 +2936,54 @@ fn tick_tank_rotate_targets(ctx: &mut TickContext<'_>) -> BtResult {
 
     let (target, icon) = targets[idx];
 
-    // Check if the mob is targeting us already.
-    let snap = ctx.interface.get_unit_snapshot(target);
-    if snap.current_target != ctx.bot_handle {
-        // Not on us — try to taunt first.
+    // Check if another tank in the group is already tanking this mob.
+    // If so, cooperate: attack without taunting (avoid stealing threat).
+    // Only take over if the other tank is dying (< 15% HP).
+    let mob_snap = ctx.interface.get_unit_snapshot(target);
+    let other_tank_on_target = if mob_snap.current_target != ctx.bot_handle && mob_snap.current_target != 0 {
+        let members = &ctx.snap.group_members[..ctx.snap.group_size as usize];
+        members.iter().copied().find(|&h| {
+            h != 0 && h != ctx.bot_handle && h == mob_snap.current_target && {
+                let role = ctx.interface.group_get_role(h);
+                role.is_tank()
+            }
+        })
+    } else {
+        None
+    };
+
+    let should_taunt = if let Some(other_tank) = other_tank_on_target {
+        let other_snap = ctx.interface.get_unit_snapshot(other_tank);
+        let other_hp_pct = if other_snap.max_health > 0 {
+            other_snap.health as f32 / other_snap.max_health as f32
+        } else {
+            0.0
+        };
+        if other_hp_pct > 0.15 {
+            // Other tank is healthy — assist without stealing threat.
+            ctx.monitor(format_args!(
+                "TARGET: TankRotate -> cooperate on 0x{target:X} (icon={icon}, other tank 0x{other_tank:X} healthy at {:.0}%)",
+                other_hp_pct * 100.0,
+            ));
+            false
+        } else {
+            // Other tank is dying — take over.
+            ctx.monitor(format_args!(
+                "TARGET: TankRotate -> TAKEOVER 0x{target:X} (icon={icon}, other tank 0x{other_tank:X} dying at {:.0}%)",
+                other_hp_pct * 100.0,
+            ));
+            true
+        }
+    } else {
+        // No other tank on this target — normal behavior.
+        mob_snap.current_target != ctx.bot_handle
+    };
+
+    if should_taunt {
         if ctx.interface.taunt(target) {
             ctx.monitor(format_args!(
                 "TARGET: TankRotate -> taunt 0x{target:X} (icon={icon}, was on 0x{:X})",
-                snap.current_target,
+                mob_snap.current_target,
             ));
         }
     }
@@ -2885,18 +3015,38 @@ fn tick_tank_rotate_targets(ctx: &mut TickContext<'_>) -> BtResult {
 fn tick_tank_pickup(ctx: &mut TickContext<'_>) -> BtResult {
     for &attacker in ctx.attackers {
         let snap = ctx.interface.get_unit_snapshot(attacker);
-        if snap.current_target != ctx.bot_handle {
-            if ctx.interface.taunt(attacker) {
-                ctx.monitor(format_args!(
-                    "TARGET: TankPickup -> taunt 0x{attacker:X} (was on 0x{:X})",
-                    snap.current_target,
-                ));
-                return BtResult::Success;
-            }
-            ctx.monitor(format_args!(
-                "TARGET: TankPickup -> taunt(0x{attacker:X}) REFUSED",
-            ));
+        if snap.current_target == ctx.bot_handle {
+            continue; // already on us
         }
+        // Don't taunt mobs that are on another healthy tank — they're
+        // handling it. Only pick up mobs targeting non-tanks or dying tanks.
+        let target_is_healthy_tank = snap.current_target != 0 && {
+            let role = ctx.interface.group_get_role(snap.current_target);
+            if role.is_tank() {
+                let tank_snap = ctx.interface.get_unit_snapshot(snap.current_target);
+                let hp_pct = if tank_snap.max_health > 0 {
+                    tank_snap.health as f32 / tank_snap.max_health as f32
+                } else {
+                    0.0
+                };
+                hp_pct > 0.15
+            } else {
+                false
+            }
+        };
+        if target_is_healthy_tank {
+            continue;
+        }
+        if ctx.interface.taunt(attacker) {
+            ctx.monitor(format_args!(
+                "TARGET: TankPickup -> taunt 0x{attacker:X} (was on 0x{:X})",
+                snap.current_target,
+            ));
+            return BtResult::Success;
+        }
+        ctx.monitor(format_args!(
+            "TARGET: TankPickup -> taunt(0x{attacker:X}) REFUSED",
+        ));
     }
     BtResult::Failure
 }
@@ -3703,13 +3853,15 @@ fn tick_pull_target(ctx: &mut TickContext<'_>) -> BtResult {
         Some(t) => t,
         None => return BtResult::Failure,
     };
+    // Only ranged pull options — no melee attack() fallback, because that
+    // would start server-side MoveChase toward the target, defeating the
+    // purpose of holding position during a pull.
     if ctx.interface.auto_shoot(target) {
+        ctx.monitor(format_args!("PULL: auto_shoot on 0x{target:X}"));
         return BtResult::Success;
     }
     if ctx.interface.taunt(target) {
-        return BtResult::Success;
-    }
-    if ctx.attack(target) {
+        ctx.monitor(format_args!("PULL: taunt on 0x{target:X}"));
         return BtResult::Success;
     }
     BtResult::Failure
@@ -3746,25 +3898,50 @@ fn tick_is_pulling(ctx: &mut TickContext<'_>) -> BtResult {
     BtResult::Success
 }
 
-/// `Bt::PullBack`. After pulling a mob, return to the group's position.
-/// Uses `follow(master)` to move back toward the master/leader. Returns
-/// Running while the bot is moving back, Failure once close enough or
-/// when there is no master to return to. Returns Failure (not Success)
-/// when already close so the parent Selector falls through to the
-/// combat pipeline.
+/// `Bt::PullBack`. After pulling a mob, return to the saved pre-pull
+/// position. The pull command saves the bot's position to blackboard
+/// keys `PullBackX/Y/Z` before engaging. Returns Running while the bot
+/// is moving back, Failure once close enough or when there is no saved
+/// position. Returns Failure (not Success) when already close so the
+/// parent Selector falls through to the combat pipeline.
 fn tick_pull_back(ctx: &mut TickContext<'_>) -> BtResult {
-    // Pull back to the master/tank/group member, reusing the same
-    // priority order as the Follow leaf.
-    let target = match pick_follow_target(ctx) {
-        Some(t) => t,
-        None => return BtResult::Failure,
+    use crate::engine::blackboard::Key;
+
+    // Retrieve saved pre-pull position from blackboard.
+    let x = ctx.blackboard.get_f32(Key::PullBackX);
+    let y = ctx.blackboard.get_f32(Key::PullBackY);
+    let z = ctx.blackboard.get_f32(Key::PullBackZ);
+    let (Some(px), Some(py), Some(pz)) = (x, y, z) else {
+        // No saved position — fall back to following master.
+        let target = match pick_follow_target(ctx) {
+            Some(t) => t,
+            None => return BtResult::Failure,
+        };
+        let dist = ctx.interface.unit_distance(target);
+        if dist <= 5.0 {
+            return BtResult::Failure;
+        }
+        if ctx.interface.follow(target, 2.0, 0.0) {
+            return BtResult::Running;
+        }
+        return BtResult::Failure;
     };
-    let dist = ctx.interface.unit_distance(target);
-    if dist <= 5.0 {
-        // Already close — pull-back complete, let combat pipeline run.
+
+    // Check distance to pre-pull position.
+    let bot = ctx.snap.self_.pos;
+    let dx = bot.x - px;
+    let dy = bot.y - py;
+    let dist_sq = dx * dx + dy * dy;
+    if dist_sq <= 5.0 * 5.0 {
+        // Back at pre-pull position — pull-back complete.
+        ctx.monitor(format_args!("PULL_BACK: arrived at pre-pull position"));
         return BtResult::Failure;
     }
-    if ctx.interface.follow(target, 2.0, 0.0) {
+    ctx.monitor(format_args!(
+        "PULL_BACK: returning to ({px:.0}, {py:.0}, {pz:.0}) dist={:.1}",
+        dist_sq.sqrt()
+    ));
+    if ctx.interface.move_to(px, py, pz) {
         BtResult::Running
     } else {
         BtResult::Failure

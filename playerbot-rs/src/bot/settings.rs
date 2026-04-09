@@ -310,6 +310,7 @@ impl StrategyFlags {
     pub const ASSIST: Self = Self::bit2(18);
     pub const PROTECT: Self = Self::bit2(19);
     pub const FERAL: Self = Self::bit2(20);
+    pub const RPG_CRAFT: Self = Self::bit2(21);
 
     /// Mutually-exclusive targeting flags. Bare `co <mode>` clears these
     /// before inserting the new one, preserving all other Combat slot flags.
@@ -368,6 +369,7 @@ impl StrategyFlags {
         (Self::RPG_PLAYER, "rpg player"),
         (Self::RPG_QUEST, "rpg quest"),
         (Self::RPG_VENDOR, "rpg vendor"),
+        (Self::RPG_CRAFT, "rpg craft"),
         (Self::RTSC, "rtsc"),
         (Self::RTSC_JUMP, "rtsc jump"),
         (Self::WBUFF, "wbuff"),

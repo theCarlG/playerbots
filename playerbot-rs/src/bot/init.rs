@@ -29,10 +29,10 @@ pub fn create_bot(
     let kit = kit_strategies(class, spec);
     state.settings.strategies = kit;
     state.settings.init_strategies = kit;
-    // Tanks default to marking targets with skull (icon 7). Non-tanks
-    // leave it as None so the MarkRtiPreferred node no-ops.
+    // Bots with the MARK_RTI flag default to marking targets with skull
+    // (icon 7). Non-markers leave it as None so MarkRtiPreferred no-ops.
     let combat_flags = state.settings.strategies.get(BotStateKind::Combat);
-    if combat_flags.contains(StrategyFlags::TANK_ASSIST) {
+    if combat_flags.contains(StrategyFlags::MARK_RTI) {
         state.settings.preferred_rti_icon = Some(7);
     }
     // Set default position_stance to match the kitted strategy flags
@@ -263,10 +263,11 @@ fn build_world_tree(class_rotation: Bt) -> Bt {
     Sel!(
         // On taxi — do nothing.
         Seq!(Bt::OnTaxi, Bt::Noop),
+        // Resurrect dead party/raid members — highest OOC priority so
+        // healers rez before buffing or drinking.
+        reactive::resurrect_subtree(),
         // Apply missing world buffs (configured in server config).
         crate::strategies::wbuff::build(),
-        // Resurrect dead party members before eating/drinking.
-        reactive::resurrect_subtree(),
         // OOC healing — healers top off injured group members.
         // Runs before Consumables so the healer heals first, then drinks.
         Seq!(
@@ -316,7 +317,8 @@ fn combat_wrapper(class_rotation: Bt) -> Bt {
         reactive::dispel_subtree(),
         reactive::resurrect_subtree(),
         reactive::threat_subtree(),
-        reactive::pull_back_subtree(),
+        reactive::pull_phase_subtree(),
+        reactive::wait_for_attack_subtree(),
         reactive::preheal_subtree(),
         // CC adds: cast crowd control on RTI CC target or nearest add.
         // Throttled inside AutoCc to prevent spam.
@@ -333,11 +335,13 @@ fn combat_wrapper(class_rotation: Bt) -> Bt {
         // but succeeds once the bot arrives.
         Seq!(
             // B.1 — Targeting + engage. Gated on ShouldEngage (which
-            //        respects Reactivity for ALL roles) or an explicit focus
-            //        command. Healers entering via GroupMembersBelow skip
-            //        this so they don't auto-attack.
+            //        respects Reactivity for ALL roles), an explicit focus
+            //        command, or the server combat flag (so DPS bots in a
+            //        group fight acquire targets via AssistLeader even when
+            //        nothing is personally attacking them). Healers entering
+            //        via GroupMembersBelow skip this so they don't auto-attack.
             Bt::Optional(Box::new(Seq!(
-                Sel!(Bt::ShouldEngage, Bt::HasFocusTarget),
+                Sel!(Bt::ShouldEngage, Bt::HasFocusTarget, Bt::InCombat),
                 Sel!(reactive::targeting_subtree(), Bt::Noop),
                 Bt::EngageTarget,
                 Sel!(reactive::mark_rti_subtree(), Bt::Noop),
