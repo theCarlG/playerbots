@@ -270,7 +270,7 @@ impl BotState {
             prev_active_fsm: ActiveFsm::World,
             prev_world_sub: WorldSub::default(),
             encounter: None,
-            bdi: crate::bdi::BdiState::new(role),
+            bdi: crate::bdi::BdiState::new(class, role),
             lod: crate::bot::lod::AiLod::Full,
             trees,
             class,

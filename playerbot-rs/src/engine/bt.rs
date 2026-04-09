@@ -1341,7 +1341,7 @@ impl BtNode for Bt {
             // `StrategyEnabled` is the cross-state runtime gate used by
             // mode dispatch and subtrees that do not care which engine
             // owns the flag.
-            Bt::StrategyEnabled(flags) => ok(ctx.settings.strategies.has_any(*flags)),
+            Bt::StrategyEnabled(flags) => ok(ctx.settings.strategies.has_any(*flags) || ctx.goap_flags.contains(*flags)),
             Bt::ReactivityIs(r) => ok(ctx.settings.reactivity == *r),
             Bt::UsesMana => ok(ctx.snap.self_.power_type == 0),
             Bt::Cmp(res, op) => ok(eval_cmp(ctx, *res, *op)),
@@ -4715,6 +4715,7 @@ mod tests {
             class: PlayerClass::Warrior,
             role: BotRole::DPS,
             settings: &owned.settings,
+            goap_flags: crate::bot::settings::StrategyFlags::NONE,
             monitor_trace: None,
             pending_target: std::cell::Cell::new(None),
         }

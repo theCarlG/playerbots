@@ -75,6 +75,49 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     // 4.6 Update travel target FSM — check status, sync to blackboard.
     update_travel_target(bot, now_ms);
 
+    // ── BDI + GOAP evaluation ────────────────────────────────────────
+
+    // 4.7 Update beliefs from snapshot (every tick, ~80ns).
+    crate::bdi::beliefs::update(&mut bot.bdi.beliefs, &bot.snap, &bot.attackers);
+    bot.bdi.beliefs.encounter_active = bot
+        .encounter
+        .as_ref()
+        .is_some_and(|e| e.is_active());
+
+    // 4.8 BDI: evaluate desires and select/maintain intention.
+    //     Time-sliced: only 1/5 of bots per tick (~360 bots/tick).
+    let encounter_active = bot.bdi.beliefs.encounter_active;
+    if !minimal && crate::bdi::should_evaluate(bot.handle as u64, now_ms) {
+        crate::bdi::evaluate(
+            &mut bot.bdi,
+            bot.class,
+            bot.role,
+            encounter_active,
+            now_ms,
+        );
+    }
+
+    // 4.9 GOAP: plan if intention changed or plan is stale.
+    if !minimal && bot.bdi.needs_replan(now_ms) {
+        let desire = bot.bdi.active_desire();
+        let current_ws = crate::goap::world_state::from_beliefs(&bot.bdi.beliefs);
+        if let Some(plan) = crate::goap::plan_for_intention(
+            desire,
+            current_ws,
+            &bot.bdi.available_actions,
+            now_ms,
+        ) {
+            bot.bdi.plan_cache.plan = plan;
+        }
+    }
+
+    // 4.10 Write BDI/GOAP state to blackboard.
+    crate::bdi::write_to_blackboard(&bot.bdi, &mut bot.blackboard);
+    crate::goap::write_to_blackboard(&bot.bdi.plan_cache, &mut bot.blackboard);
+    let goap_flags = bot.bdi.goap_strategy_flags();
+
+    // ── End BDI + GOAP ───────────────────────────────────────────────
+
     // 5. Determine ActiveFsm (Dead > Combat > World)
     // A focus_target (from pull/attack commands) also triggers Combat so
     // the bot approaches and engages rather than staying in Follow mode.
@@ -182,6 +225,7 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         class,
         role,
         settings,
+        goap_flags,
         monitor_trace: if monitor_active {
             Some(std::cell::RefCell::new(Vec::new()))
         } else {

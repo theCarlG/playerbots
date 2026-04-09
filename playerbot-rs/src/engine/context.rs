@@ -6,7 +6,7 @@
 use std::cell::Cell;
 
 use crate::{
-    bot::settings::BotSettings,
+    bot::settings::{BotSettings, StrategyFlags},
     bot::state::PlayerClass,
     encounters::EncounterFsm,
     engine::{
@@ -66,6 +66,10 @@ pub struct TickContext<'a> {
     // ── Settings ──────────────────────────────────────────────────────
     /// Per-bot runtime settings (read-only during tick).
     pub settings: &'a BotSettings,
+
+    /// Strategy flags derived from the current GOAP plan step.
+    /// Merged with `settings.strategies` when checking `StrategyEnabled`.
+    pub goap_flags: StrategyFlags,
 
     // ── Debug monitor ────────────────────────────────────────────────
     /// When `Some`, the BT tick records the full path from root to the
@@ -415,6 +419,7 @@ pub mod tests {
             class: PlayerClass::Warrior,
             role: BotRole::DPS,
             settings: default_test_settings(),
+            goap_flags: StrategyFlags::NONE,
             monitor_trace: None,
             pending_target: Cell::new(None),
         }
@@ -474,6 +479,7 @@ pub mod tests {
                 class: PlayerClass::Warrior,
                 role: BotRole::DPS,
                 settings: &self.settings,
+                goap_flags: StrategyFlags::NONE,
                 monitor_trace: None,
                 pending_target: Cell::new(None),
             }
