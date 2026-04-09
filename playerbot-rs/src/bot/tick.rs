@@ -1,13 +1,19 @@
 /// Main tick logic — called from `playerbot_update`.
 ///
 /// Sequence per tick:
-///   1. Refresh snapshot (one C++ call)
-///   2. Throttled refresh of nearby/attacker lists
-///   3. Zone-change check → create/destroy encounter FSM
-///   4. Process push events → update encounter FSM + blackboard
-///   5. Build `TickContext`
-///   6. Run the BT tree
-///   7. Advance timers
+///   1.  Refresh snapshot + group membership + LOD tier
+///   1c. LOD tick-skip (Background/Dormant skip most ticks)
+///   2.  Throttled refresh of nearby/attacker lists (LOD-gated)
+///   3.  Zone-change check → create/destroy encounter FSM
+///   4.  Process push events → update encounter FSM + blackboard
+///   4.7 BDI belief update (every tick, ~80ns)
+///   4.8 BDI desire evaluation (LOD-gated interval)
+///   4.9 GOAP planning (on intention change or plan staleness)
+///   4.10 Write BDI/GOAP/LOD to blackboard + compute strategy flags
+///   5.  Determine ActiveFsm (Dead > Combat > World)
+///   6.  Build TickContext, run BT tree
+///   6b. GOAP plan step advancement (step complete/failed signals)
+///   7.  Monitor, addon pushes, KTM, timers
 use crate::{
     bot::state::BotState,
     encounters::{EncounterEvent, coordinator},
@@ -102,6 +108,20 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     let bdi_interval = bot.lod.bdi_interval_ms();
     let bdi_due = now_ms.saturating_sub(bot.bdi.last_eval_ms) >= bdi_interval;
     if !minimal && bdi_due {
+        // Build group desire counts for coordination (if grouped).
+        let group_desires = bot.group_state.as_ref().and_then(|gh| {
+            let gs = gh.state().try_read().ok()?;
+            let mut gd = crate::bdi::desires::GroupDesireCounts::default();
+            for md in &gs.member_desires {
+                if md.handle != 0 && md.handle != bot.handle {
+                    let idx = md.desire as usize;
+                    if idx < crate::bdi::desires::DesireKind::COUNT {
+                        gd.counts[idx] = gd.counts[idx].saturating_add(1);
+                    }
+                }
+            }
+            Some(gd)
+        });
         crate::bdi::evaluate(
             &mut bot.bdi,
             bot.class,
@@ -109,6 +129,7 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
             encounter_active,
             now_ms,
             bot.settings.mode,
+            group_desires.as_ref(),
         );
     }
 
@@ -282,6 +303,19 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         let _ = trees.maintenance.tick(&mut ctx);
     }
 
+    // 6a. GOAP plan step advancement — check BT signals before dropping ctx.
+    let goap_step_complete = ctx
+        .blackboard
+        .get_bool(crate::engine::blackboard::Key::GoapStepCompleteSignal)
+        .unwrap_or(false);
+    let goap_step_failed = ctx
+        .blackboard
+        .get_bool(crate::engine::blackboard::Key::GoapStepFailedSignal)
+        .unwrap_or(false);
+    // Clear the signals for next tick.
+    ctx.blackboard.clear(crate::engine::blackboard::Key::GoapStepCompleteSignal);
+    ctx.blackboard.clear(crate::engine::blackboard::Key::GoapStepFailedSignal);
+
     // 6. Monitor: BT path tracing + throttled tick summary
     //
     // Collect data from `ctx` first (which borrows `bot` fields), then
@@ -301,6 +335,17 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     };
     drop(ctx);
     drop(ctx_group);
+
+    // 6b. Apply GOAP plan step signals now that borrows are released.
+    if goap_step_complete {
+        bot.bdi.plan_cache.plan.advance();
+    }
+    if goap_step_failed {
+        // Invalidate the plan — next tick's needs_replan() will trigger replanning.
+        bot.bdi.plan_cache.plan = crate::goap::plan::GoapPlan::default();
+        bot.bdi.intention_changed = true;
+    }
+
     if monitor_active {
         // Log BT path changes (which leaf node was reached).
         if let Some(path) = monitor_path
@@ -627,6 +672,9 @@ fn sync_encounter_to_group(bot: &mut BotState, now_ms: u64) {
             gs.coordination.heal_priority.rotate_right(1);
             gs.coordination.heal_priority[0] = mt;
         }
+
+    // Publish this bot's BDI desire to the group for coordination.
+    gs.publish_desire(bot.handle, bot.bdi.active_desire() as u8);
 
     // Periodic claim GC — every 5 seconds, sweep expired claims.
     // Cheap: iterates a 32-element array.

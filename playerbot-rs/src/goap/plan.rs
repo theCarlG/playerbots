@@ -124,3 +124,152 @@ impl PlanCache {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bot::settings::StrategyFlags;
+    use crate::goap::action::GoapAction;
+    use crate::goap::world_state::{Atom, WorldState};
+
+    fn make_action(id: u16, pre_set: u64, eff_set: u64) -> GoapAction {
+        GoapAction {
+            id: ActionId(id),
+            name: "test",
+            precondition_set: pre_set,
+            precondition_clear: 0,
+            effect_set: eff_set,
+            effect_clear: 0,
+            cost: 10,
+            bt_flags: StrategyFlags::NONE,
+            satisfies: 0,
+        }
+    }
+
+    fn make_plan(len: u8, current_step: u8, created_at_ms: u64, goal: WorldState) -> GoapPlan {
+        GoapPlan {
+            steps: [ActionId(0), ActionId(1), ActionId(2), ActionId(3),
+                    ActionId(4), ActionId(5), ActionId(6), ActionId(7)],
+            len,
+            current_step,
+            goal,
+            created_at_ms,
+        }
+    }
+
+    // ── GoapPlan tests ─────────────────────────────────────────
+
+    #[test]
+    fn empty_plan() {
+        let p = GoapPlan::default();
+        assert!(p.is_empty());
+        assert!(p.is_complete());
+        assert!(p.current_action().is_none());
+    }
+
+    #[test]
+    fn advance_through_plan() {
+        let mut p = make_plan(3, 0, 0, WorldState::default());
+        assert!(!p.is_complete());
+        assert_eq!(p.current_action(), Some(ActionId(0)));
+
+        assert!(p.advance()); // step 0→1, more steps remain
+        assert_eq!(p.current_action(), Some(ActionId(1)));
+
+        assert!(p.advance()); // step 1→2
+        assert_eq!(p.current_action(), Some(ActionId(2)));
+
+        assert!(!p.advance()); // step 2→3, plan complete
+        assert!(p.is_complete());
+        assert!(p.current_action().is_none());
+    }
+
+    #[test]
+    fn advance_past_end_is_idempotent() {
+        let mut p = make_plan(1, 0, 0, WorldState::default());
+        assert!(!p.advance()); // complete
+        assert!(!p.advance()); // still complete, no panic
+        assert_eq!(p.current_step, 1);
+    }
+
+    // ── PlanCache::needs_replan tests ──────────────────────────
+
+    #[test]
+    fn replan_when_empty() {
+        let cache = PlanCache::default();
+        let ws = WorldState::default();
+        assert!(cache.needs_replan(ws, 0, &[]));
+    }
+
+    #[test]
+    fn replan_when_complete() {
+        let cache = PlanCache {
+            plan: make_plan(2, 2, 1000, WorldState::with(Atom::TargetDead)),
+            planned_world_state: WorldState::default(),
+        };
+        assert!(cache.needs_replan(WorldState::default(), 2000, &[]));
+    }
+
+    #[test]
+    fn replan_when_stale() {
+        let goal = WorldState::with(Atom::TargetDead);
+        let action = make_action(0, 0, 0);
+        let cache = PlanCache {
+            plan: make_plan(2, 0, 1000, goal),
+            planned_world_state: WorldState::default(),
+        };
+        // 6001ms after creation > PLAN_STALE_MS (5000)
+        assert!(cache.needs_replan(WorldState::default(), 6001, &[action]));
+    }
+
+    #[test]
+    fn no_replan_when_fresh() {
+        let goal = WorldState::with(Atom::TargetDead);
+        let action = make_action(0, 0, 0); // no preconditions, always applicable
+        let cache = PlanCache {
+            plan: make_plan(2, 0, 1000, goal),
+            planned_world_state: WorldState::default(),
+        };
+        // Goal not yet satisfied, plan is fresh, action applicable
+        assert!(!cache.needs_replan(WorldState::default(), 2000, &[action]));
+    }
+
+    #[test]
+    fn replan_when_goal_satisfied() {
+        let goal = WorldState::with(Atom::TargetDead);
+        let action = make_action(0, 0, 0);
+        let cache = PlanCache {
+            plan: make_plan(2, 0, 1000, goal),
+            planned_world_state: WorldState::default(),
+        };
+        // Current world state already has TargetDead — goal satisfied
+        let current = WorldState::with(Atom::TargetDead);
+        assert!(cache.needs_replan(current, 2000, &[action]));
+    }
+
+    #[test]
+    fn replan_when_preconditions_broken() {
+        let goal = WorldState::with(Atom::TargetDead);
+        // Action requires HasTarget
+        let action = make_action(0, 1u64 << Atom::HasTarget as u8, 0);
+        let cache = PlanCache {
+            plan: make_plan(2, 0, 1000, goal),
+            planned_world_state: WorldState::default(),
+        };
+        // Current WS does NOT have HasTarget — precondition broken
+        assert!(cache.needs_replan(WorldState::default(), 2000, &[action]));
+    }
+
+    #[test]
+    fn no_replan_when_preconditions_met() {
+        let goal = WorldState::with(Atom::TargetDead);
+        let action = make_action(0, 1u64 << Atom::HasTarget as u8, 0);
+        let cache = PlanCache {
+            plan: make_plan(2, 0, 1000, goal),
+            planned_world_state: WorldState::default(),
+        };
+        // Current WS has HasTarget — precondition met
+        let current = WorldState::with(Atom::HasTarget);
+        assert!(!cache.needs_replan(current, 2000, &[action]));
+    }
+}

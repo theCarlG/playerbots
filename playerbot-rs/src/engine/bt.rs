@@ -334,6 +334,14 @@ pub enum Bt {
     /// subtrees (RPG branches, RTSC, grind extras, CC management,
     /// combat-order targeting like tank/assist/protect, boost, etc.).
     StrategyEnabled(StrategyFlags),
+    /// True when the BDI active desire matches this kind.
+    GoapDesireIs(crate::bdi::desires::DesireKind),
+    /// Signal the current GOAP plan step as complete — advance to next step.
+    /// Always succeeds. Place after the subtree that fulfills the action.
+    GoapStepComplete,
+    /// Signal the current GOAP plan step as failed — triggers replan.
+    /// Always fails.
+    GoapStepFailed,
     /// Bot's reactivity level matches.
     ReactivityIs(Reactivity),
     /// Bot uses mana (not rage/energy/runic power).
@@ -1342,6 +1350,29 @@ impl BtNode for Bt {
             // mode dispatch and subtrees that do not care which engine
             // owns the flag.
             Bt::StrategyEnabled(flags) => ok(ctx.settings.strategies.has_any(*flags) || ctx.goap_flags.contains(*flags)),
+            Bt::GoapDesireIs(desire) => {
+                let active = ctx.blackboard.get_u32(crate::engine::blackboard::Key::BdiActiveDesire)
+                    .unwrap_or(crate::bdi::desires::DesireKind::Idle as u32);
+                ok(active == *desire as u32)
+            }
+            Bt::GoapStepComplete => {
+                // Advance the GOAP plan to the next step via blackboard signal.
+                // The actual advancement happens in tick.rs after the BT runs,
+                // reading this flag from the blackboard.
+                ctx.blackboard.set(
+                    crate::engine::blackboard::Key::GoapStepCompleteSignal,
+                    crate::engine::blackboard::Value::Bool(true),
+                );
+                ok(true)
+            }
+            Bt::GoapStepFailed => {
+                // Signal GOAP to replan by marking the plan as invalidated.
+                ctx.blackboard.set(
+                    crate::engine::blackboard::Key::GoapStepFailedSignal,
+                    crate::engine::blackboard::Value::Bool(true),
+                );
+                ok(false)
+            }
             Bt::ReactivityIs(r) => ok(ctx.settings.reactivity == *r),
             Bt::UsesMana => ok(ctx.snap.self_.power_type == 0),
             Bt::Cmp(res, op) => ok(eval_cmp(ctx, *res, *op)),

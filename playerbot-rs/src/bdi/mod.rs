@@ -129,6 +129,7 @@ pub fn evaluate(
     encounter_active: bool,
     server_time_ms: u64,
     mode: crate::bot::settings::BehaviorMode,
+    group_desires: Option<&desires::GroupDesireCounts>,
 ) {
     state.intention_changed = false;
 
@@ -139,7 +140,7 @@ pub fn evaluate(
 
     // Score all desires
     let mut scores =
-        desires::score_desires(&state.beliefs, role, &state.personality, encounter_active, mode);
+        desires::score_desires(&state.beliefs, role, &state.personality, encounter_active, mode, group_desires);
 
     // Apply class-specific weights
     for score in &mut scores {

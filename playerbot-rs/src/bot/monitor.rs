@@ -252,7 +252,7 @@ pub fn monitor_tick_summary(bot: &BotState) {
     monitor_log(
         bot,
         &format!(
-            "  BDI: desire={:?}{} intention={:?} plan={}/{} lod={:?}",
+            "  BDI: desire={}{} intention={} plan={}/{} lod={:?}",
             desire, forced, bot.bdi.intention.desire, plan.current_step, plan.len, bot.lod,
         ),
     );

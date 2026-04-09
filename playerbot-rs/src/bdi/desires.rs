@@ -133,6 +133,39 @@ impl DesireKind {
     pub fn as_bit(self) -> u32 {
         1u32 << (self as u8)
     }
+
+    /// Short human-readable name for status/monitor output.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Survive => "survive",
+            Self::FleeFromDanger => "flee",
+            Self::HealGroup => "heal_group",
+            Self::ResurrectDead => "resurrect",
+            Self::DispelDebuffs => "dispel",
+            Self::ProtectAlly => "protect",
+            Self::TankBoss => "tank",
+            Self::KillTarget => "kill",
+            Self::CrowdControl => "cc",
+            Self::InterruptCast => "interrupt",
+            Self::ManageThreat => "threat",
+            Self::PullMobs => "pull",
+            Self::PositionForMechanic => "position",
+            Self::ExecuteEncounterDuty => "encounter_duty",
+            Self::RecoverResources => "recover",
+            Self::BuffGroup => "buff",
+            Self::RepairGear => "repair",
+            Self::FollowLeader => "follow",
+            Self::GrindMobs => "grind",
+            Self::Travel => "travel",
+            Self::Idle => "idle",
+        }
+    }
+}
+
+impl std::fmt::Display for DesireKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// A scored desire — a `DesireKind` with an urgency value.
@@ -146,6 +179,17 @@ pub struct ScoredDesire {
     pub urgency: f32,
 }
 
+/// Group desire counts for coordination — prevents duplicate roles.
+///
+/// Passed into `score_desires` so healers seeing others already healing
+/// can fall through to dispel/rez, etc.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GroupDesireCounts {
+    /// How many other bots currently have each desire active.
+    /// Indexed by `DesireKind as usize`.
+    pub counts: [u8; DesireKind::COUNT],
+}
+
 /// Score all desires given current beliefs, role, personality, and mode.
 ///
 /// Returns a fixed-size array of scored desires. Urgency 0.0 means
@@ -156,6 +200,7 @@ pub fn score_desires(
     personality: &super::personality::Personality,
     encounter_active: bool,
     mode: crate::bot::settings::BehaviorMode,
+    group_desires: Option<&GroupDesireCounts>,
 ) -> [ScoredDesire; DesireKind::COUNT] {
     use crate::bot::settings::BehaviorMode;
 
@@ -240,10 +285,195 @@ pub fn score_desires(
         scores[DesireKind::ExecuteEncounterDuty as usize].urgency = 0.7;
     }
 
+    // Group coordination: suppress desires that too many groupmates already have.
+    // Note: HealGroup is NOT suppressed here — multiple healers should all want
+    // to heal. Target deconfliction happens via HealAssignment tracking in
+    // GroupState, not at the desire level.
+    if let Some(gd) = group_desires {
+        // If someone else is already tanking, we don't need to
+        if gd.counts[DesireKind::TankBoss as usize] >= 1 && role.is_tank() {
+            scores[DesireKind::TankBoss as usize].urgency *= 0.5;
+            scores[DesireKind::ManageThreat as usize].urgency *= 1.3;
+        }
+        // If 2+ others already on CC, reduce ours
+        if gd.counts[DesireKind::CrowdControl as usize] >= 2 {
+            scores[DesireKind::CrowdControl as usize].urgency *= 0.4;
+        }
+        // If someone else is already rezzing, we don't need to
+        if gd.counts[DesireKind::ResurrectDead as usize] >= 1 {
+            scores[DesireKind::ResurrectDead as usize].urgency *= 0.3;
+        }
+    }
+
     // Idle is always available as a fallback
     if scores[DesireKind::Idle as usize].urgency < 0.01 {
         scores[DesireKind::Idle as usize].urgency = 0.01;
     }
 
+    // Clamp all urgencies to [0.0, 1.0]
+    for s in &mut scores {
+        s.urgency = s.urgency.clamp(0.0, 1.0);
+    }
+
     scores
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bdi::beliefs::BeliefSet;
+    use crate::bdi::personality::Personality;
+    use crate::bot::settings::BehaviorMode;
+
+    fn default_personality() -> Personality {
+        Personality {
+            aggression: 0.5,
+            caution: 0.5,
+            helpfulness: 0.5,
+            discipline: 0.5,
+            initiative: 0.5,
+        }
+    }
+
+    fn highest(scores: &[ScoredDesire; DesireKind::COUNT]) -> DesireKind {
+        scores
+            .iter()
+            .max_by(|a, b| a.urgency.partial_cmp(&b.urgency).unwrap())
+            .unwrap()
+            .kind
+    }
+
+    #[test]
+    fn dead_bot_wants_idle() {
+        let mut beliefs = BeliefSet::default();
+        beliefs.alive = false;
+        let scores = score_desires(
+            &beliefs,
+            crate::ffi::BotRole::DPS,
+            &default_personality(),
+            false,
+            BehaviorMode::Follow,
+            None,
+        );
+        assert_eq!(highest(&scores), DesireKind::Idle);
+        assert_eq!(scores[DesireKind::Idle as usize].urgency, 1.0);
+    }
+
+    #[test]
+    fn tank_in_combat_wants_tank_boss() {
+        let mut beliefs = BeliefSet::default();
+        beliefs.in_combat = true;
+        let scores = score_desires(
+            &beliefs,
+            crate::ffi::BotRole::TANK,
+            &default_personality(),
+            false,
+            BehaviorMode::Follow,
+            None,
+        );
+        assert_eq!(highest(&scores), DesireKind::TankBoss);
+    }
+
+    #[test]
+    fn healer_in_combat_wants_heal_group() {
+        let mut beliefs = BeliefSet::default();
+        beliefs.in_combat = true;
+        let scores = score_desires(
+            &beliefs,
+            crate::ffi::BotRole::HEAL,
+            &Personality { helpfulness: 0.9, ..default_personality() },
+            false,
+            BehaviorMode::Follow,
+            None,
+        );
+        assert_eq!(highest(&scores), DesireKind::HealGroup);
+    }
+
+    #[test]
+    fn grind_mode_boosts_grind_mobs() {
+        let beliefs = BeliefSet::default();
+        let scores = score_desires(
+            &beliefs,
+            crate::ffi::BotRole::DPS,
+            &Personality { aggression: 1.0, ..default_personality() },
+            false,
+            BehaviorMode::Grind,
+            None,
+        );
+        assert!(scores[DesireKind::GrindMobs as usize].urgency > 0.4);
+        assert!(
+            scores[DesireKind::GrindMobs as usize].urgency
+                > scores[DesireKind::FollowLeader as usize].urgency
+        );
+    }
+
+    #[test]
+    fn low_hp_boosts_survive() {
+        let mut beliefs = BeliefSet::default();
+        beliefs.hp_pct = 15;
+        beliefs.in_combat = true;
+        let scores = score_desires(
+            &beliefs,
+            crate::ffi::BotRole::DPS,
+            &Personality { caution: 1.0, ..default_personality() },
+            false,
+            BehaviorMode::Follow,
+            None,
+        );
+        assert_eq!(highest(&scores), DesireKind::Survive);
+    }
+
+    #[test]
+    fn multiple_healers_all_want_to_heal() {
+        // HealGroup should NOT be suppressed at the desire level — all healers
+        // should want to heal. Target deconfliction happens via HealAssignment
+        // tracking in GroupState, not here.
+        let mut beliefs = BeliefSet::default();
+        beliefs.in_combat = true;
+        let mut gd = GroupDesireCounts::default();
+        gd.counts[DesireKind::HealGroup as usize] = 3; // 3 others already healing
+
+        let without = score_desires(
+            &beliefs,
+            crate::ffi::BotRole::HEAL,
+            &Personality { helpfulness: 0.9, ..default_personality() },
+            false,
+            BehaviorMode::Follow,
+            None,
+        );
+        let with = score_desires(
+            &beliefs,
+            crate::ffi::BotRole::HEAL,
+            &Personality { helpfulness: 0.9, ..default_personality() },
+            false,
+            BehaviorMode::Follow,
+            Some(&gd),
+        );
+        assert_eq!(
+            with[DesireKind::HealGroup as usize].urgency,
+            without[DesireKind::HealGroup as usize].urgency,
+            "heal urgency should be the same regardless of how many others are healing"
+        );
+    }
+
+    #[test]
+    fn passive_mode_wants_idle() {
+        let beliefs = BeliefSet::default();
+        let scores = score_desires(
+            &beliefs,
+            crate::ffi::BotRole::DPS,
+            &default_personality(),
+            false,
+            BehaviorMode::Passive,
+            None,
+        );
+        assert_eq!(highest(&scores), DesireKind::Idle);
+    }
+
+    #[test]
+    fn display_impl_works() {
+        assert_eq!(DesireKind::KillTarget.to_string(), "kill");
+        assert_eq!(DesireKind::HealGroup.to_string(), "heal_group");
+        assert_eq!(DesireKind::Idle.to_string(), "idle");
+    }
 }

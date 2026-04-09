@@ -266,8 +266,49 @@ impl GroupCoordination {
     }
 }
 
+/// Per-bot desire entry for group coordination.
+/// Each bot publishes its current BDI desire so groupmates can avoid
+/// duplicating work (e.g., two healers both choosing HealGroup).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MemberDesire {
+    /// Bot handle (0 = empty slot).
+    pub handle: UnitHandle,
+    /// Current active desire (DesireKind discriminant as u8).
+    pub desire: u8,
+}
+
+/// Maximum group members we track desires for.
+const MAX_MEMBER_DESIRES: usize = 40;
+
+/// Tracks which healer is attending to which friendly target.
+///
+/// Soft coordination — multiple healers CAN target the same ally (e.g.,
+/// tank taking heavy damage). This informs target selection so healers
+/// naturally spread across injured allies instead of all picking the
+/// same lowest-HP target.
+///
+/// Auto-expires after `HEAL_ASSIGNMENT_TTL_MS` if not refreshed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HealAssignment {
+    /// Healer bot handle (0 = empty slot).
+    pub healer: UnitHandle,
+    /// The friendly target being healed.
+    pub target: UnitHandle,
+    /// Server time (ms) when this was last refreshed.
+    pub updated_ms: u64,
+}
+
+/// How long a heal assignment lives before auto-expiring (ms).
+/// Healers refresh each tick while actively healing. A dead or
+/// interrupted healer's assignment expires naturally.
+const HEAL_ASSIGNMENT_TTL_MS: u64 = 3_000;
+
+/// Maximum concurrent heal assignments tracked.
+/// 10 covers the most healer-heavy 40-man compositions.
+const MAX_HEAL_ASSIGNMENTS: usize = 10;
+
 /// State shared across all bots in one group/raid.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct GroupState {
     pub assignments: EncounterAssignments,
     /// Server time (ms) when assignments were last recomputed.
@@ -278,11 +319,116 @@ pub struct GroupState {
     pub encounter: SharedEncounterState,
     /// Group-wide coordination (targeting, tank order, CC, blessings).
     pub coordination: GroupCoordination,
+    /// Each bot's current BDI desire. Used by desire scoring to avoid
+    /// duplicating roles (e.g., too many healers on HealGroup when one
+    /// should DispelDebuffs instead).
+    pub member_desires: [MemberDesire; MAX_MEMBER_DESIRES],
+    /// Heal target tracking — which healer is attending to which ally.
+    /// Healers publish their target here so others spread across
+    /// injured allies instead of all picking the same one.
+    pub heal_assignments: [HealAssignment; MAX_HEAL_ASSIGNMENTS],
+}
+
+impl Default for GroupState {
+    fn default() -> Self {
+        Self {
+            assignments: EncounterAssignments::default(),
+            last_computed_ms: 0,
+            encounter_active: false,
+            encounter: SharedEncounterState::default(),
+            coordination: GroupCoordination::default(),
+            member_desires: [MemberDesire::default(); MAX_MEMBER_DESIRES],
+            heal_assignments: [HealAssignment::default(); MAX_HEAL_ASSIGNMENTS],
+        }
+    }
 }
 
 impl GroupState {
     pub fn is_stale(&self, now_ms: u64, threshold_ms: u64) -> bool {
         now_ms.saturating_sub(self.last_computed_ms) > threshold_ms
+    }
+
+    /// Publish this bot's current desire to the shared member_desires table.
+    pub fn publish_desire(&mut self, bot_handle: UnitHandle, desire: u8) {
+        // Update existing slot or take first empty one.
+        if let Some(slot) = self.member_desires.iter_mut().find(|m| m.handle == bot_handle) {
+            slot.desire = desire;
+            return;
+        }
+        if let Some(slot) = self.member_desires.iter_mut().find(|m| m.handle == 0) {
+            *slot = MemberDesire { handle: bot_handle, desire };
+        }
+    }
+
+    /// Count how many group members currently have a given desire active.
+    pub fn count_with_desire(&self, desire: u8) -> u8 {
+        self.member_desires.iter()
+            .filter(|m| m.handle != 0 && m.desire == desire)
+            .count()
+            .min(255) as u8
+    }
+
+    // ── Heal target coordination ────────────────────────────
+
+    /// Publish (or refresh) this healer's current heal target.
+    ///
+    /// Called each tick while a healer is actively healing someone.
+    /// If the healer already has a slot, it's updated in place.
+    /// Otherwise the first empty or expired slot is taken.
+    pub fn publish_heal_target(
+        &mut self,
+        healer: UnitHandle,
+        target: UnitHandle,
+        now_ms: u64,
+    ) {
+        // Update existing slot for this healer.
+        if let Some(slot) = self.heal_assignments.iter_mut().find(|a| a.healer == healer) {
+            slot.target = target;
+            slot.updated_ms = now_ms;
+            return;
+        }
+        // Take first empty slot.
+        if let Some(slot) = self.heal_assignments.iter_mut().find(|a| a.healer == 0) {
+            *slot = HealAssignment { healer, target, updated_ms: now_ms };
+            return;
+        }
+        // Evict first expired slot.
+        if let Some(slot) = self
+            .heal_assignments
+            .iter_mut()
+            .find(|a| now_ms.saturating_sub(a.updated_ms) >= HEAL_ASSIGNMENT_TTL_MS)
+        {
+            *slot = HealAssignment { healer, target, updated_ms: now_ms };
+        }
+    }
+
+    /// Clear this healer's heal assignment (stopped healing / switched to DPS / died).
+    pub fn clear_heal_target(&mut self, healer: UnitHandle) {
+        if let Some(slot) = self.heal_assignments.iter_mut().find(|a| a.healer == healer) {
+            *slot = HealAssignment::default();
+        }
+    }
+
+    /// Count how many other healers (excluding `me`) are actively targeting `target`.
+    ///
+    /// Used by heal target selection: prefer allies with fewer healers
+    /// already assigned. Returns 0 for targets nobody else is healing.
+    pub fn healers_on_target(&self, me: UnitHandle, target: UnitHandle, now_ms: u64) -> u8 {
+        self.heal_assignments
+            .iter()
+            .filter(|a| {
+                a.healer != 0
+                    && a.healer != me
+                    && a.target == target
+                    && now_ms.saturating_sub(a.updated_ms) < HEAL_ASSIGNMENT_TTL_MS
+            })
+            .count()
+            .min(255) as u8
+    }
+
+    /// Check if any other healer (excluding `me`) is already targeting `target`.
+    pub fn is_heal_target_covered(&self, me: UnitHandle, target: UnitHandle, now_ms: u64) -> bool {
+        self.healers_on_target(me, target, now_ms) > 0
     }
 }
 
@@ -452,5 +598,90 @@ mod tests {
         assert_eq!(c.heal_priority[0], 99);
         assert_eq!(c.heal_priority[1], 10);
         assert_eq!(c.heal_priority[2], 20);
+    }
+
+    // ── Heal assignment tracking tests ─────────────────────
+
+    const HEALER_1: UnitHandle = 0xEE01;
+    const HEALER_2: UnitHandle = 0xEE02;
+    const HEALER_3: UnitHandle = 0xEE03;
+    const ALLY_1: UnitHandle = 0xAA01;
+    const ALLY_2: UnitHandle = 0xAA02;
+
+    #[test]
+    fn publish_and_query_heal_target() {
+        let mut gs = GroupState::default();
+        gs.publish_heal_target(HEALER_1, ALLY_1, 1000);
+
+        assert_eq!(gs.healers_on_target(HEALER_2, ALLY_1, 1000), 1);
+        assert_eq!(gs.healers_on_target(HEALER_1, ALLY_1, 1000), 0); // excludes self
+        assert!(gs.is_heal_target_covered(HEALER_2, ALLY_1, 1000));
+        assert!(!gs.is_heal_target_covered(HEALER_2, ALLY_2, 1000)); // nobody on ALLY_2
+    }
+
+    #[test]
+    fn multiple_healers_on_same_target() {
+        let mut gs = GroupState::default();
+        gs.publish_heal_target(HEALER_1, ALLY_1, 1000);
+        gs.publish_heal_target(HEALER_2, ALLY_1, 1000);
+
+        // HEALER_3 sees 2 others on ALLY_1
+        assert_eq!(gs.healers_on_target(HEALER_3, ALLY_1, 1000), 2);
+    }
+
+    #[test]
+    fn heal_assignment_expires() {
+        let mut gs = GroupState::default();
+        gs.publish_heal_target(HEALER_1, ALLY_1, 1000);
+
+        // Still active at 3999ms (1000 + 3000 - 1)
+        assert_eq!(gs.healers_on_target(HEALER_2, ALLY_1, 3999), 1);
+        // Expired at 4000ms (1000 + HEAL_ASSIGNMENT_TTL_MS)
+        assert_eq!(gs.healers_on_target(HEALER_2, ALLY_1, 4000), 0);
+    }
+
+    #[test]
+    fn refresh_heal_target_extends_lifetime() {
+        let mut gs = GroupState::default();
+        gs.publish_heal_target(HEALER_1, ALLY_1, 1000);
+        // Refresh at 2000ms
+        gs.publish_heal_target(HEALER_1, ALLY_1, 2000);
+
+        // Still alive at 4999ms (2000 + 3000 - 1)
+        assert_eq!(gs.healers_on_target(HEALER_2, ALLY_1, 4999), 1);
+        // Expired at 5000ms
+        assert_eq!(gs.healers_on_target(HEALER_2, ALLY_1, 5000), 0);
+    }
+
+    #[test]
+    fn switch_heal_target() {
+        let mut gs = GroupState::default();
+        gs.publish_heal_target(HEALER_1, ALLY_1, 1000);
+        // Switch to ALLY_2
+        gs.publish_heal_target(HEALER_1, ALLY_2, 1500);
+
+        assert_eq!(gs.healers_on_target(HEALER_2, ALLY_1, 1500), 0); // no longer on ALLY_1
+        assert_eq!(gs.healers_on_target(HEALER_2, ALLY_2, 1500), 1); // now on ALLY_2
+    }
+
+    #[test]
+    fn clear_heal_target() {
+        let mut gs = GroupState::default();
+        gs.publish_heal_target(HEALER_1, ALLY_1, 1000);
+        gs.clear_heal_target(HEALER_1);
+
+        assert_eq!(gs.healers_on_target(HEALER_2, ALLY_1, 1000), 0);
+    }
+
+    #[test]
+    fn expired_slot_reused() {
+        let mut gs = GroupState::default();
+        // Fill all 10 slots
+        for i in 0..10u64 {
+            gs.publish_heal_target(0x1000 + i, ALLY_1, 0);
+        }
+        // All expired at 3000ms — new assignment should evict one
+        gs.publish_heal_target(HEALER_1, ALLY_2, 3000);
+        assert_eq!(gs.healers_on_target(HEALER_2, ALLY_2, 3000), 1);
     }
 }

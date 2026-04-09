@@ -1667,7 +1667,7 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             let plan_len = bot.bdi.plan_cache.plan.len;
             let forced = if bot.bdi.forced_intention.is_some() { " [forced]" } else { "" };
             let msg = format!(
-                "Mode:{} CO:[{}] React:{:?} HP:{:.0}% MP:{:.0}% | BDI:{:?}{} GOAP:{}/{}",
+                "Mode:{} CO:[{}] React:{:?} HP:{:.0}% MP:{:.0}% | BDI:{}{} GOAP:{}/{}",
                 s.mode.as_str(),
                 s.strategies.get(BotStateKind::Combat).describe(),
                 s.reactivity,

@@ -79,6 +79,8 @@ pub enum Key {
     GoapPlanStep,                // u32: which step we're on (0-based)
     GoapPlanLength,              // u32: total plan length
     AiLodTier,                   // u32: AiLod discriminant (0=Full..3=Dormant)
+    GoapStepCompleteSignal,      // bool: BT signaled current step complete
+    GoapStepFailedSignal,        // bool: BT signaled current step failed
 
     // Add new keys above this line. Keep count accurate.
     _Count,
