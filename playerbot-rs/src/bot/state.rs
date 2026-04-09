@@ -182,6 +182,14 @@ pub struct BotState {
     /// enters a known zone; updated each tick before the BT runs.
     pub encounter: Option<Box<dyn EncounterFsm>>,
 
+    /// BDI+GOAP cognitive state. Manages beliefs, desires, intentions,
+    /// personality, and the current GOAP plan.
+    pub bdi: crate::bdi::BdiState,
+
+    /// Current AI Level-of-Detail tier. Determines processing depth
+    /// based on proximity to human players.
+    pub lod: crate::bot::lod::AiLod,
+
     /// Per-FSM behavior trees. Built once at bot init (and on respec).
     /// The tick loop selects which tree to run based on `active_fsm`.
     pub trees: BotTrees,
@@ -262,6 +270,8 @@ impl BotState {
             prev_active_fsm: ActiveFsm::World,
             prev_world_sub: WorldSub::default(),
             encounter: None,
+            bdi: crate::bdi::BdiState::new(role),
+            lod: crate::bot::lod::AiLod::Full,
             trees,
             class,
             spec,

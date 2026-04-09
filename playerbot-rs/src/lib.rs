@@ -4,6 +4,7 @@
 // All public symbols are extern "C" and declared in cpp_wrapper/botffi.h.
 #![allow(unsafe_code)]
 
+pub mod bdi;
 pub mod bot;
 pub mod classes;
 pub mod combat;
@@ -14,6 +15,7 @@ pub mod encounters;
 pub mod engine;
 pub mod factory;
 pub mod ffi;
+pub mod goap;
 pub mod logging;
 pub mod noncombat;
 pub mod rtsc;

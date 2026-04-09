@@ -72,6 +72,14 @@ pub enum Key {
     PullBackZ,      // f32
     PullStartTime,  // u32: server_time_ms when IsPulling was set (for timeout)
 
+    // ── BDI / GOAP state ──────────────────────────────────────────
+    BdiActiveDesire,             // u32: DesireKind discriminant
+    BdiIntentionChangedThisTick, // bool: intention switched this tick
+    GoapCurrentAction,           // u32: ActionId of current GOAP plan step
+    GoapPlanStep,                // u32: which step we're on (0-based)
+    GoapPlanLength,              // u32: total plan length
+    AiLodTier,                   // u32: AiLod discriminant (0=Full..3=Dormant)
+
     // Add new keys above this line. Keep count accurate.
     _Count,
 }
