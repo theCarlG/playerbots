@@ -9,7 +9,6 @@ use cmangos::{BotCallbacks, BotHandle, SpellId, UnitHandle, VtableWorld, World};
 use crate::bot;
 use crate::bot::state::BotState;
 use crate::commands;
-use crate::config;
 use crate::factory;
 use crate::log_error;
 use crate::logging;
@@ -30,35 +29,11 @@ pub unsafe extern "C" fn playerbot_set_log_sink(sink: Option<logging::LogSinkFn>
     logging::set_sink(sink);
 }
 
-/// Set bot configuration from C++. Must be called before any bots are created.
-/// Values that are 0 / 0.0 / false use defaults.
-///
-/// # Safety
-/// Must be called from a single thread (server startup, before bots spawn).
-#[unsafe(no_mangle)]
-pub extern "C" fn playerbot_set_config(
-    react_delay_ms: u32,
-    max_wait_for_move_ms: u32,
-    eat_hp_pct: f32,
-    drink_mana_pct: f32,
-    debug: bool,
-) {
-    let mut cfg = config::BotConfig::default();
-    if react_delay_ms > 0 {
-        cfg.react_delay_ms = react_delay_ms;
-    }
-    if max_wait_for_move_ms > 0 {
-        cfg.max_wait_for_move_ms = max_wait_for_move_ms;
-    }
-    if eat_hp_pct > 0.0 {
-        cfg.eat_hp_threshold = eat_hp_pct;
-    }
-    if drink_mana_pct > 0.0 {
-        cfg.drink_mana_threshold = drink_mana_pct;
-    }
-    cfg.debug = debug;
-    let _ = config::set(cfg);
-}
+// Config loading (the old `playerbot_set_config` forwarder) is gone.
+// The C++ shim at `cpp_wrapper/BotConfig.{h,cpp}` calls into
+// `crate::config::ffi::playerbot_config_load` directly during server
+// startup; all other fields are pulled via the `playerbot_config_get_*`
+// family exported from that module.
 
 #[unsafe(no_mangle)]
 pub extern "C" fn playerbot_shutdown() {}

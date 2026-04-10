@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -1086,12 +1087,100 @@ void playerbot_init(void);
  */
 void playerbot_shutdown(void);
 
-/**
- * Set bot configuration. Must be called after playerbot_init() and before
- * any bots are created. Values of 0/0.0/false use built-in defaults.
- */
-void playerbot_set_config(uint32_t react_delay_ms, uint32_t max_wait_for_move_ms,
-                          float eat_hp_pct, float drink_mana_pct, bool debug);
+/* ─────────────────────────────────────────────────────────────────────
+ * Bot configuration (`playerbot_config_*`)
+ *
+ * Phase D of the C++ → Rust migration moved the `.conf` parser from
+ * `playerbot/PlayerbotAIConfig.cpp` into the Rust `playerbot` crate.
+ * The C++ side keeps a thin data mirror at `cpp_wrapper/BotConfig.{h,cpp}`
+ * that calls `playerbot_config_load()` during server startup and then
+ * populates every legacy `sPlayerbotAIConfig.X` field via the getters
+ * below. Rust hot-path code reads the same state via
+ * `crate::config::get()` (lock-free via arc-swap).
+ *
+ * Call order:
+ *   1. playerbot_set_log_sink(...);        // so parse errors are reported
+ *   2. playerbot_config_load("path.conf"); // populates the Rust singleton
+ *   3. sPlayerbotAIConfig.Initialize();    // compat-shim pulls values over FFI
+ *   4. playerbot_init();                   // remaining AI init
+ * ───────────────────────────────────────────────────────────────────── */
+
+/** Parse `path` as a CMaNGOS `.conf` file and install the result as the
+ *  global Rust config state. Applies `PlayerBots_*` env-var overrides on
+ *  top of the file. Returns true on success, false on parse/I-O failure
+ *  (the existing state is left untouched on failure). */
+bool playerbot_config_load(const char* path);
+
+/** Reset the Rust config singleton to compile-time defaults. Intended
+ *  only for test harnesses that run without `playerbot_config_load`. */
+void playerbot_config_reset_to_defaults(void);
+
+/* By-key scalar getters. `default` is returned if `key` is null,
+ * missing from the parsed state, or fails to parse as the requested
+ * type. Matches the old `Config::GetBoolDefault` / `GetIntDefault` /
+ * `GetStringDefault` semantics. */
+bool     playerbot_config_get_bool(const char* key, bool default_value);
+uint32_t playerbot_config_get_u32(const char* key, uint32_t default_value);
+int32_t  playerbot_config_get_i32(const char* key, int32_t default_value);
+float    playerbot_config_get_f32(const char* key, float default_value);
+
+/** Return an owned C string for `key` (or `default_value`, or the empty
+ *  string if both are null). Caller must free via
+ *  `playerbot_config_free_cstr`. */
+char* playerbot_config_get_string_dup(const char* key, const char* default_value);
+
+/** Free a string returned by any `*_dup` getter. */
+void playerbot_config_free_cstr(char* ptr);
+
+/* List getters. Both *_list_dup functions populate `*out_ptr` with a
+ * freshly-allocated array and `*out_len` with its length. On an empty
+ * result, `*out_ptr` is NULL and `*out_len` is 0. Return false only on
+ * invalid parameters (null key / null out-params); a missing key is a
+ * successful empty list. Pair with the matching `_free_*` function. */
+bool playerbot_config_get_u32_list_dup(const char* key, uint32_t** out_ptr, size_t* out_len);
+void playerbot_config_free_u32_list(uint32_t* ptr, size_t len);
+
+bool playerbot_config_get_string_list_dup(const char* key, char*** out_ptr, size_t* out_len);
+void playerbot_config_free_string_list(char** ptr, size_t len);
+
+/** Enumerate config keys that contain `needle` as a substring (case-
+ *  insensitive, sorted). Used by the shim to port
+ *  `ConfigAccess::GetValues("AiPlayerbot.WorldBuff")` and similar
+ *  dynamic-key iteration. Free the array with
+ *  `playerbot_config_free_string_list`. */
+bool playerbot_config_keys_containing(const char* needle, char*** out_ptr, size_t* out_len);
+
+/* Typed accessors for array/map fields. These are pre-derived by the
+ * Rust parser (defaults → race-only → class-only → specific overrides),
+ * so the C++ shim doesn't re-implement that logic. */
+uint32_t playerbot_config_get_class_race_probability(uint32_t cls, uint32_t race);
+uint32_t playerbot_config_get_class_race_probability_total(void);
+int64_t  playerbot_config_get_fixed_class_race_count(uint32_t cls, uint32_t race);
+uint32_t playerbot_config_get_level_probability(uint32_t level);
+
+uint32_t playerbot_config_get_gear_min_item_level(uint32_t phase);
+uint32_t playerbot_config_get_gear_max_item_level(uint32_t phase);
+int32_t  playerbot_config_get_gear_item(uint32_t phase, uint32_t cls, uint32_t spec, uint32_t slot);
+
+/* World buffs (`AiPlayerbot.WorldBuff.*`): iterate via
+ * `playerbot_config_world_buffs_len()` + per-index accessor. */
+size_t playerbot_config_world_buffs_len(void);
+bool playerbot_config_world_buff_at(size_t idx,
+                                    uint32_t* out_spell_id,
+                                    uint32_t* out_faction_id,
+                                    uint32_t* out_class_id,
+                                    uint32_t* out_spec_id,
+                                    uint32_t* out_min_level,
+                                    uint32_t* out_max_level,
+                                    uint32_t* out_event_id);
+
+/* Login criteria (`AiPlayerbot.LoginCriteria*` + default fallback).
+ * Each criterion is a comma-separated string list; the `_at` accessor
+ * returns the Nth criterion as an owned C string array. */
+size_t playerbot_config_login_criteria_len(void);
+bool playerbot_config_login_criteria_at(size_t idx, char*** out_ptr, size_t* out_len);
+size_t playerbot_config_default_login_criteria_len(void);
+bool playerbot_config_default_login_criteria_dup(char*** out_ptr, size_t* out_len);
 
 /**
  * Create AI state for one bot. Called when bot Player logs in.

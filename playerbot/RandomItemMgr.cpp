@@ -1,6 +1,6 @@
 
 #include "playerbot/playerbot.h"
-#include "playerbot/PlayerbotAIConfig.h"
+#include "BotConfig.h"
 #include "RandomItemMgr.h"
 #include "playerbot/PlayerbotAI.h"
 

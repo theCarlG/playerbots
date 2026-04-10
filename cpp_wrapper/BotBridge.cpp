@@ -28,7 +28,7 @@
 #include "Entities/Bag.h"
 #include "Entities/Item.h"
 #include "Entities/ItemPrototype.h"
-#include "playerbot/PlayerbotAIConfig.h"
+#include "BotConfig.h"
 #include "playerbot/RandomItemMgr.h"
 #include "playerbot/RandomPlayerbotMgr.h"
 #include "Util/Util.h"

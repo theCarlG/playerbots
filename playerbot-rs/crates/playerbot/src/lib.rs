@@ -12,6 +12,7 @@ pub mod bot;
 pub mod classes;
 pub mod combat;
 pub mod commands;
+#[allow(unsafe_code)]
 pub mod config;
 pub mod data;
 pub mod encounters;

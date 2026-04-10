@@ -1,6 +1,6 @@
 
 #include "playerbot/PlayerbotAIBase.h"
-#include "playerbot/PlayerbotAIConfig.h"
+#include "BotConfig.h"
 #include "playerbot/playerbotDefs.h"
 #include "Entities/Player.h"
 

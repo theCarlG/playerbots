@@ -12,7 +12,7 @@
 #include "Globals/ObjectAccessor.h"
 #include "Entities/ObjectGuid.h"
 #include "Globals/ObjectMgr.h"
-#include "playerbot/PlayerbotAIConfig.h"
+#include "BotConfig.h"
 #include "Accounts/AccountMgr.h"
 #include "playerbot/playerbot.h"
 #include "Mails/Mail.h"

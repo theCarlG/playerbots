@@ -60,6 +60,8 @@ add_dependencies(playerbot_rs_lib playerbot_rs_build)
 set(CppWrapper_Source
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/BotBridge.h
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/BotBridge.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/BotConfig.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/BotConfig.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/PlayerbotRust.h
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/PlayerbotRust.cpp
 )

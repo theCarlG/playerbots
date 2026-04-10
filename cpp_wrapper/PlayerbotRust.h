@@ -14,7 +14,7 @@
 #include <memory>
 
 #include "playerbot/PlayerbotAIBase.h"
-#include "playerbot/PlayerbotAIConfig.h"
+#include "BotConfig.h"
 #include "Entities/ObjectGuid.h"
 #include "botffi.h"
 #include "BotBridge.h"

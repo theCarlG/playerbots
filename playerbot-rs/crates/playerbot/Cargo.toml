@@ -16,6 +16,7 @@ wotlk = ["cmangos/wotlk"]
 [dependencies]
 cmangos = { path = "../cmangos" }
 bitflags.workspace = true
+arc-swap = "1"
 
 [dev-dependencies]
 cmangos = { path = "../cmangos", features = ["mock"] }

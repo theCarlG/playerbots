@@ -1,5 +1,5 @@
 #include "playerbot/playerbot.h"
-#include "playerbot/PlayerbotAIConfig.h"
+#include "BotConfig.h"
 #include "playerbot/PlayerbotFactory.h"
 #include "playerbot/RandomPlayerbotMgr.h"
 #include "PlayerbotRust.h"

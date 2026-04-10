@@ -4,7 +4,7 @@
 
 #include "Server/SQLStorages.h"
 #include "Entities/ItemPrototype.h"
-#include "playerbot/PlayerbotAIConfig.h"
+#include "BotConfig.h"
 #include "Accounts/AccountMgr.h"
 #include "Database/DBCStore.h"
 #include "Globals/SharedDefines.h"

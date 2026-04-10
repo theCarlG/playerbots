@@ -13,9 +13,7 @@
 #include "Server/Opcodes.h"
 #include "World/World.h"
 #include "Server/WorldPacket.h"
-#include "playerbot/PlayerbotAIConfig.h"
-#include "Guilds/Guild.h"
-#include "Guilds/GuildMgr.h"
+#include "BotConfig.h"
 #include "MotionGenerators/MotionMaster.h"
 #include "MotionGenerators/MovementGenerator.h"
 #include "BotBridge.h"
@@ -47,19 +45,9 @@ void PlayerbotRust::InitRustModule()
 {
     playerbot_set_log_sink(&PlayerbotRustLogSink);
     playerbot_init();
-
-    // Forward the C++ config values to the Rust module. Zero / negative /
-    // unset fields fall back to Rust defaults. `debug` is derived from
-    // whether the operator enabled any debug-channel filters.
-    const PlayerbotAIConfig& c = sPlayerbotAIConfig;
-
-    // Rust expects HP/mana thresholds as fractions [0.0, 1.0]; PB2's
-    // lowHealth / mediumMana are 0–100 integer percentages.
-    float eatHp    = c.lowHealth > 0 ? static_cast<float>(c.lowHealth) / 100.0f : 0.0f;
-    float drinkMp  = c.mediumMana > 0 ? static_cast<float>(c.mediumMana) / 100.0f : 0.0f;
-    bool  debugOn  = !c.debugFilter.empty();
-
-    playerbot_set_config(c.reactDelay, c.maxWaitForMove, eatHp, drinkMp, debugOn);
+    // Phase D: the Rust side parses the `.conf` file itself via
+    // `playerbot_config_load()` — called from `PlayerbotAIConfig::Initialize()`
+    // in `cpp_wrapper/BotConfig.cpp`. No per-field forwarding required here.
 }
 
 void PlayerbotRust::ShutdownRustModule()
