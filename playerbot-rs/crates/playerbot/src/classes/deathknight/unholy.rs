@@ -1,0 +1,73 @@
+/// Unholy Death Knight behavior tree (`WotLK` only) — Disease DPS spec.
+///
+/// Priority: Bone Shield → Death Grip → diseases → Scourge Strike →
+///   `AoE` Blood Boil → Death Coil → Death and Decay
+#[allow(unused_imports)]
+use crate::engine::bt::{
+    Bt::{self, CastOnSelf, Cmp, CastOnTarget, InCombat},
+    Op::{Above, AtLeast},
+    Resource::{TargetDistance, NearbyCount},
+};
+use crate::engine::macro_fsm::ActiveFsm;
+#[allow(unused_imports)]
+use crate::{Sel, Seq};
+
+#[cfg(feature = "wotlk")]
+use cmangos::SpellId;
+#[cfg(feature = "wotlk")]
+use crate::data::spells::vanilla::deathknight::*;
+
+#[cfg(not(feature = "wotlk"))]
+pub fn build_tree(fsm: ActiveFsm) -> Bt {
+    match fsm {
+        ActiveFsm::Combat => Sel!(),
+        ActiveFsm::World => Bt::Noop,
+        ActiveFsm::Dead => Bt::Noop,
+    }
+}
+
+#[cfg(feature = "wotlk")]
+const SCOURGE_STRIKE: SpellId = SpellId(55271);
+#[cfg(feature = "wotlk")]
+const FROST_FEVER: SpellId = SpellId(55095);
+#[cfg(feature = "wotlk")]
+const BLOOD_PLAGUE: SpellId = SpellId(55078);
+
+#[cfg(feature = "wotlk")]
+pub fn build_tree(fsm: ActiveFsm) -> Bt {
+    match fsm {
+        ActiveFsm::Combat => combat_tree(),
+        ActiveFsm::World => Bt::Noop,
+        ActiveFsm::Dead => Bt::Noop,
+    }
+}
+
+#[cfg(feature = "wotlk")]
+fn combat_tree() -> Bt {
+    Sel!(
+        // Melee approach handled by combat_wrapper's close_subtree.
+        // Self-buff.
+        Seq!(Bt::self_missing(BONE_SHIELD), CastOnSelf(BONE_SHIELD)),
+        // Pull.
+        Seq!(Cmp(TargetDistance, Above(15)), CastOnTarget(DEATH_GRIP)),
+        Seq!(
+            InCombat,
+            Sel!(
+                // Diseases.
+                Seq!(Bt::target_missing(FROST_FEVER), CastOnTarget(ICY_TOUCH),),
+                Seq!(
+                    Bt::target_missing(BLOOD_PLAGUE),
+                    CastOnTarget(PLAGUE_STRIKE),
+                ),
+                // Main damage.
+                CastOnTarget(SCOURGE_STRIKE),
+                // AoE spread.
+                Seq!(Cmp(NearbyCount, AtLeast(2)), CastOnTarget(BLOOD_BOIL)),
+                // RP dump.
+                CastOnTarget(DEATH_COIL),
+                // AoE ground.
+                Seq!(Cmp(NearbyCount, AtLeast(2)), CastOnSelf(DEATH_AND_DECAY)),
+            ),
+        ),
+    )
+}

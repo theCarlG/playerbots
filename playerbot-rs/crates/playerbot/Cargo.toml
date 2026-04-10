@@ -1,0 +1,24 @@
+[package]
+name = "playerbot"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "playerbot_rs"
+crate-type = ["staticlib", "rlib"]
+
+[features]
+default = []
+vanilla = ["cmangos/vanilla"]
+tbc = ["cmangos/tbc"]
+wotlk = ["cmangos/wotlk"]
+
+[dependencies]
+cmangos = { path = "../cmangos" }
+bitflags.workspace = true
+
+[dev-dependencies]
+cmangos = { path = "../cmangos", features = ["mock"] }
+
+[lints]
+workspace = true

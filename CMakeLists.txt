@@ -40,13 +40,13 @@ else()
     set(RUST_TARGET_DIR "debug")
 endif()
 
-set(RUST_CRATE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/playerbot-rs")
-set(RUST_LIB "${RUST_CRATE_DIR}/target/${RUST_TARGET_DIR}/libplayerbot_rs.a")
+set(RUST_WORKSPACE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/playerbot-rs")
+set(RUST_LIB "${RUST_WORKSPACE_DIR}/target/${RUST_TARGET_DIR}/libplayerbot_rs.a")
 
 add_custom_target(playerbot_rs_build ALL
-    COMMAND cargo build ${CARGO_PROFILE} --features ${RUST_FEATURE}
-    WORKING_DIRECTORY ${RUST_CRATE_DIR}
-    COMMENT "Building Rust playerbot-rs (feature=${RUST_FEATURE})"
+    COMMAND cargo build -p playerbot ${CARGO_PROFILE} --features ${RUST_FEATURE}
+    WORKING_DIRECTORY ${RUST_WORKSPACE_DIR}
+    COMMENT "Building Rust playerbot (feature=${RUST_FEATURE})"
     BYPRODUCTS ${RUST_LIB}
 )
 

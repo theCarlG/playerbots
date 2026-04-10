@@ -1,0 +1,21 @@
+[package]
+name = "cmangos"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+default = []
+mock = []
+vanilla = ["cmangos-sys/vanilla"]
+tbc = ["cmangos-sys/tbc"]
+wotlk = ["cmangos-sys/wotlk"]
+
+[dependencies]
+cmangos-sys = { path = "../cmangos-sys" }
+bitflags.workspace = true
+
+[lints]
+workspace = true

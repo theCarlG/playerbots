@@ -64,6 +64,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmangos"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "cmangos-sys",
+]
+
+[[package]]
+name = "cmangos-sys"
+version = "0.1.0"
+dependencies = [
+ "bindgen",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -129,11 +144,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "playerbot-rs"
+name = "playerbot"
 version = "0.1.0"
 dependencies = [
- "bindgen",
  "bitflags",
+ "cmangos",
 ]
 
 [[package]]
