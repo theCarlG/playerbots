@@ -239,6 +239,14 @@ pub struct BotState {
     pub last_ktm_threat_sent: i64,
     /// Server time (ms) when the last KLHTM threat update was sent.
     pub last_ktm_threat_time_ms: u64,
+
+    // ── Raid event fanout ──────────────────────────────────────────────
+    /// High-water sequence of [`crate::engine::group_state::RaidEvent`]s
+    /// this bot has already drained from the shared encounter ring buffer.
+    /// Updated each tick by the consumer in [`crate::bdi::beliefs`] /
+    /// [`crate::bot::tick`]; bots that join mid-fight start at 0 and pick
+    /// up whatever is still within the TTL window. See Gap #7.
+    pub last_seen_raid_event_seq: u64,
 }
 
 impl BotState {
@@ -290,6 +298,7 @@ impl BotState {
             last_addon_push_ms: 0,
             last_ktm_threat_sent: 0,
             last_ktm_threat_time_ms: 0,
+            last_seen_raid_event_seq: 0,
         }
     }
 

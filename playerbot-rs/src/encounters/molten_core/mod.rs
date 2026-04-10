@@ -161,19 +161,42 @@ const DOUSE_ELIGIBLE: BehaviorLeaf = BehaviorLeaf {
 };
 
 /// Iterate the seven rune GO entries and douse the first one in
-/// range. The Quintessence item is consumed server-side on interact.
+/// range that no other bot has already claimed. The Quintessence item
+/// is consumed server-side on interact. Each rune entry is unique within
+/// the instance, so the entry id is sufficient as a `DouseRune` claim
+/// subject — see `engine::claim::ClaimData::DouseRune`.
+///
+/// Claim TTL is short (~3 s) so a dying claimant releases the rune
+/// quickly to the next eligible bot.
 const DOUSE_RUNE: BehaviorLeaf = BehaviorLeaf {
     label: "mc_douse_rune",
     handler: |ctx: &mut TickContext<'_>| -> BtResult {
         if ctx.timers.gcd_active(ctx.server_time_ms) {
             return BtResult::Failure;
         }
+        const DOUSE_CLAIM_TTL_MS: u64 = 3_000;
         for &entry in RUNE_GO_ENTRIES {
-            if let Some(h) = ctx.interface.nearby_gameobject_by_entry(entry, 10.0)
-                && ctx.interface.use_gameobject(h)
-            {
+            // Skip runes another bot already owns. Cheap read — no lock churn.
+            if ctx.is_douse_claimed_by_other(entry) {
+                continue;
+            }
+            let Some(h) = ctx.interface.nearby_gameobject_by_entry(entry, 10.0) else {
+                continue;
+            };
+            // Claim before acting so a concurrent doser races us at the
+            // table, not at the GameObject. If we lose the claim race,
+            // try the next rune.
+            if !ctx.try_claim_douse(entry, DOUSE_CLAIM_TTL_MS) {
+                continue;
+            }
+            if ctx.interface.use_gameobject(h) {
+                // Success — keep the claim alive for its TTL so a fast
+                // double-tick by another bot doesn't re-douse this rune.
                 return BtResult::Success;
             }
+            // Use failed (out of range, busy, etc.) — release immediately
+            // so another bot can pick it up next tick.
+            ctx.release_douse(entry);
         }
         BtResult::Failure
     },

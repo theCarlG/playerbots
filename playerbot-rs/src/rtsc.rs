@@ -36,6 +36,22 @@ pub const MARKER_SCALE: f32 = 0.5;
 pub const JUMP_SLOT: &str = "jump";
 pub const JUMP_POINT_SLOT: &str = "jump point";
 
+/// How long a queued [`RtscAction`] stays valid before
+/// [`on_spell_land`] discards it. PB2 implicitly assumes the master
+/// casts Aedm within ~5 s of typing `rtsc <verb>`; we double that to
+/// avoid penalising slow connections, but a stale pending action
+/// would otherwise hijack the next unrelated Aedm cast — see Gap #14.
+pub const RTSC_PENDING_TTL_MS: u64 = 10_000;
+
+/// Queue a [`RtscAction`] for the next [`on_spell_land`] call,
+/// stamping it with the current server time. The TTL is checked at
+/// drain time so a queued action that never sees an Aedm cast does
+/// not poison subsequent commands.
+pub fn queue_pending(bot: &mut BotState, action: RtscAction) {
+    let now = bot.snap.server_time_ms;
+    bot.settings.rtsc_pending_action = Some((action, now));
+}
+
 /// Outcome of a [`jump_command`] invocation. The caller routes user-
 /// visible error strings via its own reply channel.
 #[derive(Debug, PartialEq, Eq)]
@@ -179,7 +195,7 @@ pub fn jump_command(bot: &mut BotState) -> JumpCommandResult {
     let have_jump = bot.settings.rtsc_waypoints.contains_key(JUMP_SLOT);
     let have_point = bot.settings.rtsc_waypoints.contains_key(JUMP_POINT_SLOT);
     if !have_jump {
-        bot.settings.rtsc_pending_action = Some(RtscAction::Jump);
+        queue_pending(bot, RtscAction::Jump);
         bot.settings
             .strategies
             .get_mut(BotStateKind::NonCombat)
@@ -212,19 +228,74 @@ pub fn jump_reset(bot: &mut BotState) {
         .remove(StrategyFlags::RTSC_JUMP);
 }
 
+/// User-visible outcome of an [`on_spell_land`] call. The command
+/// dispatcher uses this to whisper PB2-style confirmations back to
+/// the master ("Moved to X,Y,Z", "Saved as <name>", etc.). Variants
+/// where no reply is appropriate (idle bot, stale pending) collapse
+/// to [`SpellLandOutcome::Ignored`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum SpellLandOutcome {
+    /// `move`/`move exact` consumed — bot is heading to (x,y,z).
+    Moved { x: f32, y: f32, z: f32, exact: bool },
+    /// `save <name>` consumed — waypoint stored.
+    Saved { name: String, x: f32, y: f32, z: f32 },
+    /// First Aedm cast of a `jump` command — stage one stored.
+    JumpStageOne { x: f32, y: f32, z: f32 },
+    /// Second Aedm cast of a `jump` command — stage two stored,
+    /// the executor leaf will now drive the jump rotation.
+    JumpStageTwo { x: f32, y: f32, z: f32 },
+    /// No pending action and the bot was selected — fell through to
+    /// the default "follow the cast" move. No reply expected.
+    DefaultMove { x: f32, y: f32, z: f32 },
+    /// Either the bot was unselected with no pending action, or the
+    /// pending action exceeded [`RTSC_PENDING_TTL_MS`] and was dropped.
+    Ignored,
+}
+
 /// Consume an Aedm cast at `(x, y, z)`. Called from the
 /// `BotCommand::RtscSpellPosition` handler. Updates `rtsc_last_seen`
 /// unconditionally (PB2 `see spell location` AI value) then dispatches
 /// on the pending action.
-pub fn on_spell_land(bot: &mut BotState, x: f32, y: f32, z: f32) {
+///
+/// Returns a [`SpellLandOutcome`] so the command dispatcher can whisper
+/// the appropriate user-visible confirmation. Pending actions queued
+/// more than [`RTSC_PENDING_TTL_MS`] ago are silently discarded — see
+/// Gap #14.
+pub fn on_spell_land(bot: &mut BotState, x: f32, y: f32, z: f32) -> SpellLandOutcome {
     bot.settings.rtsc_last_seen = Some((x, y, z));
 
-    match bot.settings.rtsc_pending_action.take() {
-        Some(RtscAction::Move { exact: _ }) => {
-            bot.interface.move_to(x, y, z);
+    let now = bot.snap.server_time_ms;
+    let pending = match bot.settings.rtsc_pending_action.take() {
+        Some((action, queued_at)) if now.saturating_sub(queued_at) <= RTSC_PENDING_TTL_MS => {
+            Some(action)
+        }
+        // Stale or absent — drop without dispatching to avoid hijacking
+        // an unrelated Aedm cast. Caller falls through to the default
+        // selected-move branch below.
+        _ => None,
+    };
+
+    match pending {
+        Some(RtscAction::Move { exact }) => {
+            // Drive the move via the BDI forced-intention path so that
+            // the next BT tick does not clobber it with follow / combat
+            // movement. The intention router (see `bot::tick`) issues
+            // `move_to` every tick until arrival, then clears the
+            // intention. See Gap #10 / Gap #13.
+            bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention::MoveToRtsc {
+                x,
+                y,
+                z,
+                exact,
+            });
+            bot.bdi.intention_changed = true;
+            SpellLandOutcome::Moved { x, y, z, exact }
         }
         Some(RtscAction::Save { name }) => {
-            bot.settings.rtsc_waypoints.insert(name, (x, y, z));
+            bot.settings
+                .rtsc_waypoints
+                .insert(name.clone(), (x, y, z));
+            SpellLandOutcome::Saved { name, x, y, z }
         }
         Some(RtscAction::Jump) => {
             // Stage one or stage two, decided by which reserved slot
@@ -236,28 +307,50 @@ pub fn on_spell_land(bot: &mut BotState, x: f32, y: f32, z: f32) {
                 // Re-queue pending so the next Aedm cast fills the
                 // stage-two slot without requiring the user to type
                 // `rtsc jump` again.
-                bot.settings.rtsc_pending_action = Some(RtscAction::Jump);
+                queue_pending(bot, RtscAction::Jump);
+                SpellLandOutcome::JumpStageOne { x, y, z }
             } else if !bot.settings.rtsc_waypoints.contains_key(JUMP_POINT_SLOT) {
                 bot.settings
                     .rtsc_waypoints
                     .insert(JUMP_POINT_SLOT.into(), (x, y, z));
-                // Both slots populated — the BT jump-executor consumer
-                // (future step) takes over from here. Clear pending.
+                // Both slots populated — hand off to the forced-intention
+                // jump executor (Gap #12).
+                let stage1 = bot.settings.rtsc_waypoints[JUMP_SLOT];
+                let stage2 = (x, y, z);
+                bot.bdi.forced_intention =
+                    Some(crate::bdi::intentions::ForcedIntention::JumpRtsc {
+                        stage1,
+                        stage2,
+                        at_stage_two: false,
+                    });
+                bot.bdi.intention_changed = true;
+                SpellLandOutcome::JumpStageTwo { x, y, z }
+            } else {
+                // Third cast while both slots are full: `jump reset`
+                // required. No-op.
+                SpellLandOutcome::Ignored
             }
-            // Third cast while both slots are full: pending was already
-            // None (we `.take()`ed it above). No-op — `jump reset`
-            // is required to start a new jump.
         }
         None => {
-            // No pending action: fall through to a default move when
-            // the bot is selected. PB2 doesn't do this explicitly —
+            // No (live) pending action: fall through to a default move
+            // when the bot is selected. PB2 doesn't do this explicitly —
             // it requires a queued command — but the Rust port has
             // historically fallen back to move-on-selected and some
             // callers rely on it. Keep the behavior but gated by
             // `rtsc_selected` so unselected bots don't chase master
             // casts intended for other bots.
             if bot.settings.rtsc_selected {
-                bot.interface.move_to(x, y, z);
+                bot.bdi.forced_intention =
+                    Some(crate::bdi::intentions::ForcedIntention::MoveToRtsc {
+                        x,
+                        y,
+                        z,
+                        exact: false,
+                    });
+                bot.bdi.intention_changed = true;
+                SpellLandOutcome::DefaultMove { x, y, z }
+            } else {
+                SpellLandOutcome::Ignored
             }
         }
     }
@@ -559,23 +652,40 @@ mod tests {
     #[test]
     fn on_spell_land_updates_last_seen_and_moves_when_pending_move() {
         let mut bot = fake_bot();
-        bot.settings.rtsc_pending_action = Some(RtscAction::Move { exact: false });
-        on_spell_land(&mut bot, 100.0, 200.0, 50.0);
+        queue_pending(&mut bot, RtscAction::Move { exact: false });
+        let outcome = on_spell_land(&mut bot, 100.0, 200.0, 50.0);
         assert_eq!(bot.settings.rtsc_last_seen, Some((100.0, 200.0, 50.0)));
         assert!(bot.settings.rtsc_pending_action.is_none());
+        assert!(matches!(outcome, SpellLandOutcome::Moved { exact: false, .. }));
+        // Forced intention should now drive the move.
+        assert!(matches!(
+            bot.bdi.forced_intention,
+            Some(crate::bdi::intentions::ForcedIntention::MoveToRtsc { .. })
+        ));
     }
 
     #[test]
     fn on_spell_land_records_save_under_name() {
         let mut bot = fake_bot();
-        bot.settings.rtsc_pending_action = Some(RtscAction::Save {
-            name: "tank spot".into(),
-        });
-        on_spell_land(&mut bot, 10.0, 20.0, 30.0);
+        queue_pending(&mut bot, RtscAction::Save { name: "tank spot".into() });
+        let outcome = on_spell_land(&mut bot, 10.0, 20.0, 30.0);
         assert_eq!(
             bot.settings.rtsc_waypoints.get("tank spot"),
             Some(&(10.0, 20.0, 30.0))
         );
+        assert!(matches!(outcome, SpellLandOutcome::Saved { .. }));
+    }
+
+    #[test]
+    fn on_spell_land_drops_stale_pending() {
+        let mut bot = fake_bot();
+        // Queue at t=0, then advance the snapshot clock past the TTL.
+        queue_pending(&mut bot, RtscAction::Move { exact: false });
+        bot.snap.server_time_ms = RTSC_PENDING_TTL_MS + 1;
+        let outcome = on_spell_land(&mut bot, 1.0, 2.0, 3.0);
+        // Pending was discarded; bot was not selected, so we ignore.
+        assert!(matches!(outcome, SpellLandOutcome::Ignored));
+        assert!(bot.bdi.forced_intention.is_none());
     }
 
     #[test]
@@ -589,19 +699,29 @@ mod tests {
                 .contains(StrategyFlags::RTSC_JUMP)
         );
         // First Aedm cast → "jump" slot populated, pending re-armed.
-        on_spell_land(&mut bot, 1.0, 2.0, 3.0);
+        let outcome = on_spell_land(&mut bot, 1.0, 2.0, 3.0);
         assert_eq!(
             bot.settings.rtsc_waypoints.get(JUMP_SLOT),
             Some(&(1.0, 2.0, 3.0))
         );
-        assert_eq!(bot.settings.rtsc_pending_action, Some(RtscAction::Jump));
-        // Second Aedm cast → "jump point" slot populated, pending cleared.
-        on_spell_land(&mut bot, 4.0, 5.0, 6.0);
+        assert!(matches!(outcome, SpellLandOutcome::JumpStageOne { .. }));
+        assert!(matches!(
+            bot.settings.rtsc_pending_action,
+            Some((RtscAction::Jump, _))
+        ));
+        // Second Aedm cast → "jump point" slot populated, pending cleared,
+        // forced intention queued.
+        let outcome = on_spell_land(&mut bot, 4.0, 5.0, 6.0);
         assert_eq!(
             bot.settings.rtsc_waypoints.get(JUMP_POINT_SLOT),
             Some(&(4.0, 5.0, 6.0))
         );
         assert!(bot.settings.rtsc_pending_action.is_none());
+        assert!(matches!(outcome, SpellLandOutcome::JumpStageTwo { .. }));
+        assert!(matches!(
+            bot.bdi.forced_intention,
+            Some(crate::bdi::intentions::ForcedIntention::JumpRtsc { .. })
+        ));
     }
 
     #[test]

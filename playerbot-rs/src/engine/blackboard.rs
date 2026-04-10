@@ -52,11 +52,6 @@ pub enum Key {
     // ── Follow throttle ──────────────────────────────────────────────
     LastFollowMs, // u64: last time position-based follow issued move_to
 
-    // ── RTSC move queue ─────────────────────────────────────────────
-    RtscMoveX, // f32: next RTSC move waypoint
-    RtscMoveY,
-    RtscMoveZ,
-
     // ── FSM state ─────────────────────────────────────────────────────
     ActiveFsmState, // u32: ActiveFsm discriminant (0=World, 1=Combat, 2=Dead)
     WorldSubState,  // u32: WorldSub discriminant (Follow/Grind/Quest/Stay/...)

@@ -1463,7 +1463,7 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             s.focus_target = resolved;
             // Set forced intention so BDI commits to killing this target.
             if resolved.is_some() {
-                bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention {
+                bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention::Desire {
                     desire: crate::bdi::desires::DesireKind::KillTarget,
                     target: resolved,
                 });
@@ -1510,7 +1510,7 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                     s.focus_target = Some(unit);
                 }
                 // Set forced intention so BDI commits to killing this target.
-                bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention {
+                bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention::Desire {
                     desire: crate::bdi::desires::DesireKind::KillTarget,
                     target: Some(unit),
                 });
@@ -1579,7 +1579,7 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                     bot.interface.attack(unit);
                 }
                 // Set forced intention so BDI commits to pulling.
-                bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention {
+                bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention::Desire {
                     desire: crate::bdi::desires::DesireKind::PullMobs,
                     target: Some(unit),
                 });
@@ -1593,7 +1593,7 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             if let Some(unit) = bot.interface.get_unit_with_raid_icon(*icon) {
                 bot.interface.attack(unit);
                 s.focus_target = Some(unit);
-                bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention {
+                bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention::Desire {
                     desire: crate::bdi::desires::DesireKind::KillTarget,
                     target: Some(unit),
                 });
@@ -1614,7 +1614,7 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 if !bot.interface.auto_shoot(unit) && !bot.interface.taunt(unit) {
                     bot.interface.attack(unit);
                 }
-                bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention {
+                bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention::Desire {
                     desire: crate::bdi::desires::DesireKind::PullMobs,
                     target: Some(unit),
                 });
@@ -1629,7 +1629,7 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 && bot.interface.can_cast(spell, unit)
             {
                 bot.interface.cast_spell(spell, unit);
-                bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention {
+                bot.bdi.forced_intention = Some(crate::bdi::intentions::ForcedIntention::Desire {
                     desire: crate::bdi::desires::DesireKind::CrowdControl,
                     target: Some(unit),
                 });
@@ -3177,18 +3177,18 @@ fn apply_rtsc_command(bot: &mut BotState, pc: &PendingCommand) {
         }
         BotCommand::RtscMove => {
             crate::rtsc::ensure_spell_learned(bot);
-            bot.settings.rtsc_pending_action = Some(RtscAction::Move { exact: false });
+            crate::rtsc::queue_pending(bot, RtscAction::Move { exact: false });
         }
         BotCommand::RtscMoveExact => {
             crate::rtsc::ensure_spell_learned(bot);
-            bot.settings.rtsc_pending_action = Some(RtscAction::Move { exact: true });
+            crate::rtsc::queue_pending(bot, RtscAction::Move { exact: true });
         }
         BotCommand::RtscSaveHere(name) => {
             crate::rtsc::save_here(bot, name.clone());
         }
         BotCommand::RtscSave(name) => {
             crate::rtsc::ensure_spell_learned(bot);
-            bot.settings.rtsc_pending_action = Some(RtscAction::Save { name: name.clone() });
+            crate::rtsc::queue_pending(bot, RtscAction::Save { name: name.clone() });
         }
         BotCommand::RtscUnsave(name) => {
             bot.settings.rtsc_waypoints.remove(name);
@@ -3221,7 +3221,27 @@ fn apply_rtsc_command(bot: &mut BotState, pc: &PendingCommand) {
             reply(bot, pc, &msg);
         }
         BotCommand::RtscSpellPosition(x, y, z) => {
-            crate::rtsc::on_spell_land(bot, *x, *y, *z);
+            use crate::rtsc::SpellLandOutcome;
+            // Whisper a PB2-style confirmation back to the master so the
+            // user knows the cast registered. Silent for the default
+            // selected-fallthrough and ignored stale/unselected cases.
+            // See Gap #15.
+            match crate::rtsc::on_spell_land(bot, *x, *y, *z) {
+                SpellLandOutcome::Moved { x, y, z, exact } => {
+                    let tag = if exact { " (exact)" } else { "" };
+                    reply(bot, pc, &format!("Moving to {x:.1}, {y:.1}, {z:.1}{tag}"));
+                }
+                SpellLandOutcome::Saved { name, x, y, z } => {
+                    reply(bot, pc, &format!("Saved location as {name} ({x:.1}, {y:.1}, {z:.1})"));
+                }
+                SpellLandOutcome::JumpStageOne { x, y, z } => {
+                    reply(bot, pc, &format!("Jump stage 1 recorded ({x:.1}, {y:.1}, {z:.1})"));
+                }
+                SpellLandOutcome::JumpStageTwo { x, y, z } => {
+                    reply(bot, pc, &format!("Jump stage 2 recorded ({x:.1}, {y:.1}, {z:.1}) — executing"));
+                }
+                SpellLandOutcome::DefaultMove { .. } | SpellLandOutcome::Ignored => {}
+            }
         }
         BotCommand::RtscReset => {
             crate::rtsc::reset(bot);

@@ -962,8 +962,6 @@ pub enum Bt {
     ApplyWorldBuffs,
     /// Travel to a world buff location for `buff_id`.
     WorldBuffTravel(SpellId),
-    /// Consume the next entry in the RTSC move queue.
-    RtscConsumeMoveQueue,
     /// Join LFG queue (`WotLK` only).
     LfgJoin,
     /// Accept LFG proposal (`WotLK` only).
@@ -2090,7 +2088,6 @@ impl BtNode for Bt {
             Bt::AhBid => tick_ah_bid(ctx),
             Bt::ApplyOutfit => tick_apply_outfit(ctx),
             Bt::Fish => tick_fish(ctx),
-            Bt::RtscConsumeMoveQueue => tick_rtsc_consume_move_queue(ctx),
             Bt::LfgJoin => tick_lfg_join(ctx),
             Bt::LfgAccept => tick_lfg_accept(ctx),
             Bt::AcceptBgInvite => tick_accept_bg_invite(ctx),
@@ -3026,10 +3023,19 @@ fn tick_has_tank_focus_target(ctx: &mut TickContext<'_>) -> bool {
 }
 
 fn tick_tank_pickup(ctx: &mut TickContext<'_>) -> BtResult {
+    // Taunt's effective duration is ~3 s on most mobs; 4 s TTL keeps the
+    // claim live across the full taunt without leaving stale entries
+    // around for the next pull. See `engine::claim::ClaimData::AddPickup`.
+    const PICKUP_CLAIM_TTL_MS: u64 = 4_000;
     for &attacker in ctx.attackers {
         let snap = ctx.interface.get_unit_snapshot(attacker);
         if snap.current_target == ctx.bot_handle {
             continue; // already on us
+        }
+        // Skip mobs another off-tank has already taken — claim-then-act
+        // so two tanks in the same group never race for the same add.
+        if ctx.is_add_pickup_claimed_by_other(attacker) {
+            continue;
         }
         // Don't taunt mobs that are on another healthy tank — they're
         // handling it. Only pick up mobs targeting non-tanks or dying tanks.
@@ -3048,6 +3054,12 @@ fn tick_tank_pickup(ctx: &mut TickContext<'_>) -> BtResult {
             }
         };
         if target_is_healthy_tank {
+            continue;
+        }
+        // Place the claim before the taunt so a concurrent off-tank
+        // racing us can't end up calling taunt on the same mob even
+        // within the same tick window.
+        if !ctx.try_claim_add_pickup(attacker, PICKUP_CLAIM_TTL_MS) {
             continue;
         }
         if ctx.interface.taunt(attacker) {
@@ -3578,27 +3590,6 @@ fn tick_apply_outfit(ctx: &mut TickContext<'_>) -> BtResult {
 fn tick_fish(ctx: &mut TickContext<'_>) -> BtResult {
     if ctx.interface.start_fishing() {
         BtResult::Running
-    } else {
-        BtResult::Failure
-    }
-}
-
-fn tick_rtsc_consume_move_queue(ctx: &mut TickContext<'_>) -> BtResult {
-    use crate::engine::blackboard::Key;
-    // Consume the next RTSC move waypoint from the blackboard
-    if let (Some(x), Some(y), Some(z)) = (
-        ctx.blackboard.get_f32(Key::RtscMoveX),
-        ctx.blackboard.get_f32(Key::RtscMoveY),
-        ctx.blackboard.get_f32(Key::RtscMoveZ),
-    ) {
-        ctx.blackboard.clear(Key::RtscMoveX);
-        ctx.blackboard.clear(Key::RtscMoveY);
-        ctx.blackboard.clear(Key::RtscMoveZ);
-        if ctx.interface.move_to(x, y, z) {
-            BtResult::Running
-        } else {
-            BtResult::Failure
-        }
     } else {
         BtResult::Failure
     }
@@ -6435,7 +6426,6 @@ mod tests {
             Bt::WorldBuffTravel(SpellId(1)).tick(&mut ctx),
             BtResult::Failure
         );
-        assert_eq!(Bt::RtscConsumeMoveQueue.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::LfgJoin.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::LfgAccept.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::AcceptBgInvite.tick(&mut ctx), BtResult::Failure);

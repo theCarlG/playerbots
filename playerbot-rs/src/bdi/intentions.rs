@@ -30,14 +30,74 @@ impl Default for Intention {
     }
 }
 
-/// A forced intention from a player command (attack, pull, focus, cc rti).
+/// A forced intention from a player command (attack, pull, focus, cc rti,
+/// RTSC move/jump).
 ///
-/// When present, this overrides the normal BDI desire evaluation.
-/// The bot obeys commands first, thinks for itself second.
+/// When present, this overrides the normal BDI desire evaluation. The
+/// bot obeys commands first, thinks for itself second.
+///
+/// The variants split into two families:
+/// - [`ForcedIntention::Desire`] reuses the autonomous-BDI machinery —
+///   GOAP plans for the desire and the BT executes the plan.
+/// - [`ForcedIntention::MoveToRtsc`] / [`ForcedIntention::JumpRtsc`] are
+///   positional, not goal-shaped, so they bypass GOAP entirely. The
+///   tick loop's RTSC consumer (`bot::tick::tick_rtsc_forced_intention`)
+///   drives `move_to` every tick until arrival, then clears the
+///   intention. See Gap #10 / Gap #13 in `playerbot-rs/GAPS.md`.
 #[derive(Debug, Clone, Copy)]
-pub struct ForcedIntention {
-    pub desire: DesireKind,
-    pub target: Option<UnitHandle>,
+pub enum ForcedIntention {
+    /// Player command satisfied by an autonomous-style desire (kill,
+    /// pull, cc, focus). GOAP plans for `desire`, BT executes.
+    Desire {
+        desire: DesireKind,
+        target: Option<UnitHandle>,
+    },
+    /// Move to an RTSC waypoint until arrival. `exact` is reserved for
+    /// the PB2 distinction between formation-offset moves and absolute
+    /// moves; the consumer treats both the same way today.
+    MoveToRtsc {
+        x: f32,
+        y: f32,
+        z: f32,
+        exact: bool,
+    },
+    /// Two-stage RTSC jump: first walk to `stage1`, then trigger the
+    /// jump action toward `stage2`. The consumer flips `at_stage_two`
+    /// once stage one is reached so the second tick fires the jump.
+    /// PB2 reference: `RtscAction.cpp:315-344`.
+    JumpRtsc {
+        stage1: (f32, f32, f32),
+        stage2: (f32, f32, f32),
+        at_stage_two: bool,
+    },
+}
+
+impl ForcedIntention {
+    /// The autonomous-style desire this intention satisfies, for BDI
+    /// scoring/monitor reporting. RTSC variants surface as `Travel`
+    /// because that is the closest existing kind — they do not
+    /// participate in GOAP scoring directly.
+    pub fn desire(&self) -> DesireKind {
+        match self {
+            Self::Desire { desire, .. } => *desire,
+            Self::MoveToRtsc { .. } | Self::JumpRtsc { .. } => DesireKind::Travel,
+        }
+    }
+
+    /// The unit target, if any. RTSC variants are positional and have
+    /// no target.
+    pub fn target(&self) -> Option<UnitHandle> {
+        match self {
+            Self::Desire { target, .. } => *target,
+            _ => None,
+        }
+    }
+
+    /// True for the positional RTSC variants — used by the tick loop
+    /// to skip the BDI replan path and route to the RTSC consumer.
+    pub fn is_rtsc_positional(&self) -> bool {
+        matches!(self, Self::MoveToRtsc { .. } | Self::JumpRtsc { .. })
+    }
 }
 
 /// Urgency delta threshold for preempting the current intention early.

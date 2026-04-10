@@ -83,7 +83,7 @@ impl BdiState {
     /// The current active desire (forced or autonomous).
     pub fn active_desire(&self) -> DesireKind {
         if let Some(forced) = &self.forced_intention {
-            forced.desire
+            forced.desire()
         } else {
             self.intention.desire
         }

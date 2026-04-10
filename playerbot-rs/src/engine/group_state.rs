@@ -162,6 +162,54 @@ fn is_ranged_dps_class(class_id: u8) -> bool {
     matches!(class_id, 3 | 5 | 8 | 9)
 }
 
+/// A transient raid-wide event broadcast across every bot in the group.
+///
+/// Distinct from [`crate::encounters::EncounterEvent`], which is the
+/// per-bot signal driving each bot's local encounter FSM. `RaidEvent`
+/// is the *fanout* signal: produced once by whichever bot detects the
+/// change, then drained by every other bot during belief update so
+/// out-of-LOS or dormant-LOD bots don't miss the "phase 2 started"
+/// notification.
+///
+/// Variants are deliberately small (no payload heavier than two u64s)
+/// so the entire ring buffer fits in the same cache line as the rest
+/// of [`SharedEncounterState`]. See Gap #7 in `playerbot-rs/GAPS.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RaidEventKind {
+    /// Default empty slot — never produced by [`SharedEncounterState::publish_event`],
+    /// used only as the initial value of an unwritten ring buffer slot.
+    #[default]
+    None,
+    /// The boss began (or completed) a notable spell cast.
+    BossCast(u32 /* spell id */),
+    /// The encounter FSM transitioned to a new phase.
+    PhaseChange(u32 /* new phase id */),
+    /// The group wiped — bots should reset combat state.
+    Wipe,
+    /// An add spawned and is now eligible for OT pickup / CC.
+    AddSpawn(UnitHandle),
+}
+
+/// A timestamped [`RaidEventKind`] entry in the ring buffer.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RaidEvent {
+    pub kind: RaidEventKind,
+    /// Server time (ms) when the event was published. Consumers ignore
+    /// entries older than [`RAID_EVENT_TTL_MS`] to avoid replaying
+    /// stale events when a new bot joins mid-fight.
+    pub timestamp_ms: u64,
+}
+
+/// Capacity of the raid event ring buffer. Sized so a busy encounter
+/// (one event every ~300ms) keeps ~5 s of history live — enough that
+/// any bot polling at LOD-Background's 5 s belief interval still
+/// catches every event.
+pub const RAID_EVENT_RING: usize = 16;
+
+/// How long a raid event remains valid for late drains. Beyond this,
+/// the slot is treated as empty and consumers skip it.
+pub const RAID_EVENT_TTL_MS: u64 = 5_000;
+
 /// Shared encounter state visible to every bot in the group.
 ///
 /// The per-bot `EncounterFsm` drives boss phase transitions locally.
@@ -178,6 +226,74 @@ pub struct SharedEncounterState {
     pub active: bool,
     /// Claim table — prevents duplicate heals, CC, rune dousing, etc.
     pub claims: ClaimTable,
+    /// Ring buffer of recent raid events for raid-wide fanout.
+    /// Bots track their `last_seen_raid_event_seq` and drain everything
+    /// produced since.
+    pub events: [RaidEvent; RAID_EVENT_RING],
+    /// Monotonically increasing sequence number — each
+    /// [`SharedEncounterState::publish_event`] call increments it. Slot
+    /// index is `(seq - 1) % RAID_EVENT_RING`. Wraps in u64 — never
+    /// realistically overflows.
+    pub events_seq: u64,
+}
+
+impl SharedEncounterState {
+    /// Publish an event into the ring buffer. Idempotent for repeated
+    /// publish of the same kind within the same tick — duplicate
+    /// `PhaseChange(N)` calls return without advancing the sequence
+    /// when the most recent live event matches.
+    pub fn publish_event(&mut self, kind: RaidEventKind, now_ms: u64) {
+        // Dedupe: if the most recent live entry has the same kind and
+        // is still within the TTL window, skip.
+        if self.events_seq > 0 {
+            let last_idx = ((self.events_seq - 1) as usize) % RAID_EVENT_RING;
+            let last = self.events[last_idx];
+            if last.kind == kind
+                && now_ms.saturating_sub(last.timestamp_ms) < RAID_EVENT_TTL_MS
+            {
+                return;
+            }
+        }
+        self.events_seq += 1;
+        let idx = ((self.events_seq - 1) as usize) % RAID_EVENT_RING;
+        self.events[idx] = RaidEvent {
+            kind,
+            timestamp_ms: now_ms,
+        };
+    }
+
+    /// Drain every event with sequence > `last_seen_seq` that is still
+    /// within the TTL window. Returns the events in publication order
+    /// alongside the new high-water sequence. Caller stores the
+    /// returned sequence as `last_seen_seq` for the next drain.
+    ///
+    /// Allocates only when there are events to drain — the common
+    /// no-event path is zero-alloc.
+    pub fn drain_events_since(
+        &self,
+        last_seen_seq: u64,
+        now_ms: u64,
+    ) -> (Vec<RaidEvent>, u64) {
+        if self.events_seq <= last_seen_seq {
+            return (Vec::new(), self.events_seq);
+        }
+        // Don't replay further than the ring holds.
+        let oldest_seq = self.events_seq.saturating_sub(RAID_EVENT_RING as u64);
+        let start_seq = last_seen_seq.max(oldest_seq) + 1;
+        let mut out = Vec::with_capacity((self.events_seq - start_seq + 1) as usize);
+        for seq in start_seq..=self.events_seq {
+            let idx = ((seq - 1) as usize) % RAID_EVENT_RING;
+            let ev = self.events[idx];
+            if matches!(ev.kind, RaidEventKind::None) {
+                continue;
+            }
+            if now_ms.saturating_sub(ev.timestamp_ms) >= RAID_EVENT_TTL_MS {
+                continue;
+            }
+            out.push(ev);
+        }
+        (out, self.events_seq)
+    }
 }
 
 /// Group-wide coordination data — targeting, tank order, CC assignments.
@@ -944,5 +1060,65 @@ mod tests {
         ea.clear_special("polarity");
         assert_eq!(ea.get_special("polarity"), None);
         assert_eq!(ea.get_special("breaker"), Some(0xCC));
+    }
+
+    #[test]
+    fn raid_event_publish_and_drain() {
+        let mut s = SharedEncounterState::default();
+        s.publish_event(RaidEventKind::PhaseChange(2), 1000);
+        let (events, seq) = s.drain_events_since(0, 1100);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, RaidEventKind::PhaseChange(2));
+        assert_eq!(seq, 1);
+
+        // Drain again with the new high-water mark — nothing new.
+        let (events2, seq2) = s.drain_events_since(seq, 1100);
+        assert!(events2.is_empty());
+        assert_eq!(seq2, 1);
+    }
+
+    #[test]
+    fn raid_event_dedup_within_ttl() {
+        let mut s = SharedEncounterState::default();
+        s.publish_event(RaidEventKind::PhaseChange(2), 1000);
+        s.publish_event(RaidEventKind::PhaseChange(2), 1500); // dedup
+        s.publish_event(RaidEventKind::PhaseChange(3), 1600); // distinct kind
+        assert_eq!(s.events_seq, 2);
+
+        let (events, _) = s.drain_events_since(0, 1700);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].kind, RaidEventKind::PhaseChange(2));
+        assert_eq!(events[1].kind, RaidEventKind::PhaseChange(3));
+    }
+
+    #[test]
+    fn raid_event_drops_stale_entries() {
+        let mut s = SharedEncounterState::default();
+        s.publish_event(RaidEventKind::Wipe, 0);
+        // Drain at now well past the TTL — the stale event is filtered.
+        let (events, seq) = s.drain_events_since(0, RAID_EVENT_TTL_MS + 1);
+        assert!(events.is_empty());
+        assert_eq!(seq, 1);
+    }
+
+    #[test]
+    fn raid_event_ring_wraps() {
+        let mut s = SharedEncounterState::default();
+        // Publish > capacity distinct kinds so the ring wraps.
+        for i in 0..(RAID_EVENT_RING as u32 + 4) {
+            s.publish_event(RaidEventKind::PhaseChange(i + 1), 1000 + i as u64);
+        }
+        assert_eq!(s.events_seq, RAID_EVENT_RING as u64 + 4);
+
+        // Drain from 0 — only the most recent RAID_EVENT_RING entries
+        // are recoverable, never the dropped earlier ones.
+        let (events, seq) = s.drain_events_since(0, 1100);
+        assert_eq!(events.len(), RAID_EVENT_RING);
+        assert_eq!(seq, RAID_EVENT_RING as u64 + 4);
+        // First recovered event should be the oldest still in the ring.
+        assert_eq!(
+            events[0].kind,
+            RaidEventKind::PhaseChange(5) // 1+4 dropped
+        );
     }
 }

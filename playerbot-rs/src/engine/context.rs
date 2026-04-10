@@ -233,6 +233,84 @@ impl<'a> TickContext<'a> {
         )
     }
 
+    /// Check if a `DouseRune(entry)` claim is held by another bot.
+    /// Solo bots see no claims and always return `false`.
+    pub fn is_douse_claimed_by_other(&self, entry: u32) -> bool {
+        use crate::engine::claim::ClaimData;
+        let Some(gs) = self.group_state else {
+            return false;
+        };
+        gs.encounter.claims.is_claimed_by_other(
+            self.bot_handle,
+            &ClaimData::DouseRune(entry),
+            self.server_time_ms,
+        )
+    }
+
+    /// Try to claim a `DouseRune(entry)` slot. Returns `true` for solo
+    /// bots (no group handle) so encounter logic still runs untouched.
+    pub fn try_claim_douse(&self, entry: u32, ttl_ms: u64) -> bool {
+        use crate::engine::claim::ClaimData;
+        let Some(handle) = self.group_handle else {
+            return true;
+        };
+        let Ok(mut gs) = handle.state().try_write() else {
+            return true;
+        };
+        gs.encounter.claims.try_claim(
+            self.bot_handle,
+            ClaimData::DouseRune(entry),
+            ttl_ms,
+            self.server_time_ms,
+        )
+    }
+
+    /// Release a `DouseRune(entry)` claim held by this bot. Cheap when
+    /// the bot doesn't own it (no-op).
+    pub fn release_douse(&self, entry: u32) {
+        use crate::engine::claim::ClaimData;
+        let Some(handle) = self.group_handle else {
+            return;
+        };
+        let Ok(mut gs) = handle.state().try_write() else {
+            return;
+        };
+        gs.encounter
+            .claims
+            .release(self.bot_handle, &ClaimData::DouseRune(entry));
+    }
+
+    /// Check if an `AddPickup(target)` claim is held by another bot.
+    pub fn is_add_pickup_claimed_by_other(&self, target: UnitHandle) -> bool {
+        use crate::engine::claim::ClaimData;
+        let Some(gs) = self.group_state else {
+            return false;
+        };
+        gs.encounter.claims.is_claimed_by_other(
+            self.bot_handle,
+            &ClaimData::AddPickup(target),
+            self.server_time_ms,
+        )
+    }
+
+    /// Try to claim an `AddPickup(target)` slot. Returns `true` for solo
+    /// bots so off-tank pickup logic still runs untouched.
+    pub fn try_claim_add_pickup(&self, target: UnitHandle, ttl_ms: u64) -> bool {
+        use crate::engine::claim::ClaimData;
+        let Some(handle) = self.group_handle else {
+            return true;
+        };
+        let Ok(mut gs) = handle.state().try_write() else {
+            return true;
+        };
+        gs.encounter.claims.try_claim(
+            self.bot_handle,
+            ClaimData::AddPickup(target),
+            ttl_ms,
+            self.server_time_ms,
+        )
+    }
+
     /// Push a diagnostic line to the monitor log (no-op when monitor is off).
     /// These lines are flushed to the log file at the end of each tick.
     #[inline]

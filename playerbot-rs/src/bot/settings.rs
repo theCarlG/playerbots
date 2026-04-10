@@ -997,8 +997,12 @@ pub struct BotSettings {
     // -- RTSC (Real-Time Strategy Control) --
     /// Whether this bot is currently selected for RTSC commands.
     pub rtsc_selected: bool,
-    /// Pending action for the next spell-target position.
-    pub rtsc_pending_action: Option<RtscAction>,
+    /// Pending action for the next spell-target position. Stored with the
+    /// server-time ms when it was queued so a stale pending action (master
+    /// queued the action but never cast Aedm) is auto-cleared after
+    /// `RTSC_PENDING_TTL_MS` — otherwise the next unrelated Aedm cast would
+    /// be misinterpreted as fulfilling the queued command.
+    pub rtsc_pending_action: Option<(RtscAction, u64)>,
     /// Named waypoints saved via RTSC. PB2 stores these as per-bot
     /// `"RTSC saved location::<name>"` blackboard entries
     /// (`RtscAction.cpp:83`). The reserved names `"jump"` and

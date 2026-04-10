@@ -173,6 +173,16 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
 
     // ── End BDI + GOAP ───────────────────────────────────────────────
 
+    // 4.95 RTSC forced-intention consumer.
+    //
+    // RTSC moves bypass GOAP — they are positional, not goal-shaped.
+    // Drive `move_to` (and the two-stage jump rotation) every tick
+    // until arrival, then clear the intention. This is what makes the
+    // RTSC waypoint persist across ticks instead of getting clobbered
+    // by follow / combat movement. See `playerbot-rs/GAPS.md` Gaps
+    // #10-#13.
+    tick_rtsc_forced_intention(bot);
+
     // 5. Determine ActiveFsm (Dead > Combat > World)
     // A focus_target (from pull/attack commands) also triggers Combat so
     // the bot approaches and engages rather than staying in Follow mode.
@@ -185,7 +195,7 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         if !bot.interface.is_attackable(focus) {
             bot.settings.focus_target = None;
             // If the forced intention targeted this unit, clear it too.
-            if bot.bdi.forced_intention.is_some_and(|fi| fi.target == Some(focus)) {
+            if bot.bdi.forced_intention.is_some_and(|fi| fi.target() == Some(focus)) {
                 bot.bdi.forced_intention = None;
                 bot.bdi.intention_changed = true;
             }
@@ -527,6 +537,87 @@ fn resolve_boss_hp_pct(bot: &BotState) -> f32 {
     (s.health as f32 / s.max_health as f32).clamp(0.0, 1.0)
 }
 
+/// Squared 3D distance considered "arrived" at an RTSC waypoint.
+/// Slightly larger than the regular pathing tolerance because RTSC
+/// targets are master-clicked terrain points where the master rarely
+/// cares about sub-yard precision.
+const RTSC_ARRIVAL_DIST_SQ: f32 = 4.0; // 2 yards
+
+/// Drive an active [`ForcedIntention::MoveToRtsc`] /
+/// [`ForcedIntention::JumpRtsc`] each tick. Issues `move_to` until the
+/// bot is within [`RTSC_ARRIVAL_DIST_SQ`] of the target, then clears
+/// the intention. The two-stage jump flips `at_stage_two` once stage
+/// one is reached and fires `bot_jump()` on the second arrival.
+///
+/// This is the consumer that makes RTSC moves survive across BT ticks
+/// (Gap #10) and replaces the never-wired `RtscConsumeMoveQueue` BT
+/// leaf (Gap #11). The jump executor (Gap #12) is the same function
+/// because both kinds share the same forced-intention slot.
+fn tick_rtsc_forced_intention(bot: &mut BotState) {
+    use crate::bdi::intentions::ForcedIntention;
+
+    let Some(forced) = bot.bdi.forced_intention else {
+        return;
+    };
+    let pos = bot.snap.self_.pos;
+    match forced {
+        ForcedIntention::MoveToRtsc { x, y, z, exact: _ } => {
+            let dx = pos.x - x;
+            let dy = pos.y - y;
+            let dz = pos.z - z;
+            if dx * dx + dy * dy + dz * dz <= RTSC_ARRIVAL_DIST_SQ {
+                // Arrived — drop the intention so normal BDI/GOAP
+                // resumes next tick.
+                bot.bdi.forced_intention = None;
+                bot.bdi.intention_changed = true;
+            } else {
+                bot.interface.move_to(x, y, z);
+            }
+        }
+        ForcedIntention::JumpRtsc {
+            stage1,
+            stage2,
+            at_stage_two,
+        } => {
+            let target = if at_stage_two { stage2 } else { stage1 };
+            let dx = pos.x - target.0;
+            let dy = pos.y - target.1;
+            let dz = pos.z - target.2;
+            if dx * dx + dy * dy + dz * dz <= RTSC_ARRIVAL_DIST_SQ {
+                if at_stage_two {
+                    // Stage two reached — fire the actual jump and clear
+                    // both the intention and the strategy bit.
+                    bot.interface.bot_jump();
+                    bot.bdi.forced_intention = None;
+                    bot.bdi.intention_changed = true;
+                    bot.settings.rtsc_waypoints.remove(crate::rtsc::JUMP_SLOT);
+                    bot.settings
+                        .rtsc_waypoints
+                        .remove(crate::rtsc::JUMP_POINT_SLOT);
+                    use crate::bot::settings::{BotStateKind, StrategyFlags};
+                    bot.settings
+                        .strategies
+                        .get_mut(BotStateKind::NonCombat)
+                        .remove(StrategyFlags::RTSC_JUMP);
+                } else {
+                    // Stage one reached — flip to stage two and start
+                    // moving toward the jump point on the next tick.
+                    bot.bdi.forced_intention = Some(ForcedIntention::JumpRtsc {
+                        stage1,
+                        stage2,
+                        at_stage_two: true,
+                    });
+                }
+            } else {
+                bot.interface.move_to(target.0, target.1, target.2);
+            }
+        }
+        ForcedIntention::Desire { .. } => {
+            // Non-RTSC forced intention — handled by the normal BDI/GOAP path.
+        }
+    }
+}
+
 fn process_events(bot: &mut BotState, _now_ms: u64) {
     // Determine boss HP for FSM updates.
     //
@@ -721,15 +812,39 @@ fn sync_encounter_to_group(bot: &mut BotState, now_ms: u64) {
         return;
     };
 
-    // Sync encounter metadata.
+    // Sync encounter metadata, publishing raid-wide events on transitions
+    // so out-of-LOS / dormant-LOD bots don't miss phase changes or wipes.
+    // Captured BEFORE the overwrite so we can compare old vs new.
+    let prev_active = gs.encounter.active;
+    let prev_phase = gs.encounter.phase_id;
     if let Some(enc) = &bot.encounter {
+        let new_active = enc.is_active();
+        let new_phase = enc.phase_id();
         gs.encounter.boss_entry = enc.boss_entry();
-        gs.encounter.phase_id = enc.phase_id();
-        gs.encounter.active = enc.is_active();
-        gs.encounter_active = enc.is_active();
+        gs.encounter.phase_id = new_phase;
+        gs.encounter.active = new_active;
+        gs.encounter_active = new_active;
+
+        // Phase transitions inside an active encounter are interesting
+        // to every bot regardless of LOD — publish on change.
+        if new_active && new_phase != prev_phase {
+            gs.encounter
+                .publish_event(crate::engine::group_state::RaidEventKind::PhaseChange(new_phase), now_ms);
+        }
+        // Active → inactive transition during a fight is a wipe (or kill).
+        // We can't distinguish here without boss death info, but the
+        // raid-wide reset behavior is identical, so publish Wipe.
+        if prev_active && !new_active {
+            gs.encounter
+                .publish_event(crate::engine::group_state::RaidEventKind::Wipe, now_ms);
+        }
     } else {
         gs.encounter.active = false;
         gs.encounter_active = false;
+        if prev_active {
+            gs.encounter
+                .publish_event(crate::engine::group_state::RaidEventKind::Wipe, now_ms);
+        }
     }
 
     // Auto-register tanks in group coordination. Bots with the TANK flag
@@ -798,6 +913,62 @@ fn sync_encounter_to_group(bot: &mut BotState, now_ms: u64) {
     if now_ms.saturating_sub(gs.last_computed_ms) >= 5000 {
         gs.encounter.claims.gc(now_ms);
         gs.last_computed_ms = now_ms;
+    }
+
+    // Drain raid-wide events newer than what this bot has already seen.
+    // Collect inside the lock, then drop it before mutating bot state.
+    let (new_events, new_seq) = gs
+        .encounter
+        .drain_events_since(bot.last_seen_raid_event_seq, now_ms);
+    drop(gs);
+
+    if !new_events.is_empty() {
+        bot.last_seen_raid_event_seq = new_seq;
+        for ev in &new_events {
+            apply_raid_event(bot, ev, now_ms);
+        }
+    } else {
+        // Keep the high-water mark in sync even on no-op drains so a
+        // wrapped sequence (>16 publishes between drains) isn't replayed.
+        bot.last_seen_raid_event_seq = new_seq;
+    }
+}
+
+/// Fan-out side effects for a single drained raid event.
+///
+/// Bots that are LOD-dormant or out of LOS may never see the originating
+/// snapshot transition, so this is the only path by which they learn that
+/// the boss phase changed or the group wiped. Keep the per-event work tiny
+/// — this runs once per event per bot per tick under the bot mutex.
+fn apply_raid_event(
+    bot: &mut BotState,
+    ev: &crate::engine::group_state::RaidEvent,
+    now_ms: u64,
+) {
+    use crate::encounters::EncounterEvent;
+    use crate::engine::group_state::RaidEventKind;
+
+    match ev.kind {
+        RaidEventKind::Wipe => {
+            // Force the local FSM into wipe handling so dormant bots
+            // tear down combat-only state alongside everyone else.
+            if let Some(enc) = bot.encounter.as_deref_mut() {
+                enc.update(&EncounterEvent::GroupWipe, 0.0, now_ms);
+            }
+            bot.bdi.beliefs.encounter_active = false;
+        }
+        RaidEventKind::PhaseChange(_) | RaidEventKind::BossCast(_) => {
+            // Mark the encounter active for desire reasoning even on a
+            // dormant tier; the local FSM will catch up to the new phase
+            // on its own next snapshot tick.
+            bot.bdi.beliefs.encounter_active = true;
+        }
+        RaidEventKind::AddSpawn(_) => {
+            // Pickup is brokered through `ClaimTable::AddPickup` (Gap #9);
+            // the fanout itself just informs reasoning that adds exist.
+            bot.bdi.beliefs.encounter_active = true;
+        }
+        RaidEventKind::None => {}
     }
 }
 
