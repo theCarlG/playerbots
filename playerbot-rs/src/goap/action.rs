@@ -13,6 +13,21 @@ use crate::bot::settings::StrategyFlags;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct ActionId(pub u16);
 
+// ── Role / class filtering constants ─────────────────────────────────
+pub const ROLE_ANY: u8 = 0xFF;
+pub const ROLE_TANK: u8 = 1;
+pub const ROLE_HEAL: u8 = 2;
+pub const ROLE_DPS: u8 = 4;
+pub const ROLE_TANK_DPS: u8 = ROLE_TANK | ROLE_DPS;
+pub const ROLE_HEAL_DPS: u8 = ROLE_HEAL | ROLE_DPS;
+
+pub const CLASS_ANY: u16 = 0xFFFF;
+
+/// Helper: `class_bit(PlayerClass::Mage as u8)` → `1 << 8`.
+pub const fn class_bit(c: u8) -> u16 {
+    1u16 << c
+}
+
 /// A GOAP action definition.
 #[derive(Debug, Clone, Copy)]
 pub struct GoapAction {
@@ -35,6 +50,10 @@ pub struct GoapAction {
     /// Bitmask of `DesireKind` variants this action can help satisfy.
     /// Used for quick filtering: skip actions that can't satisfy the goal.
     pub satisfies: u32,
+    /// Role bitmask: bit 0=tank, 1=heal, 2=dps. `ROLE_ANY` (0xFF) = any role.
+    pub role_mask: u8,
+    /// Class bitmask: bit N = `PlayerClass` discriminant N. `CLASS_ANY` (0xFFFF) = any class.
+    pub class_mask: u16,
 }
 
 impl GoapAction {

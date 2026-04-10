@@ -56,6 +56,12 @@ pub enum Atom {
     // ── Encounter ───────────────────────────────────────────
     EncounterDutyDone = 24,
     MechanicPositioned = 25,
+
+    // ── Extended state ─────────────────────────────────────
+    Stealthed = 26,
+    PetActive = 27,
+    PullInitiated = 28,
+    BehindTarget = 29,
 }
 
 /// 64-bit bitfield of boolean world-state facts.
@@ -138,6 +144,13 @@ pub fn from_beliefs(beliefs: &crate::bdi::beliefs::BeliefSet) -> WorldState {
     if beliefs.has_target {
         ws.set(Atom::HasTarget);
     }
+    // Target state derived from target_hp_pct (populated by populate_group_beliefs).
+    // Only meaningful when has_target is true; `!has_target` cannot distinguish
+    // "never engaged" from "killed target", so TargetDead is only set while
+    // actively targeting something with 0 HP (rare transient state).
+    if beliefs.has_target && beliefs.target_hp_pct == 0 {
+        ws.set(Atom::TargetDead);
+    }
     if beliefs.group_injured_count == 0 && beliefs.group_size > 0 {
         ws.set(Atom::GroupHealthy);
     }
@@ -146,6 +159,12 @@ pub fn from_beliefs(beliefs: &crate::bdi::beliefs::BeliefSet) -> WorldState {
     }
     if beliefs.threat_level as u8 <= crate::bdi::beliefs::ThreatLevel::Low as u8 {
         ws.set(Atom::ThreatSafe);
+    }
+    // ResourcesRecovered when both HP and mana are topped off. Allows
+    // `eat_and_drink` plan steps to advance when the bot finishes drinking.
+    // Mana-less classes (rage/energy) only need HP.
+    if beliefs.hp_pct >= 95 && beliefs.mana_pct >= 95 {
+        ws.set(Atom::ResourcesRecovered);
     }
 
     ws

@@ -24,6 +24,23 @@ pub const SPELL_ERUPTION_ZONE3: SpellId = SpellId(30006);
 pub const SPELL_ERUPTION_ZONE4: SpellId = SpellId(30010);
 pub const SPELL_PLAGUE_CLOUD: SpellId = SpellId(29350);
 
+/// Centers of the four eruption stripes on Heigan's dance floor.
+///
+/// The stripes run parallel to each other; zones 1..4 are the four stripes
+/// closest-to-farthest from Heigan's platform. The room is oriented along
+/// the X axis so the zone X centers differ; Y/Z are roughly constant.
+///
+/// Values are taken from widely-documented Heigan guides (the core
+/// eruption trigger GameObjects aren't addressable from the bot side).
+/// Bots pathfind to the closest point in the stripe via `move_to`, so
+/// each entry is the *stripe center*, not a precise safe spot.
+const HEIGAN_ZONE_CENTERS: [(f32, f32, f32); 4] = [
+    (2793.0, -3710.0, 273.5), // Zone 1 (closest to platform)
+    (2786.0, -3710.0, 273.5), // Zone 2
+    (2779.0, -3710.0, 273.5), // Zone 3
+    (2772.0, -3710.0, 273.5), // Zone 4 (farthest)
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HeiganPhase {
     #[default]
@@ -140,6 +157,19 @@ impl EncounterFsm for HeiganFsm {
 
     fn safe_zone_hint(&self) -> u8 {
         self.safe_zone()
+    }
+
+    fn safe_zone_position(&self) -> Option<(f32, f32, f32)> {
+        // Only meaningful during the dance phase; in DPS phase we
+        // shouldn't be moving to a stripe.
+        if self.phase != HeiganPhase::DancePhase {
+            return None;
+        }
+        let idx = self.safe_zone() as usize;
+        if idx == 0 || idx > HEIGAN_ZONE_CENTERS.len() {
+            return None;
+        }
+        Some(HEIGAN_ZONE_CENTERS[idx - 1])
     }
 }
 

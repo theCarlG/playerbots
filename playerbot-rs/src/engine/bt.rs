@@ -336,6 +336,25 @@ pub enum Bt {
     StrategyEnabled(StrategyFlags),
     /// True when the BDI active desire matches this kind.
     GoapDesireIs(crate::bdi::desires::DesireKind),
+    /// True when GOAP has an active plan step (strategy flags != NONE).
+    /// Use `.not()` to gate BT fallbacks that should only run when GOAP
+    /// has no plan (e.g., follow, eat/drink, generic CC).
+    GoapHasPlan,
+    /// True when GOAP permits this flag — either GOAP has no active plan
+    /// (no opinion) OR GOAP's current plan step has these flags set
+    /// (GOAP explicitly wants this behavior). Use to gate BT nodes whose
+    /// behavior is both a fallback (when GOAP has no plan) AND the
+    /// executor for a GOAP action (when GOAP's plan has the flag set).
+    ///
+    /// For example, `Buff` is both a fallback (out-of-combat upkeep) and
+    /// the executor for `buff_group` (which sets `BUFF`). Using
+    /// `GoapPermits(BUFF)` lets Buff fire in both cases, but suppresses
+    /// it when GOAP has a different plan (e.g., `eat_and_drink`).
+    GoapPermits(StrategyFlags),
+    /// True when GOAP's current plan step has these flags set. Unlike
+    /// `StrategyEnabled`, this ignores the kit's configured flags — it
+    /// only fires when GOAP is actively planning this behavior.
+    GoapFlagsActive(StrategyFlags),
     /// Signal the current GOAP plan step as complete — advance to next step.
     /// Always succeeds. Place after the subtree that fulfills the action.
     GoapStepComplete,
@@ -381,6 +400,14 @@ pub enum Bt {
     SettingEnabled(Setting),
     /// Bot has a focus target set.
     HasFocusTarget,
+    /// Bot has at least one RTI icon assigned in
+    /// `GroupCoordination::tank_focus_targets` that resolves to a live
+    /// attackable unit on the server. Used by the combat gate so bots
+    /// auto-engage marked mobs without needing an explicit pull — after
+    /// `@all tank skull` + marker paint, they charge in and pick up the
+    /// marked mob via `AttackRtiPriority`. The field name is legacy —
+    /// these assignments are available to every class, not just tanks.
+    HasTankFocusTarget,
     /// Bot has a protect target set.
     HasProtectTarget,
     /// There are units attacking this bot.
@@ -629,9 +656,6 @@ pub enum Bt {
     ThreatDump,
     /// Attack the focus target.
     FocusAttack,
-    /// Tank: rotate between assigned RTI focus targets to maintain threat.
-    /// Cycles to the next assigned target every ~4 seconds.
-    TankRotateTargets,
     /// Tank: taunt loose adds not targeting us.
     TankPickupAdds,
     /// Assist: attack leader/tank's target.
@@ -787,6 +811,28 @@ pub enum Bt {
     /// of their own target-pick so they converge. Failure when no
     /// mob wears the icon or the attack call is refused.
     RtiAssist,
+    /// Unified RTI target acquisition for every class/role. Runs three
+    /// phases in order:
+    ///
+    /// 1. **Assigned multi-select** — if the bot has one or more RTI
+    ///    icons assigned via `GroupCoordination::tank_focus_targets`
+    ///    (set by `@<bot> tank <icon>` / `@all tank <icon>` or a pull
+    ///    command), walk them in canonical kill order and engage the
+    ///    first live attackable mob. Tank-flagged bots additionally run
+    ///    cooperation/taunt logic so multiple tanks on the same mark
+    ///    don't steal threat from each other.
+    /// 2. **Preferred icon** — fall back to the bot's
+    ///    `preferred_rti_icon` (configured via `rti <icon>` or the
+    ///    addon's "Mark current target" button) when there are no
+    ///    assignments.
+    /// 3. **Canonical kill order** — if nothing above matched, walk
+    ///    skull → cross → square → moon → triangle → diamond → circle
+    ///    → star and engage the first marked mob found.
+    ///
+    /// Returns `Failure` when no RTI-marked mob exists or the attack
+    /// call is refused, letting the parent `Sel` fall through to
+    /// `AssistLeader` / `AttackNearest`.
+    AttackRtiPriority,
     /// Switch the bot's target to the unit wearing
     /// `BotSettings::preferred_cc_rti_icon` and start attacking it.
     /// Used by the CC side of the same assist chain, so a CC'er
@@ -1355,6 +1401,11 @@ impl BtNode for Bt {
                     .unwrap_or(crate::bdi::desires::DesireKind::Idle as u32);
                 ok(active == *desire as u32)
             }
+            Bt::GoapHasPlan => ok(ctx.has_goap_plan()),
+            Bt::GoapPermits(flags) => {
+                ok(!ctx.has_goap_plan() || ctx.goap_flags.contains(*flags))
+            }
+            Bt::GoapFlagsActive(flags) => ok(ctx.goap_flags.contains(*flags)),
             Bt::GoapStepComplete => {
                 // Advance the GOAP plan to the next step via blackboard signal.
                 // The actual advancement happens in tick.rs after the BT runs,
@@ -1399,6 +1450,7 @@ impl BtNode for Bt {
             }
             Bt::SettingEnabled(s) => ok(check_setting(ctx, *s)),
             Bt::HasFocusTarget => ok(ctx.settings.focus_target.is_some()),
+            Bt::HasTankFocusTarget => ok(tick_has_tank_focus_target(ctx)),
             Bt::HasProtectTarget => ok(ctx.settings.protect_target.is_some()),
             Bt::HasAttackers => ok(!ctx.attackers.is_empty()),
             Bt::HasNearby => ok(!ctx.nearby.is_empty()),
@@ -1661,8 +1713,19 @@ impl BtNode for Bt {
                 BtResult::Success
             }
             Bt::MoveToSafeZone => {
-                use crate::engine::blackboard::Key;
-                let _zone = ctx.blackboard.get_u32(Key::EncounterSafeZone).unwrap_or(1);
+                // Encounter FSMs own the coordinate tables — Heigan's four
+                // stripes, Thaddius's polarity sides, etc. The BT asks the
+                // current encounter for the destination; failing that, fall
+                // back to a generic pathfinder safe position.
+                if let Some(enc) = ctx.encounter
+                    && let Some((x, y, z)) = enc.safe_zone_position()
+                {
+                    return if ctx.interface.move_to(x, y, z) {
+                        BtResult::Running
+                    } else {
+                        BtResult::Failure
+                    };
+                }
                 move_to_safe(ctx, 10.0)
             }
 
@@ -1789,7 +1852,6 @@ impl BtNode for Bt {
             Bt::ResurrectParty => tick_resurrect(ctx),
             Bt::ThreatDump => tick_threat_dump(ctx),
             Bt::FocusAttack => tick_focus_attack(ctx),
-            Bt::TankRotateTargets => tick_tank_rotate_targets(ctx),
             Bt::TankPickupAdds => tick_tank_pickup(ctx),
             Bt::AssistLeader => tick_assist_leader(ctx),
             Bt::ProtectAttacker => tick_protect(ctx),
@@ -1974,6 +2036,7 @@ impl BtNode for Bt {
             Bt::RtiCcTargetSelect => {
                 tick_rti_assist(ctx, ctx.settings.preferred_cc_rti_icon.unwrap_or(5))
             }
+            Bt::AttackRtiPriority => tick_attack_rti_priority(ctx),
 
             // ── Actions — Step 13: cross-class reactive combat ────────
             Bt::IsPulling => tick_is_pulling(ctx),
@@ -2834,25 +2897,51 @@ fn tick_dispel(ctx: &mut TickContext<'_>) -> BtResult {
 }
 
 fn tick_resurrect(ctx: &mut TickContext<'_>) -> BtResult {
-    if let Some(dead) = ctx.interface.find_dead_party_member() {
-        let spell = match ctx.class {
-            PlayerClass::Priest => RESURRECTION,
-            PlayerClass::Paladin => REDEMPTION,
-            PlayerClass::Druid => REBIRTH,
-            PlayerClass::Shaman => ANCESTRAL_SPIRIT,
-            _ => return BtResult::Failure,
-        };
-        if spell != REBIRTH && ctx.in_combat() {
-            return BtResult::Failure;
-        }
-        if ctx.interface.can_cast(spell, dead) && ctx.interface.cast_spell(spell, dead) {
-            ctx.timers.on_spell_cast(spell, ctx.server_time_ms);
-            let name = ctx.spell_name(spell);
-            ctx.monitor(format_args!("REACTIVE: Resurrect {name} on 0x{dead:X}"));
-            return BtResult::Success;
-        }
+    let spell = match ctx.class {
+        PlayerClass::Priest => RESURRECTION,
+        PlayerClass::Paladin => REDEMPTION,
+        PlayerClass::Druid => REBIRTH,
+        PlayerClass::Shaman => ANCESTRAL_SPIRIT,
+        _ => return BtResult::Failure,
+    };
+    if spell != REBIRTH && ctx.in_combat() {
+        return BtResult::Failure;
+    }
+
+    // Prefer an assignments-aware priority target (healers first,
+    // then tanks, then DPS). Fall back to the C++ finder when the
+    // group has no populated roster or none of the prioritized
+    // members are actually dead right now.
+    let dead = pick_rez_target_by_priority(ctx)
+        .or_else(|| ctx.interface.find_dead_party_member());
+    let Some(dead) = dead else {
+        return BtResult::Failure;
+    };
+    if ctx.interface.can_cast(spell, dead) && ctx.interface.cast_spell(spell, dead) {
+        ctx.timers.on_spell_cast(spell, ctx.server_time_ms);
+        let name = ctx.spell_name(spell);
+        ctx.monitor(format_args!("REACTIVE: Resurrect {name} on 0x{dead:X}"));
+        return BtResult::Success;
     }
     BtResult::Failure
+}
+
+/// Walk the shared `EncounterAssignments` roster in rez priority
+/// order and return the first member that is actually dead. Returns
+/// `None` when assignments aren't populated or the whole roster is
+/// alive — the caller falls back to `find_dead_party_member`.
+fn pick_rez_target_by_priority(ctx: &TickContext<'_>) -> Option<UnitHandle> {
+    let gs = ctx.group_state?;
+    for candidate in gs.assignments.rez_priority_order() {
+        if candidate == 0 || candidate == ctx.bot_handle {
+            continue;
+        }
+        let snap = ctx.interface.get_unit_snapshot(candidate);
+        if !snap.is_alive {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 fn tick_pulling_aggro(ctx: &TickContext<'_>) -> bool {
@@ -2914,139 +3003,26 @@ fn tick_focus_attack(ctx: &mut TickContext<'_>) -> BtResult {
     BtResult::Failure
 }
 
-/// Tank multi-target rotation: cycle between assigned RTI focus targets
-/// every ~4 seconds. Resolves RTI icons to live unit handles, picks the
-/// next one in round-robin order, and attacks + taunts if the mob isn't
-/// targeting us. This keeps threat on all assigned mobs.
-fn tick_tank_rotate_targets(ctx: &mut TickContext<'_>) -> BtResult {
-    use crate::engine::blackboard::Key;
-
-    const ROTATION_INTERVAL_MS: u64 = 4_000;
-
-    let gs = match ctx.group_state {
-        Some(gs) => gs,
-        None => return BtResult::Failure,
+/// `Bt::HasTankFocusTarget`. Returns true if the bot has at least one
+/// tank_focus_target icon assigned that resolves to a live attackable
+/// unit on the server. This is the "should I enter combat" gate that
+/// lets tanks auto-engage marked mobs after `@all tank <icon>` — without
+/// it, a defensive-reactivity tank would stand still until hit, even
+/// with a skull painted on a mob right next to them.
+fn tick_has_tank_focus_target(ctx: &mut TickContext<'_>) -> bool {
+    let Some(gs) = ctx.group_state else {
+        return false;
     };
-
-    // Collect this bot's assigned RTI icons.
     let mut icons = [0u8; 8];
     let count = gs.coordination.tank_target_icons(ctx.bot_handle, &mut icons);
-    if count == 0 {
-        return BtResult::Failure;
-    }
-
-    // Resolve icons to live unit handles, filtering out dead/despawned mobs.
-    let mut targets: [(u64, u8); 8] = [(0, 0); 8];
-    let mut n_targets = 0;
-    for i in 0..count {
-        let icon = icons[i];
-        // RTI icons in tank_focus_targets are stored 1-based (1..=8),
-        // matching get_unit_with_raid_icon's convention.
-        if let Some(unit) = ctx.interface.get_unit_with_raid_icon(icon) {
-            if ctx.interface.is_attackable(unit) {
-                targets[n_targets] = (unit, icon);
-                n_targets += 1;
-            }
+    for icon in icons.iter().take(count).copied() {
+        if let Some(unit) = ctx.interface.get_unit_with_raid_icon(icon)
+            && ctx.interface.is_attackable(unit)
+        {
+            return true;
         }
     }
-
-    if n_targets == 0 {
-        return BtResult::Failure;
-    }
-
-    // Read rotation state from blackboard.
-    let cur_idx = ctx.blackboard.get_u32(Key::TankRotationIdx).unwrap_or(0) as usize;
-    let last_switch = ctx.blackboard.get_u64(Key::TankRotationSwitchMs).unwrap_or(0);
-
-    // Decide which target to focus this tick.
-    let elapsed_since_switch = ctx.server_time_ms.saturating_sub(last_switch);
-    let idx = if elapsed_since_switch >= ROTATION_INTERVAL_MS || last_switch == 0 {
-        // Time to rotate to the next target.
-        let next = if cur_idx + 1 >= n_targets { 0 } else { cur_idx + 1 };
-        ctx.blackboard.set(Key::TankRotationIdx, crate::engine::blackboard::Value::U32(next as u32));
-        ctx.blackboard.set(Key::TankRotationSwitchMs, crate::engine::blackboard::Value::U64(ctx.server_time_ms));
-        next
-    } else {
-        // Stay on the current target (clamped to valid range).
-        cur_idx.min(n_targets - 1)
-    };
-
-    let (target, icon) = targets[idx];
-
-    // Check if another tank in the group is already tanking this mob.
-    // If so, cooperate: attack without taunting (avoid stealing threat).
-    // Only take over if the other tank is dying (< 15% HP).
-    let mob_snap = ctx.interface.get_unit_snapshot(target);
-    let other_tank_on_target = if mob_snap.current_target != ctx.bot_handle && mob_snap.current_target != 0 {
-        let members = &ctx.snap.group_members[..ctx.snap.group_size as usize];
-        members.iter().copied().find(|&h| {
-            h != 0 && h != ctx.bot_handle && h == mob_snap.current_target && {
-                let role = ctx.interface.group_get_role(h);
-                role.is_tank()
-            }
-        })
-    } else {
-        None
-    };
-
-    let should_taunt = if let Some(other_tank) = other_tank_on_target {
-        let other_snap = ctx.interface.get_unit_snapshot(other_tank);
-        let other_hp_pct = if other_snap.max_health > 0 {
-            other_snap.health as f32 / other_snap.max_health as f32
-        } else {
-            0.0
-        };
-        if other_hp_pct > 0.15 {
-            // Other tank is healthy — assist without stealing threat.
-            ctx.monitor(format_args!(
-                "TARGET: TankRotate -> cooperate on 0x{target:X} (icon={icon}, other tank 0x{other_tank:X} healthy at {:.0}%)",
-                other_hp_pct * 100.0,
-            ));
-            false
-        } else {
-            // Other tank is dying — take over.
-            ctx.monitor(format_args!(
-                "TARGET: TankRotate -> TAKEOVER 0x{target:X} (icon={icon}, other tank 0x{other_tank:X} dying at {:.0}%)",
-                other_hp_pct * 100.0,
-            ));
-            true
-        }
-    } else {
-        // No other tank on this target — normal behavior.
-        mob_snap.current_target != ctx.bot_handle
-    };
-
-    if should_taunt {
-        if ctx.interface.taunt(target) {
-            ctx.monitor(format_args!(
-                "TARGET: TankRotate -> taunt 0x{target:X} (icon={icon}, was on 0x{:X})",
-                mob_snap.current_target,
-            ));
-        }
-    }
-
-    // Attack / switch to this target regardless of taunt result.
-    if ctx.current_target() == Some(target) {
-        ctx.pending_target.set(Some(target));
-        ctx.monitor(format_args!(
-            "TARGET: TankRotate -> stay on 0x{target:X} (icon={icon}, {}/{n_targets})",
-            idx + 1,
-        ));
-        return BtResult::Success;
-    }
-
-    if ctx.attack(target) {
-        ctx.monitor(format_args!(
-            "TARGET: TankRotate -> switch to 0x{target:X} (icon={icon}, {}/{n_targets})",
-            idx + 1,
-        ));
-        return BtResult::Success;
-    }
-
-    ctx.monitor(format_args!(
-        "TARGET: TankRotate -> attack(0x{target:X}) REFUSED",
-    ));
-    BtResult::Failure
+    false
 }
 
 fn tick_tank_pickup(ctx: &mut TickContext<'_>) -> BtResult {
@@ -3885,27 +3861,80 @@ fn tick_engage_target(ctx: &mut TickContext<'_>) -> BtResult {
     BtResult::Success
 }
 
+/// Ranged attack range threshold for pulls. Classic bow/gun/crossbow
+/// auto-shot has a 30 yard max; we use 28 to leave a safety margin for
+/// server tick latency so the shot actually lands instead of bouncing
+/// on the range check.
+const PULL_RANGED_MAX: f32 = 28.0;
+/// Chase stop distance during a pull. Keeps the bot well inside ranged
+/// range so it doesn't oscillate across the PULL_RANGED_MAX boundary
+/// (server chase stops ± 1y from the requested distance).
+const PULL_CHASE_STOP: f32 = 20.0;
+
 fn tick_pull_target(ctx: &mut TickContext<'_>) -> BtResult {
-    let target = match ctx.current_target() {
+    // Prefer the configured focus target (set by the Pull command) so a
+    // tank that has switched selection during the approach still chases
+    // the pull target rather than whatever the server selection happens
+    // to be this tick.
+    let target = ctx
+        .settings
+        .focus_target
+        .or_else(|| ctx.current_target())
+        .filter(|&t| t != 0 && ctx.interface.is_attackable(t));
+    let target = match target {
         Some(t) => t,
         None => return BtResult::Failure,
     };
-    // Only ranged pull options — no melee attack() fallback, because that
-    // would start server-side MoveChase toward the target, defeating the
-    // purpose of holding position during a pull.
-    if ctx.interface.auto_shoot(target) {
-        ctx.monitor(format_args!("PULL: auto_shoot on 0x{target:X}"));
-        return BtResult::Success;
+
+    // Stop and fire if already in range.
+    let dist = ctx.interface.unit_distance(target);
+    if dist <= PULL_RANGED_MAX {
+        if ctx.interface.auto_shoot(target) {
+            ctx.monitor(format_args!(
+                "PULL: auto_shoot on 0x{target:X} dist={dist:.1}y"
+            ));
+            return BtResult::Success;
+        }
+        if ctx.interface.taunt(target) {
+            ctx.monitor(format_args!(
+                "PULL: taunt on 0x{target:X} dist={dist:.1}y"
+            ));
+            return BtResult::Success;
+        }
+        // No ranged pull available — clear IsPulling so the bot commits to
+        // a direct engage instead of looping walk-then-try-pull every tick.
+        use crate::engine::blackboard::{Key, Value};
+        ctx.blackboard.set(Key::IsPulling, Value::U32(0));
+        ctx.monitor(format_args!(
+            "PULL: no ranged pull available at dist={dist:.1}y — falling through to direct engage"
+        ));
+        return BtResult::Failure;
     }
-    if ctx.interface.taunt(target) {
-        ctx.monitor(format_args!("PULL: taunt on 0x{target:X}"));
-        return BtResult::Success;
+
+    // Out of ranged range — chase the target until we get close enough.
+    // Using chase() instead of move_to() so the server tracks the target
+    // if it wanders, and stopping at PULL_CHASE_STOP (20y) so the bot
+    // arrives well inside PULL_RANGED_MAX and doesn't straddle the edge.
+    if ctx.interface.attack(target) {
+        // Ensure the server-side selection matches so later auto_shoot
+        // ticks land on the intended unit.
+        ctx.pending_target.set(Some(target));
     }
-    // No ranged pull available — clear IsPulling so the bot commits to a
-    // direct engage instead of looping walk-then-try-pull every tick.
-    use crate::engine::blackboard::{Key, Value};
-    ctx.blackboard.set(Key::IsPulling, Value::U32(0));
-    ctx.monitor(format_args!("PULL: no ranged pull available — falling through to direct engage"));
+    if ctx.interface.chase(target, PULL_CHASE_STOP, 0.0) {
+        ctx.monitor(format_args!(
+            "PULL: chasing 0x{target:X} dist={dist:.1}y -> stop@{PULL_CHASE_STOP:.0}y"
+        ));
+        return BtResult::Running;
+    }
+    // chase() refused (no movegen available) — fall back to move_to on
+    // the target's current position. Less smooth but keeps the bot moving.
+    let snap = ctx.interface.get_unit_snapshot(target);
+    if ctx.interface.move_to(snap.pos.x, snap.pos.y, snap.pos.z) {
+        ctx.monitor(format_args!(
+            "PULL: move_to fallback for 0x{target:X} dist={dist:.1}y"
+        ));
+        return BtResult::Running;
+    }
     BtResult::Failure
 }
 
@@ -4164,6 +4193,187 @@ fn tick_rti_assist(ctx: &mut TickContext<'_>, icon_0to7: u8) -> BtResult {
         Some(u) if ctx.attack(u) => BtResult::Success,
         _ => BtResult::Failure,
     }
+}
+
+/// Canonical raid-wide kill order, high to low priority.
+/// Matches Blizzard's /assist convention and common raid addons:
+/// skull → cross → square → moon → triangle → diamond → circle → star.
+/// Indices are 1..=8 (FFI convention for `get_unit_with_raid_icon`).
+const RTI_KILL_ORDER: [u8; 8] = [
+    8, // skull
+    7, // cross
+    6, // square
+    5, // moon
+    4, // triangle
+    3, // diamond
+    2, // circle
+    1, // star
+];
+
+/// `Bt::AttackRtiPriority`. Unified RTI target acquisition for every
+/// class/role. Runs three phases:
+///
+/// 1. **Assigned multi-select** — if the bot has one or more RTI icons
+///    stored in `GroupCoordination::tank_focus_targets` (set by `tank`
+///    / `@all tank` commands or the pull resolver), walk those icons
+///    in canonical kill order (skull first) and engage the first live
+///    attackable mob. For tank-flagged bots this also runs cooperation
+///    logic so multi-tank groups don't fight over threat: if another
+///    healthy tank already holds the mob, attack without taunting; if
+///    that tank is dying (< 15% HP), take over with a taunt.
+/// 2. **Preferred icon** — fall back to `preferred_rti_icon`
+///    (configured via `rti <icon>` or the addon button) when the bot
+///    has no assignments.
+/// 3. **Canonical kill order** — walk skull → cross → square → moon →
+///    triangle → diamond → circle → star and engage the first painted
+///    mob found.
+///
+/// Falls through to `Failure` when no RTI-marked attackable mob exists,
+/// letting the parent `Sel` run the generic assist/protect/aggressive
+/// leaves as fallback.
+fn tick_attack_rti_priority(ctx: &mut TickContext<'_>) -> BtResult {
+    // 1) Assigned RTI icons (multi-select) — gathered from
+    //    GroupCoordination and walked in canonical kill order.
+    let mut assigned = [0u8; 8];
+    let assigned_count = ctx
+        .group_state
+        .map(|gs| gs.coordination.tank_target_icons(ctx.bot_handle, &mut assigned))
+        .unwrap_or(0);
+
+    if assigned_count > 0 {
+        for &kill_icon in &RTI_KILL_ORDER {
+            // Only consider icons the bot is actually assigned to.
+            if !assigned[..assigned_count].iter().any(|&i| i == kill_icon) {
+                continue;
+            }
+            if let Some(unit) = ctx.interface.get_unit_with_raid_icon(kill_icon)
+                && ctx.interface.is_attackable(unit)
+            {
+                return engage_rti_target(ctx, unit, kill_icon, true);
+            }
+        }
+        // Fall through to phases 2+3 so a bot with assignments still
+        // engages something when none of the assigned icons are painted.
+    }
+
+    // 2) Preferred icon — `rti <icon>` / addon "Mark current target".
+    //    0..=7 settings convention, convert to 1..=8 for the FFI call.
+    if let Some(pref) = ctx.settings.preferred_rti_icon
+        && pref < 8
+    {
+        let icon_1to8 = pref + 1;
+        if let Some(unit) = ctx.interface.get_unit_with_raid_icon(icon_1to8)
+            && ctx.interface.is_attackable(unit)
+        {
+            return engage_rti_target(ctx, unit, icon_1to8, false);
+        }
+    }
+
+    // 3) Canonical kill order fallback.
+    for &icon in &RTI_KILL_ORDER {
+        if let Some(unit) = ctx.interface.get_unit_with_raid_icon(icon)
+            && ctx.interface.is_attackable(unit)
+        {
+            return engage_rti_target(ctx, unit, icon, false);
+        }
+    }
+
+    BtResult::Failure
+}
+
+/// Engage a specific RTI-marked mob. Shared helper for
+/// `tick_attack_rti_priority` used by all three phases.
+///
+/// When `assigned=true` and the bot runs the `TANK` strategy flag, the
+/// helper runs multi-tank cooperation: if another healthy tank already
+/// holds the mob, we attack without taunting; if that tank is dying
+/// (< 15% HP), we taunt to take over. For non-tanks, for unassigned
+/// fallback engagements, and whenever the mob is not already on
+/// another tank, `assigned`/role doesn't matter — we just attack.
+fn engage_rti_target(
+    ctx: &mut TickContext<'_>,
+    target: UnitHandle,
+    icon: u8,
+    assigned: bool,
+) -> BtResult {
+    // Cooperation + taunt logic only applies to tank-flagged bots
+    // that are running an assigned icon. Everyone else skips straight
+    // to the attack path.
+    let is_tank = assigned
+        && ctx
+            .settings
+            .strategies
+            .has_any(crate::bot::settings::StrategyFlags::TANK);
+
+    if is_tank {
+        let mob_snap = ctx.interface.get_unit_snapshot(target);
+        let other_tank_on_target = if mob_snap.current_target != ctx.bot_handle
+            && mob_snap.current_target != 0
+        {
+            let members = &ctx.snap.group_members[..ctx.snap.group_size as usize];
+            members.iter().copied().find(|&h| {
+                h != 0
+                    && h != ctx.bot_handle
+                    && h == mob_snap.current_target
+                    && ctx.interface.group_get_role(h).is_tank()
+            })
+        } else {
+            None
+        };
+
+        let should_taunt = if let Some(other_tank) = other_tank_on_target {
+            let other_snap = ctx.interface.get_unit_snapshot(other_tank);
+            let other_hp_pct = if other_snap.max_health > 0 {
+                other_snap.health as f32 / other_snap.max_health as f32
+            } else {
+                0.0
+            };
+            if other_hp_pct > 0.15 {
+                ctx.monitor(format_args!(
+                    "TARGET: RtiPriority -> cooperate on 0x{target:X} (icon={icon}, other tank 0x{other_tank:X} healthy at {:.0}%)",
+                    other_hp_pct * 100.0,
+                ));
+                false
+            } else {
+                ctx.monitor(format_args!(
+                    "TARGET: RtiPriority -> TAKEOVER 0x{target:X} (icon={icon}, other tank 0x{other_tank:X} dying at {:.0}%)",
+                    other_hp_pct * 100.0,
+                ));
+                true
+            }
+        } else {
+            mob_snap.current_target != ctx.bot_handle
+        };
+
+        if should_taunt && ctx.interface.taunt(target) {
+            ctx.monitor(format_args!(
+                "TARGET: RtiPriority -> taunt 0x{target:X} (icon={icon})"
+            ));
+        }
+    }
+
+    if ctx.current_target() == Some(target) {
+        ctx.pending_target.set(Some(target));
+        if assigned {
+            ctx.monitor(format_args!(
+                "TARGET: RtiPriority -> stay on 0x{target:X} (assigned icon={icon})"
+            ));
+        }
+        return BtResult::Success;
+    }
+
+    if ctx.attack(target) {
+        let label = if assigned { "assigned" } else { "kill order" };
+        ctx.monitor(format_args!(
+            "TARGET: RtiPriority -> {label} icon {icon} 0x{target:X}"
+        ));
+        return BtResult::Success;
+    }
+
+    ctx.monitor(format_args!(
+        "TARGET: RtiPriority -> attack(0x{target:X}) REFUSED (icon={icon})"
+    ));
+    BtResult::Failure
 }
 
 // ── 11h: consumable / potion helper ────────────────────────────────────────
@@ -5900,6 +6110,20 @@ mod tests {
         assert_eq!(Bt::PullTarget.tick(&mut ctx), BtResult::Success);
     }
 
+    #[test]
+    fn pull_target_chases_when_out_of_ranged_range() {
+        // 50y is well beyond PULL_RANGED_MAX (28y). The leaf should
+        // request a chase and return Running, not fire auto_shoot or
+        // taunt — even though the mock taunt would otherwise succeed.
+        let mut mock = Mock11a::new();
+        mock.unit_distance = 50.0;
+        mock.auto_shoot_result = true;
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.current_target = 1;
+        let mut ctx = ctx_with_iface(&mut owned, &mock);
+        assert_eq!(Bt::PullTarget.tick(&mut ctx), BtResult::Running);
+    }
+
     // ── 11g: RTI / CC targeting ─────────────────────────────────────────
 
     #[test]
@@ -5981,6 +6205,57 @@ mod tests {
         let mut owned = TestCtxOwned::new();
         let mut ctx = ctx_with_iface(&mut owned, &mock);
         assert_eq!(Bt::RtiAssist.tick(&mut ctx), BtResult::Failure);
+    }
+
+    #[test]
+    fn attack_rti_priority_prefers_preferred_icon() {
+        // preferred_rti_icon = 0..=7 indexing. Setting to 2 (diamond)
+        // should resolve icon 3 at the FFI (1..=8), even though the
+        // kill order would otherwise reach for skull first.
+        let mut mock = Mock11a::new();
+        mock.raid_icon_units.insert(3, 0x1111); // diamond
+        mock.raid_icon_units.insert(8, 0x2222); // skull
+        let mut owned = TestCtxOwned::new();
+        owned.settings.preferred_rti_icon = Some(2);
+        let mut ctx = ctx_with_iface(&mut owned, &mock);
+        assert_eq!(Bt::AttackRtiPriority.tick(&mut ctx), BtResult::Success);
+        assert_eq!(ctx.pending_target.get(), Some(0x1111));
+    }
+
+    #[test]
+    fn attack_rti_priority_walks_canonical_kill_order() {
+        // No preferred icon — should walk skull → cross → square → ...
+        // First marked mob wins. Here only cross (icon 7) is painted,
+        // so the leaf must attack it even though skull (8) would be
+        // higher priority.
+        let mut mock = Mock11a::new();
+        mock.raid_icon_units.insert(7, 0xCAFE); // cross
+        let mut owned = TestCtxOwned::new();
+        // preferred_rti_icon stays None.
+        let mut ctx = ctx_with_iface(&mut owned, &mock);
+        assert_eq!(Bt::AttackRtiPriority.tick(&mut ctx), BtResult::Success);
+        assert_eq!(ctx.pending_target.get(), Some(0xCAFE));
+    }
+
+    #[test]
+    fn attack_rti_priority_prefers_skull_over_lower_icons() {
+        // Both skull (8) and star (1) are painted. Skull wins because
+        // it sits at the top of the canonical kill order.
+        let mut mock = Mock11a::new();
+        mock.raid_icon_units.insert(8, 0xD00D);
+        mock.raid_icon_units.insert(1, 0xFAC3);
+        let mut owned = TestCtxOwned::new();
+        let mut ctx = ctx_with_iface(&mut owned, &mock);
+        assert_eq!(Bt::AttackRtiPriority.tick(&mut ctx), BtResult::Success);
+        assert_eq!(ctx.pending_target.get(), Some(0xD00D));
+    }
+
+    #[test]
+    fn attack_rti_priority_fails_when_no_marked_mob() {
+        let mock = Mock11a::new();
+        let mut owned = TestCtxOwned::new();
+        let mut ctx = ctx_with_iface(&mut owned, &mock);
+        assert_eq!(Bt::AttackRtiPriority.tick(&mut ctx), BtResult::Failure);
     }
 
     #[test]
@@ -6278,74 +6553,86 @@ mod tests {
     }
 
     #[test]
-    fn tank_rotate_targets_cycles_between_assigned_icons() {
-        use crate::engine::group_state::{GroupCoordination, GroupState};
+    fn attack_rti_priority_uses_assigned_icons_in_kill_order() {
+        // Bot is assigned star (1) and skull (8). Both are painted on
+        // separate mobs. The bot should engage skull first because the
+        // canonical kill order puts it at the top, regardless of the
+        // order the assignments were made.
+        use crate::engine::group_state::GroupState;
 
         let mut mock = Mock11a::new();
-        // Two mobs marked skull (8) and cross (7).
-        let mob_skull: UnitHandle = 0xA000;
-        let mob_cross: UnitHandle = 0xB000;
+        let mob_star: UnitHandle = 0xA000;
+        let mob_skull: UnitHandle = 0xB000;
+        mock.raid_icon_units.insert(1, mob_star);
         mock.raid_icon_units.insert(8, mob_skull);
-        mock.raid_icon_units.insert(7, mob_cross);
 
         let mut owned = TestCtxOwned::new();
         let bot_handle: UnitHandle = 0x1234;
 
-        // Set up group state with tank focus targets for this bot.
         let mut gs = GroupState::default();
-        gs.coordination.assign_tank_target(bot_handle, 8); // skull
-        gs.coordination.assign_tank_target(bot_handle, 7); // cross
+        gs.coordination.assign_tank_target(bot_handle, 1); // star first
+        gs.coordination.assign_tank_target(bot_handle, 8); // then skull
 
-        // First tick: should pick a target (idx wraps from 0 → 1 since
-        // last_switch==0 triggers rotation).
-        owned.time_ms = 10_000;
         let mut ctx = ctx_with_iface(&mut owned, &mock);
         ctx.bot_handle = bot_handle;
         ctx.group_state = Some(&gs);
-        let r1 = tick_tank_rotate_targets(&mut ctx);
-        assert_eq!(r1, BtResult::Success);
-        let first_target = ctx.pending_target.get();
-
-        // Second tick within rotation interval: should stay on same target.
-        owned.time_ms = 12_000;
-        let mut ctx = ctx_with_iface(&mut owned, &mock);
-        ctx.bot_handle = bot_handle;
-        ctx.group_state = Some(&gs);
-        let r2 = tick_tank_rotate_targets(&mut ctx);
-        assert_eq!(r2, BtResult::Success);
-        let second_target = ctx.pending_target.get();
-        assert_eq!(first_target, second_target, "should stay on same target within interval");
-
-        // Third tick after interval: should switch to next target.
-        owned.time_ms = 15_000; // 5s after first switch > 4s interval
-        let mut ctx = ctx_with_iface(&mut owned, &mock);
-        ctx.bot_handle = bot_handle;
-        ctx.group_state = Some(&gs);
-        let r3 = tick_tank_rotate_targets(&mut ctx);
-        assert_eq!(r3, BtResult::Success);
-        let third_target = ctx.pending_target.get();
-        assert_ne!(first_target, third_target, "should have rotated to the other target");
+        assert_eq!(Bt::AttackRtiPriority.tick(&mut ctx), BtResult::Success);
+        assert_eq!(
+            ctx.pending_target.get(),
+            Some(mob_skull),
+            "assigned icons must walk canonical kill order (skull before star)"
+        );
     }
 
     #[test]
-    fn tank_rotate_targets_fails_without_group_state() {
-        let mock = Mock11a::new();
-        let mut owned = TestCtxOwned::new();
-        let mut ctx = ctx_with_iface(&mut owned, &mock);
-        assert_eq!(tick_tank_rotate_targets(&mut ctx), BtResult::Failure);
-    }
-
-    #[test]
-    fn tank_rotate_targets_fails_without_assignments() {
+    fn attack_rti_priority_ignores_unassigned_painted_icons() {
+        // Bot is assigned only square (6), but skull (8) is also
+        // painted. The leaf must engage the assigned square, not
+        // skull — the preferred/canonical-kill-order phases only
+        // run as a fallback when the assigned set yields nothing.
         use crate::engine::group_state::GroupState;
 
-        let mock = Mock11a::new();
+        let mut mock = Mock11a::new();
+        let mob_square: UnitHandle = 0xC000;
+        let mob_skull: UnitHandle = 0xD000;
+        mock.raid_icon_units.insert(6, mob_square);
+        mock.raid_icon_units.insert(8, mob_skull);
+
         let mut owned = TestCtxOwned::new();
-        let gs = GroupState::default(); // no tank_focus_targets
+        let bot_handle: UnitHandle = 0x2345;
+
+        let mut gs = GroupState::default();
+        gs.coordination.assign_tank_target(bot_handle, 6);
+
         let mut ctx = ctx_with_iface(&mut owned, &mock);
-        ctx.bot_handle = 0x1234;
+        ctx.bot_handle = bot_handle;
         ctx.group_state = Some(&gs);
-        assert_eq!(tick_tank_rotate_targets(&mut ctx), BtResult::Failure);
+        assert_eq!(Bt::AttackRtiPriority.tick(&mut ctx), BtResult::Success);
+        assert_eq!(ctx.pending_target.get(), Some(mob_square));
+    }
+
+    #[test]
+    fn attack_rti_priority_falls_back_when_assigned_icon_not_painted() {
+        // Bot is assigned skull (8), but nothing is painted with
+        // skull. A cross (7) is painted though — the canonical
+        // kill-order fallback should pick it up.
+        use crate::engine::group_state::GroupState;
+
+        let mut mock = Mock11a::new();
+        let mob_cross: UnitHandle = 0xE000;
+        mock.raid_icon_units.insert(7, mob_cross);
+
+        let mut owned = TestCtxOwned::new();
+        let bot_handle: UnitHandle = 0x3456;
+
+        let mut gs = GroupState::default();
+        gs.coordination.assign_tank_target(bot_handle, 8);
+
+        let mut ctx = ctx_with_iface(&mut owned, &mock);
+        ctx.bot_handle = bot_handle;
+        ctx.group_state = Some(&gs);
+        assert_eq!(Bt::AttackRtiPriority.tick(&mut ctx), BtResult::Success);
+        assert_eq!(ctx.pending_target.get(), Some(mob_cross));
     }
 
     #[test]

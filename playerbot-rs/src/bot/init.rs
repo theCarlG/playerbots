@@ -236,13 +236,19 @@ fn build_combat_tree(class_rotation: Bt) -> Bt {
         // Combat wrapper: reactive + rotation.
         // Also fires when group members are injured (healers top off OOC),
         // when dueling, or when commanded to focus a target.
+        //
+        // `HasTankFocusTarget` lets tanks auto-engage mobs that have been
+        // marked with their assigned RTI icon (via `@all tank <icon>`)
+        // even when the tank is not yet being attacked — a defensive
+        // tank with a painted skull should charge in, not wait for aggro.
         Seq!(
             Sel!(
                 Bt::InCombat,
                 ShouldEngage,
                 Bt::InDuel,
                 Bt::GroupMembersBelow(1, 0.90),
-                Bt::HasFocusTarget
+                Bt::HasFocusTarget,
+                Bt::HasTankFocusTarget,
             ),
             combat_wrapper(class_rotation),
         ),
@@ -275,7 +281,10 @@ fn build_world_tree(class_rotation: Bt) -> Bt {
             Bt::throttle(1_000, class_rotation),
         ),
         // Eat/drink to recover HP/mana.
-        Consumables,
+        // Fires when GOAP permits it — either no plan (fallback upkeep)
+        // or GOAP's plan has the CONSUMABLES flag (RecoverResources →
+        // eat_and_drink → CONSUMABLES flag → BT executes).
+        Seq!(Bt::GoapPermits(StrategyFlags::CONSUMABLES), Consumables),
         // Duel request handling (can happen OOC too).
         Seq!(
             Bt::DuelRequested,
@@ -321,8 +330,12 @@ fn combat_wrapper(class_rotation: Bt) -> Bt {
         reactive::wait_for_attack_subtree(),
         reactive::preheal_subtree(),
         // CC adds: cast crowd control on RTI CC target or nearest add.
-        // Throttled inside AutoCc to prevent spam.
-        Bt::throttle(2_000, Bt::AutoCc),
+        // Fires when GOAP permits CC — either no plan at all (reactive
+        // fallback) or GOAP's plan step has the CC flag set.
+        Seq!(
+            Bt::GoapPermits(StrategyFlags::CC),
+            Bt::throttle(2_000, Bt::AutoCc),
+        ),
         // ── B) Combat pipeline ───────────────────────────────────────
         //
         // Three-step Seq: target → position → act. Each step uses
@@ -423,7 +436,11 @@ fn mode_dispatch() -> Bt {
         Seq!(
             ModeIs(BehaviorMode::Follow),
             Sel!(
-                Follow,
+                // Follow fires when GOAP permits it — either no plan
+                // (fallback) or GOAP's plan has the FOLLOW flag
+                // (FollowLeader → follow_leader → FOLLOW flag → BT).
+                // Other plans (eat_and_drink, buff_group) suppress it.
+                Seq!(Bt::GoapPermits(StrategyFlags::FOLLOW), Follow),
                 crate::strategies::travel::build(),
                 world::rpg::rpg_subtree(),
                 world::grind::grind_subtree(),
@@ -431,6 +448,14 @@ fn mode_dispatch() -> Bt {
         ),
         Seq!(ModeIs(BehaviorMode::Stay), world::stay::stay_subtree(),),
         Seq!(ModeIs(BehaviorMode::Grind), world::grind::grind_subtree(),),
+        // GOAP-driven grind: when GOAP's plan step has the GRIND flag
+        // (GrindMobs desire → grind_nearby action), run grind behavior
+        // even outside of explicit Grind mode. This lets ungrouped,
+        // unassigned bots pursue their autonomous grind plan.
+        Seq!(
+            Bt::GoapFlagsActive(StrategyFlags::GRIND),
+            world::grind::grind_subtree(),
+        ),
         Seq!(ModeIs(BehaviorMode::Quest), world::quest::quest_subtree(),),
         Seq!(ModeIs(BehaviorMode::Guard), world::guard::guard_subtree(),),
         // RPG mode is only active if the RPG strategy flag is set; without
@@ -451,7 +476,15 @@ fn maintenance_subtree(buffs: &'static [GroupBuff]) -> Bt {
         MaintainHunterAspect, MaintainPaladinAura,
     };
     Sel!(
-        Seq!(InCombat.not(), Bt::throttle(5_000, Buff(buffs))),
+        // Buffing: fires when GOAP permits it — either no plan (fallback
+        // upkeep) or GOAP's plan has the BUFF flag (BuffGroup desire →
+        // buff_group action → BUFF flag → BT executes). Suppressed only
+        // when GOAP has a different plan (e.g. eat_and_drink).
+        Seq!(
+            InCombat.not(),
+            Bt::GoapPermits(StrategyFlags::BUFF),
+            Bt::throttle(5_000, Buff(buffs)),
+        ),
         // Class-prefs upkeep: each handler self-filters by `ClassPrefs`
         // variant, so only the one matching the bot's class ever does
         // work. Safe to run unconditionally.
@@ -481,7 +514,13 @@ fn maintenance_subtree(buffs: &'static [GroupBuff]) -> Bt {
         // between following master and closing to target). Uses
         // InCombatFsm (not InCombat) because the server combat flag can
         // briefly drop while the bot still has attackers.
-        Seq!(Bt::InCombatFsm.not(), Bt::throttle(2_000, Follow)),
+        // Follow fallback — fires when GOAP permits FOLLOW so active
+        // non-follow plans (eat_and_drink, buff_group) aren't interrupted.
+        Seq!(
+            Bt::InCombatFsm.not(),
+            Bt::GoapPermits(StrategyFlags::FOLLOW),
+            Bt::throttle(2_000, Follow),
+        ),
     )
 }
 

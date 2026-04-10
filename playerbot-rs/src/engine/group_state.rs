@@ -26,7 +26,19 @@ impl BotRole {
     }
 }
 
-/// Encounter-specific role assignments computed by `GroupCoordinator`.
+/// Encounter-specific role assignments — a per-tick snapshot of every
+/// group member classified by role and (for DPS) by range category.
+///
+/// Populated in `bot::tick::sync_encounter_to_group` by iterating
+/// `snap.group_members` and asking the interface for each member's
+/// role + class. Every bot in the group runs this rebuild; because
+/// the input is the same for everyone, they converge on the same
+/// roster without coordination.
+///
+/// Rosters contain members regardless of alive status — the
+/// classification is a stable property of each bot, and consumers
+/// that need live/dead filtering (e.g., `tick_resurrect` picking who
+/// to rez first) check `is_alive` at read time.
 #[derive(Debug, Clone, Default)]
 pub struct EncounterAssignments {
     pub main_tank: Option<UnitHandle>,
@@ -34,7 +46,8 @@ pub struct EncounterAssignments {
     pub healers: Vec<UnitHandle>,
     pub ranged_dps: Vec<UnitHandle>,
     pub melee_dps: Vec<UnitHandle>,
-    /// Special roles keyed by an encounter-specific string (e.g. "`mc_breaker`", "`polarity_switch`")
+    /// Special roles keyed by an encounter-specific string (e.g. "`mc_breaker`", "`polarity_switch`").
+    /// Command-driven — `rebuild` does NOT touch this field.
     pub special: Vec<(String, UnitHandle)>,
 }
 
@@ -45,6 +58,108 @@ impl EncounterAssignments {
             .find(|(r, _)| r == role)
             .map(|(_, h)| *h)
     }
+
+    /// Set or update a special encounter-specific assignment.
+    /// Used by command handlers (e.g. `@bot assign mc_breaker`).
+    pub fn set_special(&mut self, role: &str, handle: UnitHandle) {
+        if let Some(slot) = self.special.iter_mut().find(|(r, _)| r == role) {
+            slot.1 = handle;
+            return;
+        }
+        self.special.push((role.to_string(), handle));
+    }
+
+    /// Clear a specific special-role assignment.
+    pub fn clear_special(&mut self, role: &str) {
+        self.special.retain(|(r, _)| r != role);
+    }
+
+    /// Rebuild the tank/heal/dps rosters from an iterator of
+    /// `(handle, class_id, role_bits)` tuples. `special` is left
+    /// untouched — it is command-driven and persists across ticks.
+    ///
+    /// The first tank encountered becomes `main_tank`; the second
+    /// becomes `off_tank`. Additional tanks are ignored (raid setups
+    /// with > 2 tanks use the `special` slot or the per-bot
+    /// `tank_focus_targets` multi-select).
+    ///
+    /// DPS members are split by class: `Hunter`, `Priest`, `Mage`,
+    /// `Warlock` go into `ranged_dps`; everyone else goes into
+    /// `melee_dps`. The split is deliberately coarse — hybrid classes
+    /// like Shaman/Druid can be either, but we don't know the spec
+    /// at this layer, so we default to melee for ambiguous cases.
+    pub fn rebuild<I>(&mut self, members: I)
+    where
+        I: IntoIterator<Item = (UnitHandle, u8, u8)>,
+    {
+        self.main_tank = None;
+        self.off_tank = None;
+        self.healers.clear();
+        self.ranged_dps.clear();
+        self.melee_dps.clear();
+
+        for (handle, class_id, role_bits) in members {
+            if handle == 0 {
+                continue;
+            }
+            let role = BotRole(role_bits);
+            if role.is_tank() {
+                if self.main_tank.is_none() {
+                    self.main_tank = Some(handle);
+                } else if self.off_tank.is_none() && self.main_tank != Some(handle) {
+                    self.off_tank = Some(handle);
+                }
+                // Fall through — a tank/offspec bot with both tank
+                // and DPS bits can appear in melee_dps too, but we
+                // skip that here to keep rosters clean.
+                continue;
+            }
+            if role.is_heal() {
+                self.healers.push(handle);
+                continue;
+            }
+            if role.is_dps() {
+                if is_ranged_dps_class(class_id) {
+                    self.ranged_dps.push(handle);
+                } else {
+                    self.melee_dps.push(handle);
+                }
+            }
+        }
+    }
+
+    /// Iterate every classified member in rez priority order:
+    /// healers first (a dead healer is the most urgent rez target
+    /// because everyone else will die without heals), then the
+    /// main tank and off-tank, then ranged DPS, then melee DPS.
+    /// `special` assignments are not included — those are covered
+    /// by the canonical rosters.
+    ///
+    /// Dead-vs-alive filtering is the caller's responsibility; the
+    /// roster contains every classified member regardless of state
+    /// so rez logic can hit `get_unit_snapshot` and pick the first
+    /// actually-dead entry.
+    pub fn rez_priority_order(&self) -> impl Iterator<Item = UnitHandle> + '_ {
+        self.healers
+            .iter()
+            .copied()
+            .chain(self.main_tank.into_iter())
+            .chain(self.off_tank.into_iter())
+            .chain(self.ranged_dps.iter().copied())
+            .chain(self.melee_dps.iter().copied())
+    }
+}
+
+/// Classify a class id as ranged DPS for the purpose of splitting
+/// the encounter roster. Hunters, Mages, Warlocks and Priests are
+/// always ranged; everyone else defaults to melee. Hybrid classes
+/// (Shaman, Druid, Paladin) pick their bucket based on spec, but
+/// without spec data at this layer we bucket them as melee —
+/// encounter BTs that need the real split can query the bot's
+/// class prefs or use per-bot positioning.
+fn is_ranged_dps_class(class_id: u8) -> bool {
+    // PlayerClass discriminants: Hunter=3, Priest=5, Mage=8, Warlock=9.
+    matches!(class_id, 3 | 5 | 8 | 9)
 }
 
 /// Shared encounter state visible to every bot in the group.
@@ -683,5 +798,151 @@ mod tests {
         // All expired at 3000ms — new assignment should evict one
         gs.publish_heal_target(HEALER_1, ALLY_2, 3000);
         assert_eq!(gs.healers_on_target(HEALER_2, ALLY_2, 3000), 1);
+    }
+
+    // ── EncounterAssignments rebuild/rez ordering ──────────
+
+    // Class discriminants: Warrior=1, Paladin=2, Hunter=3, Rogue=4,
+    // Priest=5, Shaman=7, Mage=8, Warlock=9, Druid=11.
+    const TANK_WARRIOR: UnitHandle = 0xB001;
+    const TANK_DRUID: UnitHandle = 0xB002;
+    const HEALER_PRIEST: UnitHandle = 0xB101;
+    const HEALER_PALADIN: UnitHandle = 0xB102;
+    const DPS_HUNTER: UnitHandle = 0xB201;
+    const DPS_MAGE: UnitHandle = 0xB202;
+    const DPS_WARLOCK: UnitHandle = 0xB203;
+    const DPS_ROGUE: UnitHandle = 0xB204;
+    const DPS_SHAMAN: UnitHandle = 0xB205;
+
+    #[test]
+    fn rebuild_classifies_tanks_healers_and_dps_by_range() {
+        let mut ea = EncounterAssignments::default();
+        ea.rebuild([
+            (TANK_WARRIOR, 1, BotRole::TANK.0),
+            (HEALER_PRIEST, 5, BotRole::HEAL.0),
+            (DPS_HUNTER, 3, BotRole::DPS.0),
+            (DPS_MAGE, 8, BotRole::DPS.0),
+            (DPS_WARLOCK, 9, BotRole::DPS.0),
+            (DPS_ROGUE, 4, BotRole::DPS.0),
+            (DPS_SHAMAN, 7, BotRole::DPS.0),
+        ]);
+
+        assert_eq!(ea.main_tank, Some(TANK_WARRIOR));
+        assert_eq!(ea.off_tank, None);
+        assert_eq!(ea.healers, vec![HEALER_PRIEST]);
+        // Hunter, Mage, Warlock → ranged. Priest is healer here so not DPS.
+        assert_eq!(ea.ranged_dps, vec![DPS_HUNTER, DPS_MAGE, DPS_WARLOCK]);
+        // Rogue and Shaman default to melee (shaman is hybrid, defaults melee).
+        assert_eq!(ea.melee_dps, vec![DPS_ROGUE, DPS_SHAMAN]);
+    }
+
+    #[test]
+    fn rebuild_fills_main_then_off_tank() {
+        let mut ea = EncounterAssignments::default();
+        ea.rebuild([
+            (TANK_WARRIOR, 1, BotRole::TANK.0),
+            (TANK_DRUID, 11, BotRole::TANK.0),
+            // A 3rd tank is ignored (no room).
+            (0xB003, 2, BotRole::TANK.0),
+        ]);
+
+        assert_eq!(ea.main_tank, Some(TANK_WARRIOR));
+        assert_eq!(ea.off_tank, Some(TANK_DRUID));
+    }
+
+    #[test]
+    fn rebuild_skips_zero_handles() {
+        let mut ea = EncounterAssignments::default();
+        ea.rebuild([
+            (0, 1, BotRole::TANK.0),
+            (TANK_WARRIOR, 1, BotRole::TANK.0),
+            (0, 5, BotRole::HEAL.0),
+            (HEALER_PRIEST, 5, BotRole::HEAL.0),
+        ]);
+
+        assert_eq!(ea.main_tank, Some(TANK_WARRIOR));
+        assert_eq!(ea.healers, vec![HEALER_PRIEST]);
+    }
+
+    #[test]
+    fn rebuild_clears_previous_roster() {
+        let mut ea = EncounterAssignments::default();
+        ea.rebuild([
+            (TANK_WARRIOR, 1, BotRole::TANK.0),
+            (HEALER_PRIEST, 5, BotRole::HEAL.0),
+            (DPS_HUNTER, 3, BotRole::DPS.0),
+        ]);
+        // Second rebuild with a new roster should fully replace.
+        ea.rebuild([
+            (TANK_DRUID, 11, BotRole::TANK.0),
+            (HEALER_PALADIN, 2, BotRole::HEAL.0),
+        ]);
+
+        assert_eq!(ea.main_tank, Some(TANK_DRUID));
+        assert_eq!(ea.off_tank, None);
+        assert_eq!(ea.healers, vec![HEALER_PALADIN]);
+        assert!(ea.ranged_dps.is_empty());
+        assert!(ea.melee_dps.is_empty());
+    }
+
+    #[test]
+    fn rebuild_preserves_special_assignments() {
+        let mut ea = EncounterAssignments::default();
+        ea.set_special("mc_breaker", 0xBEEF);
+        ea.rebuild([(TANK_WARRIOR, 1, BotRole::TANK.0)]);
+        assert_eq!(ea.get_special("mc_breaker"), Some(0xBEEF));
+    }
+
+    #[test]
+    fn rez_priority_order_lists_healers_then_tanks_then_dps() {
+        let mut ea = EncounterAssignments::default();
+        ea.rebuild([
+            (TANK_WARRIOR, 1, BotRole::TANK.0),
+            (TANK_DRUID, 11, BotRole::TANK.0),
+            (HEALER_PRIEST, 5, BotRole::HEAL.0),
+            (HEALER_PALADIN, 2, BotRole::HEAL.0),
+            (DPS_HUNTER, 3, BotRole::DPS.0),
+            (DPS_ROGUE, 4, BotRole::DPS.0),
+        ]);
+
+        let order: Vec<UnitHandle> = ea.rez_priority_order().collect();
+        assert_eq!(
+            order,
+            vec![
+                HEALER_PRIEST,  // healers first
+                HEALER_PALADIN,
+                TANK_WARRIOR,   // then main tank
+                TANK_DRUID,     // then off-tank
+                DPS_HUNTER,     // ranged DPS
+                DPS_ROGUE,      // melee DPS
+            ]
+        );
+    }
+
+    #[test]
+    fn rez_priority_order_handles_empty_roster() {
+        let ea = EncounterAssignments::default();
+        assert_eq!(ea.rez_priority_order().count(), 0);
+    }
+
+    #[test]
+    fn special_set_get_and_clear() {
+        let mut ea = EncounterAssignments::default();
+        assert_eq!(ea.get_special("polarity"), None);
+
+        ea.set_special("polarity", 0xAA);
+        assert_eq!(ea.get_special("polarity"), Some(0xAA));
+
+        // Update existing role reuses slot instead of appending.
+        ea.set_special("polarity", 0xBB);
+        assert_eq!(ea.get_special("polarity"), Some(0xBB));
+        assert_eq!(ea.special.len(), 1);
+
+        ea.set_special("breaker", 0xCC);
+        assert_eq!(ea.special.len(), 2);
+
+        ea.clear_special("polarity");
+        assert_eq!(ea.get_special("polarity"), None);
+        assert_eq!(ea.get_special("breaker"), Some(0xCC));
     }
 }

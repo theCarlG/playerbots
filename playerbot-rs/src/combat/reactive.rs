@@ -10,7 +10,7 @@
 /// selector containing both `Bt` enum nodes and the class rotation.
 use crate::bot::settings::StrategyFlags;
 use crate::bot::state::PlayerClass;
-use crate::engine::bt::Bt::{self, ShouldFlee, FleeToSafe, TargetCastingInterruptible, Interrupt, IsClass, DispelParty, ResurrectParty, IsTank, InCombat, PullingAggro, ThreatDump, StrategyEnabled, PullBack, PreHeal, HealInterrupt, KiteFromTarget, CloseToTarget, MaintainRange, MoveBehind, MarkRtiPreferred, HasFocusTarget, FocusAttack, TankRotateTargets, TankPickupAdds, AssistLeader, ProtectAttacker, ReactivityIs, AttackNearest, HasAttackers};
+use crate::engine::bt::Bt::{self, ShouldFlee, FleeToSafe, TargetCastingInterruptible, Interrupt, IsClass, DispelParty, ResurrectParty, IsTank, InCombat, PullingAggro, ThreatDump, StrategyEnabled, PullBack, PreHeal, HealInterrupt, KiteFromTarget, CloseToTarget, MaintainRange, MoveBehind, MarkRtiPreferred, HasFocusTarget, FocusAttack, TankPickupAdds, AttackRtiPriority, AssistLeader, ProtectAttacker, ReactivityIs, AttackNearest, HasAttackers};
 use crate::{Sel, Seq};
 
 /// Flee on an explicit `flee` command or when HP drops below the bot's
@@ -160,37 +160,46 @@ pub fn mark_rti_subtree() -> Bt {
 }
 
 /// Target selection based on combat order and settings.
+///
+/// Focus targets, RTI assignments, and tank duties always run (command
+/// overrides). The generic assist/protect/aggressive arms are suppressed
+/// when GOAP has an active plan — GOAP drives target acquisition through
+/// its own actions. Attack-back fallback always runs as a safety net.
 pub fn targeting_subtree() -> Bt {
     Sel!(
-        // Focus target override — explicit "attack this" command.
+        // Focus target override — explicit "attack this" command. Always runs.
         Seq!(HasFocusTarget, FocusAttack),
-        // Tank/off-tank: rotate between assigned RTI focus targets.
-        // No TANK flag gate — any bot with assigned tank targets
-        // (via `tank <icon>`) will rotate them. TankRotateTargets
-        // returns Failure when the bot has no assignments.
-        TankRotateTargets,
-        // Tank: pick up loose adds targeting non-tanks.
+        // Unified RTI priority for every class/role. This leaf handles
+        // three phases in order: (a) the bot's assigned RTI icons from
+        // `GroupCoordination::tank_focus_targets` walked in canonical
+        // kill order — tank-flagged bots also run cooperation/taunt
+        // logic so multiple tanks don't steal threat from each other;
+        // (b) the bot's `preferred_rti_icon` as a fallback when it has
+        // no explicit assignments; (c) the canonical kill order
+        // (skull → cross → square → moon → triangle → diamond → circle
+        // → star) to engage the first marked mob. Runs BEFORE the
+        // generic assist/protect/aggressive arms so raid marks always
+        // outrank a leader's arbitrary current selection.
+        AttackRtiPriority,
+        // Tank: pick up loose adds targeting non-tanks. Always runs.
         Seq!(
             StrategyEnabled(StrategyFlags::TANK),
             Bt::throttle(1_000, TankPickupAdds),
         ),
-        // Assist: attack leader/tank's target.
-        Seq!(StrategyEnabled(StrategyFlags::ASSIST), AssistLeader,),
-        // Protect: attack what attacks protect target.
-        Seq!(StrategyEnabled(StrategyFlags::PROTECT), ProtectAttacker,),
-        // Aggressive: attack nearest hostile (bot reaches out and grabs
-        // the closest mob even if nothing is currently hitting it).
+        // GOAP-gated: assist/protect/aggressive only when GOAP has no plan.
+        // When GOAP is active, it drives target selection through acquire_target.
         Seq!(
-            ReactivityIs(crate::bot::settings::Reactivity::Aggressive),
-            AttackNearest,
+            Bt::GoapHasPlan.not(),
+            Sel!(
+                Seq!(StrategyEnabled(StrategyFlags::ASSIST), AssistLeader),
+                Seq!(StrategyEnabled(StrategyFlags::PROTECT), ProtectAttacker),
+                Seq!(
+                    ReactivityIs(crate::bot::settings::Reactivity::Aggressive),
+                    AttackNearest,
+                ),
+            ),
         ),
-        // Default attack-back fallback. Whenever anything is hitting the
-        // bot and none of the higher-priority arms produced a target
-        // (tank idle, assist leader has no target, protect list empty),
-        // any non-passive bot should at minimum fight its attackers back
-        // instead of standing still getting killed. `ShouldEngage`
-        // upstream already ensured the bot is allowed to be in combat,
-        // so we can attack unconditionally here.
+        // Default attack-back fallback — always runs as safety net.
         Seq!(HasAttackers, AttackNearest),
     )
 }

@@ -54,6 +54,11 @@ pub struct BeliefSet {
     pub zone_id: u32,
     pub in_instance: bool,
     pub encounter_active: bool,
+    /// Boss HP percent (0..=100). 100 when no encounter or boss unresolved.
+    /// Populated from `resolve_boss_handle()` before `update()` runs; read by
+    /// execute-phase desires and by `from_beliefs()` for the GOAP `BossBelow*`
+    /// atoms.
+    pub boss_hp_pct: u8,
 
     // ── Resources ───────────────────────────────────────────
     pub has_food: bool,
@@ -88,6 +93,7 @@ impl Default for BeliefSet {
             zone_id: 0,
             in_instance: false,
             encounter_active: false,
+            boss_hp_pct: 100,
             has_food: false,
             has_drink: false,
             durability_low: false,
@@ -166,16 +172,13 @@ pub fn update(beliefs: &mut BeliefSet, snap: &BotWorldSnapshot, attackers: &[Uni
 
     // Target state
     beliefs.has_target = snap.self_.current_target != 0;
-    // NOTE: target_hp_pct requires a unit snapshot query — for now we leave
-    // it as-is and populate it from TickContext in a later phase when the
-    // BDI evaluator has access to the interface.
-    // beliefs.target_hp_pct stays at its previous value.
+    // target_hp_pct is populated by populate_group_beliefs() in tick.rs
+    // which runs before this function and has access to the BotInterface.
 
-    // Group state (simplified — group member snapshots need interface calls;
-    // for Phase 1 we derive what we can from the world snapshot alone)
+    // Group size from snapshot; per-member fields (group_hp_min_pct,
+    // group_injured_count, group_dead_count, tank_alive, healer_alive)
+    // are populated by populate_group_beliefs() in tick.rs.
     beliefs.group_size = snap.group_size;
-    // TODO(phase2): populate group_hp_min_pct, group_injured_count,
-    // group_dead_count, tank_alive, healer_alive from group member snapshots
 
     // Environment
     beliefs.zone_id = snap.zone_id;
@@ -225,7 +228,9 @@ pub fn diff(current: &BeliefSet, prev: &BeliefSet) -> BeliefDiff {
         d |= BeliefDiff::COMBAT_CHANGED;
     }
 
-    if current.encounter_active != prev.encounter_active {
+    if current.encounter_active != prev.encounter_active
+        || current.boss_hp_pct.abs_diff(prev.boss_hp_pct) > 5
+    {
         d |= BeliefDiff::ENCOUNTER_CHANGED;
     }
 

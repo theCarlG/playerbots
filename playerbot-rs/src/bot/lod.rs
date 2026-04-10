@@ -79,13 +79,16 @@ pub fn determine_lod(bot: &BotState) -> AiLod {
         return AiLod::Full;
     }
 
-    // Check if any nearby unit is a human player.
-    // The FFI provides unit_kind (1 = player). We check the nearby list
-    // which is already populated from the scan.
+    // Check if any nearby unit is likely a human player.
+    // A non-bot player has npc_entry == 0 (it's a player character) and
+    // we don't manage it (it's not in our bot pool). Since we can't
+    // cheaply query the bot pool from here, we use a heuristic: any
+    // player in the group with a master (master_guid != 0 on the group
+    // member) is managed, but the master itself is human.
     //
-    // NOTE: Phase 5 will add a proper is_human_player() check via FFI.
-    // For Phase 1, bots without a master default to Background/Dormant.
-    let has_human_nearby = false; // TODO(phase5): check nearby_units for human players
+    // Fallback: if the bot is in a group, it's likely near a human.
+    // Solo bots without a master or group default to Background/Dormant.
+    let has_human_nearby = bot.snap.group_size > 0;
 
     if has_human_nearby {
         return AiLod::Active;

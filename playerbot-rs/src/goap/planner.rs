@@ -10,7 +10,7 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashSet};
 
-use super::action::{ActionId, ActionMask, GoapAction};
+use super::action::{ActionId, ActionMask, GoapAction, CLASS_ANY, ROLE_ANY};
 use super::plan::{GoapPlan, MAX_PLAN_STEPS};
 use super::world_state::WorldState;
 
@@ -179,6 +179,8 @@ mod tests {
                 cost: 1,
                 bt_flags: StrategyFlags::NONE,
                 satisfies: 0,
+                role_mask: ROLE_ANY,
+                class_mask: CLASS_ANY,
             },
             GoapAction {
                 id: ActionId(1),
@@ -190,6 +192,8 @@ mod tests {
                 cost: 2,
                 bt_flags: StrategyFlags::NONE,
                 satisfies: 0,
+                role_mask: ROLE_ANY,
+                class_mask: CLASS_ANY,
             },
             GoapAction {
                 id: ActionId(2),
@@ -202,6 +206,8 @@ mod tests {
                 cost: 3,
                 bt_flags: StrategyFlags::NONE,
                 satisfies: 0,
+                role_mask: ROLE_ANY,
+                class_mask: CLASS_ANY,
             },
         ]
     }

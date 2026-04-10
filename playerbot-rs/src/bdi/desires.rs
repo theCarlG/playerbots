@@ -279,10 +279,15 @@ pub fn score_desires(
         }
     }
 
-    // Encounter duties
+    // Encounter duties. Raid mechanics MUST outrank baseline combat desires
+    // (TankBoss 0.80, HealGroup 0.80, KillTarget 0.70*aggression). Boss
+    // one-shots don't care that you were mid-rotation — positioning and
+    // scripted duties take priority. Caution slightly modulates positioning
+    // so aggro personalities are still willing to eat a hit for dps uptime.
     if encounter_active {
-        scores[DesireKind::PositionForMechanic as usize].urgency = 0.75;
-        scores[DesireKind::ExecuteEncounterDuty as usize].urgency = 0.7;
+        scores[DesireKind::PositionForMechanic as usize].urgency =
+            (0.92 * personality.caution).max(0.85);
+        scores[DesireKind::ExecuteEncounterDuty as usize].urgency = 0.9;
     }
 
     // Group coordination: suppress desires that too many groupmates already have.

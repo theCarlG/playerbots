@@ -117,6 +117,13 @@ impl<'a> TickContext<'a> {
         }
     }
 
+    /// True if GOAP has an active plan step with strategy flags set.
+    /// BT nodes that overlap with GOAP (follow, eat/drink, buff, etc.)
+    /// check this to suppress themselves and let GOAP drive.
+    pub fn has_goap_plan(&self) -> bool {
+        self.goap_flags != StrategyFlags::NONE
+    }
+
     /// True if this bot is currently in combat.
     pub fn in_combat(&self) -> bool {
         self.snap.self_unit().in_combat

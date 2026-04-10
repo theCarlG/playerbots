@@ -1492,11 +1492,12 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             });
             if let Some(unit) = t {
                 bot.interface.attack(unit);
-                // For bots with tank rotation assignments, don't set
-                // focus_target — it overrides TankRotateTargets and
-                // makes the tank ignore its other assigned marks. The
-                // immediate attack() call engages the target this tick;
-                // on subsequent ticks TankRotateTargets handles rotation.
+                // For bots with RTI multi-select assignments, don't
+                // set focus_target — it overrides AttackRtiPriority
+                // and makes the bot ignore its other assigned marks.
+                // The immediate attack() call engages the target this
+                // tick; on subsequent ticks AttackRtiPriority walks
+                // the assigned icons in kill order.
                 let has_tank_assignments = bot
                     .group_state
                     .as_ref()
@@ -1529,12 +1530,31 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                 return;
             }
             let t = target.or_else(|| {
+                // 1) Tank with assigned tank_focus_targets — pull the
+                //    first assigned RTI icon that resolves to a live
+                //    attackable mob. This is how `@all pull` coordinates
+                //    multi-tank pulls after `@all tank <icon>` assignments.
+                if let Some(gh) = &bot.group_state
+                    && let Ok(gs) = gh.state().try_read()
+                {
+                    let mut icons = [0u8; 8];
+                    let count = gs.coordination.tank_target_icons(bot.handle, &mut icons);
+                    for icon in icons.iter().take(count).copied() {
+                        if let Some(unit) = bot.interface.get_unit_with_raid_icon(icon)
+                            && bot.interface.is_attackable(unit)
+                        {
+                            return Some(unit);
+                        }
+                    }
+                }
+                // 2) Master's current target.
                 if let Some(master) = bot.master_guid.filter(|&g| g != 0) {
                     let ms = bot.interface.get_unit_snapshot(master);
                     if ms.current_target != 0 {
                         return Some(ms.current_target);
                     }
                 }
+                // 3) Self current target / first attacker.
                 let t = bot.snap.self_.current_target;
                 if t != 0 {
                     Some(t)

@@ -46,7 +46,7 @@ pub fn find_heal_target(ctx: &TickContext<'_>, threshold: f32) -> Option<UnitHan
         if h == 0 || h == ctx.bot_handle {
             continue;
         }
-        // Skip targets already claimed by another healer.
+        // Skip targets already claimed by another healer (hard lock).
         if ctx.is_heal_claimed_by_other(h) {
             continue;
         }
@@ -54,7 +54,14 @@ pub fn find_heal_target(ctx: &TickContext<'_>, threshold: f32) -> Option<UnitHan
         if !snap.is_alive || snap.max_health == 0 {
             continue;
         }
-        let pct = snap.health as f32 / snap.max_health as f32;
+        let mut pct = snap.health as f32 / snap.max_health as f32;
+        // Soft deprioritize: if other healers are already assigned to this
+        // target (via HealAssignment tracking), inflate the apparent HP% so
+        // uncovered targets are preferred. Each existing healer adds 20%.
+        if let Some(gs) = ctx.group_state {
+            let others = gs.healers_on_target(ctx.bot_handle, h, ctx.server_time_ms);
+            pct += others as f32 * 0.20;
+        }
         if pct < best_pct {
             best_pct = pct;
             best = Some(h);
@@ -85,7 +92,12 @@ pub fn find_injured_party_member(ctx: &TickContext<'_>, threshold: f32) -> Optio
         if !snap.is_alive || snap.max_health == 0 {
             continue;
         }
-        let pct = snap.health as f32 / snap.max_health as f32;
+        let mut pct = snap.health as f32 / snap.max_health as f32;
+        // Soft deprioritize targets with existing healer assignments.
+        if let Some(gs) = ctx.group_state {
+            let others = gs.healers_on_target(ctx.bot_handle, h, ctx.server_time_ms);
+            pct += others as f32 * 0.20;
+        }
         if pct < best_pct {
             best_pct = pct;
             best = Some(h);

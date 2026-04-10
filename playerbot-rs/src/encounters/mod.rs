@@ -82,6 +82,17 @@ pub trait EncounterFsm: Send {
         0
     }
 
+    /// World position (x, y, z) the bot should move to for the current
+    /// "safe zone" in this phase. Returned only when the phase has a
+    /// well-defined movement target (Heigan dance, Thaddius polarity).
+    /// `None` falls back to generic `get_safe_position()`.
+    ///
+    /// The encounter owns the coordinate table so the BT stays generic.
+    /// Called from `Bt::MoveToSafeZone` via `ctx.encounter.safe_zone_position()`.
+    fn safe_zone_position(&self) -> Option<(f32, f32, f32)> {
+        None
+    }
+
     /// Returns the BT override for the current phase, if any.
     ///
     /// When `Some`, this BT runs instead of the normal combat rotation.
@@ -269,5 +280,13 @@ where
 
     fn phase_bt(&self, fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         self.active_boss.as_ref().and_then(|b| b.phase_bt(fsm))
+    }
+
+    fn safe_zone_hint(&self) -> u8 {
+        self.active_boss.as_ref().map_or(0, |b| b.safe_zone_hint())
+    }
+
+    fn safe_zone_position(&self) -> Option<(f32, f32, f32)> {
+        self.active_boss.as_ref().and_then(|b| b.safe_zone_position())
     }
 }

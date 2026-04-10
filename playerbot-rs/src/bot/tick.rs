@@ -95,12 +95,19 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
 
     // ── BDI + GOAP evaluation ────────────────────────────────────────
 
-    // 4.7 Update beliefs from snapshot (every tick, ~80ns).
+    // 4.7 Populate group + target beliefs from unit snapshots (FFI calls).
+    populate_group_beliefs(bot);
+
+    // 4.7b Update beliefs from snapshot (every tick, ~80ns).
     crate::bdi::beliefs::update(&mut bot.bdi.beliefs, &bot.snap, &bot.attackers);
     bot.bdi.beliefs.encounter_active = bot
         .encounter
         .as_ref()
         .is_some_and(|e| e.is_active());
+    // Boss HP for execute-phase desires and BossBelow* GOAP atoms.
+    // Uses the same resolver as the encounter FSM so HP-gated phase
+    // transitions agree with belief-based desire scoring.
+    bot.bdi.beliefs.boss_hp_pct = (resolve_boss_hp_pct(bot) * 100.0) as u8;
 
     // 4.8 BDI: evaluate desires and select/maintain intention.
     //     Gated by LOD tier interval (Full: 500ms, Active: 2s, Background: 5s, Dormant: never).
@@ -133,17 +140,25 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         );
     }
 
-    // 4.9 GOAP: plan if intention changed or plan is stale.
-    if !minimal && bot.bdi.needs_replan(now_ms) {
-        let desire = bot.bdi.active_desire();
+    // 4.9 GOAP: advance plan steps whose effects are now satisfied, then
+    //     replan if intention changed or plan is stale/complete.
+    if !minimal {
         let current_ws = crate::goap::world_state::from_beliefs(&bot.bdi.beliefs);
-        if let Some(plan) = crate::goap::plan_for_intention(
-            desire,
-            current_ws,
-            &bot.bdi.available_actions,
-            now_ms,
-        ) {
-            bot.bdi.plan_cache.plan = plan;
+        // Natural step advancement — when BT has fulfilled a step's
+        // effects (e.g. `acquire_target` sets HasTarget), auto-advance.
+        bot.bdi
+            .plan_cache
+            .try_advance_completed_steps(current_ws, crate::goap::actions::registry());
+        if bot.bdi.needs_replan(now_ms) {
+            let desire = bot.bdi.active_desire();
+            if let Some(plan) = crate::goap::plan_for_intention(
+                desire,
+                current_ws,
+                &bot.bdi.available_actions,
+                now_ms,
+            ) {
+                bot.bdi.plan_cache.plan = plan;
+            }
         }
     }
 
@@ -346,6 +361,20 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
         bot.bdi.intention_changed = true;
     }
 
+    // 6c. Publish heal target for soft coordination (HealAssignment tracking).
+    // Healers publish their current target so other healers can deprioritize
+    // already-covered allies and spread heals across the group.
+    if bot.role.is_heal() {
+        let target = bot.snap.self_.current_target;
+        if target != 0 {
+            if let Some(ref gh) = bot.group_state {
+                if let Ok(mut gs) = gh.state().try_write() {
+                    gs.publish_heal_target(bot.handle as u64, target, now_ms);
+                }
+            }
+        }
+    }
+
     if monitor_active {
         // Log BT path changes (which leaf node was reached).
         if let Some(path) = monitor_path
@@ -438,21 +467,74 @@ fn broadcast_ktm_threat(bot: &mut BotState, now_ms: u64) {
     bot.last_ktm_threat_time_ms = now_ms;
 }
 
+/// Resolve the active boss unit handle by `npc_entry` from the encounter FSM.
+///
+/// Scans, in priority order: current target, attackers, nearby units. Returns
+/// `0` when there is no encounter active, no known boss entry, or no match.
+/// This is used by HP polling and belief population so HP-gated phase
+/// transitions fire correctly for bots that aren't directly targeting the boss.
+fn resolve_boss_handle(bot: &BotState) -> crate::ffi::UnitHandle {
+    let Some(enc) = bot.encounter.as_ref() else {
+        return 0;
+    };
+    let boss_entry = enc.boss_entry();
+    if boss_entry == 0 {
+        return 0;
+    }
+    // 1. Current target
+    let target = bot.snap.self_.current_target;
+    if target != 0 {
+        let s = bot.interface.get_unit_snapshot(target);
+        if s.npc_entry == boss_entry {
+            return target;
+        }
+    }
+    // 2. Attackers
+    for &h in &bot.attackers {
+        if h == 0 {
+            continue;
+        }
+        let s = bot.interface.get_unit_snapshot(h);
+        if s.npc_entry == boss_entry {
+            return h;
+        }
+    }
+    // 3. Nearby units (most expensive — bounded by LOD scan range)
+    for &h in &bot.nearby_units {
+        if h == 0 {
+            continue;
+        }
+        let s = bot.interface.get_unit_snapshot(h);
+        if s.npc_entry == boss_entry {
+            return h;
+        }
+    }
+    0
+}
+
+/// Read boss HP as a fraction (0.0..=1.0) from the resolved boss handle.
+/// Returns 1.0 when no boss is resolvable so HP-gated transitions don't fire
+/// spuriously on the idle value.
+fn resolve_boss_hp_pct(bot: &BotState) -> f32 {
+    let handle = resolve_boss_handle(bot);
+    if handle == 0 {
+        return 1.0;
+    }
+    let s = bot.interface.get_unit_snapshot(handle);
+    if s.max_health == 0 {
+        return 1.0;
+    }
+    (s.health as f32 / s.max_health as f32).clamp(0.0, 1.0)
+}
+
 fn process_events(bot: &mut BotState, _now_ms: u64) {
     // Determine boss HP for FSM updates.
-    let boss_hp_pct = {
-        let target = bot.snap.self_.current_target;
-        if target != 0 {
-            let snap = bot.interface.get_unit_snapshot(target);
-            if snap.max_health > 0 {
-                snap.health as f32 / snap.max_health as f32
-            } else {
-                1.0
-            }
-        } else {
-            1.0
-        }
-    };
+    //
+    // The encounter FSM needs HP of the *boss* — not whatever the bot is
+    // currently targeting. A DPS bot might target an add, a healer might
+    // target the tank, etc. Use the encounter's boss entry to find the
+    // correct unit, scanning attackers, current target, and nearby units.
+    let boss_hp_pct = resolve_boss_hp_pct(bot);
 
     let now_ms = bot.snap.server_time_ms;
 
@@ -512,11 +594,22 @@ fn process_events(bot: &mut BotState, _now_ms: u64) {
         enc.update(&EncounterEvent::None, boss_hp_pct, now_ms);
         // Write encounter hints to blackboard for BT nodes.
         use crate::engine::blackboard::{Key, Value};
+        // Current phase — read by phase-gated BT leaves and overlay trees.
+        bot.blackboard
+            .set(Key::CurrentEncounterPhase, Value::U32(enc.phase_id()));
         let zone = enc.safe_zone_hint();
         if zone > 0 {
             bot.blackboard
                 .set(Key::EncounterSafeZone, Value::U32(zone as u32));
+        } else {
+            bot.blackboard.clear(Key::EncounterSafeZone);
         }
+    } else {
+        // No encounter — clear stale phase/zone blackboard entries so
+        // gated BT leaves don't read values from a previous encounter.
+        use crate::engine::blackboard::Key;
+        bot.blackboard.clear(Key::CurrentEncounterPhase);
+        bot.blackboard.clear(Key::EncounterSafeZone);
     }
 
     // Boss detection: when the encounter FSM has no active boss yet, scan
@@ -673,6 +766,30 @@ fn sync_encounter_to_group(bot: &mut BotState, now_ms: u64) {
             gs.coordination.heal_priority[0] = mt;
         }
 
+    // Rebuild the shared EncounterAssignments roster from the current
+    // group snapshot. Every bot runs this — the input (per-member
+    // class + role from get_unit_snapshot) is deterministic across
+    // bots, so all group members converge on the same roster without
+    // further coordination.
+    //
+    // Cost: ~50ns per get_unit_snapshot × up-to-40 members ≈ 2µs,
+    // negligible next to the belief population that already runs this
+    // tick. We iterate directly instead of collecting into a Vec so
+    // the rebuild consumes a zero-alloc iterator.
+    {
+        let size = bot.snap.group_size as usize;
+        let cap = bot.snap.group_members.len();
+        let members = bot.snap.group_members[..size.min(cap)]
+            .iter()
+            .copied()
+            .filter(|&h| h != 0)
+            .map(|h| {
+                let us = bot.interface.get_unit_snapshot(h);
+                (h, us.class_id, us.role)
+            });
+        gs.assignments.rebuild(members);
+    }
+
     // Publish this bot's BDI desire to the group for coordination.
     gs.publish_desire(bot.handle, bot.bdi.active_desire() as u8);
 
@@ -681,6 +798,83 @@ fn sync_encounter_to_group(bot: &mut BotState, now_ms: u64) {
     if now_ms.saturating_sub(gs.last_computed_ms) >= 5000 {
         gs.encounter.claims.gc(now_ms);
         gs.last_computed_ms = now_ms;
+    }
+}
+
+/// Populate group + target beliefs from unit snapshots.
+///
+/// Iterates group members and calls `get_unit_snapshot()` per live member to
+/// fill group-level belief fields (min HP%, injured count, dead count,
+/// tank/healer alive). Also fills target HP% from the current target snapshot.
+///
+/// Called before `beliefs::update()` so the derived fields (`party_needs_heals`,
+/// `party_needs_rez`) incorporate group data.
+///
+/// Cost: ~50ns per `get_unit_snapshot()` × 40 members max = ~2µs worst case.
+fn populate_group_beliefs(bot: &mut BotState) {
+    use crate::ffi::BotRole;
+
+    let beliefs = &mut bot.bdi.beliefs;
+    let size = bot.snap.group_size as usize;
+
+    // Reset group fields to defaults before accumulating.
+    beliefs.group_hp_min_pct = 100;
+    beliefs.group_injured_count = 0;
+    beliefs.group_dead_count = 0;
+    beliefs.tank_alive = false;
+    beliefs.healer_alive = false;
+    beliefs.tank_hp_pct = 100;
+
+    if size > 0 {
+        let cap = bot.snap.group_members.len();
+        for &h in &bot.snap.group_members[..size.min(cap)] {
+            if h == 0 || h == bot.handle as u64 {
+                continue;
+            }
+            let us = bot.interface.get_unit_snapshot(h);
+
+            if !us.is_alive {
+                beliefs.group_dead_count = beliefs.group_dead_count.saturating_add(1);
+                continue;
+            }
+
+            let hp_pct = if us.max_health > 0 {
+                ((us.health as u64 * 100) / us.max_health as u64).min(100) as u8
+            } else {
+                0
+            };
+
+            if hp_pct < beliefs.group_hp_min_pct {
+                beliefs.group_hp_min_pct = hp_pct;
+            }
+            if hp_pct < 80 {
+                beliefs.group_injured_count = beliefs.group_injured_count.saturating_add(1);
+            }
+
+            let role = BotRole(us.role);
+            if role.is_tank() {
+                beliefs.tank_alive = true;
+                if hp_pct < beliefs.tank_hp_pct {
+                    beliefs.tank_hp_pct = hp_pct;
+                }
+            }
+            if role.is_heal() {
+                beliefs.healer_alive = true;
+            }
+        }
+    }
+
+    // Target HP from unit snapshot.
+    let target = bot.snap.self_.current_target;
+    if target != 0 {
+        let ts = bot.interface.get_unit_snapshot(target);
+        beliefs.target_hp_pct = if ts.max_health > 0 {
+            ((ts.health as u64 * 100) / ts.max_health as u64).min(100) as u8
+        } else {
+            0
+        };
+    } else {
+        beliefs.target_hp_pct = 0;
     }
 }
 
@@ -697,6 +891,16 @@ fn on_fsm_exit(bot: &mut BotState, prev: ActiveFsm) {
             bot.blackboard.clear(Key::LastAttackTarget);
             bot.blackboard.clear(Key::IsPulling);
             bot.settings.focus_target = None;
+
+            // Clear heal target tracking so stale assignments don't
+            // persist into the next combat.
+            if bot.role.is_heal() {
+                if let Some(ref gh) = bot.group_state {
+                    if let Ok(mut gs) = gh.state().try_write() {
+                        gs.clear_heal_target(bot.handle as u64);
+                    }
+                }
+            }
 
             // Cancel feign death if the hunter is still lying down.
             // Feign death applies an aura that persists until manually

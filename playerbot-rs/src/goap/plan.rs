@@ -78,6 +78,47 @@ pub struct PlanCache {
 const PLAN_STALE_MS: u64 = 5_000;
 
 impl PlanCache {
+    /// Advance the plan if the current step's effects are satisfied by
+    /// the current world state. This is how plans naturally progress:
+    /// as the BT executes the action, the world state updates, and on
+    /// the next tick we detect the effect and move to the next step.
+    ///
+    /// Returns the number of steps advanced (usually 0 or 1, but can
+    /// cascade if multiple steps are already satisfied — e.g. a plan
+    /// created stale that now overlaps with current state).
+    ///
+    /// Should be called each tick after belief refresh and before
+    /// `needs_replan`.
+    pub fn try_advance_completed_steps(
+        &mut self,
+        current_ws: WorldState,
+        registry: &[super::action::GoapAction],
+    ) -> u8 {
+        let mut advanced: u8 = 0;
+        while let Some(action_id) = self.plan.current_action() {
+            let Some(action) = registry.get(action_id.0 as usize) else {
+                break;
+            };
+            // Step is complete when all its effect_set bits are now true
+            // in the current world state AND all effect_clear bits are
+            // now false. Zero-effect actions never auto-advance (must be
+            // explicitly signaled via GoapStepComplete).
+            if action.effect_set == 0 && action.effect_clear == 0 {
+                break;
+            }
+            let set_ok = action.effect_set == 0
+                || (current_ws.0 & action.effect_set) == action.effect_set;
+            let clear_ok = action.effect_clear == 0
+                || (current_ws.0 & action.effect_clear) == 0;
+            if !(set_ok && clear_ok) {
+                break;
+            }
+            self.plan.advance();
+            advanced = advanced.saturating_add(1);
+        }
+        advanced
+    }
+
     /// Check if the cached plan needs replanning.
     ///
     /// Triggers:
@@ -143,6 +184,8 @@ mod tests {
             cost: 10,
             bt_flags: StrategyFlags::NONE,
             satisfies: 0,
+            role_mask: crate::goap::action::ROLE_ANY,
+            class_mask: crate::goap::action::CLASS_ANY,
         }
     }
 
@@ -271,5 +314,92 @@ mod tests {
         // Current WS has HasTarget — precondition met
         let current = WorldState::with(Atom::HasTarget);
         assert!(!cache.needs_replan(current, 2000, &[action]));
+    }
+
+    // ── try_advance_completed_steps tests ──────────────────────
+
+    #[test]
+    fn advance_when_effect_satisfied() {
+        // Two-step plan: acquire_target (effect HasTarget) → attack (effect TargetDead)
+        let acquire = make_action(0, 0, 1u64 << Atom::HasTarget as u8);
+        let attack = make_action(1, 0, 1u64 << Atom::TargetDead as u8);
+        let registry = [acquire, attack];
+        let mut cache = PlanCache {
+            plan: GoapPlan {
+                steps: [ActionId(0), ActionId(1), ActionId(0), ActionId(0),
+                        ActionId(0), ActionId(0), ActionId(0), ActionId(0)],
+                len: 2,
+                current_step: 0,
+                goal: WorldState::with(Atom::TargetDead),
+                created_at_ms: 0,
+            },
+            planned_world_state: WorldState::default(),
+        };
+        // Simulate BT fulfilling acquire_target — HasTarget now set
+        let ws = WorldState::with(Atom::HasTarget);
+        let advanced = cache.try_advance_completed_steps(ws, &registry);
+        assert_eq!(advanced, 1, "should advance acquire_target");
+        assert_eq!(cache.plan.current_step, 1);
+    }
+
+    #[test]
+    fn no_advance_when_effect_not_met() {
+        let acquire = make_action(0, 0, 1u64 << Atom::HasTarget as u8);
+        let registry = [acquire];
+        let mut cache = PlanCache {
+            plan: make_plan(1, 0, 0, WorldState::with(Atom::HasTarget)),
+            planned_world_state: WorldState::default(),
+        };
+        // World state still empty
+        let advanced = cache.try_advance_completed_steps(WorldState::default(), &registry);
+        assert_eq!(advanced, 0);
+        assert_eq!(cache.plan.current_step, 0);
+    }
+
+    #[test]
+    fn advance_cascades_multiple_steps() {
+        let step_a = make_action(0, 0, 1u64 << Atom::HasTarget as u8);
+        let step_b = make_action(1, 0, 1u64 << Atom::TargetInMeleeRange as u8);
+        let registry = [step_a, step_b];
+        let mut cache = PlanCache {
+            plan: GoapPlan {
+                steps: [ActionId(0), ActionId(1), ActionId(0), ActionId(0),
+                        ActionId(0), ActionId(0), ActionId(0), ActionId(0)],
+                len: 2,
+                current_step: 0,
+                goal: WorldState::default(),
+                created_at_ms: 0,
+            },
+            planned_world_state: WorldState::default(),
+        };
+        // Both effects now satisfied → advance twice
+        let ws = WorldState::with(Atom::HasTarget) | WorldState::with(Atom::TargetInMeleeRange);
+        let advanced = cache.try_advance_completed_steps(ws, &registry);
+        assert_eq!(advanced, 2);
+        assert!(cache.plan.is_complete());
+    }
+
+    #[test]
+    fn advance_stops_at_effectless_action() {
+        // An action with no effects can't auto-advance (must use GoapStepComplete signal)
+        let a = make_action(0, 0, 1u64 << Atom::HasTarget as u8);
+        let effectless = make_action(1, 0, 0); // no effect
+        let registry = [a, effectless];
+        let mut cache = PlanCache {
+            plan: GoapPlan {
+                steps: [ActionId(0), ActionId(1), ActionId(0), ActionId(0),
+                        ActionId(0), ActionId(0), ActionId(0), ActionId(0)],
+                len: 2,
+                current_step: 0,
+                goal: WorldState::default(),
+                created_at_ms: 0,
+            },
+            planned_world_state: WorldState::default(),
+        };
+        let ws = WorldState::with(Atom::HasTarget);
+        let advanced = cache.try_advance_completed_steps(ws, &registry);
+        // Only first action advances; second has no effect so won't auto-advance
+        assert_eq!(advanced, 1);
+        assert_eq!(cache.plan.current_step, 1);
     }
 }

@@ -40,7 +40,7 @@ pub fn desire_to_goal(desire: DesireKind) -> WorldState {
         DesireKind::CrowdControl => WorldState::with(Atom::CcApplied),
         DesireKind::InterruptCast => WorldState::with(Atom::InterruptReady),
         DesireKind::ManageThreat => WorldState::with(Atom::ThreatSafe),
-        DesireKind::PullMobs => WorldState::with(Atom::InCombat) | WorldState::with(Atom::HasTarget),
+        DesireKind::PullMobs => WorldState::with(Atom::PullInitiated),
         DesireKind::PositionForMechanic => WorldState::with(Atom::MechanicPositioned),
         DesireKind::ExecuteEncounterDuty => WorldState::with(Atom::EncounterDutyDone),
         DesireKind::RecoverResources => WorldState::with(Atom::ResourcesRecovered),

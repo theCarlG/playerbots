@@ -1,7 +1,8 @@
 /// Tanking GOAP actions — taunt, pick up add, hold aggro.
 use crate::bdi::desires::DesireKind;
 use crate::bot::settings::StrategyFlags;
-use crate::goap::action::{ActionId, GoapAction};
+use crate::bot::state::PlayerClass;
+use crate::goap::action::*;
 use crate::goap::world_state::Atom;
 
 pub fn register(actions: &mut Vec<GoapAction>) {
@@ -18,6 +19,10 @@ pub fn register(actions: &mut Vec<GoapAction>) {
         cost: 2,
         bt_flags: StrategyFlags::TANK_ASSIST,
         satisfies: DesireKind::TankBoss.as_bit() | DesireKind::ManageThreat.as_bit(),
+        role_mask: ROLE_TANK,
+        class_mask: class_bit(PlayerClass::Warrior as u8)
+            | class_bit(PlayerClass::Paladin as u8)
+            | class_bit(PlayerClass::Druid as u8),
     });
 
     actions.push(GoapAction {
@@ -30,6 +35,10 @@ pub fn register(actions: &mut Vec<GoapAction>) {
         cost: 3,
         bt_flags: StrategyFlags::TANK_ASSIST,
         satisfies: DesireKind::TankBoss.as_bit() | DesireKind::ProtectAlly.as_bit(),
+        role_mask: ROLE_TANK,
+        class_mask: class_bit(PlayerClass::Warrior as u8)
+            | class_bit(PlayerClass::Paladin as u8)
+            | class_bit(PlayerClass::Druid as u8),
     });
 
     actions.push(GoapAction {
@@ -42,5 +51,8 @@ pub fn register(actions: &mut Vec<GoapAction>) {
         cost: 4,
         bt_flags: StrategyFlags::PROTECT,
         satisfies: DesireKind::ProtectAlly.as_bit(),
+        role_mask: ROLE_TANK_DPS,
+        class_mask: class_bit(PlayerClass::Warrior as u8)
+            | class_bit(PlayerClass::Paladin as u8),
     });
 }
