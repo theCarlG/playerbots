@@ -17,6 +17,7 @@
 #include "MotionGenerators/MotionMaster.h"
 #include "MotionGenerators/MovementGenerator.h"
 #include "BotBridge.h"
+#include "LoginBridge.h"
 #include "Spells/Spell.h"
 
 // Spell id used by the RTSC "Aedm" marker to encode ground-targeted positions.
@@ -48,10 +49,18 @@ void PlayerbotRust::InitRustModule()
     // Phase D: the Rust side parses the `.conf` file itself via
     // `playerbot_config_load()` — called from `PlayerbotAIConfig::Initialize()`
     // in `cpp_wrapper/BotConfig.cpp`. No per-field forwarding required here.
+
+    // Phase E: spawn the Rust login worker and install the
+    // `LoginCallbacks` vtable. Must happen after the config has been
+    // loaded (it is — `PlayerbotAIConfig::Initialize` runs before the
+    // CMaNGOS core calls this init function).
+    LoginCallbacks loginCbs = LoginBridge::MakeCallbacks();
+    playerbot_login_init(&loginCbs);
 }
 
 void PlayerbotRust::ShutdownRustModule()
 {
+    playerbot_login_shutdown();
     playerbot_shutdown();
 }
 

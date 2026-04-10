@@ -19,7 +19,8 @@
 #include "Chat/ChannelMgr.h"
 #include "Guilds/GuildMgr.h"
 #include "World/WorldState.h"
-#include "PlayerbotLoginMgr.h"
+#include "LoginBridge.h"
+#include "botffi.h"
 #include "Entities/Transports.h"
 
 #ifndef MANGOSBOT_ZERO
@@ -510,7 +511,16 @@ void RandomPlayerbotMgr::UpdateAIInternal(uint32 elapsed, bool minimal)
     ScaleBotActivity();
     if (sPlayerbotAIConfig.asyncBotLogin)
     {
-        sPlayerBotLoginMgr.Update(players);
+        // Phase E: the login queue lives in Rust. Build the real-player
+        // snapshot on this thread and hand it to `playerbot_login_update`,
+        // which both forwards the tick to the Rust worker and drains any
+        // pending `perform_login`/`perform_logout` commands on this thread.
+        static thread_local std::vector<BotRealPlayerInfo> s_realBuf;
+        s_realBuf.resize(players.size());
+        uint32_t n = LoginBridge::BuildRealPlayerSnapshot(
+            s_realBuf.data(),
+            static_cast<uint32_t>(s_realBuf.size()));
+        playerbot_login_update(s_realBuf.data(), n);
     }
 
     uint32 maxAllowedBotCount = GetEventValue(0, "bot_count");
@@ -4098,7 +4108,8 @@ std::list<std::string> RandomPlayerbotMgr::HandleConsoleCleanMap(std::string par
 std::list<std::string> RandomPlayerbotMgr::HandleConsoleLoginDebug(std::string param)
 {
     std::list<std::string> messages;
-    sPlayerBotLoginMgr.ToggleDebug();
+    // Phase E: forwards into the Rust login worker via FFI.
+    playerbot_login_toggle_debug();
     std::string msg = "Login debug toggled.";
     messages.push_back(msg);
     return messages;

@@ -20,7 +20,11 @@ pub mod engine;
 pub mod factory;
 pub mod goap;
 #[allow(unsafe_code)]
+pub mod itempool;
+#[allow(unsafe_code)]
 pub mod logging;
+#[allow(unsafe_code)]
+pub mod login;
 pub mod noncombat;
 pub mod rtsc;
 pub mod strategies;

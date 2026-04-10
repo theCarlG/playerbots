@@ -17,6 +17,10 @@
 #![deny(unsafe_code)]
 
 pub mod ids;
+#[allow(unsafe_code)]
+pub mod item_world;
+#[allow(unsafe_code)]
+pub mod login_world;
 #[cfg(any(test, feature = "mock"))]
 pub mod mock;
 #[allow(unsafe_code)]
@@ -29,13 +33,23 @@ pub mod world;
 
 // Re-export every POD type from cmangos-sys at the crate root.
 pub use cmangos_sys::{
-    BotAuraInfo, BotCallbacks, BotDispelTarget, BotHandle, BotInventoryItem, BotMailSummary,
-    BotPosition, BotQuestInfo, BotReputationEntry, BotSafePosition, BotSkillEntry, BotSpellInfo,
-    BotTalentEntry, BotTaxiNode, BotThreatEntry, BotTravelDest, BotUnitSnapshot, BotWorldSnapshot,
-    UnitHandle,
+    BotAuraInfo, BotCallbacks, BotCandidateInfo, BotDispelTarget, BotEnchantInfo,
+    BotGemPropertiesRow, BotHandle, BotInventoryItem, BotItemEnchantmentRow, BotItemProtoDamage,
+    BotItemProtoSocket, BotItemProtoSpellRef, BotItemProtoStat, BotItemPrototype,
+    BotItemRarityRow, BotMailSummary, BotPlayerItemCtx, BotPosition, BotQuestInfo,
+    BotQuestItemRow, BotRealPlayerInfo, BotReputationEntry, BotSafePosition, BotSkillEntry,
+    BotSpellEntryInfo, BotSpellInfo, BotTalentEntry, BotTaxiNode, BotThreatEntry, BotTravelDest,
+    BotUnitSnapshot, BotVendorItemRow, BotWeightScaleRow, BotWeightScaleStatRow,
+    BotWorldSnapshot, ItemCallbacks, LoginCallbacks, UnitHandle,
 };
 
 pub use ids::{BotRole, ItemId, SkillId, SpellId, TalentId};
+pub use item_world::{ItemWorld, QuestStatus, TalentTabInfo, VtableItemWorld};
+#[cfg(any(test, feature = "mock"))]
+pub use item_world::{MockItemEvent, MockItemWorld};
+pub use login_world::{HolderState, LoginWorld, VtableLoginWorld};
+#[cfg(any(test, feature = "mock"))]
+pub use login_world::{MockLoginEvent, MockLoginWorld};
 pub use owned::{
     AuraList, BotSpellList, GatherableList, InventoryList, OwnedCString, OwnedList, QuestLog,
     ReputationList, SkillList, TalentList, TaxiNodeList, ThreatList, TravelDestList, UnitList,

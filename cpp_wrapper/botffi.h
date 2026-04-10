@@ -1049,6 +1049,474 @@ typedef struct BotCallbacks {
                           uint8_t* out_quality);
 } BotCallbacks;
 
+/* ─────────────────────────────────────────────────────────────────────
+ * LoginCallbacks — module-level vtable used by the Rust login queue
+ * worker (Phase E of the C++ → Rust migration).
+ *
+ * Unlike `BotCallbacks`, none of these are per-bot. They cover the four
+ * pieces of functionality the C++ login queue needed but Rust cannot
+ * implement directly: candidate enumeration from the CMaNGOS DBs, the
+ * async `CharacterDatabase.DelayQueryHolder` lifecycle, the
+ * `RandomPlayerbotMgr` KV store (`GetValue`/`SetValue` with TTL), and
+ * the actual login/logout dispatch.
+ *
+ * Thread model: the Rust login worker drives a dedicated background
+ * thread and calls these from that thread. `perform_login` /
+ * `perform_logout` are the exception: they mutate map state and must
+ * run on the main thread, so the worker forwards them as commands via
+ * an mpsc channel; the main thread drains the channel from
+ * `playerbot_login_update` and executes them.
+ *
+ * The vtable is installed once at startup via `playerbot_login_init`.
+ * ───────────────────────────────────────────────────────────────────── */
+
+/* Candidate row returned by `query_candidates`. Populated from a single
+ * row of the CMaNGOS `characters` table joined against the random-bot
+ * `account` rows. All fields are raw DB values — the Rust side applies
+ * `instant_randomize` / `disable_random_levels` semantics. */
+typedef struct {
+    uint32_t account_id;
+    uint32_t guid;                   /* low guid, matches ObjectGuid::GetCounter() */
+    uint8_t  race;
+    uint8_t  cls;
+    uint32_t level;
+    bool     is_online;              /* characters.online != 0 */
+    uint32_t total_played_time;      /* characters.totaltime */
+    uint32_t map_id;
+    float    x, y, z, o;
+    uint32_t guild_id;               /* 0 = no guild */
+    uint32_t group_id;               /* snapshotted at load time; 0 = no group */
+} BotCandidateInfo;
+
+/* Snapshot of a real (non-bot) player passed to the login queue each
+ * update tick. The worker uses these to evaluate distance / map / group
+ * / guild gates on bot candidates. */
+typedef struct {
+    uint32_t guid;
+    uint32_t map_id;
+    float    x, y, z;
+    uint32_t group_id;               /* 0 = not in a group */
+    uint32_t guild_id;               /* 0 = no guild */
+} BotRealPlayerInfo;
+
+/* HolderState matches the C++ enum: 0=empty, 1=sent, 2=received. */
+#define PLAYERBOT_HOLDER_EMPTY    0
+#define PLAYERBOT_HOLDER_SENT     1
+#define PLAYERBOT_HOLDER_RECEIVED 2
+
+typedef struct LoginCallbacks {
+    /* ── Candidate enumeration ──────────────────────────────────────────
+     * Scan the random-bot accounts (accounts whose username begins with
+     * `account_prefix` case-insensitively) and fill `out_rows` with every
+     * matching character. The callee allocates; the caller frees via
+     * `free_candidate_list`. Returns the number of rows written to
+     * `*out_rows`. */
+    uint32_t (*query_candidates)(const char* account_prefix, BotCandidateInfo** out_rows);
+    void     (*free_candidate_list)(BotCandidateInfo* rows, uint32_t count);
+
+    /* ── Async holder lifecycle ─────────────────────────────────────────
+     * `send_holder` kicks off the CMaNGOS `CharacterDatabase.DelayQueryHolder`
+     * that the legacy C++ `PlayerLoginInfo::SendHolder` issued. Returns
+     * true if the holder was queued, false on immediate failure. The C++
+     * side tracks the holder internally keyed on `guid`; Rust polls
+     * `get_holder_state(guid)` to learn when the holder has returned. */
+    bool    (*send_holder)(uint32_t account, uint32_t guid);
+    /* Returns the current HolderState for `guid` — one of PLAYERBOT_HOLDER_*. */
+    uint8_t (*get_holder_state)(uint32_t guid);
+    /* Discard the holder for `guid` (e.g. on state reset). Safe to call
+     * when there is no holder. */
+    void    (*clear_holder)(uint32_t guid);
+
+    /* ── RandomPlayerbotMgr KV store ────────────────────────────────────
+     * Thin FFI wrappers around `sRandomPlayerbotMgr.{GetValue,SetValue}`.
+     * `key` is an ASCII identifier like "add", "logout", "bot_count".
+     * `valid_in_s` is the TTL in seconds; -1 means "use default". */
+    uint32_t (*random_mgr_get_value)(uint32_t guid, const char* key);
+    void     (*random_mgr_set_value)(uint32_t guid, const char* key, uint32_t value,
+                                     int32_t valid_in_s);
+    uint32_t (*random_mgr_get_players_level)(void);
+    uint32_t (*random_mgr_get_max_online_bot_count)(void);
+    uint32_t (*random_mgr_get_world_max_level)(void);
+    uint32_t (*random_mgr_database_delay_ms)(void);
+    void     (*random_mgr_database_ping)(void);
+
+    /* ── Login / logout dispatch ────────────────────────────────────────
+     * Issue the actual login or logout for `guid`. Called on the main
+     * thread only (never on the login worker). Returns true if the
+     * operation was accepted, false if the guid is unknown or the bot
+     * is already in the requested state. */
+    bool (*perform_login)(uint32_t guid);
+    bool (*perform_logout)(uint32_t guid);
+
+    /* ── Debug logging ──────────────────────────────────────────────────
+     * Called when the worker wants to surface a state transition via
+     * `sLog.outError` (keeping parity with the original C++ debug path
+     * behind `ToggleDebug`). */
+    void (*log_debug)(const char* msg);
+} LoginCallbacks;
+
+/* ─────────────────────────────────────────────────────────────────────
+ * ItemCallbacks — module-level vtable used by the Rust item pool /
+ * random-gear subsystem (Phase F of the C++ → Rust migration).
+ *
+ * Unlike `BotCallbacks`, none of these are per-bot. They cover the data
+ * the C++ `RandomItemMgr` previously pulled directly from
+ * `sObjectMgr` / `sSpellTemplate` / `sFactionTemplateStore` /
+ * `CharacterDatabase` at init time: item prototypes, spell entries,
+ * weight scale rows, quest-reward relationships, vendor sources,
+ * item-enchantment templates, and a small set of per-player queries the
+ * runtime `GetLiveStatWeight` path needs (reputation rank, skill value,
+ * quest status, pvp rank).
+ *
+ * Memory ownership: every `query_*` returns a freshly-allocated array
+ * the C++ bridge owns until the matching `free_*` is called. Rust copies
+ * the rows it needs into its own caches during `playerbot_itempool_init`
+ * and releases the raw arrays before returning.
+ *
+ * Thread model: every callback is invoked from the main thread during
+ * init and from whatever thread the factory runs on at runtime. All
+ * underlying reads are thread-safe for the operations exposed here
+ * (`sObjectMgr`/`sSpellTemplate` are immutable post-init; `sRandomItemMgr`
+ * does not exist anymore).
+ *
+ * The vtable is installed once at startup via `playerbot_itempool_init`.
+ * ───────────────────────────────────────────────────────────────────── */
+
+/* One entry of `ItemPrototype::ItemStat[]`. Max 10 entries per proto
+ * (MAX_ITEM_PROTO_STATS). Empty slots have `stat_value == 0`. */
+typedef struct {
+    uint32_t stat_type;       /* `ItemModType` enum: ITEM_MOD_POWER/AGI/... */
+    int32_t  stat_value;
+} BotItemProtoStat;
+
+/* One entry of `ItemPrototype::Damage[]`. Max 5 entries per proto
+ * (MAX_ITEM_PROTO_DAMAGES). Empty slots have `damage_max == 0`. */
+typedef struct {
+    float    damage_min;
+    float    damage_max;
+    uint32_t damage_type;     /* `SpellSchools` enum: 0=normal .. 6=arcane */
+} BotItemProtoDamage;
+
+/* One entry of `ItemPrototype::Socket[]`. WotLK/TBC only; zeroed on
+ * Classic. Max 3 entries per proto (MAX_ITEM_PROTO_SOCKETS). */
+typedef struct {
+    uint32_t color;           /* `SocketColor` enum: 1=meta, 2=red, 4=yellow, 8=blue */
+    uint32_t content;         /* unused at proto level; always 0 */
+} BotItemProtoSocket;
+
+/* One entry of `ItemPrototype::Spells[]`. Max 5 entries per proto
+ * (MAX_ITEM_PROTO_SPELLS). Empty slots have `spell_id == 0`. */
+typedef struct {
+    int32_t  spell_id;
+    uint32_t spell_trigger;            /* `ItemSpelltriggerType`: 0=on_use, 1=on_equip, 2=on_hit, ... */
+    int32_t  spell_charges;
+    float    spell_ppm_rate;
+    int32_t  spell_cooldown;           /* milliseconds, -1 = none */
+    uint32_t spell_category;
+    int32_t  spell_category_cooldown;  /* milliseconds */
+} BotItemProtoSpellRef;
+
+/* Subset of CMaNGOS `ItemPrototype` carrying every field the Rust item
+ * pool needs. Populated by the C++ bridge from `sItemStorage` during
+ * `query_item_prototypes`. Fields absent on a given expansion (flags2,
+ * scaling stats, sockets, random_suffix, totem_category, item_limit_*,
+ * holiday_id) are zeroed on that build. */
+typedef struct {
+    uint32_t item_id;
+    uint32_t class_id;                 /* `ItemClass` */
+    uint32_t sub_class;                /* `ItemSubclass*` within class */
+    int32_t  unk0;
+    uint32_t quality;                  /* 0=poor .. 7=heirloom */
+    uint32_t flags;
+    uint32_t flags2;                   /* WotLK+, 0 earlier */
+    uint32_t buy_count;
+    int32_t  buy_price;                /* uint in 0.x, int in 2.x+; int is lossless */
+    uint32_t sell_price;
+    uint32_t inventory_type;           /* `InventoryType` */
+    int32_t  allowable_class;          /* class mask; -1 = all */
+    int32_t  allowable_race;           /* race mask; -1 = all */
+    uint32_t item_level;
+    uint32_t required_level;
+    uint32_t required_skill;
+    uint32_t required_skill_rank;
+    uint32_t required_spell;
+    uint32_t required_honor_rank;      /* Classic PvP rank requirement */
+    uint32_t required_city_rank;
+    uint32_t required_reputation_faction;
+    uint32_t required_reputation_rank;
+    uint32_t max_count;
+    uint32_t stackable;
+    uint32_t container_slots;
+    uint32_t stats_count;              /* populated length of `stats` */
+    uint32_t scaling_stat_distribution; /* WotLK heirlooms */
+    uint32_t scaling_stat_value;       /* WotLK heirlooms */
+    uint32_t armor;
+    uint32_t holy_res;
+    uint32_t fire_res;
+    uint32_t nature_res;
+    uint32_t frost_res;
+    uint32_t shadow_res;
+    uint32_t arcane_res;
+    uint32_t delay;                    /* weapon speed in milliseconds */
+    uint32_t ammo_type;                /* weapon `ammo_type` column */
+    float    ranged_mod_range;
+    uint32_t bonding;                  /* `ItemBondingType` */
+    int32_t  page_text;
+    uint32_t lang;
+    uint32_t page_material;
+    uint32_t start_quest;
+    uint32_t lock_id;
+    int32_t  material;
+    uint32_t sheath;
+    int32_t  random_property;
+    int32_t  random_suffix;            /* TBC+ */
+    uint32_t block;
+    uint32_t itemset;
+    uint32_t max_durability;
+    uint32_t area;
+    int32_t  map;
+    uint32_t bag_family;
+    uint32_t totem_category;           /* TBC+ */
+    int32_t  socket_bonus;             /* TBC+ */
+    uint32_t gem_properties;           /* TBC+ */
+    int32_t  required_disenchant_skill;
+    float    armor_damage_modifier;
+    uint32_t duration;                 /* high bit = percentage, else seconds */
+    uint32_t item_limit_category;      /* WotLK+ */
+    uint32_t holiday_id;               /* WotLK+ */
+
+    char     name[96];                 /* null-terminated, truncated to 95 chars */
+
+    BotItemProtoStat     stats[10];    /* MAX_ITEM_PROTO_STATS */
+    BotItemProtoDamage   damages[5];   /* MAX_ITEM_PROTO_DAMAGES */
+    BotItemProtoSocket   sockets[3];   /* MAX_ITEM_PROTO_SOCKETS */
+    BotItemProtoSpellRef spells[5];    /* MAX_ITEM_PROTO_SPELLS */
+} BotItemPrototype;
+
+/* Subset of CMaNGOS `SpellEntry` — the fields `CalculateStatWeight` /
+ * `CalculateEnchantWeight` read to interpret an item's on-equip /
+ * on-use / proc spell. Filled by `lookup_spell_entry`. */
+typedef struct {
+    uint32_t id;
+    uint32_t effect[3];                /* `SpellEffects` enum, 0 = unused slot */
+    uint32_t effect_apply_aura_name[3]; /* `AuraType` enum */
+    int32_t  effect_base_points[3];    /* signed, can be negative */
+    int32_t  effect_misc_value[3];     /* signed, e.g. negative spell power gaps */
+    int32_t  effect_misc_value_b[3];
+    uint32_t effect_die_sides[3];      /* used by the basepoints/sides coverage calc */
+    int32_t  duration_ms;              /* resolved from sSpellDurationStore; 0 = no duration */
+    uint32_t recovery_time_ms;
+    int32_t  proc_chance;              /* -1 if not a proc spell */
+    uint32_t school_mask;
+    char     name[96];                 /* null-terminated; truncated */
+} BotSpellEntryInfo;
+
+/* One row of the custom `ai_playerbot_weight_scales` table. Each scale
+ * describes a class/spec slot: id is a small integer, name is the
+ * internal spec key (e.g. "arms", "holy", "combat"). */
+typedef struct {
+    uint32_t id;
+    uint32_t class_id;                 /* CLASS_WARRIOR..CLASS_DRUID */
+    char     name[40];                 /* spec key; null-terminated */
+} BotWeightScaleRow;
+
+/* One row of the custom `ai_playerbot_weight_scales_stats` table.
+ * (scale_id, stat_name, weight) triples drive `CalculateSingleStatWeight`. */
+typedef struct {
+    uint32_t scale_id;
+    char     stat[32];                 /* stat key: "sta", "splpwr", "mledps", ... */
+    int32_t  weight;
+} BotWeightScaleStatRow;
+
+/* One (quest_id, reward_item_id) relationship derived from
+ * `quest_template` at init time. Used by `GetQuestIdsForItem` to find
+ * which quests reward a given item and by the "quest source" detection
+ * in `BuildItemInfoCache`. */
+typedef struct {
+    uint32_t item_id;
+    uint32_t quest_id;
+    uint32_t min_level;                /* Quest.MinLevel */
+    uint32_t required_classes;         /* Quest.RequiredClasses */
+    uint32_t required_races;           /* Quest.RequiredRaces */
+    uint32_t zone_or_sort;             /* Quest.ZoneOrSort, for PVP-quest heuristics */
+    uint32_t reward_rep_faction;       /* Quest.RewRepFaction[0], 0 = none */
+    int32_t  reward_rep_value;         /* Quest.RewRepValue[0] */
+    bool     is_choice;                /* true = RewardChoiceItemId, false = RewardItemId */
+} BotQuestItemRow;
+
+/* One (vendor_entry, item_id) relationship from `npc_vendor`, with the
+ * vendor's faction and (if the vendor entry has a condition referring
+ * to reputation) the pre-resolved required rep rank + faction. */
+typedef struct {
+    uint32_t vendor_entry;
+    uint32_t item_id;
+    uint32_t vendor_faction_template;
+    uint32_t vendor_faction;           /* FactionTemplateEntry.faction */
+    uint32_t required_reputation_rank; /* 0 = no requirement */
+    uint32_t required_reputation_faction;
+    uint32_t condition_id;             /* original condition row; 0 = none */
+} BotVendorItemRow;
+
+/* One row of `item_enchantment_template` — the CMaNGOS table that maps
+ * random property entries to enchant ids with weighted chances. Used
+ * by `LoadRandomEnchantments` and `CalculateRandomPropertyWeight`. */
+typedef struct {
+    uint32_t entry;
+    uint32_t ench;
+    float    chance;
+} BotItemEnchantmentRow;
+
+/* Subset of `SpellItemEnchantmentEntry` carrying the fields
+ * `CalculateEnchantWeight` decodes: three (type, amount, spellid)
+ * triples plus the aura base id that some types resolve through. */
+typedef struct {
+    uint32_t id;
+    uint32_t type[3];                  /* `ItemEnchantmentType` */
+    int32_t  amount[3];
+    uint32_t spell_id[3];
+    char     description[96];          /* null-terminated; truncated */
+    bool     is_valid;
+} BotEnchantInfo;
+
+/* Optional row from `ai_playerbot_rarity_cache`. When the cache does
+ * not exist the bridge returns zero rows and `GetItemRarity` falls back
+ * to a computed value. */
+typedef struct {
+    uint32_t item_id;
+    float    rarity;
+} BotItemRarityRow;
+
+/* Subset of `GemProperties.dbc` — the gem metadata the socket-weight
+ * calculation needs on TBC/WotLK. Empty on Classic. */
+typedef struct {
+    uint32_t id;
+    uint32_t spell_item_enchantment;
+    uint32_t color;                    /* `SocketColor` mask */
+    uint32_t required_skill_id;
+    uint32_t required_skill_value;
+} BotGemPropertiesRow;
+
+/* Per-player context read before runtime stat-weight scoring. Populated
+ * by `get_player_item_ctx` and forwarded through to the Rust live
+ * weight calculation so the bridge only needs one callback per query. */
+typedef struct {
+    uint32_t guid_low;
+    uint32_t level;
+    uint32_t class_id;                 /* 1..11 */
+    uint32_t race_id;                  /* 1..11 */
+    uint32_t team;                     /* 0 = Alliance, 1 = Horde */
+    uint32_t pvp_rank;                 /* Classic: GetHonorHighestRankInfo().rank; TBC+: honor rank index */
+    uint32_t map_id;
+    bool     in_world;
+} BotPlayerItemCtx;
+
+/* Quest status bitflags returned by `player_quest_status`. */
+#define PLAYERBOT_QUEST_SATISFIES_CLASS  0x01u
+#define PLAYERBOT_QUEST_SATISFIES_RACE   0x02u
+#define PLAYERBOT_QUEST_SATISFIES_LEVEL  0x04u
+#define PLAYERBOT_QUEST_IS_ACTIVE        0x08u
+#define PLAYERBOT_QUEST_IS_COMPLETED     0x10u
+#define PLAYERBOT_QUEST_IS_REWARDED      0x20u
+
+typedef struct ItemCallbacks {
+    /* ── Item prototype enumeration ─────────────────────────────────
+     * Scan every row in `sItemStorage` and return a freshly-allocated
+     * array of `BotItemPrototype`. The caller frees via
+     * `free_item_prototype_list(ptr, count)`. Returns the number of
+     * rows written. */
+    uint32_t (*query_item_prototypes)(BotItemPrototype** out_rows);
+    void     (*free_item_prototype_list)(BotItemPrototype* rows, uint32_t count);
+
+    /* ── On-demand spell entry lookup ────────────────────────────────
+     * Resolve a spell id against `sSpellTemplate` and fill `out` with
+     * the subset of fields the stat-weight calculation reads. Returns
+     * `false` if the spell is not in the store; `out` is then
+     * untouched. */
+    bool (*lookup_spell_entry)(uint32_t spell_id, BotSpellEntryInfo* out);
+
+    /* ── Weight scales ──────────────────────────────────────────────
+     * Load the full `ai_playerbot_weight_scales` table (scales) and
+     * the paired `ai_playerbot_weight_scales_stats` table (per-scale
+     * stat weights). If the tables don't exist the bridge returns 0
+     * rows for both; Rust will fall back to compile-time defaults. */
+    uint32_t (*query_weight_scales)(BotWeightScaleRow** out_rows);
+    void     (*free_weight_scale_list)(BotWeightScaleRow* rows, uint32_t count);
+    uint32_t (*query_weight_scale_stats)(BotWeightScaleStatRow** out_rows);
+    void     (*free_weight_scale_stat_list)(BotWeightScaleStatRow* rows, uint32_t count);
+
+    /* ── Quest rewards ──────────────────────────────────────────────
+     * Enumerate every (quest, reward item) pair known to the
+     * `ObjectMgr` quest store. One row per (quest × reward item); if a
+     * quest rewards 4 items, 4 rows are emitted. */
+    uint32_t (*query_quest_items)(BotQuestItemRow** out_rows);
+    void     (*free_quest_item_list)(BotQuestItemRow* rows, uint32_t count);
+
+    /* ── Vendor sources ─────────────────────────────────────────────
+     * Enumerate every (vendor, sold item) pair from `npc_vendor`,
+     * pre-resolving the vendor's faction and (when the vendor row
+     * carries a condition referring to reputation) the rep rank
+     * requirement. Rows for vendors whose faction lookup fails are
+     * skipped. */
+    uint32_t (*query_vendor_items)(BotVendorItemRow** out_rows);
+    void     (*free_vendor_item_list)(BotVendorItemRow* rows, uint32_t count);
+
+    /* ── Item enchantment template ──────────────────────────────────
+     * Load the `item_enchantment_template` table. One row per
+     * (entry, ench) pair, carrying the weighted chance. Used to
+     * decode random property enchant pools. */
+    uint32_t (*query_item_enchantment_template)(BotItemEnchantmentRow** out_rows);
+    void     (*free_item_enchantment_list)(BotItemEnchantmentRow* rows, uint32_t count);
+
+    /* ── On-demand enchant lookup ───────────────────────────────────
+     * Resolve an enchant id against `sSpellItemEnchantmentStore` and
+     * fill `out`. Returns `false` on miss. */
+    bool (*lookup_enchant_info)(uint32_t enchant_id, BotEnchantInfo* out);
+
+    /* ── Random-property → enchant slot resolver ────────────────────
+     * For a given random property id, fill `out_enchant_ids[4]` with
+     * the enchant ids from `sItemRandomPropertiesStore[id].enchant_id`.
+     * Returns `false` on miss. */
+    bool (*lookup_random_property_enchants)(int32_t property_id, uint32_t out_enchant_ids[4]);
+
+    /* ── Optional rarity cache ──────────────────────────────────────
+     * If the `ai_playerbot_rarity_cache` table exists, return its
+     * rows. Otherwise return 0 and Rust will fall back to its
+     * computed rarity heuristic. */
+    uint32_t (*query_rarity_rows)(BotItemRarityRow** out_rows);
+    void     (*free_rarity_list)(BotItemRarityRow* rows, uint32_t count);
+
+    /* ── Gem properties (TBC/WotLK) ─────────────────────────────────
+     * Return `sGemPropertiesStore` contents. Returns 0 rows on Classic. */
+    uint32_t (*query_gem_properties)(BotGemPropertiesRow** out_rows);
+    void     (*free_gem_list)(BotGemPropertiesRow* rows, uint32_t count);
+
+    /* ── Per-player queries ─────────────────────────────────────────
+     * `guid_low` is the low part of `ObjectGuid` (what
+     * `ObjectGuid::GetCounter()` returns). `get_player_item_ctx`
+     * returns `false` if the guid is not a resolvable logged-in
+     * player. */
+    bool     (*get_player_item_ctx)(uint32_t guid_low, BotPlayerItemCtx* out);
+    int32_t  (*get_player_reputation_rank)(uint32_t guid_low, uint32_t faction_id);
+    uint32_t (*get_player_skill_value)(uint32_t guid_low, uint32_t skill_id);
+    /* Returns the bitmask defined above; 0 = unknown quest. */
+    uint32_t (*player_quest_status)(uint32_t guid_low, uint32_t quest_id);
+    /* Returns the bot's best talent-tab index (0..2) and sets
+     * `*out_meditation_rank` to the rank of the Meditation talent
+     * (used by priest disc/holy disambiguation). 0 = no points. */
+    uint32_t (*get_player_talent_tab)(uint32_t guid_low, uint32_t* out_meditation_rank);
+
+    /* ── RNG ────────────────────────────────────────────────────────
+     * Wraps CMaNGOS `urand(min, max)`. Inclusive. Rust uses this when
+     * it would have called the legacy C++ urand path; tests plug in a
+     * deterministic impl instead. */
+    uint32_t (*urand_range)(uint32_t min, uint32_t max);
+
+    /* ── Debug logging ──────────────────────────────────────────────
+     * Optional; used for init-time progress lines so they show up via
+     * `sLog` when `itempool debug` is flipped on. */
+    void (*log_debug)(const char* msg);
+} ItemCallbacks;
+
 /* ── Rust exports (entry points CMaNGOS calls into Rust) ─────────────────── */
 
 /* ── Logging sink ────────────────────────────────────────────────────────── */
@@ -1370,6 +1838,186 @@ void playerbot_factory_init_talents_tree(void* state, bool incremental);
  * to the monitor log file. The log file is written via bot_append_log_file.
  */
 bool playerbot_toggle_monitor(void* state);
+
+/* ─────────────────────────────────────────────────────────────────────
+ * Login queue (`playerbot_login_*`)
+ *
+ * Phase E of the C++ → Rust migration moved the bot login/logout queue
+ * from `playerbot/PlayerbotLoginMgr.cpp` into the Rust `playerbot`
+ * crate's `login` module. The C++ side keeps only a thin shim at
+ * `cpp_wrapper/LoginBridge.{h,cpp}` that implements `LoginCallbacks`
+ * and forwards the few calls left to `RandomPlayerbotMgr` / the DB.
+ *
+ * Call order:
+ *   1. playerbot_config_load(...);            // file parser
+ *   2. playerbot_login_init(&login_cbs);      // spawns worker thread
+ *   3. playerbot_login_update(real_players)   // every RPBM update tick
+ *   4. playerbot_login_shutdown();            // joined on server stop
+ * ───────────────────────────────────────────────────────────────────── */
+
+/** Install the login vtable and spawn the background worker thread.
+ *  Must be called exactly once, after `playerbot_config_load`. Passing
+ *  a null pointer is a no-op. */
+void playerbot_login_init(const LoginCallbacks* cbs);
+
+/** Main tick. Called from `RandomPlayerbotMgr::UpdateAIInternal` on
+ *  the world thread. `real_players` describes every non-bot player
+ *  currently online and is used to evaluate distance / map / group /
+ *  guild gates. The worker thread asynchronously drives the DB side;
+ *  this call drains any pending `perform_login`/`perform_logout`
+ *  commands on the main thread. */
+void playerbot_login_update(const BotRealPlayerInfo* real_players, uint32_t count);
+
+/** Flip the login worker's debug logging state. Mirrors the legacy
+ *  `PlayerBotLoginMgr::ToggleDebug`. */
+void playerbot_login_toggle_debug(void);
+
+/** Join the background worker thread and detach the vtable. Safe to
+ *  call more than once; second call is a no-op. */
+void playerbot_login_shutdown(void);
+
+/* ─────────────────────────────────────────────────────────────────────
+ * Item pool (`playerbot_itempool_*`)
+ *
+ * Phase F of the C++ → Rust migration moved the full `RandomItemMgr`
+ * (item info cache, equip pool, consumable pools, stat-weight scoring,
+ * random-enchant resolution, rarity cache, gem list) from
+ * `playerbot/RandomItemMgr.cpp` into the Rust `playerbot` crate's
+ * `itempool` module. The C++ side keeps a thin shim at
+ * `cpp_wrapper/ItemBridge.{h,cpp}` that implements `ItemCallbacks` and
+ * re-exposes a `sRandomItemMgr`-compatible façade backed by these
+ * functions so that `PlayerbotFactory.cpp` and `ahbot/PricingStrategy.cpp`
+ * do not need to change.
+ *
+ * Call order:
+ *   1. playerbot_config_load(...);             // file parser (Phase D)
+ *   2. playerbot_itempool_init(&item_cbs);     // snapshots every table
+ *   3. playerbot_login_init(&login_cbs);       // login queue (Phase E)
+ *   4. factory/ahbot use `playerbot_itempool_*`
+ *   5. playerbot_itempool_shutdown();          // drops the cache
+ * ───────────────────────────────────────────────────────────────────── */
+
+/** Install the item vtable and build every internal cache. Reads all
+ *  prototypes, quest→item maps, vendor→item maps, weight scales, gem
+ *  properties, random-enchant template, spell lookups, and rarity
+ *  values via the supplied `ItemCallbacks`. Must be called exactly
+ *  once, after `playerbot_config_load`. Passing a null pointer is a
+ *  no-op (the module stays uninitialized and every query returns
+ *  zeroed/empty results). */
+void playerbot_itempool_init(const ItemCallbacks* cbs);
+
+/** Drop every cache and detach the vtable. Safe to call more than
+ *  once; the second call is a no-op. */
+void playerbot_itempool_shutdown(void);
+
+/* ── Item metadata (used by PlayerbotFactory) ────────────────────── */
+
+/** Return the minimum required level derived during
+ *  `BuildItemInfoCache`. Returns 0 for items not in the cache. */
+uint32_t playerbot_itempool_get_min_level(uint32_t item_id);
+
+/** Return the item rarity used by ahbot pricing. Falls back to a
+ *  computed heuristic if the `ai_playerbot_rarity_cache` table was
+ *  empty. Returns 0.0 for items not in the store. */
+float playerbot_itempool_get_item_rarity(uint32_t item_id);
+
+/** Resolve the player's spec id (0..n) using the same policy as the
+ *  legacy `GetPlayerSpecId`: best talent tab plus class-specific
+ *  tie-breakers (druid feral tank/dps 50/50, priest disc/holy via
+ *  Meditation rank, hunter MM/surv by rank, warrior arms/fury by
+ *  two-hand count — all via the `urand_range` / `get_player_talent_tab`
+ *  callbacks). Returns 0 when the guid is not a logged-in player. */
+uint32_t playerbot_itempool_get_player_spec_id(uint32_t guid_low);
+
+/* ── Pool queries ────────────────────────────────────────────────── */
+
+/** Query the equip pool. Fills `*out_ptr` with a freshly allocated
+ *  array of item ids matching `(level, class, spec, slot, quality)`
+ *  and `*out_len` with its length. Empty result is `(NULL, 0)` and
+ *  still returns `true`. Returns `false` only on invalid out-params.
+ *  Caller frees via `playerbot_itempool_free_u32_list`. */
+bool playerbot_itempool_query(uint32_t level,
+                              uint8_t  class_id,
+                              uint8_t  spec_id,
+                              uint8_t  slot,
+                              uint32_t quality,
+                              uint32_t** out_ptr,
+                              size_t*    out_len);
+
+/** Free an array returned by `playerbot_itempool_query` (or any other
+ *  `_get_*_list` helper that documents this function as its free
+ *  path). A `(NULL, 0)` pair is a safe no-op. */
+void playerbot_itempool_free_u32_list(uint32_t* ptr, size_t len);
+
+/** Return the full gem list (one item id per gem known to the
+ *  item-info cache). Caller frees via `playerbot_itempool_free_u32_list`.
+ *  Empty on Classic. */
+bool playerbot_itempool_get_gems(uint32_t** out_ptr, size_t* out_len);
+
+/* ── Stat weight scoring ─────────────────────────────────────────── */
+
+/** Equivalent to `RandomItemMgr::GetStatWeight(item_id, spec_id)`.
+ *  Returns the pre-computed base stat weight for the given (item,
+ *  spec) pair or 0 if the item is not in the info cache. */
+uint32_t playerbot_itempool_get_stat_weight(uint32_t item_id, uint32_t spec_id);
+
+/** Equivalent to `RandomItemMgr::GetLiveStatWeight(bot, item_id,
+ *  spec_id)`. Runs the full runtime scoring pass on the current
+ *  prototype using the player's level, talent tab, and
+ *  situational modifiers, combining the base weight with the stat
+ *  contributions derived from `ItemPrototype::ItemStat[]`,
+ *  weapon DPS, and `ItemPrototype::Spells[]`. Returns 0 when the guid
+ *  is not a logged-in player. */
+uint32_t playerbot_itempool_get_live_stat_weight(uint32_t guid_low,
+                                                 uint32_t item_id,
+                                                 uint32_t spec_id);
+
+/** Equivalent to `RandomItemMgr::GetBestRandomEnchantStatWeight`.
+ *  Returns the best possible random-enchant weight the item could
+ *  roll for the given spec. */
+uint32_t playerbot_itempool_get_best_random_enchant_stat_weight(uint32_t item_id,
+                                                                uint32_t spec_id);
+
+/* ── Enchants / quest disambiguation ─────────────────────────────── */
+
+/** Equivalent to `RandomItemMgr::CalculateBestRandomEnchantId`.
+ *  Picks the highest-weight random enchant id for the given
+ *  (class, spec, item) combination; 0 = no viable enchant. */
+uint32_t playerbot_itempool_calculate_best_random_enchant_id(uint8_t  class_id,
+                                                             uint8_t  spec_id,
+                                                             uint32_t item_id);
+
+/** Equivalent to `RandomItemMgr::CalculateEnchantWeight`. */
+uint32_t playerbot_itempool_calculate_enchant_weight(uint8_t  class_id,
+                                                     uint8_t  spec_id,
+                                                     uint32_t enchant_id);
+
+/** Equivalent to `RandomItemMgr::HasSameQuestRewards(bot, item_id)`.
+ *  Returns true if the bot has completed (or is currently holding) a
+ *  quest whose reward pool contains `item_id`. Used to skip duplicate
+ *  quest rewards during factory gearing. */
+bool playerbot_itempool_has_same_quest_rewards(uint32_t guid_low, uint32_t item_id);
+
+/* ── Consumable pools (replace BotCallbacks::factory_pick_*) ─────── */
+
+/** Equivalent to `RandomItemMgr::GetAmmo(level, ammo_subclass)`.
+ *  `ammo_subclass` matches the weapon's `ammo_type` field (arrows,
+ *  bullets, thrown). Returns 0 on no match. */
+uint32_t playerbot_itempool_get_ammo(uint32_t level, uint32_t ammo_subclass);
+
+/** Equivalent to `RandomItemMgr::GetRandomPotion(level, effect)`.
+ *  `effect` matches the potion family (heal, mana, etc.) as used by
+ *  the potion cache. Returns 0 on no match. */
+uint32_t playerbot_itempool_get_random_potion(uint32_t level, uint32_t effect);
+
+/** Equivalent to `RandomItemMgr::GetFood(level, category)`. */
+uint32_t playerbot_itempool_get_food(uint32_t level, uint32_t category);
+
+/** Equivalent to `RandomItemMgr::GetRandomFood(level, category)`. */
+uint32_t playerbot_itempool_get_random_food(uint32_t level, uint32_t category);
+
+/** Equivalent to `RandomItemMgr::GetRandomTrade(level)`. */
+uint32_t playerbot_itempool_get_random_trade(uint32_t level);
 
 #ifdef __cplusplus
 } /* extern "C" */
