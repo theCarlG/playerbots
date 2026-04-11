@@ -255,6 +255,87 @@ namespace BotBridge
     void     CB_BotSetSkill(BotHandle bot, uint32_t skill_id, uint32_t value, uint32_t max);
     void     CB_BotUpdateSkillsForLevel(BotHandle bot);
 
+    // ── Factory: refresh (cheat mask + DB save) ────────────────────────────
+    uint32_t CB_BotCheatMask(BotHandle bot);
+    void     CB_BotSaveToDbIfNotBusy(BotHandle bot);
+
+    // ── Factory: prepare ───────────────────────────────────────────────────
+    void CB_BotResurrectFull(BotHandle bot);
+    void CB_BotCombatStop(BotHandle bot);
+    void CB_BotSetLevelAndResetXp(BotHandle bot, uint32_t level);
+    void CB_BotSetPlayerFlag(BotHandle bot, uint32_t flag, bool set);
+    bool CB_FactoryConfigDisableRandomLevels(BotHandle bot);
+    bool CB_FactoryConfigRandomBotShowHelmet(BotHandle bot);
+    bool CB_FactoryConfigRandomBotShowCloak(BotHandle bot);
+
+    // ── Factory: Randomize orchestration ───────────────────────────────────
+    bool     CB_FactoryIsRandomBot(BotHandle bot);
+    bool     CB_FactoryHasRealPlayerMaster(BotHandle bot);
+    bool     CB_FactoryIsInRealGuild(BotHandle bot);
+    uint32_t CB_FactoryConfigMinEnchantingBotLevel(BotHandle bot);
+    void     CB_FactoryLoadEnchantContainer(BotHandle bot);
+    void     CB_BotResetTalents(BotHandle bot);
+    void     CB_BotLearnQuestRewardedSpells(BotHandle bot);
+    uint32_t CB_BotGetMoney(BotHandle bot);
+    void     CB_BotSetMoney(BotHandle bot, uint32_t amount);
+    void     CB_FactoryInitAllGems(BotHandle bot);
+    void     CB_FactoryEnchantAllEquipment(BotHandle bot);
+
+    // ── Factory: quests ────────────────────────────────────────────────────
+    bool CB_QuestIsEligibleForBot(BotHandle bot, uint32_t quest_id);
+    void CB_BotRewardQuestComplete(BotHandle bot, uint32_t quest_id);
+
+    // ── Factory: arena team ────────────────────────────────────────────────
+    uint32_t CB_BotGetAccountId(BotHandle bot);
+
+    // ── Factory: guild ─────────────────────────────────────────────────────
+    bool     CB_FactoryQueryGuildSummary(BotHandle bot,
+                                         uint32_t guild_id,
+                                         uint8_t* out_leader_team,
+                                         uint32_t* out_member_size,
+                                         uint32_t* out_max_members_hint,
+                                         char* out_name,
+                                         uint32_t name_buf_len);
+    bool     CB_FactoryGuildAddMember(BotHandle bot, uint32_t guild_id, uint32_t rank_id);
+    bool     CB_FactoryGetGuildRankName(BotHandle bot,
+                                        uint32_t guild_id,
+                                        uint32_t rank_id,
+                                        char* out_name,
+                                        uint32_t name_buf_len);
+    uint32_t CB_FactoryBotGuildId(BotHandle bot);
+
+    // ── Factory: per-bot KV store ──────────────────────────────────────────
+    uint32_t CB_FactoryKvGetU32(BotHandle bot, const char* key);
+    void     CB_FactoryKvSetU32(BotHandle bot, const char* key, uint32_t value);
+    void     CB_FactoryLearnTradeskillRecipes(BotHandle bot);
+
+    // ── Factory: equipment ────────────────────────────────────────────────
+    uint32_t CB_FactoryBotGuidLow(BotHandle bot);
+    uint32_t CB_FactoryBotEquippedItemInSlot(BotHandle bot, uint8_t slot);
+    void     CB_FactoryDestroyAllEquippedItems(BotHandle bot);
+    bool     CB_FactoryEquipNewItemInSlot(BotHandle bot,
+                                          uint8_t slot,
+                                          uint32_t item_id,
+                                          uint32_t random_enchant_id,
+                                          bool apply_enchants);
+    void     CB_FactoryInitStatsForLevelAndUpdate(BotHandle bot);
+    bool     CB_FactoryMasterEquipGearScore(BotHandle bot, uint32_t* out_gs);
+    void     CB_FactoryTellMaster(BotHandle bot, const char* msg);
+
+    // ── Factory: pet ──────────────────────────────────────────────────────
+    bool      CB_FactoryBotHasPet(BotHandle bot);
+    uint32_t  CB_FactoryPetEntry(BotHandle bot);
+    uint32_t  CB_FactoryPetFamily(BotHandle bot);
+    uint32_t  CB_FactoryPetLevel(BotHandle bot);
+    bool      CB_FactoryPetHasSpell(BotHandle bot, uint32_t spell_id);
+    uint32_t* CB_FactoryPetAutocastCandidateSpells(BotHandle bot, uint32_t* out_count);
+    uint32_t* CB_FactoryTameableCreaturesForBotLevel(BotHandle bot, uint32_t* out_count);
+    bool      CB_FactoryCreateHunterPet(BotHandle bot, uint32_t creature_entry);
+    void      CB_FactoryPetRefreshStats(BotHandle bot);
+    void      CB_FactoryPetLearnSpell(BotHandle bot, uint32_t spell_id);
+    void      CB_FactoryPetToggleAutocast(BotHandle bot, uint32_t spell_id, bool enable);
+    void      CB_FactoryPetForceDismiss(BotHandle bot);
+
     // ── Factory: item prototype queries ────────────────────────────────────
     uint32_t CB_ItemPrototypeQuality(BotHandle bot, uint32_t item_id);
 

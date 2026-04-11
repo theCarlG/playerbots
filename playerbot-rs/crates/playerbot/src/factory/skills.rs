@@ -256,7 +256,11 @@ fn apply_weapon_table(tx: &mut FactoryTransaction<'_>, class_id: u8, level: u32)
 /// Mirror of `PlayerbotFactory::SetRandomSkill`: roll a value in
 /// `[maxValue - level, maxValue]` where `maxValue` is the expansion-
 /// appropriate skill cap, and only upgrade if higher than the current.
-fn set_random_skill(tx: &mut FactoryTransaction<'_>, skill_id: u32, level: u32) {
+///
+/// `pub(super)` so `factory::init_trade_skills` can reuse the exact
+/// same cap/upgrade semantics when assigning the 5 profession skills
+/// (first aid, fishing, cooking, first profession, second profession).
+pub(super) fn set_random_skill(tx: &mut FactoryTransaction<'_>, skill_id: u32, level: u32) {
     let max_value = skill_cap_for_level(level);
     let lo = max_value.saturating_sub(level);
     let value = tx.random_u32(lo, max_value);

@@ -195,6 +195,94 @@ public:
     /// Pick a spec and spend all talent points across it (plus any leftover
     /// into the complementary tab) via the Rust factory module.
     void FactoryInitTalentsTreeViaRust(bool incremental);
+
+    /// Top up consumables on a bot via the Rust factory module (ports
+    /// `PlayerbotFactory::Refresh`). Gated on the bot's item cheat bit.
+    void FactoryRefreshViaRust();
+
+    /// Reset the bot's chassis (resurrect, combat-stop, level + XP, helmet
+    /// / cloak flags) via the Rust factory module. Ports
+    /// `PlayerbotFactory::Prepare`. `level` is the target level handed to
+    /// the C++ factory ctor.
+    void FactoryPrepareViaRust(uint32_t level);
+
+    /// Reward every eligible quest from a caller-owned list via the Rust
+    /// factory module. Ports `PlayerbotFactory::InitQuests`. `ids` / `len`
+    /// describe the PB2 `std::list<uint32>` flattened to a contiguous array.
+    void FactoryInitQuestsViaRust(const uint32_t* ids, size_t len);
+
+    /// Kick off a random arena-team creation pass when the bot qualifies, via
+    /// the Rust factory module. Ports `PlayerbotFactory::InitArenaTeam`. The
+    /// Rust side consults the random-factory singleton for both gates
+    /// (account in random list, current arena-team count below target) and
+    /// forwards to `playerbot_random_factory_create_arena_teams` when they
+    /// pass. On Classic this is a silent no-op.
+    void FactoryInitArenaTeamViaRust();
+
+    /// Stock a guild tabard if the bot is already guilded, otherwise pick a
+    /// same-team random guild from the random-factory singleton's
+    /// `random_bot_guilds` list, join it at a random rank, and stock a tabard
+    /// on join, via the Rust factory module. Ports
+    /// `PlayerbotFactory::InitGuild`.
+    void FactoryInitGuildViaRust();
+
+    /// Run `InitSkills` (weapons/armor/riding) followed by `InitTradeSkills`
+    /// (professions + first aid/fishing/cooking + TBC+ armorsmith chain +
+    /// opaque trainer-iteration loop) via the Rust factory module. Ports
+    /// `PlayerbotFactory::InitAllSkills`.
+    void FactoryInitAllSkillsViaRust();
+
+    /// Run only the tradeskill half of `InitAllSkills` — profession
+    /// assignment, universal secondaries, plate-class armorsmith chain,
+    /// and the opaque trainer-iteration callback. Ports
+    /// `PlayerbotFactory::InitTradeSkills`.
+    void FactoryInitTradeSkillsViaRust();
+
+    /// Re-roll the bot's equipped gear from the itempool cache via the
+    /// Rust factory module. Ports `PlayerbotFactory::InitEquipment`.
+    /// `flags` packs the four legacy boolean parameters:
+    ///   bit 0 = incremental, bit 1 = syncWithMaster,
+    ///   bit 2 = progressive, bit 3 = partialUpgrade.
+    /// `itemQuality` pins the quality tier when non-zero (`0` = follow
+    /// the progressive/incremental ladder).
+    void FactoryInitEquipmentViaRust(uint32_t flags, uint32_t itemQuality);
+
+    /// Hunter-only pet creation + stat refresh + mass-autocast + force-
+    /// dismiss pass via the Rust factory module. Ports
+    /// `PlayerbotFactory::InitPet`. No-op for every non-hunter class.
+    void FactoryInitPetViaRust();
+
+    /// Per-class / per-expansion pet spell learning via the Rust factory
+    /// module. Ports `PlayerbotFactory::InitPetSpells`. Hunter + warlock
+    /// only; every other class is a no-op on the Rust side.
+    void FactoryInitPetSpellsViaRust();
+
+    /// Top-level "re-roll this bot from scratch" pass via the Rust factory
+    /// module. Ports `PlayerbotFactory::Randomize(bool incremental,
+    /// bool syncWithMaster)`. `level` is the target level from the factory
+    /// ctor; `itemQuality` is the `.py equip <quality>` override
+    /// (0 = follow the progressive ladder).
+    void FactoryRandomizeViaRust(uint32_t level,
+                                  bool     incremental,
+                                  bool     syncWithMaster,
+                                  uint32_t itemQuality);
+
+    /// Top up ranged-weapon ammo for warrior / rogue / hunter bots via the
+    /// Rust factory module. Ports `PlayerbotFactory::InitAmmo`. No-op for
+    /// every other class.
+    void FactoryInitAmmoViaRust();
+
+    /// Enchant every equipped slot via the Rust factory module. Ports
+    /// `PlayerbotFactory::EnchantEquipment`. The full body (enchant-
+    /// container load, spec-tab dispatch, per-slot iteration) lives on the
+    /// C++ bridge side; this is a thin wrapper that forwards.
+    void FactoryEnchantEquipmentViaRust();
+
+    /// Socket a random gem into every empty socket via the Rust factory
+    /// module. Ports `PlayerbotFactory::InitGems`. Classic is a
+    /// compile-time no-op on the bridge side.
+    void FactoryInitGemsViaRust();
+
     void TellPlayerNoFacing(Player* /*target*/, const std::string& /*msg*/) {}
     void CastSpell(uint32_t /*spellId*/, Unit* /*target*/) {}
     void EnchantItemT(uint32_t /*spellId*/, uint8_t /*slot*/, Item* /*item*/) {}

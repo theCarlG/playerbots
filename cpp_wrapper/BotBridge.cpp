@@ -29,6 +29,7 @@
 #include "Entities/Item.h"
 #include "Entities/ItemPrototype.h"
 #include "BotConfig.h"
+#include "playerbot/PlayerbotAI.h"
 #include "playerbot/RandomItemMgr.h"
 #include "playerbot/RandomPlayerbotMgr.h"
 #include "Util/Util.h"
@@ -393,6 +394,65 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.bot_get_skill_value                 = CB_BotGetSkillValue;
     cbs.bot_set_skill                       = CB_BotSetSkill;
     cbs.bot_update_skills_for_level         = CB_BotUpdateSkillsForLevel;
+
+    cbs.bot_cheat_mask                      = CB_BotCheatMask;
+    cbs.bot_save_to_db_if_not_busy          = CB_BotSaveToDbIfNotBusy;
+
+    cbs.bot_resurrect_full                  = CB_BotResurrectFull;
+    cbs.bot_combat_stop                     = CB_BotCombatStop;
+    cbs.bot_set_level_and_reset_xp          = CB_BotSetLevelAndResetXp;
+    cbs.bot_set_player_flag                 = CB_BotSetPlayerFlag;
+    cbs.factory_config_disable_random_levels = CB_FactoryConfigDisableRandomLevels;
+    cbs.factory_config_random_bot_show_helmet = CB_FactoryConfigRandomBotShowHelmet;
+    cbs.factory_config_random_bot_show_cloak  = CB_FactoryConfigRandomBotShowCloak;
+
+    cbs.factory_is_random_bot                   = CB_FactoryIsRandomBot;
+    cbs.factory_has_real_player_master          = CB_FactoryHasRealPlayerMaster;
+    cbs.factory_is_in_real_guild                = CB_FactoryIsInRealGuild;
+    cbs.factory_config_min_enchanting_bot_level = CB_FactoryConfigMinEnchantingBotLevel;
+    cbs.factory_load_enchant_container          = CB_FactoryLoadEnchantContainer;
+    cbs.bot_reset_talents                       = CB_BotResetTalents;
+    cbs.bot_learn_quest_rewarded_spells         = CB_BotLearnQuestRewardedSpells;
+    cbs.bot_get_money                           = CB_BotGetMoney;
+    cbs.bot_set_money                           = CB_BotSetMoney;
+    cbs.factory_init_all_gems                   = CB_FactoryInitAllGems;
+    cbs.factory_enchant_all_equipment           = CB_FactoryEnchantAllEquipment;
+
+    cbs.quest_is_eligible_for_bot           = CB_QuestIsEligibleForBot;
+    cbs.bot_reward_quest_complete           = CB_BotRewardQuestComplete;
+
+    cbs.bot_get_account_id                  = CB_BotGetAccountId;
+
+    cbs.factory_query_guild_summary         = CB_FactoryQueryGuildSummary;
+    cbs.factory_guild_add_member            = CB_FactoryGuildAddMember;
+    cbs.factory_get_guild_rank_name         = CB_FactoryGetGuildRankName;
+    cbs.factory_bot_guild_id                = CB_FactoryBotGuildId;
+
+    cbs.factory_kv_get_u32                  = CB_FactoryKvGetU32;
+    cbs.factory_kv_set_u32                  = CB_FactoryKvSetU32;
+    cbs.factory_learn_tradeskill_recipes    = CB_FactoryLearnTradeskillRecipes;
+
+    cbs.factory_bot_guid_low                = CB_FactoryBotGuidLow;
+    cbs.factory_bot_equipped_item_in_slot   = CB_FactoryBotEquippedItemInSlot;
+    cbs.factory_destroy_all_equipped_items  = CB_FactoryDestroyAllEquippedItems;
+    cbs.factory_equip_new_item_in_slot      = CB_FactoryEquipNewItemInSlot;
+    cbs.factory_init_stats_for_level_and_update = CB_FactoryInitStatsForLevelAndUpdate;
+    cbs.factory_master_equip_gear_score     = CB_FactoryMasterEquipGearScore;
+    cbs.factory_tell_master                 = CB_FactoryTellMaster;
+
+    // Factory: pet
+    cbs.factory_bot_has_pet                      = CB_FactoryBotHasPet;
+    cbs.factory_pet_entry                        = CB_FactoryPetEntry;
+    cbs.factory_pet_family                       = CB_FactoryPetFamily;
+    cbs.factory_pet_level                        = CB_FactoryPetLevel;
+    cbs.factory_pet_has_spell                    = CB_FactoryPetHasSpell;
+    cbs.factory_pet_autocast_candidate_spells    = CB_FactoryPetAutocastCandidateSpells;
+    cbs.factory_tameable_creatures_for_bot_level = CB_FactoryTameableCreaturesForBotLevel;
+    cbs.factory_create_hunter_pet                = CB_FactoryCreateHunterPet;
+    cbs.factory_pet_refresh_stats                = CB_FactoryPetRefreshStats;
+    cbs.factory_pet_learn_spell                  = CB_FactoryPetLearnSpell;
+    cbs.factory_pet_toggle_autocast              = CB_FactoryPetToggleAutocast;
+    cbs.factory_pet_force_dismiss                = CB_FactoryPetForceDismiss;
 
     cbs.item_prototype_quality              = CB_ItemPrototypeQuality;
     cbs.factory_pick_trade_for_level        = CB_FactoryPickTradeForLevel;
@@ -4295,6 +4355,1272 @@ void BotBridge::CB_BotUpdateSkillsForLevel(BotHandle bot)
     Player* b = FindBot(bot);
     if (!b) return;
     b->UpdateSkillsForLevel(true);
+}
+
+// ── Factory: refresh (cheat mask + DB save) ───────────────────────────────
+
+uint32_t BotBridge::CB_BotCheatMask(BotHandle bot)
+{
+    // `PlayerbotFactory::Refresh` only cares about the item cheat bit, which
+    // is part of the global BotCheats / RndBotCheats config masks. PB2 kept
+    // per-bot cheat overrides in PlayerbotAI, but the C++ stub currently has
+    // no per-bot state, so we surface the union of the two config masks —
+    // identical behavior to "all bots share the config cheats".
+    Player* b = FindBot(bot);
+    if (!b) return 0;
+    return sPlayerbotAIConfig.botCheatMask | sPlayerbotAIConfig.rndBotCheatMask;
+}
+
+void BotBridge::CB_BotSaveToDbIfNotBusy(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b) return;
+    // Mirrors the tail of `PlayerbotFactory::Refresh`: only save if the
+    // CharacterDatabase worker queue is catching up faster than 10ms.
+    if (sRandomPlayerbotMgr.GetDatabaseDelay("CharacterDatabase") < 10 * IN_MILLISECONDS)
+        b->SaveToDB();
+}
+
+// ── Factory: prepare ──────────────────────────────────────────────────────
+
+void BotBridge::CB_BotResurrectFull(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b) return;
+    // Mirrors the top of `PlayerbotFactory::Prepare`: if the bot is dead,
+    // resurrect it at full HP and spawn bones in one step.
+    if (!b->IsAlive())
+    {
+        b->ResurrectPlayer(1.0f, false);
+        b->SpawnCorpseBones();
+    }
+}
+
+void BotBridge::CB_BotCombatStop(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b) return;
+    b->CombatStop(true);
+}
+
+void BotBridge::CB_BotSetLevelAndResetXp(BotHandle bot, uint32_t level)
+{
+    Player* b = FindBot(bot);
+    if (!b) return;
+    b->SetLevel(level);
+    b->SetUInt32Value(PLAYER_XP, 0);
+    b->SetUInt32Value(PLAYER_NEXT_LEVEL_XP, sObjectMgr.GetXPForLevel(level));
+}
+
+void BotBridge::CB_BotSetPlayerFlag(BotHandle bot, uint32_t flag, bool set)
+{
+    Player* b = FindBot(bot);
+    if (!b) return;
+    if (set)
+        b->SetFlag(PLAYER_FLAGS, flag);
+    else
+        b->RemoveFlag(PLAYER_FLAGS, flag);
+}
+
+bool BotBridge::CB_FactoryConfigDisableRandomLevels(BotHandle /*bot*/)
+{
+    return sPlayerbotAIConfig.disableRandomLevels;
+}
+
+bool BotBridge::CB_FactoryConfigRandomBotShowHelmet(BotHandle /*bot*/)
+{
+    return sPlayerbotAIConfig.randomBotShowHelmet;
+}
+
+bool BotBridge::CB_FactoryConfigRandomBotShowCloak(BotHandle /*bot*/)
+{
+    return sPlayerbotAIConfig.randomBotShowCloak;
+}
+
+// ── Factory: Randomize orchestration ──────────────────────────────────────
+//
+// These callbacks back the top-level `PlayerbotFactory::Randomize` orchestrator
+// which is now implemented in Rust (`factory/randomize.rs`). Each one is a
+// direct lift of one line from PB2's Randomize body so the Rust side can
+// consult live engine state (random-bot ownership, master identity, guild
+// membership) and mutate bot state (talents, money) without crossing the
+// C++↔Rust boundary for fine-grained field access.
+
+bool BotBridge::CB_FactoryIsRandomBot(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    return sRandomPlayerbotMgr.IsRandomBot(b);
+}
+
+bool BotBridge::CB_FactoryHasRealPlayerMaster(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    PlayerbotAI* ai = b->GetPlayerbotAI();
+    if (!ai)
+        return false;
+    return ai->HasRealPlayerMaster();
+}
+
+bool BotBridge::CB_FactoryIsInRealGuild(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    // PB2 parity: any guilded bot counts as "in a real guild" — see
+    // PlayerbotRust::IsInRealGuild (cpp_wrapper/PlayerbotRust.cpp:417).
+    return b->GetGuildId() != 0;
+}
+
+uint32_t BotBridge::CB_FactoryConfigMinEnchantingBotLevel(BotHandle /*bot*/)
+{
+    return sPlayerbotAIConfig.minEnchantingBotLevel;
+}
+
+void BotBridge::CB_BotResetTalents(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+    b->resetTalents(true);
+}
+
+void BotBridge::CB_BotLearnQuestRewardedSpells(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+    b->learnQuestRewardedSpells();
+}
+
+uint32_t BotBridge::CB_BotGetMoney(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+    return b->GetMoney();
+}
+
+void BotBridge::CB_BotSetMoney(BotHandle bot, uint32_t amount)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+    b->SetMoney(amount);
+}
+
+// ── Enchant / gem helpers (ported from PlayerbotFactory::EnchantEquipment + InitGems) ──
+//
+// `PlayerbotFactory::EnchantEquipment` builds its per-call state from the
+// `ai_playerbot_enchants` world-DB table, then iterates equipped slots and
+// calls `ai->EnchantItemT()` which — in THIS fork — is a no-op stub
+// (`PlayerbotRust::EnchantItemT`, PlayerbotRust.h:261). To preserve full PB2
+// parity we still load the container, still walk the slots, and still invoke
+// the (no-op) EnchantItemT path: if that stub is ever filled in on the
+// PlayerbotRust side, enchanting will "light up" here with no further changes.
+//
+// InitGems is fully gated off on Classic (`#ifndef MANGOSBOT_ZERO`) in PB2,
+// so `CB_FactoryInitAllGems` is a no-op on vanilla and the full TBC/WotLK
+// port is compiled only for those expansions.
+
+namespace
+{
+    struct EnchantTemplate
+    {
+        uint8  ClassId;
+        uint8  SpecId;
+        uint32 SpellId;
+        uint8  SlotId;
+    };
+
+    // PB2 loads the enchant container once per factory instance; we cache it
+    // process-wide since the `ai_playerbot_enchants` table is read-only after
+    // server start and every Randomize call would otherwise re-query it.
+    std::vector<EnchantTemplate>& EnchantContainer()
+    {
+        static std::vector<EnchantTemplate> g;
+        return g;
+    }
+
+    static bool g_enchant_loaded = false;
+
+    void DoLoadEnchantContainer()
+    {
+        auto& c = EnchantContainer();
+        c.clear();
+        g_enchant_loaded = true;
+
+        auto result = WorldDatabase.PQuery("SELECT class, spec, spellid, slotid FROM ai_playerbot_enchants");
+        if (!result)
+            return;
+
+        do
+        {
+            Field* fields = result->Fetch();
+            EnchantTemplate t{};
+            t.ClassId = fields[0].GetUInt8();
+            t.SpecId  = fields[1].GetUInt8();
+            t.SpellId = fields[2].GetUInt32();
+            t.SlotId  = fields[3].GetUInt8();
+            c.push_back(t);
+        } while (result->NextRow());
+    }
+
+    // Mirrors `PlayerbotFactory::GetPlayerSpecTab` (PlayerbotFactory.cpp:51) —
+    // picks the talent tab the bot has invested the most points in.
+    int ComputePlayerSpecTab(Player* bot)
+    {
+        int maxCount = 0, bestTab = 0;
+        for (int i = 0; i < 3; ++i)
+        {
+            int count = 0;
+            uint32 classMask = bot->getClassMask();
+            for (uint32 i2 = 0; i2 < sTalentStore.GetNumRows(); ++i2)
+            {
+                TalentEntry const* talentInfo = sTalentStore.LookupEntry(i2);
+                if (!talentInfo)
+                    continue;
+                TalentTabEntry const* talentTabInfo = sTalentTabStore.LookupEntry(talentInfo->TalentTab);
+                if (!talentTabInfo || talentTabInfo->tabpage != uint32(i) || !(talentTabInfo->ClassMask & classMask))
+                    continue;
+                for (int rank = MAX_TALENT_RANK - 1; rank >= 0; --rank)
+                {
+                    if (talentInfo->RankID[rank] && bot->HasSpell(talentInfo->RankID[rank]))
+                    {
+                        count += rank + 1;
+                        break;
+                    }
+                }
+            }
+            if (count > maxCount)
+            {
+                maxCount = count;
+                bestTab  = i;
+            }
+        }
+        return bestTab;
+    }
+
+    // Mirrors `PlayerbotFactory::ApplyEnchantTemplate(uint8 spec, Item*)` —
+    // iterates the container looking for entries that match the bot's class
+    // and the passed spec key, then forwards to the (stub) EnchantItemT.
+    void ApplyEnchantTemplateForSpec(Player* bot, uint8 spec, Item* item)
+    {
+        PlayerbotAI* ai = bot->GetPlayerbotAI();
+        if (!ai)
+            return;
+        for (auto const& t : EnchantContainer())
+        {
+            if (t.ClassId == bot->getClass() && t.SpecId == spec)
+                ai->EnchantItemT(t.SpellId, t.SlotId, item);
+        }
+    }
+
+    // Mirrors `PlayerbotFactory::EnchantItem` (PlayerbotFactory.cpp:830) —
+    // computes a spec-key from class*10+tab and applies the template.
+    void DoEnchantItem(Player* bot, Item* item)
+    {
+        if (!item || !bot)
+            return;
+        if (bot->GetLevel() < sPlayerbotAIConfig.minEnchantingBotLevel)
+            return;
+        int tab = ComputePlayerSpecTab(bot);
+        uint32 tempId = uint32((uint32)bot->getClass() * (uint32)10);
+        ApplyEnchantTemplateForSpec(bot, uint8(tempId + uint32(tab)), item);
+    }
+
+#ifndef MANGOSBOT_ZERO
+    // Stat-bucket classifiers — lifted verbatim from
+    // `PlayerbotFactory::CheckItemStats/AddItemStats/AddItemSpellStats`
+    // (PlayerbotFactory.cpp:436/467/552). Kept file-local so PlayerbotFactory
+    // can be deleted without leaving dangling references.
+
+    bool GemCheckItemStats(Player* bot, uint8 sp, uint8 ap, uint8 tank)
+    {
+        switch (bot->getClass())
+        {
+        case CLASS_PRIEST:
+        case CLASS_MAGE:
+        case CLASS_WARLOCK:
+            if (!sp || ap > sp || tank > sp)
+                return false;
+            break;
+        case CLASS_PALADIN:
+        case CLASS_WARRIOR:
+            if ((!ap && !tank) || sp > ap || sp > tank)
+                return false;
+            break;
+        case CLASS_HUNTER:
+        case CLASS_ROGUE:
+            if (!ap || sp > ap || sp > tank)
+                return false;
+            break;
+#ifdef MANGOSBOT_TWO
+        case CLASS_DEATH_KNIGHT:
+            if ((!ap && !tank) || sp > ap || sp > tank)
+                return false;
+            break;
+#endif
+        }
+        return sp || ap || tank;
+    }
+
+    void GemAddItemStats(uint32 mod, uint8& sp, uint8& ap, uint8& tank)
+    {
+        switch (mod)
+        {
+        case ITEM_MOD_HEALTH:
+        case ITEM_MOD_STAMINA:
+        case ITEM_MOD_MANA:
+        case ITEM_MOD_INTELLECT:
+        case ITEM_MOD_SPIRIT:
+        case ITEM_MOD_HIT_SPELL_RATING:
+        case ITEM_MOD_HASTE_RATING:
+        case ITEM_MOD_HASTE_RANGED_RATING:
+        case ITEM_MOD_CRIT_RANGED_RATING:
+        case ITEM_MOD_HIT_RANGED_RATING:
+#ifdef MANGOSBOT_TWO
+        case ITEM_MOD_SPELL_HEALING_DONE:
+        case ITEM_MOD_SPELL_DAMAGE_DONE:
+        case ITEM_MOD_MANA_REGENERATION:
+        case ITEM_MOD_ARMOR_PENETRATION_RATING:
+        case ITEM_MOD_SPELL_POWER:
+        case ITEM_MOD_HEALTH_REGEN:
+        case ITEM_MOD_SPELL_PENETRATION:
+#endif
+            sp++;
+            break;
+        }
+
+        switch (mod)
+        {
+        case ITEM_MOD_AGILITY:
+        case ITEM_MOD_STRENGTH:
+        case ITEM_MOD_HEALTH:
+        case ITEM_MOD_STAMINA:
+        case ITEM_MOD_DEFENSE_SKILL_RATING:
+        case ITEM_MOD_DODGE_RATING:
+        case ITEM_MOD_PARRY_RATING:
+        case ITEM_MOD_BLOCK_RATING:
+        case ITEM_MOD_HIT_TAKEN_MELEE_RATING:
+        case ITEM_MOD_HIT_TAKEN_RANGED_RATING:
+        case ITEM_MOD_HIT_TAKEN_SPELL_RATING:
+        case ITEM_MOD_CRIT_TAKEN_MELEE_RATING:
+        case ITEM_MOD_CRIT_TAKEN_RANGED_RATING:
+        case ITEM_MOD_CRIT_TAKEN_SPELL_RATING:
+        case ITEM_MOD_HIT_TAKEN_RATING:
+        case ITEM_MOD_CRIT_TAKEN_RATING:
+        case ITEM_MOD_RESILIENCE_RATING:
+#ifdef MANGOSBOT_TWO
+        case ITEM_MOD_BLOCK_VALUE:
+#endif
+            tank++;
+            break;
+        }
+
+        switch (mod)
+        {
+        case ITEM_MOD_HEALTH:
+        case ITEM_MOD_STAMINA:
+        case ITEM_MOD_AGILITY:
+        case ITEM_MOD_STRENGTH:
+        case ITEM_MOD_HIT_MELEE_RATING:
+        case ITEM_MOD_HIT_RANGED_RATING:
+        case ITEM_MOD_CRIT_MELEE_RATING:
+        case ITEM_MOD_CRIT_RANGED_RATING:
+        case ITEM_MOD_HASTE_MELEE_RATING:
+        case ITEM_MOD_HASTE_RANGED_RATING:
+        case ITEM_MOD_HIT_RATING:
+        case ITEM_MOD_CRIT_RATING:
+        case ITEM_MOD_HASTE_RATING:
+        case ITEM_MOD_EXPERTISE_RATING:
+#ifdef MANGOSBOT_TWO
+        case ITEM_MOD_ATTACK_POWER:
+        case ITEM_MOD_RANGED_ATTACK_POWER:
+        case ITEM_MOD_FERAL_ATTACK_POWER:
+#endif
+            ap++;
+            break;
+        }
+    }
+
+    void GemAddItemSpellStats(uint32 smod, uint8& sp, uint8& ap, uint8& tank)
+    {
+        switch (smod)
+        {
+        case SPELL_AURA_MOD_DAMAGE_DONE:
+        case SPELL_AURA_MOD_HEALING_DONE:
+        case SPELL_AURA_MOD_SPELL_CRIT_CHANCE:
+        case SPELL_AURA_MOD_POWER_REGEN:
+        case SPELL_AURA_MOD_MANA_REGEN_FROM_STAT:
+        case SPELL_AURA_HASTE_SPELLS:
+            sp++;
+            break;
+        }
+
+        switch (smod)
+        {
+        case SPELL_AURA_MOD_EXPERTISE:
+        case SPELL_AURA_MOD_ATTACK_POWER:
+        case SPELL_AURA_MOD_CRIT_PERCENT:
+        case SPELL_AURA_MOD_HIT_CHANCE:
+        case SPELL_AURA_MOD_RANGED_ATTACK_POWER:
+        case SPELL_AURA_EXTRA_ATTACKS:
+        case SPELL_AURA_MOD_MELEE_HASTE:
+        case SPELL_AURA_MOD_RANGED_HASTE:
+            ap++;
+            break;
+        }
+
+        switch (smod)
+        {
+        case SPELL_AURA_MOD_PARRY_PERCENT:
+        case SPELL_AURA_MOD_DODGE_PERCENT:
+        case SPELL_AURA_MOD_BLOCK_PERCENT:
+        case SPELL_AURA_MOD_DAMAGE_PERCENT_TAKEN:
+        case SPELL_AURA_MOD_BASE_RESISTANCE_PCT:
+        case SPELL_AURA_MOD_BASE_RESISTANCE:
+        case SPELL_AURA_MOD_SKILL:
+        case SPELL_AURA_MOD_SHIELD_BLOCKVALUE:
+        case SPELL_AURA_MOD_SHIELD_BLOCKVALUE_PCT:
+            tank++;
+            break;
+        }
+    }
+#endif // !MANGOSBOT_ZERO
+} // anonymous namespace
+
+void BotBridge::CB_FactoryLoadEnchantContainer(BotHandle /*bot*/)
+{
+    DoLoadEnchantContainer();
+}
+
+void BotBridge::CB_FactoryEnchantAllEquipment(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+    if (b->GetLevel() < sPlayerbotAIConfig.minEnchantingBotLevel)
+        return;
+    if (!g_enchant_loaded)
+        DoLoadEnchantContainer();
+
+    for (uint8 slot = 0; slot < SLOT_EMPTY; slot++)
+    {
+        Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+        if (item)
+            DoEnchantItem(b, item);
+    }
+}
+
+void BotBridge::CB_FactoryInitAllGems(BotHandle bot)
+{
+#ifdef MANGOSBOT_ZERO
+    // PB2 gates the entire InitGems body on `#ifndef MANGOSBOT_ZERO` —
+    // there are no gem sockets on Vanilla. Nothing to do.
+    (void)bot;
+#else
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+
+    std::vector<uint32> gems = sRandomItemMgr.GetGemsList();
+    for (int slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; slot++)
+    {
+        Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+        if (!item)
+            continue;
+        ItemPrototype const* proto = item->GetProto();
+        if (!proto)
+            continue;
+
+        WorldPacket data(CMSG_SOCKET_GEMS);
+        data << item->GetObjectGuid();
+        uint32 gem_placed[MAX_GEM_SOCKETS];
+        for (int i = 0; i < MAX_GEM_SOCKETS; i++)
+            gem_placed[i] = 0;
+
+        for (uint32 enchant_slot = SOCK_ENCHANTMENT_SLOT;
+             enchant_slot < SOCK_ENCHANTMENT_SLOT + MAX_GEM_SOCKETS;
+             ++enchant_slot)
+        {
+            ObjectGuid gem_GUID;
+            uint32 socketSlot  = enchant_slot - SOCK_ENCHANTMENT_SLOT;
+            uint32 SocketColor = proto->Socket[socketSlot].Color;
+#ifdef MANGOSBOT_TWO
+            if (!SocketColor)
+            {
+                // prismatic socket promotion — matches PB2 InitGems.
+                if (item->GetEnchantmentId(PRISMATIC_ENCHANTMENT_SLOT))
+                {
+                    if (socketSlot == 0 ||
+                        proto->Socket[socketSlot - 1].Color ||
+                        (socketSlot + 1 < MAX_GEM_SOCKETS && !proto->Socket[socketSlot + 1].Color))
+                    {
+                        SocketColor = SOCKET_COLOR_RED | SOCKET_COLOR_YELLOW | SOCKET_COLOR_BLUE;
+                    }
+                }
+            }
+#endif
+            uint32 gem_id = 0;
+            switch (SocketColor)
+            {
+            case SOCKET_COLOR_META:
+                gem_id = 25890;
+                break;
+            default:
+            {
+                for (auto itr = gems.begin(); itr != gems.end(); ++itr)
+                {
+                    ItemPrototype const* gemProto = sObjectMgr.GetItemPrototype(*itr);
+                    if (!gemProto)
+                        continue;
+
+                    // don't place the same gem twice on the same item
+                    bool already_placed = false;
+                    for (int i = 0; i < MAX_GEM_SOCKETS; i++)
+                        if (gem_placed[i] == gemProto->ItemId)
+                            already_placed = true;
+                    if (already_placed)
+                        continue;
+
+                    GemPropertiesEntry const* gemProperty = sGemPropertiesStore.LookupEntry(gemProto->GemProperties);
+                    if (!gemProperty)
+                        continue;
+
+                    SpellItemEnchantmentEntry const* pEnchant = sSpellItemEnchantmentStore.LookupEntry(gemProperty->spellitemenchantement);
+                    if (!pEnchant)
+                        continue;
+
+                    uint32 GemColor = gemProperty->color;
+
+                    if (gemProto->Flags & ITEM_FLAG_UNIQUE_EQUIPPABLE)
+                    {
+                        if ((b->HasItemOrGemWithIdEquipped(gemProto->ItemId, 1)) ||
+                            (b->HasItemCount(gemProto->ItemId, 1)))
+                            continue;
+                    }
+
+                    if (gemProto->RequiredSkillRank > b->GetSkillValue(SKILL_JEWELCRAFTING))
+                        continue;
+
+                    // no epic gems on low gear; no crap gems on epic gear
+                    if (((proto->ItemLevel) < 100 && (gemProto->Quality) > 3) ||
+                        ((proto->ItemLevel) > 100 && (gemProto->Quality) < 3))
+                        continue;
+
+                    uint8 sp = 0, ap = 0, tank = 0;
+                    if (GemColor & SocketColor && GemColor == SocketColor)
+                    {
+                        for (int i = 0; i < 3; ++i)
+                        {
+                            if (pEnchant->type[i] != ITEM_ENCHANTMENT_TYPE_STAT &&
+                                pEnchant->type[i] != ITEM_ENCHANTMENT_TYPE_EQUIP_SPELL)
+                                continue;
+                            switch (pEnchant->type[i])
+                            {
+                            case ITEM_ENCHANTMENT_TYPE_STAT:
+                                GemAddItemStats(pEnchant->spellid[i], sp, ap, tank);
+                                break;
+                            case ITEM_ENCHANTMENT_TYPE_EQUIP_SPELL:
+                            {
+                                SpellEntry const* spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(pEnchant->spellid[i]);
+                                if (!spellInfo)
+                                    continue;
+                                for (int j = 0; j < MAX_EFFECT_INDEX; j++)
+                                {
+                                    if (spellInfo->Effect[j] != SPELL_EFFECT_APPLY_AURA)
+                                        continue;
+                                    GemAddItemSpellStats(spellInfo->EffectApplyAuraName[j], sp, ap, tank);
+                                }
+                            }
+                            break;
+                            }
+                        }
+                    }
+                    if (!GemCheckItemStats(b, sp, ap, tank))
+                        continue;
+                    gem_id = gemProto->ItemId;
+                    break;
+                }
+            }
+            break;
+            }
+
+            if (gem_id > 0)
+            {
+                gem_placed[socketSlot] = gem_id;
+                ItemPosCountVec dest;
+                InventoryResult res = b->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, gem_id, 1);
+                if (res == EQUIP_ERR_OK)
+                {
+                    if (Item* gem = b->StoreNewItem(dest, gem_id, true))
+                    {
+                        b->SendNewItem(gem, 1, false, true, false);
+                        gem_GUID = gem->GetObjectGuid();
+                    }
+                }
+            }
+            data << gem_GUID;
+        }
+        b->GetSession()->HandleSocketOpcode(data);
+    }
+#endif // !MANGOSBOT_ZERO
+}
+
+// ── Factory: quests ───────────────────────────────────────────────────────
+
+bool BotBridge::CB_QuestIsEligibleForBot(BotHandle bot, uint32_t quest_id)
+{
+    Player* b = FindBot(bot);
+    if (!b) return false;
+
+    Quest const* quest = sObjectMgr.GetQuestTemplate(quest_id);
+    if (!quest) return false;
+
+    if (!b->SatisfyQuestClass(quest, false))
+        return false;
+    if (quest->GetMinLevel() > b->GetLevel())
+        return false;
+    if (!b->SatisfyQuestRace(quest, false))
+        return false;
+
+    return true;
+}
+
+void BotBridge::CB_BotRewardQuestComplete(BotHandle bot, uint32_t quest_id)
+{
+    Player* b = FindBot(bot);
+    if (!b) return;
+
+    Quest const* quest = sObjectMgr.GetQuestTemplate(quest_id);
+    if (!quest) return;
+
+    b->SetQuestStatus(quest_id, QUEST_STATUS_COMPLETE);
+    b->RewardQuest(quest, 0, b, false);
+}
+
+// ── Factory: arena team ───────────────────────────────────────────────────
+
+uint32_t BotBridge::CB_BotGetAccountId(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b) return 0;
+
+    WorldSession* sess = b->GetSession();
+    if (!sess) return 0;
+
+    return sess->GetAccountId();
+}
+
+// ── Factory: guild ────────────────────────────────────────────────────────
+
+bool BotBridge::CB_FactoryQueryGuildSummary(BotHandle bot,
+                                            uint32_t guild_id,
+                                            uint8_t* out_leader_team,
+                                            uint32_t* out_member_size,
+                                            uint32_t* out_max_members_hint,
+                                            char* out_name,
+                                            uint32_t name_buf_len)
+{
+    (void)bot;
+    Guild* guild = sGuildMgr.GetGuildById(guild_id);
+    if (!guild)
+        return false;
+
+    if (out_leader_team)
+    {
+        Team leaderTeam = sObjectMgr.GetPlayerTeamByGUID(guild->GetLeaderGuid());
+        // Normalize to the Rust-side 0=Alliance, 1=Horde convention.
+        *out_leader_team = (leaderTeam == ALLIANCE) ? 0u : 1u;
+    }
+    if (out_member_size)
+        *out_member_size = guild->GetMemberSize();
+    if (out_max_members_hint)
+        *out_max_members_hint = static_cast<uint32_t>(atoi(guild->GetGINFO().c_str()));
+    if (out_name && name_buf_len > 0)
+    {
+        const std::string& name = guild->GetName();
+        const uint32_t copy_n = std::min<uint32_t>(name_buf_len - 1,
+                                                   static_cast<uint32_t>(name.size()));
+        std::memcpy(out_name, name.data(), copy_n);
+        out_name[copy_n] = '\0';
+    }
+    return true;
+}
+
+bool BotBridge::CB_FactoryGuildAddMember(BotHandle bot, uint32_t guild_id, uint32_t rank_id)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    Guild* guild = sGuildMgr.GetGuildById(guild_id);
+    if (!guild)
+        return false;
+
+    return guild->AddMember(b->GetObjectGuid(), rank_id);
+}
+
+bool BotBridge::CB_FactoryGetGuildRankName(BotHandle bot,
+                                           uint32_t guild_id,
+                                           uint32_t rank_id,
+                                           char* out_name,
+                                           uint32_t name_buf_len)
+{
+    (void)bot;
+    if (!out_name || name_buf_len == 0)
+        return false;
+
+    Guild* guild = sGuildMgr.GetGuildById(guild_id);
+    if (!guild)
+        return false;
+
+    const std::string rankName = guild->GetRankName(rank_id);
+    const uint32_t copy_n = std::min<uint32_t>(name_buf_len - 1,
+                                               static_cast<uint32_t>(rankName.size()));
+    std::memcpy(out_name, rankName.data(), copy_n);
+    out_name[copy_n] = '\0';
+    return true;
+}
+
+uint32_t BotBridge::CB_FactoryBotGuildId(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+    return b->GetGuildId();
+}
+
+// ── Factory: per-bot KV store ─────────────────────────────────────────────
+
+uint32_t BotBridge::CB_FactoryKvGetU32(BotHandle bot, const char* key)
+{
+    Player* b = FindBot(bot);
+    if (!b || !key)
+        return 0;
+    return sRandomPlayerbotMgr.GetValue(b, std::string(key));
+}
+
+void BotBridge::CB_FactoryKvSetU32(BotHandle bot, const char* key, uint32_t value)
+{
+    Player* b = FindBot(bot);
+    if (!b || !key)
+        return;
+    sRandomPlayerbotMgr.SetValue(b, std::string(key), value);
+}
+
+// Trainer-iteration tail of PlayerbotFactory::InitTradeSkills. Walks every
+// creature template, inspects each tradeskill trainer's spell list, and
+// learns any recipe the bot currently qualifies for under the
+// "Apprentice + chosen profession or secondary" gate. Delegated here from
+// Rust because the loop needs sCreatureStorage, sObjectMgr.GetNpcTrainer*,
+// GetTrainerSpellState, SpellEntry::Effect*, and SkillLineEntry — several
+// cmangos-only surfaces that are not worth plumbing through the FFI.
+void BotBridge::CB_FactoryLearnTradeskillRecipes(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+
+    for (uint32 id = 0; id < sCreatureStorage.GetMaxEntry(); ++id)
+    {
+        CreatureInfo const* co = sCreatureStorage.LookupEntry<CreatureInfo>(id);
+        if (!co)
+            continue;
+
+        if (co->TrainerType != TRAINER_TYPE_TRADESKILLS)
+            continue;
+
+        uint32 trainerId = co->TrainerTemplateId;
+        if (!trainerId)
+            trainerId = co->Entry;
+
+        TrainerSpellData const* trainer_spells =
+            sObjectMgr.GetNpcTrainerTemplateSpells(trainerId);
+        if (!trainer_spells)
+            trainer_spells = sObjectMgr.GetNpcTrainerSpells(trainerId);
+
+        if (!trainer_spells)
+            continue;
+
+        for (TrainerSpellMap::const_iterator itr = trainer_spells->spellList.begin();
+             itr != trainer_spells->spellList.end(); ++itr)
+        {
+            TrainerSpell const* tSpell = &itr->second;
+            if (!tSpell)
+                continue;
+
+            uint32 reqLevel = 0;
+            reqLevel = tSpell->isProvidedReqLevel
+                           ? tSpell->reqLevel
+                           : std::max(reqLevel, tSpell->reqLevel);
+            TrainerSpellState state = b->GetTrainerSpellState(tSpell, reqLevel);
+            if (state != TRAINER_SPELL_GREEN)
+                continue;
+
+            SpellEntry const* proto = sSpellTemplate.LookupEntry<SpellEntry>(tSpell->spell);
+            if (!proto)
+                continue;
+
+            SpellEntry const* spell = sSpellTemplate.LookupEntry<SpellEntry>(tSpell->spell);
+            if (spell)
+            {
+                std::string SpellName = spell->SpellName[0];
+                if (spell->Effect[EFFECT_INDEX_1] == SPELL_EFFECT_SKILL_STEP)
+                {
+                    uint32 skill = spell->EffectMiscValue[EFFECT_INDEX_1];
+
+                    if (skill && !b->HasSkill(skill))
+                    {
+                        SkillLineEntry const* pSkill = sSkillLineStore.LookupEntry(skill);
+                        if (pSkill)
+                        {
+                            if ((SpellName.find("Apprentice") != std::string::npos &&
+                                 pSkill->categoryId == SKILL_CATEGORY_PROFESSION) ||
+                                pSkill->categoryId == SKILL_CATEGORY_SECONDARY)
+                                continue;
+                        }
+                    }
+                }
+            }
+
+            // Original code calls `ai->CastSpell(tSpell->spell, bot)` as
+            // the `else` branch when `learnedSpell` is not set. The
+            // PlayerbotAI→PlayerbotRust shim turns `CastSpell` into a
+            // no-op today (cpp_wrapper/PlayerbotRust.h:229), so the
+            // fallback is dead in the fork; omitted here rather than
+            // replicated for compile-time clarity.
+#ifdef MANGOSBOT_ZERO
+            if (tSpell->learnedSpell)
+            {
+                bool learned = false;
+                for (int j = 0; j < 3; ++j)
+                {
+                    if (proto->Effect[j] == SPELL_EFFECT_LEARN_SPELL)
+                    {
+                        uint32 learnedSpell = proto->EffectTriggerSpell[j];
+                        b->learnSpell(learnedSpell, false);
+                        learned = true;
+                    }
+                }
+                if (!learned)
+                    b->learnSpell(tSpell->learnedSpell, false);
+            }
+#else
+            if (!tSpell->learnedSpell.empty())
+            {
+                for (auto learnSpell : tSpell->learnedSpell)
+                {
+                    bool learned = false;
+                    for (int j = 0; j < 3; ++j)
+                    {
+                        if (proto->Effect[j] == SPELL_EFFECT_LEARN_SPELL)
+                        {
+                            uint32 learnedSpell = proto->EffectTriggerSpell[j];
+                            b->learnSpell(learnedSpell, false);
+                            learned = true;
+                        }
+                    }
+                    if (!learned)
+                        b->learnSpell(learnSpell, false);
+                }
+            }
+#endif
+        }
+    }
+}
+
+// ── Factory: equipment ────────────────────────────────────────────────────
+
+uint32_t BotBridge::CB_FactoryBotGuidLow(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    return b ? b->GetGUIDLow() : 0u;
+}
+
+uint32_t BotBridge::CB_FactoryBotEquippedItemInSlot(BotHandle bot, uint8_t slot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+    Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+    if (!item)
+        return 0;
+    ItemPrototype const* proto = item->GetProto();
+    return proto ? proto->ItemId : 0u;
+}
+
+void BotBridge::CB_FactoryDestroyAllEquippedItems(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+    // Mirrors `DestroyItemsVisitor(bot); InventoryIterateItems(..., ITERATE_ITEMS_IN_EQUIP)`
+    // at the top of PlayerbotFactory::InitEquipment's non-incremental branch.
+    // PB2's visitor preserves ids in `sPlayerbotAIConfig.IsInRandomQuestItemList`;
+    // since bots never loot quest items through the equip pool, and the
+    // `InventoryIterateItems` shim on `PlayerbotRust` is a no-op in this fork,
+    // the practical semantics collapse to "destroy every equipped item".
+    for (uint8_t slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+    {
+        Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+        if (!item)
+            continue;
+        b->DestroyItem(item->GetBagSlot(), item->GetSlot(), true);
+    }
+}
+
+bool BotBridge::CB_FactoryEquipNewItemInSlot(BotHandle bot,
+                                              uint8_t slot,
+                                              uint32_t item_id,
+                                              uint32_t random_enchant_id,
+                                              bool /*apply_enchants*/)
+{
+    Player* b = FindBot(bot);
+    if (!b || !item_id)
+        return false;
+
+    // Mirrors the equip-and-enchant tail of PlayerbotFactory::InitEquipment's
+    // per-slot loop (PlayerbotFactory.cpp:2301-2322).  The `apply_enchants`
+    // flag is accepted for parity with the FFI contract but is a no-op in
+    // this fork: `PlayerbotRust::EnchantItemT` is a stub (PlayerbotRust.h:242),
+    // so the per-slot enchant call would just forward to nothing.
+    uint16 eDest = 0;
+    if (RandomPlayerbotMgr::CanEquipUnseenItem(b, slot, eDest, item_id) != EQUIP_ERR_OK)
+        return false;
+
+    Item* oldItem = b->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+    if (oldItem)
+        b->DestroyItem(oldItem->GetBagSlot(), oldItem->GetSlot(), true);
+
+    Item* pItem = b->EquipNewItem(eDest, item_id, true);
+    if (!pItem)
+        return false;
+
+    if (random_enchant_id)
+    {
+        // overwrite random generated property + refresh the visible slot so
+        // inspect/scoreboard pick up the new stats
+        pItem->SetItemRandomProperties(random_enchant_id);
+        b->SetVisibleItemSlot(pItem->GetSlot(), pItem);
+    }
+    pItem->SetOwnerGuid(b->GetObjectGuid());
+    return true;
+}
+
+void BotBridge::CB_FactoryInitStatsForLevelAndUpdate(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+    b->InitStatsForLevel(true);
+    b->UpdateAllStats();
+}
+
+// Average equipped item level — matches the snapshot computation at
+// line ~668 in CB_GetSnapshot, which mirrors
+// `PlayerbotAI::GetEquipGearScore(player, false, false)` from PB2.
+static uint32_t ComputeEquipGearScore(Player* p)
+{
+    if (!p)
+        return 0;
+    uint32_t sum = 0;
+    uint32_t n = 0;
+    for (int i = EQUIPMENT_SLOT_START; i < EQUIPMENT_SLOT_END; ++i)
+    {
+        Item* item = p->GetItemByPos(INVENTORY_SLOT_BAG_0, i);
+        if (!item)
+            continue;
+        ItemPrototype const* proto = item->GetProto();
+        if (!proto)
+            continue;
+        sum += proto->ItemLevel;
+        ++n;
+    }
+    return (n > 0) ? (sum / n) : 0u;
+}
+
+bool BotBridge::CB_FactoryMasterEquipGearScore(BotHandle bot, uint32_t* out_gs)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    PlayerbotAI* ai = b->GetPlayerbotAI();
+    if (!ai)
+        return false;
+    Player* master = ai->GetMaster();
+    if (!master)
+        return false;
+    if (out_gs)
+        *out_gs = ComputeEquipGearScore(master);
+    return true;
+}
+
+void BotBridge::CB_FactoryTellMaster(BotHandle bot, const char* msg)
+{
+    if (!msg)
+        return;
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+    PlayerbotAI* ai = b->GetPlayerbotAI();
+    if (!ai)
+        return;
+    Player* master = ai->GetMaster();
+    if (!master)
+        return;
+    // `TellPlayerNoFacing` on PB2 whispers to the master; on this fork
+    // `PlayerbotRust::TellPlayerNoFacing` is a no-op shim (PlayerbotRust.h:240),
+    // so route directly through `Player::Whisper` which is the underlying
+    // chat primitive PB2's helper ultimately calls.
+    b->Whisper(msg, LANG_UNIVERSAL, master->GetObjectGuid());
+}
+
+// ── Factory: pet ──────────────────────────────────────────────────────────
+
+bool BotBridge::CB_FactoryBotHasPet(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    return b && b->GetPet() != nullptr;
+}
+
+uint32_t BotBridge::CB_FactoryPetEntry(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+    Pet* pet = b->GetPet();
+    return pet ? pet->GetEntry() : 0u;
+}
+
+uint32_t BotBridge::CB_FactoryPetFamily(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+    Pet* pet = b->GetPet();
+    if (!pet)
+        return 0;
+    CreatureInfo const* ci = sObjectMgr.GetCreatureTemplate(pet->GetEntry());
+    return ci ? ci->Family : 0u;
+}
+
+uint32_t BotBridge::CB_FactoryPetLevel(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+    Pet* pet = b->GetPet();
+    return pet ? pet->GetLevel() : 0u;
+}
+
+bool BotBridge::CB_FactoryPetHasSpell(BotHandle bot, uint32_t spell_id)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    Pet* pet = b->GetPet();
+    return pet && pet->HasSpell(spell_id);
+}
+
+uint32_t* BotBridge::CB_FactoryPetAutocastCandidateSpells(BotHandle bot, uint32_t* out_count)
+{
+    if (out_count)
+        *out_count = 0;
+    Player* b = FindBot(bot);
+    if (!b)
+        return nullptr;
+    Pet* pet = b->GetPet();
+    if (!pet)
+        return nullptr;
+
+    // Mirror PlayerbotFactory::InitPet:425-435 — skip removed / passive
+    // entries so the Rust side only sees toggleable spells.
+    std::vector<uint32> ids;
+    ids.reserve(pet->m_spells.size());
+    for (PetSpellMap::const_iterator itr = pet->m_spells.begin();
+         itr != pet->m_spells.end(); ++itr)
+    {
+        if (itr->second.state == PETSPELL_REMOVED)
+            continue;
+        if (IsPassiveSpell(itr->first))
+            continue;
+        ids.push_back(itr->first);
+    }
+
+    if (ids.empty())
+        return nullptr;
+
+    uint32_t count = static_cast<uint32_t>(ids.size());
+    uint32_t* arr  = static_cast<uint32_t*>(std::malloc(sizeof(uint32_t) * count));
+    if (!arr)
+        return nullptr;
+    for (uint32_t i = 0; i < count; ++i)
+        arr[i] = ids[i];
+    *out_count = count;
+    return arr;
+}
+
+uint32_t* BotBridge::CB_FactoryTameableCreaturesForBotLevel(BotHandle bot, uint32_t* out_count)
+{
+    if (out_count)
+        *out_count = 0;
+    Player* b = FindBot(bot);
+    if (!b)
+        return nullptr;
+
+    std::vector<uint32> ids;
+    for (uint32 id = 0; id < sCreatureStorage.GetMaxEntry(); ++id)
+    {
+        CreatureInfo const* co = sCreatureStorage.LookupEntry<CreatureInfo>(id);
+        if (!co)
+            continue;
+
+#ifdef MANGOSBOT_TWO
+        if (!co->isTameable(b->CanTameExoticPets()))
+#else
+        if (!co->isTameable())
+#endif
+            continue;
+
+        if ((int)co->MinLevel > (int)b->GetLevel())
+            continue;
+
+        ids.push_back(id);
+    }
+
+    if (ids.empty())
+        return nullptr;
+
+    uint32_t count = static_cast<uint32_t>(ids.size());
+    uint32_t* arr  = static_cast<uint32_t*>(std::malloc(sizeof(uint32_t) * count));
+    if (!arr)
+        return nullptr;
+    for (uint32_t i = 0; i < count; ++i)
+        arr[i] = ids[i];
+    *out_count = count;
+    return arr;
+}
+
+bool BotBridge::CB_FactoryCreateHunterPet(BotHandle bot, uint32_t creature_entry)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    Map* map = b->GetMap();
+    if (!map)
+        return false;
+
+    CreatureInfo const* co = sCreatureStorage.LookupEntry<CreatureInfo>(creature_entry);
+    if (!co)
+        return false;
+
+    uint32 guid = map->GenerateLocalLowGuid(HIGHGUID_PET);
+#ifdef MANGOSBOT_TWO
+    CreatureCreatePos pos(map, b->GetPositionX(), b->GetPositionY(), b->GetPositionZ(),
+                          b->GetOrientation(), b->GetPhaseMask());
+#else
+    CreatureCreatePos pos(map, b->GetPositionX(), b->GetPositionY(), b->GetPositionZ(),
+                          b->GetOrientation());
+#endif
+    uint32 pet_number = sObjectMgr.GeneratePetNumber();
+    Pet* pet = new Pet(HUNTER_PET);
+    if (!pet->Create(guid, pos, co, pet_number))
+    {
+        delete pet;
+        return false;
+    }
+
+    pet->SetOwnerGuid(b->GetObjectGuid());
+    pet->SetGuidValue(UNIT_FIELD_CREATEDBY, b->GetObjectGuid());
+    pet->setFaction(b->GetFaction());
+    pet->SetLevel(b->GetLevel());
+    pet->InitStatsForLevel(b->GetLevel());
+#ifndef MANGOSBOT_TWO
+    pet->SetLoyaltyLevel(BEST_FRIEND);
+#endif
+    pet->SetPower(POWER_HAPPINESS, HAPPINESS_LEVEL_SIZE * 2);
+    pet->GetCharmInfo()->SetPetNumber(pet->GetObjectGuid().GetEntry(), true);
+    pet->GetMap()->Add((Creature*)pet);
+    pet->AIM_Initialize();
+    pet->AI()->SetReactState(REACT_DEFENSIVE);
+    pet->InitPetCreateSpells();
+    pet->LearnPetPassives();
+    pet->CastPetAuras(true);
+    pet->CastOwnerTalentAuras();
+    pet->UpdateAllStats();
+    b->SetPet(pet);
+    b->SetPetGuid(pet->GetObjectGuid());
+#ifdef MANGOSBOT_TWO
+    pet->SetUInt32Value(UNIT_CREATED_BY_SPELL, 13481);
+#endif
+
+    pet->SavePetToDB(PET_SAVE_AS_CURRENT, b);
+    b->PetSpellInitialize();
+    return true;
+}
+
+void BotBridge::CB_FactoryPetRefreshStats(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+    Pet* pet = b->GetPet();
+    if (!pet)
+        return;
+
+    pet->InitStatsForLevel(b->GetLevel());
+    pet->SetLevel(b->GetLevel());
+#ifndef MANGOSBOT_TWO
+    pet->SetLoyaltyLevel(BEST_FRIEND);
+#endif
+    pet->SetPower(POWER_HAPPINESS, HAPPINESS_LEVEL_SIZE * 2);
+    pet->SetHealth(pet->GetMaxHealth());
+    pet->SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_PLAYER_CONTROLLED);
+    pet->AI()->SetReactState(REACT_DEFENSIVE);
+}
+
+void BotBridge::CB_FactoryPetLearnSpell(BotHandle bot, uint32_t spell_id)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+    Pet* pet = b->GetPet();
+    if (!pet)
+        return;
+    pet->learnSpell(spell_id);
+}
+
+void BotBridge::CB_FactoryPetToggleAutocast(BotHandle bot, uint32_t spell_id, bool enable)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+    Pet* pet = b->GetPet();
+    if (!pet)
+        return;
+    if (!pet->HasSpell(spell_id))
+        return;
+    if (IsPassiveSpell(spell_id))
+        return;
+    pet->ToggleAutocast(spell_id, enable);
+}
+
+void BotBridge::CB_FactoryPetForceDismiss(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return;
+    Pet* pet = b->GetPet();
+    if (!pet)
+        return;
+    if (pet->IsAlive())
+        pet->SetDeathState(JUST_DIED);
 }
 
 // ── Factory: item prototype queries ───────────────────────────────────────

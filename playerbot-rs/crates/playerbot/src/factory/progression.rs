@@ -83,6 +83,28 @@ pub fn clear_trade_skills(tx: &mut FactoryTransaction<'_>) {
     }
 }
 
+/// Zero any trade skill whose current value is exactly 1 — the "learned but
+/// never trained" state the factory does not want to carry forward.
+///
+/// Ports `PlayerbotFactory::UpdateTradeSkills`. The C++ body is
+///
+/// ```text
+/// for (skill in tradeSkills)
+///     if (bot->GetSkillValue(skill) == 1)
+///         bot->SetSkill(skill, 0, 0, 0);
+/// ```
+///
+/// `SetSkill(id, 0, 0, 0)` with the fourth `step` arg defaulted to 0 is
+/// identical to `SetSkill(id, 0, 0)` — which is what our existing
+/// `bot_set_skill` FFI already calls — so no new FFI surface is needed.
+pub fn update_trade_skills(tx: &mut FactoryTransaction<'_>) {
+    for &skill_id in trade_skills() {
+        if tx.bot_get_skill_value(skill_id) == 1 {
+            tx.bot_set_skill(skill_id, 0, 0);
+        }
+    }
+}
+
 /// Reset the bot's spellbook to class defaults.
 ///
 /// Mirrors `PlayerbotFactory::ClearSpells`. Delegates straight to `CMaNGOS`'
@@ -171,5 +193,66 @@ mod tests {
         let mut w = MockWorld::default();
         with_tx(&mut w, |tx| reset_all_quests(tx));
         assert_eq!(count(&w, MockEvent::ResetAllQuests), 1);
+    }
+
+    /* ── update_trade_skills ────────────────────────────────────────── */
+
+    /// Collect every `SetSkill` event whose value is 0 — those are the
+    /// "zeroed" skills that `update_trade_skills` is expected to emit.
+    fn zeroed(w: &MockWorld) -> Vec<u32> {
+        w.events()
+            .iter()
+            .filter_map(|e| match e {
+                MockEvent::SetSkill { skill, value: 0, max: 0 } => Some(*skill),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn update_trade_skills_zeros_value_one_entries() {
+        // Seed two trade skills at value 1 (Alchemy + Fishing) and one at a
+        // trained value (Blacksmithing at 150). The factory should zero only
+        // the two "learned but never trained" entries.
+        let mut w = MockWorld::builder()
+            .skill(SKILL_ALCHEMY, 1, 1)
+            .skill(SKILL_FISHING, 1, 1)
+            .skill(SKILL_BLACKSMITHING, 150, 225)
+            .build();
+
+        with_tx(&mut w, update_trade_skills);
+
+        let z = zeroed(&w);
+        assert_eq!(z.len(), 2, "expected two skills to be zeroed, got {z:?}");
+        assert!(z.contains(&SKILL_ALCHEMY));
+        assert!(z.contains(&SKILL_FISHING));
+        assert!(
+            !z.contains(&SKILL_BLACKSMITHING),
+            "trained skills must not be reset"
+        );
+    }
+
+    #[test]
+    fn update_trade_skills_is_noop_when_no_skills_are_at_one() {
+        // Default MockWorld has empty skills → every GetSkillValue returns 0
+        // → no SetSkill events should fire.
+        let mut w = MockWorld::default();
+        with_tx(&mut w, update_trade_skills);
+
+        assert!(
+            zeroed(&w).is_empty(),
+            "update_trade_skills must not emit events when no skill is at value 1"
+        );
+    }
+
+    #[test]
+    fn update_trade_skills_leaves_zero_valued_skills_alone() {
+        // A skill already at value 0 (or absent) should not be rewritten.
+        // GetSkillValue returns 0 for unknown skills and the guard is `== 1`,
+        // so nothing fires.
+        let mut w = MockWorld::builder().skill(SKILL_ALCHEMY, 0, 0).build();
+        with_tx(&mut w, update_trade_skills);
+
+        assert!(zeroed(&w).is_empty());
     }
 }

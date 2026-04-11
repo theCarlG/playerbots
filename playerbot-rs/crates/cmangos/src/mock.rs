@@ -69,6 +69,12 @@ pub enum MockEvent {
     SetReputation { faction: u32, value: i32 },
     SetTaxiNode(u32),
     SetAmmo(u32),
+    SaveToDbIfNotBusy,
+    ResurrectFull,
+    CombatStop,
+    SetLevelAndResetXp(u32),
+    SetPlayerFlag { flag: u32, set: bool },
+    RewardQuestComplete(u32),
     InventoryAddItem { item: ItemId, count: u32 },
     StoreInBestSlots { item: ItemId, count: u32 },
     DestroyEquippedAndBags,
@@ -80,6 +86,90 @@ pub enum MockEvent {
     ResetAllQuests,
     WriteLogFile { name: String, body: String },
     AppendLogFile { name: String, line: String },
+    /// Bot attempted to join `guild_id` at `rank`. Produced by
+    /// `factory_guild_add_member`. The mock treats this as an always-success
+    /// add; tests that want a failure path can pre-seed `guild_summaries`
+    /// to omit the target guild.
+    GuildAddMember { guild_id: u32, rank: u32 },
+    /// A `factory_kv_set_u32(key, value)` call — used by
+    /// `PlayerbotFactory::InitTradeSkills` to cache the two professions
+    /// assigned to a bot. Tests can assert on the exact key/value pairs.
+    FactoryKvSet { key: String, value: u32 },
+    /// A `factory_learn_tradeskill_recipes()` call — the opaque trainer
+    /// iteration delegated back to C++. The mock only records that the
+    /// callback fired since there is no spell-loop to simulate.
+    LearnTradeskillRecipes,
+    /// A `factory_destroy_all_equipped_items()` call — the factory
+    /// dropping every equipped item before rerolling gear. The mock
+    /// clears `equipped_item_in_slot` alongside the recorded event.
+    DestroyAllEquippedItems,
+    /// A `factory_equip_new_item_in_slot(slot, item, …)` call — InitEquipment
+    /// handing the target slot a new item id. Includes any random-enchant id
+    /// and whether to apply the socket/enchant pass.
+    EquipNewItemInSlot {
+        slot: u8,
+        item: u32,
+        random_enchant: u32,
+        apply_enchants: bool,
+    },
+    /// A `factory_init_stats_for_level_and_update()` call — the factory's
+    /// tail `InitStatsForLevel(true); UpdateAllStats()` pair that recomputes
+    /// derived stats after equipment changes.
+    InitStatsForLevelAndUpdate,
+    /// A `factory_tell_master(msg)` call — the factory announcing the
+    /// old/new gear-score pair to the synced master.
+    TellMaster(String),
+    /// A `factory_create_hunter_pet(entry)` call — InitPet picking a
+    /// creature from the tameable-creatures list. The mock stamps
+    /// `pet_entry` / `pet_family` based on the matching [`PetCreature`]
+    /// entry before recording the event.
+    CreateHunterPet(u32),
+    /// A `factory_pet_refresh_stats()` call — InitPet's tail that
+    /// re-runs the pet's stat / level / happiness / REACT_DEFENSIVE
+    /// pass after creation.
+    PetRefreshStats,
+    /// A `factory_pet_learn_spell(spell_id)` call — InitPet or
+    /// InitPetSpells teaching a new spell to the pet.
+    PetLearnSpell(u32),
+    /// A `factory_pet_toggle_autocast(spell_id, enable)` call —
+    /// flipping the autocast bit on a pet spell. Both InitPet's mass-
+    /// on loop and InitPetSpells' per-spell Cower toggle go through
+    /// this path.
+    PetToggleAutocast { spell: u32, enable: bool },
+    /// A `factory_pet_force_dismiss()` call — InitPet's "fix the
+    /// missing flags" `SetDeathState(JUST_DIED)` workaround.
+    PetForceDismiss,
+    /// A `factory_load_enchant_container()` call — the legacy
+    /// `PlayerbotFactory::LoadEnchantContainer` that pulls per-bot enchant
+    /// templates out of the world DB. Delegated to C++ because the container
+    /// lives on the (deleted) factory object.
+    LoadEnchantContainer,
+    /// A `bot_reset_talents()` call — `Randomize`'s non-incremental random
+    /// bot branch wiping talents before the fresh learn pass.
+    ResetTalents,
+    /// A `bot_learn_quest_rewarded_spells()` call — `Randomize` folding quest
+    /// reward spells into the spellbook after rewarding the special quest
+    /// list on a real random bot.
+    LearnQuestRewardedSpells,
+    /// A `bot_set_money(amount)` call — `Randomize`'s tail stipend. The mock
+    /// also stores the new balance in `money` so follow-up `bot_get_money`
+    /// queries observe it.
+    SetMoney(u32),
+    /// A `factory_init_all_gems()` call — the atomic TBC/WotLK gem fan-out
+    /// delegated to C++. No-op on Classic bridges.
+    InitAllGems,
+    /// A `factory_enchant_all_equipment()` call — the atomic per-slot enchant
+    /// template dispatch delegated to C++.
+    EnchantAllEquipment,
+}
+
+/// Descriptor for a tameable creature in [`MockState::tameable_creatures`].
+/// Pairs the creature id with the `CreatureInfo::Family` value the mock
+/// should stamp onto `pet_family` when the create callback picks this id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PetCreature {
+    pub entry: u32,
+    pub family: u32,
 }
 
 /* ── State ───────────────────────────────────────────────────────────────── */
@@ -137,6 +227,33 @@ pub struct MockState {
     pub bank_items: Vec<BotInventoryItem>,
     pub mail_items: Vec<BotInventoryItem>,
 
+    /* factory refresh */
+    pub cheat_mask: u32,
+
+    /* factory prepare / config flags */
+    pub disable_random_levels: bool,
+    pub random_bot_show_helmet: bool,
+    pub random_bot_show_cloak: bool,
+
+    /* factory randomize orchestration */
+    /// `factory_is_random_bot` — whether the bot is currently tracked in
+    /// the random-bot account list. Default `false`.
+    pub is_random_bot: bool,
+    /// `factory_has_real_player_master` — whether the bot currently has a
+    /// human master assigned. Default `false` (the default "unclaimed"
+    /// state).
+    pub has_real_player_master: bool,
+    /// `factory_is_in_real_guild` — whether the bot is in a guild that
+    /// contains at least one real player. Default `false`.
+    pub is_in_real_guild: bool,
+    /// `factory_config_min_enchanting_bot_level` — cut-off level used by
+    /// `Randomize` to gate `LoadEnchantContainer`. Default `0` (always
+    /// loads).
+    pub min_enchanting_bot_level: u32,
+    /// `bot_get_money` backing — mirrored `bot_set_money` writes update
+    /// this scalar so follow-up reads observe the new balance.
+    pub money: u32,
+
     /* skills */
     pub skills: HashMap<u32, (u32, u32)>, // skill_id -> (value, max)
 
@@ -154,6 +271,88 @@ pub struct MockState {
 
     /* quests */
     pub quest_log: Vec<BotQuestInfo>,
+    /// Quest IDs the bot is eligible to turn in via the factory
+    /// `quest_is_eligible_for_bot` predicate. Every id *not* present here
+    /// makes the predicate return false (matching `PlayerbotFactory::InitQuests`
+    /// filtering out class/race/min-level mismatches).
+    pub eligible_quests: HashSet<u32>,
+
+    /* arena team */
+    /// Owning account id returned by `bot_get_account_id` — the
+    /// `WorldSession` account used by `PlayerbotFactory::InitArenaTeam`
+    /// to gate random-bot work. Default `0` (the "no session" sentinel).
+    pub account_id: u32,
+
+    /* guild */
+    /// Bot's current guild id returned by `factory_bot_guild_id`. Default
+    /// `0` (the "not in a guild" sentinel).
+    pub bot_guild_id: u32,
+    /// Guild summaries keyed by guild id, read by
+    /// `factory_query_guild_summary`. Unknown ids return `None`.
+    pub guild_summaries: HashMap<u32, crate::GuildSummary>,
+    /// Rank-name lookup keyed by `(guild_id, rank_id)`, read by
+    /// `factory_get_guild_rank_name`. Unknown keys return `None`.
+    pub guild_rank_names: HashMap<(u32, u32), String>,
+
+    /* per-bot KV store (backs factory_kv_get_u32 / factory_kv_set_u32) */
+    /// In-memory mirror of `sRandomPlayerbotMgr.GetValue(bot, key)` —
+    /// the factory persists things like `firstSkill`/`secondSkill` here
+    /// so subsequent re-rolls hand out the same professions. Unknown
+    /// keys return 0.
+    pub kv: HashMap<String, u32>,
+
+    /* factory equipment */
+    /// Value returned by `factory_bot_guid_low`. Default `0`. Every
+    /// itempool query that identifies the bot by guid-low reads through
+    /// this, so tests only have to set it when they care about
+    /// per-bot variation (e.g., `has_same_quest_rewards`).
+    pub bot_guid_low: u32,
+    /// Per-slot current item id read by `factory_bot_equipped_item_in_slot`.
+    /// Missing slots return `0` (empty). Writes via
+    /// `factory_equip_new_item_in_slot` update this map so back-to-back
+    /// factory queries observe the new gear.
+    pub equipped_item_in_slot: HashMap<u8, u32>,
+    /// Value returned by `factory_master_equip_gear_score`. `None` means
+    /// "no master", matching the nullable `GetMaster()` path. Used by the
+    /// sync-with-master tail in `InitEquipment`.
+    pub master_equip_gear_score: Option<u32>,
+
+    /* factory pet */
+    /// `factory_pet_entry` — `0` means the bot has no pet. Writes via
+    /// `factory_create_hunter_pet` update this value so subsequent
+    /// `factory_bot_has_pet` / `factory_pet_entry` queries observe the
+    /// freshly-created pet. Mirrors `bot->GetPet()->GetEntry()`.
+    pub pet_entry: u32,
+    /// `factory_pet_family` — the `CreatureInfo::Family` bucket for
+    /// the current pet. Read per-creature from [`tameable_creatures`]
+    /// at create time and cached here.
+    pub pet_family: u32,
+    /// `factory_pet_level` — the pet's current level. Used by
+    /// `InitPetSpells` to gate each spell rank.
+    pub pet_level: u32,
+    /// `factory_pet_has_spell` — set of spell ids currently in the
+    /// pet's spellbook. Writes via `factory_pet_learn_spell` update
+    /// this set so test assertions can observe the progression.
+    pub pet_spells: HashSet<u32>,
+    /// Tracks the autocast bit of each pet spell, so tests can assert
+    /// on the order / direction of `factory_pet_toggle_autocast` calls.
+    pub pet_autocast: HashMap<u32, bool>,
+    /// Answers `factory_pet_autocast_candidate_spells` — non-passive,
+    /// non-removed spells from `PetSpellMap` that `InitPet` mass-
+    /// toggles autocast on. Kept as a plain `Vec<u32>` so tests can
+    /// preserve creation order.
+    pub pet_autocast_candidates: Vec<u32>,
+    /// Whether the pet is alive. Gates `factory_pet_force_dismiss`
+    /// in the mock (mirrors the `if (pet->IsAlive())` check at the
+    /// bottom of `InitPet`). Flipped to `false` when the dismiss is
+    /// recorded.
+    pub pet_is_alive: bool,
+    /// Tameable creature ids returned by
+    /// `factory_tameable_creatures_for_bot_level` — already filtered
+    /// by the mock's notion of "≤ bot level + tameable". Each
+    /// `PetCreature` carries the family the create-callback should
+    /// stamp onto `pet_family` when it picks this id.
+    pub tameable_creatures: Vec<PetCreature>,
 
     /* random */
     pub rng_seq: VecDeque<u32>,
@@ -222,6 +421,15 @@ impl Default for MockState {
             equipped_items: Vec::new(),
             bank_items: Vec::new(),
             mail_items: Vec::new(),
+            cheat_mask: 0,
+            disable_random_levels: false,
+            random_bot_show_helmet: true,
+            random_bot_show_cloak: true,
+            is_random_bot: false,
+            has_real_player_master: false,
+            is_in_real_guild: false,
+            min_enchanting_bot_level: 0,
+            money: 0,
             skills: HashMap::new(),
             class_talents: HashMap::new(),
             free_talent_points: 0,
@@ -230,6 +438,23 @@ impl Default for MockState {
             reputations: HashMap::new(),
             reputation_rank: HashMap::new(),
             quest_log: Vec::new(),
+            eligible_quests: HashSet::new(),
+            account_id: 0,
+            bot_guild_id: 0,
+            guild_summaries: HashMap::new(),
+            guild_rank_names: HashMap::new(),
+            kv: HashMap::new(),
+            bot_guid_low: 0,
+            equipped_item_in_slot: HashMap::new(),
+            master_equip_gear_score: None,
+            pet_entry: 0,
+            pet_family: 0,
+            pet_level: 0,
+            pet_spells: HashSet::new(),
+            pet_autocast: HashMap::new(),
+            pet_autocast_candidates: Vec::new(),
+            pet_is_alive: false,
+            tameable_creatures: Vec::new(),
             rng_seq: VecDeque::new(),
             rng_default: 0,
             potion_picks: HashMap::new(),
@@ -571,6 +796,57 @@ impl MockWorldBuilder {
         self
     }
 
+    /* factory refresh */
+    #[must_use]
+    pub fn cheat_mask(mut self, mask: u32) -> Self {
+        self.state.cheat_mask = mask;
+        self
+    }
+
+    /* factory prepare / config flags */
+    #[must_use]
+    pub fn disable_random_levels(mut self, disabled: bool) -> Self {
+        self.state.disable_random_levels = disabled;
+        self
+    }
+    #[must_use]
+    pub fn random_bot_show_helmet(mut self, show: bool) -> Self {
+        self.state.random_bot_show_helmet = show;
+        self
+    }
+    #[must_use]
+    pub fn random_bot_show_cloak(mut self, show: bool) -> Self {
+        self.state.random_bot_show_cloak = show;
+        self
+    }
+
+    /* factory randomize orchestration */
+    #[must_use]
+    pub fn is_random_bot(mut self, v: bool) -> Self {
+        self.state.is_random_bot = v;
+        self
+    }
+    #[must_use]
+    pub fn has_real_player_master(mut self, v: bool) -> Self {
+        self.state.has_real_player_master = v;
+        self
+    }
+    #[must_use]
+    pub fn is_in_real_guild(mut self, v: bool) -> Self {
+        self.state.is_in_real_guild = v;
+        self
+    }
+    #[must_use]
+    pub fn min_enchanting_bot_level(mut self, level: u32) -> Self {
+        self.state.min_enchanting_bot_level = level;
+        self
+    }
+    #[must_use]
+    pub fn money(mut self, amount: u32) -> Self {
+        self.state.money = amount;
+        self
+    }
+
     /* skills */
     #[must_use]
     pub fn skill(mut self, skill_id: u32, value: u32, max: u32) -> Self {
@@ -623,6 +899,125 @@ impl MockWorldBuilder {
     #[must_use]
     pub fn quest(mut self, quest_id: u32, complete: bool) -> Self {
         self.state.quest_log.push(BotQuestInfo { quest_id, complete });
+        self
+    }
+    /// Mark `quest_id` as eligible for the bot — the factory
+    /// `quest_is_eligible_for_bot` predicate returns true for anything in this
+    /// set.
+    #[must_use]
+    pub fn eligible_quest(mut self, quest_id: u32) -> Self {
+        self.state.eligible_quests.insert(quest_id);
+        self
+    }
+
+    /// Set the owning account id returned by `bot_get_account_id`.
+    #[must_use]
+    pub fn account_id(mut self, id: u32) -> Self {
+        self.state.account_id = id;
+        self
+    }
+
+    /// Set the bot's current guild id returned by `factory_bot_guild_id`.
+    /// `0` = "not in a guild" (the default).
+    #[must_use]
+    pub fn bot_guild_id(mut self, id: u32) -> Self {
+        self.state.bot_guild_id = id;
+        self
+    }
+
+    /// Register a guild summary returned by `factory_query_guild_summary`
+    /// for `guild_id`.
+    #[must_use]
+    pub fn guild_summary(mut self, guild_id: u32, summary: crate::GuildSummary) -> Self {
+        self.state.guild_summaries.insert(guild_id, summary);
+        self
+    }
+
+    /// Register a rank-name lookup for `(guild_id, rank_id)` returned by
+    /// `factory_get_guild_rank_name`.
+    #[must_use]
+    pub fn guild_rank_name(
+        mut self,
+        guild_id: u32,
+        rank_id: u32,
+        name: impl Into<String>,
+    ) -> Self {
+        self.state
+            .guild_rank_names
+            .insert((guild_id, rank_id), name.into());
+        self
+    }
+
+    /// Pre-seed the per-bot KV store read by `factory_kv_get_u32`. Used
+    /// by trade-skill tests to stash `firstSkill`/`secondSkill` and
+    /// verify the cache-hit branch.
+    #[must_use]
+    pub fn kv(mut self, key: impl Into<String>, value: u32) -> Self {
+        self.state.kv.insert(key.into(), value);
+        self
+    }
+
+    /* factory equipment */
+
+    /// Set the value returned by `factory_bot_guid_low`. Tests that need
+    /// per-bot itempool queries to disambiguate (`has_same_quest_rewards`)
+    /// should set this to a non-zero id.
+    #[must_use]
+    pub fn bot_guid_low(mut self, guid_low: u32) -> Self {
+        self.state.bot_guid_low = guid_low;
+        self
+    }
+    /// Pre-seed the equipped item id for a single slot. Returned by
+    /// `factory_bot_equipped_item_in_slot`. Tests for the incremental
+    /// `InitEquipment` branch use this to place the "old" item the
+    /// factory must beat.
+    #[must_use]
+    pub fn equipped_item_in_slot(mut self, slot: u8, item_id: u32) -> Self {
+        self.state.equipped_item_in_slot.insert(slot, item_id);
+        self
+    }
+    /// Pre-seed the value returned by `factory_master_equip_gear_score`.
+    /// `Some(gs)` makes the sync-with-master tail log; `None` matches the
+    /// "no master" default.
+    #[must_use]
+    pub fn master_equip_gear_score(mut self, gs: u32) -> Self {
+        self.state.master_equip_gear_score = Some(gs);
+        self
+    }
+
+    /* factory pet */
+
+    /// Pre-seed the bot with an existing pet. Matches the state the
+    /// mock would be in after a successful `factory_create_hunter_pet`
+    /// call. `level` is the pet's level; pass `0` to reuse the bot's
+    /// current level from `self_snap`.
+    #[must_use]
+    pub fn pet(mut self, entry: u32, family: u32, level: u32) -> Self {
+        self.state.pet_entry = entry;
+        self.state.pet_family = family;
+        self.state.pet_level = if level == 0 {
+            u32::from(self.state.world_snap.self_.level)
+        } else {
+            level
+        };
+        self.state.pet_is_alive = true;
+        self
+    }
+
+    /// Pre-seed the pet's autocast-candidate spell list returned by
+    /// `factory_pet_autocast_candidate_spells`. Used by tests of
+    /// `InitPet`'s mass-toggle pass.
+    #[must_use]
+    pub fn pet_autocast_candidates(mut self, candidates: Vec<u32>) -> Self {
+        self.state.pet_autocast_candidates = candidates;
+        self
+    }
+
+    /// Pre-seed the tameable-creatures list returned by
+    /// `factory_tameable_creatures_for_bot_level`.
+    #[must_use]
+    pub fn tameable_creatures(mut self, creatures: Vec<PetCreature>) -> Self {
+        self.state.tameable_creatures = creatures;
         self
     }
 
@@ -1289,6 +1684,298 @@ impl World for MockWorld {
 
     fn bot_update_skills_for_level(&self) {
         record(&self.0, MockEvent::UpdateSkillsForLevel);
+    }
+
+    fn bot_cheat_mask(&self) -> u32 {
+        self.0.borrow().cheat_mask
+    }
+
+    fn bot_save_to_db_if_not_busy(&self) {
+        record(&self.0, MockEvent::SaveToDbIfNotBusy);
+    }
+
+    fn bot_resurrect_full(&self) {
+        record(&self.0, MockEvent::ResurrectFull);
+    }
+
+    fn bot_combat_stop(&self) {
+        record(&self.0, MockEvent::CombatStop);
+    }
+
+    fn bot_set_level_and_reset_xp(&self, level: u32) {
+        record(&self.0, MockEvent::SetLevelAndResetXp(level));
+    }
+
+    fn bot_set_player_flag(&self, flag: u32, set: bool) {
+        record(&self.0, MockEvent::SetPlayerFlag { flag, set });
+    }
+
+    fn factory_config_disable_random_levels(&self) -> bool {
+        self.0.borrow().disable_random_levels
+    }
+
+    fn factory_config_random_bot_show_helmet(&self) -> bool {
+        self.0.borrow().random_bot_show_helmet
+    }
+
+    fn factory_config_random_bot_show_cloak(&self) -> bool {
+        self.0.borrow().random_bot_show_cloak
+    }
+
+    fn factory_is_random_bot(&self) -> bool {
+        self.0.borrow().is_random_bot
+    }
+
+    fn factory_has_real_player_master(&self) -> bool {
+        self.0.borrow().has_real_player_master
+    }
+
+    fn factory_is_in_real_guild(&self) -> bool {
+        self.0.borrow().is_in_real_guild
+    }
+
+    fn factory_config_min_enchanting_bot_level(&self) -> u32 {
+        self.0.borrow().min_enchanting_bot_level
+    }
+
+    fn factory_load_enchant_container(&self) {
+        record(&self.0, MockEvent::LoadEnchantContainer);
+    }
+
+    fn bot_reset_talents(&self) {
+        record(&self.0, MockEvent::ResetTalents);
+    }
+
+    fn bot_learn_quest_rewarded_spells(&self) {
+        record(&self.0, MockEvent::LearnQuestRewardedSpells);
+    }
+
+    fn bot_get_money(&self) -> u32 {
+        self.0.borrow().money
+    }
+
+    fn bot_set_money(&self, amount: u32) {
+        self.0.borrow_mut().money = amount;
+        record(&self.0, MockEvent::SetMoney(amount));
+    }
+
+    fn factory_init_all_gems(&self) {
+        record(&self.0, MockEvent::InitAllGems);
+    }
+
+    fn factory_enchant_all_equipment(&self) {
+        record(&self.0, MockEvent::EnchantAllEquipment);
+    }
+
+    fn quest_is_eligible_for_bot(&self, quest_id: u32) -> bool {
+        self.0.borrow().eligible_quests.contains(&quest_id)
+    }
+
+    fn bot_reward_quest_complete(&self, quest_id: u32) {
+        record(&self.0, MockEvent::RewardQuestComplete(quest_id));
+    }
+
+    fn bot_get_account_id(&self) -> u32 {
+        self.0.borrow().account_id
+    }
+
+    fn factory_bot_guild_id(&self) -> u32 {
+        self.0.borrow().bot_guild_id
+    }
+
+    fn factory_query_guild_summary(&self, guild_id: u32) -> Option<crate::GuildSummary> {
+        self.0.borrow().guild_summaries.get(&guild_id).cloned()
+    }
+
+    fn factory_guild_add_member(&self, guild_id: u32, rank: u32) -> bool {
+        // Mirror the FFI contract: an unknown guild id is a failure.
+        if !self.0.borrow().guild_summaries.contains_key(&guild_id) {
+            return false;
+        }
+        // Flip the bot's guild id so a follow-up `factory_bot_guild_id`
+        // call sees the join — matches the C++ side where `AddMember`
+        // updates `Player::m_guildId` synchronously.
+        {
+            let mut s = self.0.borrow_mut();
+            s.bot_guild_id = guild_id;
+            if let Some(summary) = s.guild_summaries.get_mut(&guild_id) {
+                summary.member_size = summary.member_size.saturating_add(1);
+            }
+        }
+        record(&self.0, MockEvent::GuildAddMember { guild_id, rank });
+        true
+    }
+
+    fn factory_get_guild_rank_name(&self, guild_id: u32, rank: u32) -> Option<String> {
+        self.0
+            .borrow()
+            .guild_rank_names
+            .get(&(guild_id, rank))
+            .cloned()
+    }
+
+    fn factory_kv_get_u32(&self, key: &str) -> u32 {
+        self.0.borrow().kv.get(key).copied().unwrap_or(0)
+    }
+
+    fn factory_kv_set_u32(&self, key: &str, value: u32) {
+        self.0.borrow_mut().kv.insert(key.to_string(), value);
+        record(
+            &self.0,
+            MockEvent::FactoryKvSet { key: key.to_string(), value },
+        );
+    }
+
+    fn factory_learn_tradeskill_recipes(&self) {
+        record(&self.0, MockEvent::LearnTradeskillRecipes);
+    }
+
+    fn factory_bot_guid_low(&self) -> u32 {
+        self.0.borrow().bot_guid_low
+    }
+
+    fn factory_bot_equipped_item_in_slot(&self, slot: u8) -> u32 {
+        self.0
+            .borrow()
+            .equipped_item_in_slot
+            .get(&slot)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn factory_destroy_all_equipped_items(&self) {
+        self.0.borrow_mut().equipped_item_in_slot.clear();
+        record(&self.0, MockEvent::DestroyAllEquippedItems);
+    }
+
+    fn factory_equip_new_item_in_slot(
+        &self,
+        slot: u8,
+        item_id: u32,
+        random_enchant_id: u32,
+        apply_enchants: bool,
+    ) -> bool {
+        self.0
+            .borrow_mut()
+            .equipped_item_in_slot
+            .insert(slot, item_id);
+        record(
+            &self.0,
+            MockEvent::EquipNewItemInSlot {
+                slot,
+                item: item_id,
+                random_enchant: random_enchant_id,
+                apply_enchants,
+            },
+        );
+        true
+    }
+
+    fn factory_init_stats_for_level_and_update(&self) {
+        record(&self.0, MockEvent::InitStatsForLevelAndUpdate);
+    }
+
+    fn factory_master_equip_gear_score(&self) -> Option<u32> {
+        self.0.borrow().master_equip_gear_score
+    }
+
+    fn factory_tell_master(&self, msg: &str) {
+        record(&self.0, MockEvent::TellMaster(msg.to_string()));
+    }
+
+    fn factory_bot_has_pet(&self) -> bool {
+        self.0.borrow().pet_entry != 0
+    }
+
+    fn factory_pet_entry(&self) -> u32 {
+        self.0.borrow().pet_entry
+    }
+
+    fn factory_pet_family(&self) -> u32 {
+        self.0.borrow().pet_family
+    }
+
+    fn factory_pet_level(&self) -> u32 {
+        self.0.borrow().pet_level
+    }
+
+    fn factory_pet_has_spell(&self, spell_id: u32) -> bool {
+        self.0.borrow().pet_spells.contains(&spell_id)
+    }
+
+    fn factory_pet_autocast_candidate_spells(&self) -> BotSpellList<'_> {
+        let s = self.0.borrow();
+        let candidates = s.pet_autocast_candidates.clone();
+        drop(s);
+        OwnedList::from_boxed_slice(candidates.into_boxed_slice())
+    }
+
+    fn factory_tameable_creatures_for_bot_level(&self) -> BotSpellList<'_> {
+        let s = self.0.borrow();
+        let ids: Vec<u32> = s.tameable_creatures.iter().map(|c| c.entry).collect();
+        drop(s);
+        OwnedList::from_boxed_slice(ids.into_boxed_slice())
+    }
+
+    fn factory_create_hunter_pet(&self, creature_entry: u32) -> bool {
+        let mut s = self.0.borrow_mut();
+        let Some(creature) = s
+            .tameable_creatures
+            .iter()
+            .find(|c| c.entry == creature_entry)
+            .copied()
+        else {
+            return false;
+        };
+        s.pet_entry = creature.entry;
+        s.pet_family = creature.family;
+        // InitPet sets the pet level to the bot level right before
+        // refreshing stats — mirror that here so the subsequent spell
+        // dispatch in `init_pet_spells` sees a non-zero level.
+        s.pet_level = u32::from(s.world_snap.self_.level);
+        s.pet_is_alive = true;
+        drop(s);
+        record(&self.0, MockEvent::CreateHunterPet(creature_entry));
+        true
+    }
+
+    fn factory_pet_refresh_stats(&self) {
+        {
+            let mut s = self.0.borrow_mut();
+            if s.pet_entry != 0 {
+                s.pet_level = u32::from(s.world_snap.self_.level);
+                s.pet_is_alive = true;
+            }
+        }
+        record(&self.0, MockEvent::PetRefreshStats);
+    }
+
+    fn factory_pet_learn_spell(&self, spell_id: u32) {
+        {
+            let mut s = self.0.borrow_mut();
+            if s.pet_entry != 0 {
+                s.pet_spells.insert(spell_id);
+            }
+        }
+        record(&self.0, MockEvent::PetLearnSpell(spell_id));
+    }
+
+    fn factory_pet_toggle_autocast(&self, spell_id: u32, enable: bool) {
+        {
+            let mut s = self.0.borrow_mut();
+            if s.pet_entry != 0 {
+                s.pet_autocast.insert(spell_id, enable);
+            }
+        }
+        record(&self.0, MockEvent::PetToggleAutocast { spell: spell_id, enable });
+    }
+
+    fn factory_pet_force_dismiss(&self) {
+        {
+            let mut s = self.0.borrow_mut();
+            s.pet_is_alive = false;
+        }
+        record(&self.0, MockEvent::PetForceDismiss);
     }
 
     fn bot_set_reputation(&self, faction_id: u32, value: i32) -> bool {

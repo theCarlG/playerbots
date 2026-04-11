@@ -12,7 +12,7 @@
 use crate::config::typed::{BotConfig, MAX_CLASSES, MAX_RACES};
 use crate::random::races::first_available_race;
 
-/// RNG abstraction matching the `urand(min, max)` helper in CMaNGOS —
+/// RNG abstraction matching the `urand(min, max)` helper in `CMaNGOS` —
 /// both bounds are **inclusive**.
 ///
 /// Production code uses [`VtableRng`] which forwards to the
@@ -72,6 +72,7 @@ impl FactoryRng for SequentialRng {
 /// The subtract-through-the-bucket pattern mirrors the C++ uint32 wrap
 /// semantics exactly — no branches have been simplified.
 #[must_use]
+#[allow(clippy::needless_range_loop)] // index-driven loop mirrors the C++ source verbatim
 pub fn get_random_class(cfg: &BotConfig, rng: &mut impl FactoryRng) -> u8 {
     let mut class_prob = [0u32; MAX_CLASSES];
     for race in 1..MAX_RACES {

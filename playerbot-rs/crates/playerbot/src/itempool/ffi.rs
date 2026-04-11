@@ -29,7 +29,7 @@
 
 use std::sync::{Arc, Mutex, OnceLock};
 
-use cmangos::{ItemCallbacks, ItemWorld, VtableItemWorld};
+use cmangos::{BotItemPrototype, ItemCallbacks, ItemWorld, VtableItemWorld};
 
 use crate::itempool::manager::{ItemPoolManager, ManagerInputs, PreloadedCaches};
 use crate::log_error;
@@ -376,6 +376,121 @@ pub extern "C" fn playerbot_itempool_calculate_best_random_enchant_id(
             item_id,
         )
     })
+}
+
+// ── In-process crate API ─────────────────────────────────────────────────
+//
+// Entry points for Rust code that lives in this crate (factory, random
+// managers, …) so the itempool singleton can be queried without round-
+// tripping through the C FFI. Every shim holds the mutex only for the
+// duration of a single manager call — the `with_state` helper above
+// enforces that.
+
+/// Query the equip pool for `(level, class, spec, slot, quality)` as an
+/// owned `Vec<u32>`. Empty when the itempool has not been initialised or
+/// the bucket is empty. Mirrors `playerbot_itempool_query` but keeps
+/// the data in-process for Rust-side consumers.
+pub(crate) fn query_equip(
+    level: u32,
+    class_id: u8,
+    spec_id: u8,
+    slot: u8,
+    quality: u32,
+) -> Vec<u32> {
+    with_state(Vec::new(), |st| {
+        st.manager
+            .query_equip(level, class_id, spec_id, slot, quality)
+            .to_vec()
+    })
+}
+
+/// Pre-computed base stat weight for `(item_id, spec_id)`. Returns `0`
+/// when the itempool has not been initialised.
+pub(crate) fn stat_weight(item_id: u32, spec_id: u32) -> u32 {
+    with_state(0, |st| st.manager.stat_weight(item_id, spec_id))
+}
+
+/// Cached minimum level for `item_id`. Returns `0` when the item is not
+/// in the info cache or the itempool has not been initialised.
+pub(crate) fn min_level(item_id: u32) -> u32 {
+    with_state(0, |st| st.manager.min_level(item_id))
+}
+
+/// Live (filtered) stat weight for `(guid_low, item_id, spec_id)`.
+/// Returns `0` when the itempool has not been initialised.
+pub(crate) fn live_stat_weight(guid_low: u32, item_id: u32, spec_id: u32) -> u32 {
+    with_state(0, |st| {
+        st.manager
+            .live_stat_weight(st.world.as_ref(), guid_low, item_id, spec_id)
+    })
+}
+
+/// Best enchant score rollable on `item_id` under `spec_id`. Returns
+/// `0` when the itempool has not been initialised.
+pub(crate) fn best_random_enchant_stat_weight(item_id: u32, spec_id: u32) -> u32 {
+    with_state(0, |st| {
+        st.manager
+            .best_random_enchant_stat_weight(st.world.as_ref(), item_id, spec_id)
+    })
+}
+
+/// `true` when the player already holds a reward item from any quest
+/// that can grant `item_id`. Returns `false` when the itempool has not
+/// been initialised.
+pub(crate) fn has_same_quest_rewards(guid_low: u32, item_id: u32) -> bool {
+    with_state(false, |st| {
+        st.manager
+            .has_same_quest_rewards(st.world.as_ref(), guid_low, item_id)
+    })
+}
+
+/// Pick the best random enchant id rollable for `item_id` under
+/// `(class, spec)`. Returns `0` when the itempool has not been
+/// initialised or the item has no rollable enchant.
+pub(crate) fn calculate_best_random_enchant_id(class_id: u8, spec_id: u32, item_id: u32) -> u32 {
+    with_state(0, |st| {
+        st.manager
+            .calculate_best_random_enchant_id(st.world.as_ref(), class_id, spec_id, item_id)
+    })
+}
+
+/// Score an enchant id for `(class, spec)`. Returns `0` when the
+/// itempool has not been initialised or the scale does not exist.
+pub(crate) fn calculate_enchant_weight(class_id: u8, spec_id: u32, enchant_id: u32) -> u32 {
+    with_state(0, |st| {
+        st.manager
+            .calculate_enchant_weight(st.world.as_ref(), class_id, spec_id, enchant_id)
+    })
+}
+
+/// Look up a prototype by id. Returns an owned copy because the
+/// singleton lock is released before the value is returned — callers
+/// must not hold the lock while accessing the result. `BotItemPrototype`
+/// is `Copy` (POD) so this is a cheap `memcpy` (~648 bytes).
+pub(crate) fn prototype(item_id: u32) -> Option<BotItemPrototype> {
+    with_state(None, |st| st.manager.prototype(item_id).copied())
+}
+
+/// Resolve the bot's talent-derived spec id. Returns `0` when the
+/// itempool has not been initialised or the bot's active tree has no
+/// registered weight scale.
+pub(crate) fn player_spec_id(guid_low: u32) -> u32 {
+    with_state(0, |st| st.manager.player_spec_id(st.world.as_ref(), guid_low))
+}
+
+/// Test-only helper to install a pre-built manager + world. Used by
+/// equipment-factory unit tests that need to drive the real
+/// `ItemPoolManager::query_equip` / `stat_weight` / … path without
+/// going through the full `playerbot_itempool_init` vtable installation
+/// dance. Tests using this helper must run serially — the singleton is
+/// process-wide.
+#[cfg(test)]
+pub(crate) fn install_state_for_test(manager: ItemPoolManager, world: Arc<dyn ItemWorld>) {
+    let mut guard = match state().lock() {
+        Ok(g) => g,
+        Err(e) => e.into_inner(),
+    };
+    *guard = Some(ItemPoolState { manager, world });
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────

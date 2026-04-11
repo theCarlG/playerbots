@@ -1,6 +1,5 @@
 #include "playerbot/playerbot.h"
 #include "BotConfig.h"
-#include "playerbot/PlayerbotFactory.h"
 #include "playerbot/RandomPlayerbotMgr.h"
 #include "PlayerbotRust.h"
 #include "Chat/ChannelMgr.h"
@@ -1606,54 +1605,65 @@ std::string PlayerbotHolder::HandleBotRemoveLogout(Player* bot, Player* master, 
     return "ok";
 }
 
-std::string PlayerbotHolder::HandleBotGear(Player* bot, Player* master, const std::string param)
+std::string PlayerbotHolder::HandleBotGear(Player* bot, Player* /*master*/, const std::string param)
 {
+    PlayerbotRust* ai = bot->GetPlayerbotAI();
+    if (!ai)
+        return "bot has no AI";
+
+    // Flag bits mirror `PlayerbotFactory::InitEquipment(incremental,
+    // syncWithMaster, progressive, partialUpgrade)`:
+    //   bit 0 = incremental, bit 1 = sync, bit 2 = progressive, bit 3 = partial.
+    const uint32_t kProgressiveBit =
+        sPlayerbotAIConfig.randomGearProgression ? (1u << 2) : 0;
+
     if (param.empty())
     {
-        PlayerbotFactory factory(bot, bot->GetLevel());
-        factory.EquipGear();
+        // `EquipGear()` → `InitEquipment(false, false) + InitGems()`.
+        ai->FactoryInitEquipmentViaRust(kProgressiveBit, ITEM_QUALITY_NORMAL);
+        ai->FactoryInitGemsViaRust();
         return "random gear equipped";
     }
     if (param == "green" || param == "uncommon")
     {
-        PlayerbotFactory factory(bot, bot->GetLevel(), ITEM_QUALITY_UNCOMMON);
-        factory.EquipGear();
+        ai->FactoryInitEquipmentViaRust(kProgressiveBit, ITEM_QUALITY_UNCOMMON);
+        ai->FactoryInitGemsViaRust();
         return "random green gear equipped";
     }
     if (param == "blue" || param == "rare")
     {
-        PlayerbotFactory factory(bot, bot->GetLevel(), ITEM_QUALITY_RARE);
-        factory.EquipGear();
+        ai->FactoryInitEquipmentViaRust(kProgressiveBit, ITEM_QUALITY_RARE);
+        ai->FactoryInitGemsViaRust();
         return "random blue gear equipped";
     }
     if (param == "purple" || param == "epic")
     {
-        PlayerbotFactory factory(bot, bot->GetLevel(), ITEM_QUALITY_EPIC);
-        factory.EquipGear();
+        ai->FactoryInitEquipmentViaRust(kProgressiveBit, ITEM_QUALITY_EPIC);
+        ai->FactoryInitGemsViaRust();
         return "random epic gear equipped";
     }
     if (param == "upgrade")
     {
-        PlayerbotFactory factory(bot, master ? master->GetLevel() : bot->GetLevel(), ITEM_QUALITY_NORMAL);
-        factory.UpgradeGear(false);
+        // `UpgradeGear(false)` → `InitEquipment(true, false)` (incremental).
+        ai->FactoryInitEquipmentViaRust((1u << 0) | kProgressiveBit, ITEM_QUALITY_NORMAL);
         return "gear upgraded";
     }
     if (param == "sync")
     {
-        PlayerbotFactory factory(bot, master ? master->GetLevel() : bot->GetLevel(), ITEM_QUALITY_NORMAL);
-        factory.UpgradeGear(true);
+        // `UpgradeGear(true)` → `InitEquipment(false, true)` (syncWithMaster).
+        ai->FactoryInitEquipmentViaRust((1u << 1) | kProgressiveBit, ITEM_QUALITY_NORMAL);
         return "gear upgraded";
     }
     if (param == "best")
     {
-        PlayerbotFactory factory(bot, bot->GetLevel());
-        factory.EquipGearBest();
+        // `EquipGearBest()` → `InitEquipment(false, false, /*progressive=*/false)`.
+        ai->FactoryInitEquipmentViaRust(0, ITEM_QUALITY_NORMAL);
         return "random best gear equipped";
     }
     if (param == "partial")
     {
-        PlayerbotFactory factory(bot, bot->GetLevel());
-        factory.EquipGearPartialUpgrade();
+        // `EquipGearPartialUpgrade()` → `InitEquipment(false, false, /*progressive=*/true, /*partialUpgrade=*/true)`.
+        ai->FactoryInitEquipmentViaRust((1u << 2) | (1u << 3), ITEM_QUALITY_NORMAL);
         return "random gear upgraded to some slots";
     }
 
@@ -1668,122 +1678,137 @@ std::string PlayerbotHolder::HandleBotTrainLearn(Player* bot, Player* master, co
     return "class level spells learned";
 }
 
-std::string PlayerbotHolder::HandleBotFoodDrink(Player* bot, Player* master, const std::string param)
+std::string PlayerbotHolder::HandleBotFoodDrink(Player* bot, Player* /*master*/, const std::string /*param*/)
 {
-    uint32 level = master ? master->GetLevel() : bot->GetLevel();
-    PlayerbotFactory factory(bot, level, ITEM_QUALITY_NORMAL);
-    factory.AddFood();
+    // `AddFood() → InitFood()` is now routed through the Rust consumables
+    // dispatcher (kind 1 = food). The bot's own level / class / mana-user
+    // status are read from the snapshot on the Rust side.
+    PlayerbotRust* ai = bot->GetPlayerbotAI();
+    if (!ai)
+        return "bot has no AI";
+    ai->InitConsumablesViaRust(1);
     return "food added";
 }
 
-std::string PlayerbotHolder::HandleBotPotions(Player* bot, Player* master, const std::string param)
+std::string PlayerbotHolder::HandleBotPotions(Player* bot, Player* /*master*/, const std::string /*param*/)
 {
-    uint32 level = master ? master->GetLevel() : bot->GetLevel();
-    PlayerbotFactory factory(bot, level, ITEM_QUALITY_NORMAL);
-    factory.AddPotions();
+    PlayerbotRust* ai = bot->GetPlayerbotAI();
+    if (!ai)
+        return "bot has no AI";
+    ai->InitConsumablesViaRust(0); // 0 = potions
     return "potions added";
 }
 
-std::string PlayerbotHolder::HandleBotConsumes(Player* bot, Player* master, const std::string param)
+std::string PlayerbotHolder::HandleBotConsumes(Player* bot, Player* /*master*/, const std::string /*param*/)
 {
-    uint32 level = master ? master->GetLevel() : bot->GetLevel();
-    PlayerbotFactory factory(bot, level, ITEM_QUALITY_NORMAL);
-    factory.AddConsumes();
+    PlayerbotRust* ai = bot->GetPlayerbotAI();
+    if (!ai)
+        return "bot has no AI";
+    ai->InitConsumablesViaRust(3); // 3 = class-specific weapon consumables
     return "consumables added";
 }
 
-std::string PlayerbotHolder::HandleBotReagents(Player* bot, Player* master, const std::string param)
+std::string PlayerbotHolder::HandleBotReagents(Player* bot, Player* /*master*/, const std::string /*param*/)
 {
-    uint32 level = master ? master->GetLevel() : bot->GetLevel();
-    PlayerbotFactory factory(bot, level, ITEM_QUALITY_NORMAL);
-    factory.AddReagents();
+    PlayerbotRust* ai = bot->GetPlayerbotAI();
+    if (!ai)
+        return "bot has no AI";
+    ai->InitConsumablesViaRust(2); // 2 = reagents
     return "reagents added";
 }
 
-std::string PlayerbotHolder::HandleBotPrepare(Player* bot, Player* master, const std::string param)
+std::string PlayerbotHolder::HandleBotPrepare(Player* bot, Player* /*master*/, const std::string /*param*/)
 {
-    uint32 level = master ? master->GetLevel() : bot->GetLevel();
-    PlayerbotFactory factory(bot, level, ITEM_QUALITY_NORMAL);
-    factory.Refresh();
+    PlayerbotRust* ai = bot->GetPlayerbotAI();
+    if (!ai)
+        return "bot has no AI";
+    ai->FactoryRefreshViaRust();
     return "consumes/regs added";
 }
 
 std::string PlayerbotHolder::HandleBotInit(Player* bot, Player* master, const std::string param)
 {
-    uint32 level = master ? master->GetLevel() : bot->GetLevel();
+    PlayerbotRust* ai = bot->GetPlayerbotAI();
+    if (!ai)
+        return "bot has no AI";
+
+    const uint32 level = master ? master->GetLevel() : bot->GetLevel();
 
     if (param.empty())
     {
-        PlayerbotFactory factory(bot, level, ITEM_QUALITY_NORMAL);
-        factory.Randomize(true, false);
+        ai->FactoryRandomizeViaRust(level, /*incremental*/ true, /*sync*/ false, ITEM_QUALITY_NORMAL);
     }
     else if (param == "white" || param == "common")
     {
-        PlayerbotFactory factory(bot, level, ITEM_QUALITY_NORMAL);
-        factory.Randomize(false, false);
+        ai->FactoryRandomizeViaRust(level, false, false, ITEM_QUALITY_NORMAL);
     }
     else if (param == "green" || param == "uncommon")
     {
-        PlayerbotFactory factory(bot, level, ITEM_QUALITY_UNCOMMON);
-        factory.Randomize(false, false);
+        ai->FactoryRandomizeViaRust(level, false, false, ITEM_QUALITY_UNCOMMON);
     }
     else if (param == "blue" || param == "rare")
     {
-        PlayerbotFactory factory(bot, level, ITEM_QUALITY_RARE);
-        factory.Randomize(false, false);
+        ai->FactoryRandomizeViaRust(level, false, false, ITEM_QUALITY_RARE);
     }
     else if (param == "epic" || param == "purple")
     {
-        PlayerbotFactory factory(bot, level, ITEM_QUALITY_EPIC);
-        factory.Randomize(false, false);
+        ai->FactoryRandomizeViaRust(level, false, false, ITEM_QUALITY_EPIC);
     }
     else if (param == "legendary" || param == "yellow")
     {
-        PlayerbotFactory factory(bot, level, ITEM_QUALITY_LEGENDARY);
-        factory.Randomize(false, false);
+        ai->FactoryRandomizeViaRust(level, false, false, ITEM_QUALITY_LEGENDARY);
     }
     else if (param == "sync")
     {
-        PlayerbotFactory factory(bot, level, ITEM_QUALITY_LEGENDARY);
-        factory.Randomize(false, true);
+        ai->FactoryRandomizeViaRust(level, false, true, ITEM_QUALITY_LEGENDARY);
     }
 
     return "ok";
 }
 
-std::string PlayerbotHolder::HandleBotEnchants(Player* bot, Player* master, const std::string param)
+std::string PlayerbotHolder::HandleBotEnchants(Player* bot, Player* /*master*/, const std::string /*param*/)
 {
-    PlayerbotFactory factory(bot, bot->GetLevel(), ITEM_QUALITY_LEGENDARY);
-    factory.EnchantEquipment();
+    PlayerbotRust* ai = bot->GetPlayerbotAI();
+    if (!ai)
+        return "bot has no AI";
+    ai->FactoryEnchantEquipmentViaRust();
     return "ok";
 }
 
-std::string PlayerbotHolder::HandleBotAmmo(Player* bot, Player* master, const std::string param)
+std::string PlayerbotHolder::HandleBotAmmo(Player* bot, Player* /*master*/, const std::string /*param*/)
 {
-    PlayerbotFactory factory(bot, bot->GetLevel(), ITEM_QUALITY_LEGENDARY);
-    factory.InitAmmo();
+    PlayerbotRust* ai = bot->GetPlayerbotAI();
+    if (!ai)
+        return "bot has no AI";
+    ai->FactoryInitAmmoViaRust();
     return "ok";
 }
 
-std::string PlayerbotHolder::HandleBotPet(Player* bot, Player* master, const std::string param)
+std::string PlayerbotHolder::HandleBotPet(Player* bot, Player* /*master*/, const std::string /*param*/)
 {
-    PlayerbotFactory factory(bot, bot->GetLevel(), ITEM_QUALITY_LEGENDARY);
-    factory.InitPet();
-    factory.InitPetSpells();
+    PlayerbotRust* ai = bot->GetPlayerbotAI();
+    if (!ai)
+        return "bot has no AI";
+    ai->FactoryInitPetViaRust();
+    ai->FactoryInitPetSpellsViaRust();
     return "ok";
 }
 
-std::string PlayerbotHolder::HandleBotLevelUp(Player* bot, Player* master, const std::string param)
+std::string PlayerbotHolder::HandleBotLevelUp(Player* bot, Player* /*master*/, const std::string /*param*/)
 {
-    PlayerbotFactory factory(bot, bot->GetLevel());
-    factory.Randomize(true, false);
+    PlayerbotRust* ai = bot->GetPlayerbotAI();
+    if (!ai)
+        return "bot has no AI";
+    ai->FactoryRandomizeViaRust(bot->GetLevel(), /*incremental*/ true, /*sync*/ false, 0);
     return "ok";
 }
 
-std::string PlayerbotHolder::HandleBotRefresh(Player* bot, Player* master, const std::string param)
+std::string PlayerbotHolder::HandleBotRefresh(Player* bot, Player* /*master*/, const std::string /*param*/)
 {
-    PlayerbotFactory factory(bot, bot->GetLevel());
-    factory.Refresh();
+    PlayerbotRust* ai = bot->GetPlayerbotAI();
+    if (!ai)
+        return "bot has no AI";
+    ai->FactoryRefreshViaRust();
     return "ok";
 }
 

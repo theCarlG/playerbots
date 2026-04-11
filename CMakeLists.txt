@@ -68,6 +68,8 @@ set(CppWrapper_Source
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/LoginBridge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/RandomFactoryBridge.h
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/RandomFactoryBridge.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/RandomMgrBridge.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/RandomMgrBridge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/PlayerbotRust.h
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/PlayerbotRust.cpp
 )

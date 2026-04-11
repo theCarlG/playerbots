@@ -367,7 +367,8 @@ pub unsafe extern "C" fn playerbot_factory_clear_inventory(state: *mut (), mode:
 
 /// Initialize consumables on a bot via the Rust factory module.
 ///
-/// `kind`: 0 = potions, 1 = food, 2 = reagents. Unknown values are ignored.
+/// `kind`: 0 = potions, 1 = food, 2 = reagents, 3 = additional (class-specific
+/// weapon oils / stones / poisons). Unknown values are ignored.
 ///
 /// # Safety
 /// `state` must be a valid pointer from `playerbot_create`.
@@ -455,6 +456,304 @@ pub unsafe extern "C" fn playerbot_factory_init_talents_tree(state: *mut (), inc
     let bot = unsafe { &mut *state.cast::<BotState>() };
     let mut tx = factory::FactoryTransaction::new(bot.interface.as_mut());
     factory::talents::init_talents_tree(&mut tx, incremental);
+    tx.commit();
+}
+
+/// Top up ammo / food / potions / reagents / weapon consumables on a bot
+/// and optionally save to DB. Ports `PlayerbotFactory::Refresh`.
+///
+/// Gated on the bot's item cheat bit: no-op when the bot does not have the
+/// item cheat enabled.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_refresh(state: *mut ()) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    let mut tx = factory::FactoryTransaction::new(bot.interface.as_mut());
+    factory::refresh(&mut tx);
+    tx.commit();
+}
+
+/// Reset the chassis before a factory re-roll: resurrect, combat-stop, set
+/// level + XP (unless random levels are disabled), apply helmet / cloak
+/// display flags. Ports `PlayerbotFactory::Prepare`.
+///
+/// `level` is the target level handed to the C++ `PlayerbotFactory` ctor —
+/// it is not read from the bot because the caller may want to adjust the bot
+/// before doing anything else.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_prepare(state: *mut (), level: u32) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    let mut tx = factory::FactoryTransaction::new(bot.interface.as_mut());
+    factory::prepare(&mut tx, level);
+    tx.commit();
+}
+
+/// Reward every eligible quest from a caller-owned list. Ports
+/// `PlayerbotFactory::InitQuests(std::list<uint32>&)`; the C++ side passes
+/// `specialQuestIds` (built in `PlayerbotFactory::Init`) as a contiguous
+/// array. `ids`/`len` describe that buffer — when `len == 0` the call is a
+/// no-op even if `ids` is null.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`, and `ids` must
+/// point at `len` contiguous `u32` values for the duration of the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_init_quests(
+    state: *mut (),
+    ids: *const u32,
+    len: usize,
+) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    let quest_ids: &[u32] = if len == 0 || ids.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(ids, len) }
+    };
+    let mut tx = factory::FactoryTransaction::new(bot.interface.as_mut());
+    factory::init_quests(&mut tx, quest_ids);
+    tx.commit();
+}
+
+/// Kick off a random arena-team creation pass when the bot qualifies.
+/// Ports `PlayerbotFactory::InitArenaTeam`: gated on the bot's owning
+/// account being in the live random-bot account list and the current
+/// tracked arena-team count being below `AiPlayerbot.RandomBotArenaTeamCount`.
+/// On Classic this is a compile-time no-op.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_init_arena_team(state: *mut ()) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    let mut tx = factory::FactoryTransaction::new(bot.interface.as_mut());
+    factory::init_arena_team(&mut tx);
+    tx.commit();
+}
+
+/// Top up a guild tabard on an already-guilded bot, otherwise filter the
+/// random-bot guild pool by team and add the bot at a random rank. Ports
+/// `PlayerbotFactory::InitGuild`. When the tracked guild pool is below
+/// `AiPlayerbot.RandomBotGuildCount` this call also kicks off a fresh
+/// `playerbot_random_factory_create_guilds()` pass before attempting the
+/// join.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_init_guild(state: *mut ()) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    let mut tx = factory::FactoryTransaction::new(bot.interface.as_mut());
+    factory::init_guild(&mut tx);
+    tx.commit();
+}
+
+/// Run `InitSkills` (weapons/armor/riding) followed by `InitTradeSkills`
+/// (professions + first aid/fishing/cooking + the TBC+ armorsmith chain +
+/// the opaque trainer-iteration loop). Ports
+/// `PlayerbotFactory::InitAllSkills`. The profession pair is cached in
+/// the per-bot KV store so re-rolls keep the same two professions.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_init_all_skills(state: *mut ()) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    let mut tx = factory::FactoryTransaction::new(bot.interface.as_mut());
+    factory::init_all_skills(&mut tx);
+    tx.commit();
+}
+
+/// Run only the tradeskill half of `InitAllSkills` (profession
+/// assignment + the three universal secondaries + the TBC+ armorsmith
+/// chain + the opaque trainer iteration), skipping the weapons / armor
+/// / riding pass. Ports `PlayerbotFactory::InitTradeSkills`.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_init_trade_skills(state: *mut ()) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    let mut tx = factory::FactoryTransaction::new(bot.interface.as_mut());
+    factory::init_trade_skills_only(&mut tx);
+    tx.commit();
+}
+
+/// Re-roll the bot's equipped gear from the itempool cache. Ports
+/// `PlayerbotFactory::InitEquipment`. `flags` packs the four legacy
+/// boolean parameters via [`factory::equipment_flags`]:
+///
+///   * bit 0 = `incremental`
+///   * bit 1 = `syncWithMaster`
+///   * bit 2 = `progressive`
+///   * bit 3 = `partialUpgrade`
+///
+/// `item_quality` pins the search quality tier when non-zero (legacy
+/// `.py equip <quality>` chat command path); `0` means "follow the
+/// progressive/incremental ladder".
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_init_equipment(
+    state: *mut (),
+    flags: u32,
+    item_quality: u32,
+) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    let mut tx = factory::FactoryTransaction::new(bot.interface.as_mut());
+    factory::init_equipment(&mut tx, flags, item_quality);
+    tx.commit();
+}
+
+/// Hunter-only pet creation + stat refresh + mass-autocast + force-
+/// dismiss pass. Ports `PlayerbotFactory::InitPet`. Every other class
+/// is a no-op.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_init_pet(state: *mut ()) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    let mut tx = factory::FactoryTransaction::new(bot.interface.as_mut());
+    factory::init_pet(&mut tx);
+    tx.commit();
+}
+
+/// Per-class / per-expansion pet spell learning. Ports
+/// `PlayerbotFactory::InitPetSpells`. Hunter + warlock only — every
+/// other class is a no-op.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_init_pet_spells(state: *mut ()) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    let mut tx = factory::FactoryTransaction::new(bot.interface.as_mut());
+    factory::init_pet_spells(&mut tx);
+    tx.commit();
+}
+
+/// Top-level "re-roll this bot from scratch" pass. Ports
+/// `PlayerbotFactory::Randomize(bool incremental, bool syncWithMaster)` —
+/// chains `Prepare`, the two random-bot gates, and every other `Init*`
+/// step into a single call. See [`factory::randomize::randomize`] for
+/// the full control flow.
+///
+/// `level` is the target level from the PlayerbotFactory ctor in C++;
+/// `incremental` and `sync_with_master` are the two boolean params on
+/// the PB2 method; `item_quality` is the `.py equip <quality>` override
+/// (0 = follow the progressive ladder).
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_randomize(
+    state: *mut (),
+    level: u32,
+    incremental: bool,
+    sync_with_master: bool,
+    item_quality: u32,
+) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    let mut tx = factory::FactoryTransaction::new(bot.interface.as_mut());
+    factory::randomize(&mut tx, level, incremental, sync_with_master, item_quality);
+    tx.commit();
+}
+
+/// Top up ranged-weapon ammo for warrior/rogue/hunter bots. Ports
+/// `PlayerbotFactory::InitAmmo`. Reads class + level from a snapshot on
+/// the Rust side so C++ callers don't need to marshal them.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_init_ammo(state: *mut ()) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    let mut tx = factory::FactoryTransaction::new(bot.interface.as_mut());
+    let snap = tx.get_snapshot();
+    let class = snap.self_.class_id;
+    let level = u32::from(snap.self_.level);
+    factory::ammo::init_ammo(&mut tx, class, level);
+    tx.commit();
+}
+
+/// Enchant every equipped slot on the bot, matching PB2's
+/// `PlayerbotFactory::EnchantEquipment`. The full body — enchant-container
+/// load, per-slot iteration, spec-tab lookup, and the actual item
+/// enchantment calls — lives on the C++ bridge side because it still
+/// touches live `Item*` pointers. The Rust side is a thin wrapper that
+/// forwards into `factory_enchant_all_equipment`.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_enchant_equipment(state: *mut ()) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    let tx = factory::FactoryTransaction::new(bot.interface.as_mut());
+    tx.factory_enchant_all_equipment();
+    tx.commit();
+}
+
+/// Socket a random gem into every empty socket on the bot's equipment.
+/// Ports `PlayerbotFactory::InitGems`. The full body — socket iteration,
+/// `sRandomItemMgr::GetGemsList`, stat-weight check, `CMSG_SOCKET_GEMS`
+/// dispatch — lives on the C++ bridge side. Classic is a compile-time
+/// no-op because the game has no gems pre-TBC.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_factory_init_gems(state: *mut ()) {
+    if state.is_null() {
+        return;
+    }
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    let tx = factory::FactoryTransaction::new(bot.interface.as_mut());
+    tx.factory_init_all_gems();
     tx.commit();
 }
 

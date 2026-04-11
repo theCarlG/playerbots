@@ -43,6 +43,81 @@ const SPELL_EFFECT_LEARN_SPELL: u32 = 36;
 const FOOD_CATEGORY_FOOD: u32 = 11;
 const FOOD_CATEGORY_DRINK: u32 = 59;
 
+/// Fixed stack size used by `PlayerbotFactory::AddConsumables` — the C++
+/// version always calls `StoreItem(id, 5)`.
+const ADDITIONAL_STACK: u32 = 5;
+
+// ── AddConsumables item IDs (ported verbatim from `PlayerbotFactory.h`) ──
+//
+// Weightstones / sharpening stones (warrior / paladin / hunter).
+// Note: ROUGH and COARSE weightstones share item id 3239 in the C++ header —
+// preserved here for bug-for-bug parity with the old code.
+const ROUGH_WEIGHTSTONE: ItemId = ItemId(3239);
+const COARSE_WEIGHTSTONE: ItemId = ItemId(3239);
+const HEAVY_WEIGHTSTONE: ItemId = ItemId(3241);
+const SOLID_WEIGHTSTONE: ItemId = ItemId(7965);
+const DENSE_WEIGHTSTONE: ItemId = ItemId(12643);
+// Fel / Adamantite tiers are TBC+ only; defined for all builds so the plan
+// table stays readable.
+#[cfg_attr(feature = "vanilla", allow(dead_code))]
+const FEL_WEIGHTSTONE: ItemId = ItemId(28420);
+#[cfg_attr(feature = "vanilla", allow(dead_code))]
+const ADAMANTITE_WEIGHTSTONE: ItemId = ItemId(28421);
+const ROUGH_SHARPENING_STONE: ItemId = ItemId(2862);
+const COARSE_SHARPENING_STONE: ItemId = ItemId(2863);
+const HEAVY_SHARPENING_STONE: ItemId = ItemId(2871);
+const SOL_SHARPENING_STONE: ItemId = ItemId(7964);
+const DENSE_SHARPENING_STONE: ItemId = ItemId(12404);
+#[cfg_attr(feature = "vanilla", allow(dead_code))]
+const FEL_SHARPENING_STONE: ItemId = ItemId(23528);
+#[cfg_attr(feature = "vanilla", allow(dead_code))]
+const ADAMANTITE_SHARPENING_STONE: ItemId = ItemId(23529);
+
+// Mana / wizard oils (priest / mage / warlock).
+const MINOR_MANA_OIL: ItemId = ItemId(20745);
+const LESSER_MANA_OIL: ItemId = ItemId(20747);
+const BRILLIANT_MANA_OIL: ItemId = ItemId(20748);
+// Superior oils are TBC+ only.
+#[cfg_attr(feature = "vanilla", allow(dead_code))]
+const SUPERIOR_MANA_OIL: ItemId = ItemId(22521);
+const MINOR_WIZARD_OIL: ItemId = ItemId(20744);
+const LESSER_WIZARD_OIL: ItemId = ItemId(20746);
+const WIZARD_OIL: ItemId = ItemId(20750);
+const BRILLIANT_WIZARD_OIL: ItemId = ItemId(20749);
+#[cfg_attr(feature = "vanilla", allow(dead_code))]
+const SUPERIOR_WIZARD_OIL: ItemId = ItemId(22522);
+
+// Rogue poisons.
+const INSTANT_POISON: ItemId = ItemId(6947);
+const INSTANT_POISON_II: ItemId = ItemId(6949);
+const INSTANT_POISON_III: ItemId = ItemId(6950);
+const INSTANT_POISON_IV: ItemId = ItemId(8926);
+const INSTANT_POISON_V: ItemId = ItemId(8927);
+const INSTANT_POISON_VI: ItemId = ItemId(8928);
+const INSTANT_POISON_VII: ItemId = ItemId(21927);
+const INSTANT_POISON_VIII: ItemId = ItemId(43230);
+const INSTANT_POISON_IX: ItemId = ItemId(43231);
+const DEADLY_POISON: ItemId = ItemId(2892);
+const DEADLY_POISON_II: ItemId = ItemId(2893);
+const DEADLY_POISON_III: ItemId = ItemId(8984);
+const DEADLY_POISON_IV: ItemId = ItemId(8985);
+const DEADLY_POISON_V: ItemId = ItemId(20844);
+const DEADLY_POISON_VI: ItemId = ItemId(22053);
+const DEADLY_POISON_VII: ItemId = ItemId(22054);
+const DEADLY_POISON_VIII: ItemId = ItemId(43232);
+const DEADLY_POISON_IX: ItemId = ItemId(43233);
+const CRIPPLING_POISON: ItemId = ItemId(3775);
+const CRIPPLING_POISON_II: ItemId = ItemId(3776);
+const MIND_POISON: ItemId = ItemId(5237);
+const MIND_POISON_II: ItemId = ItemId(6951);
+const MIND_POISON_III: ItemId = ItemId(9186);
+
+// LESSER_WIZARD_OIL and LESSER_MANA_OIL are defined in the C++ header but
+// never referenced by `AddConsumables`. They were enum entries only; we keep
+// the constants here so future additions don't have to rediscover the IDs.
+#[allow(dead_code)]
+const _UNREFERENCED: [ItemId; 2] = [LESSER_MANA_OIL, LESSER_WIZARD_OIL];
+
 // ── Public entry points ───────────────────────────────────────────────────
 
 /// Give the bot healing potions (and mana potions for mana users) appropriate
@@ -61,6 +136,30 @@ pub fn init_food(tx: &mut FactoryTransaction<'_>, level: u32, has_mana: bool) {
     restock_picked(tx, level, FOOD_CATEGORY_FOOD, PickKind::Food);
     if has_mana {
         restock_picked(tx, level, FOOD_CATEGORY_DRINK, PickKind::Food);
+    }
+}
+
+/// Give the bot class-specific *use-up* consumables appropriate for its level:
+///
+///   * **Priest / Mage / Warlock** — mana oils + wizard oils applied to the
+///     weapon (spell power buff).
+///   * **Warrior / Paladin / Hunter** — sharpening stones + weightstones
+///     applied to the weapon (AP/DPS buff).
+///   * **Rogue** — instant / deadly / crippling / mind poisons applied to
+///     the weapon (damage-over-time + debuff).
+///
+/// Skips any item the bot already carries at least 5 of (the C++ `StoreItem`
+/// helper's dedup check with `count == 5`). Each add is a fixed stack of 5,
+/// matching the old `PlayerbotFactory::AddConsumables` behaviour.
+pub fn init_additional_consumables(tx: &mut FactoryTransaction<'_>, class: u8, level: u32) {
+    for &item_id in additional_consumables_plan(class, level).iter() {
+        if item_id == ItemId::NONE {
+            continue;
+        }
+        if tx.item_count_in_bags(item_id) >= ADDITIONAL_STACK {
+            continue;
+        }
+        tx.inventory_add_item(item_id, ADDITIONAL_STACK);
     }
 }
 
@@ -255,12 +354,267 @@ fn reagent_plan_for(class: u8, level: u32) -> ReagentPlan {
     plan
 }
 
+// ── AddConsumables plan tables ────────────────────────────────────────────
+//
+// Each plan is returned as a `smallvec`-style fixed-capacity array; the
+// C++ version adds at most 4 items (rogue at level 30-59), so a 4-element
+// array covers every branch and avoids a per-call heap allocation.
+
+type AdditionalPlan = [ItemId; 4];
+const EMPTY_PLAN: AdditionalPlan = [ItemId::NONE; 4];
+
+fn additional_consumables_plan(class: u8, level: u32) -> AdditionalPlan {
+    match class {
+        CLASS_PRIEST | CLASS_MAGE | CLASS_WARLOCK => caster_oil_plan(level),
+        CLASS_PALADIN | CLASS_WARRIOR | CLASS_HUNTER => melee_stone_plan(level),
+        CLASS_ROGUE => rogue_poison_plan(level),
+        _ => EMPTY_PLAN,
+    }
+}
+
+/// Priest / Mage / Warlock mana + wizard oils.
+fn caster_oil_plan(level: u32) -> AdditionalPlan {
+    if (5..20).contains(&level) {
+        return [MINOR_WIZARD_OIL, ItemId::NONE, ItemId::NONE, ItemId::NONE];
+    }
+    if (20..40).contains(&level) {
+        return [MINOR_MANA_OIL, MINOR_WIZARD_OIL, ItemId::NONE, ItemId::NONE];
+    }
+    if (40..45).contains(&level) {
+        return [MINOR_MANA_OIL, WIZARD_OIL, ItemId::NONE, ItemId::NONE];
+    }
+    #[cfg(feature = "vanilla")]
+    {
+        if level >= 45 {
+            return [
+                BRILLIANT_MANA_OIL,
+                BRILLIANT_WIZARD_OIL,
+                ItemId::NONE,
+                ItemId::NONE,
+            ];
+        }
+    }
+    #[cfg(not(feature = "vanilla"))]
+    {
+        if (45..52).contains(&level) {
+            return [
+                BRILLIANT_MANA_OIL,
+                BRILLIANT_WIZARD_OIL,
+                ItemId::NONE,
+                ItemId::NONE,
+            ];
+        }
+        if (52..58).contains(&level) {
+            return [
+                SUPERIOR_MANA_OIL,
+                BRILLIANT_WIZARD_OIL,
+                ItemId::NONE,
+                ItemId::NONE,
+            ];
+        }
+        if (58..72).contains(&level) {
+            return [
+                SUPERIOR_MANA_OIL,
+                SUPERIOR_WIZARD_OIL,
+                ItemId::NONE,
+                ItemId::NONE,
+            ];
+        }
+    }
+    EMPTY_PLAN
+}
+
+/// Warrior / Paladin / Hunter sharpening stones + weightstones.
+fn melee_stone_plan(level: u32) -> AdditionalPlan {
+    if (1..5).contains(&level) {
+        return [
+            ROUGH_SHARPENING_STONE,
+            ROUGH_WEIGHTSTONE,
+            ItemId::NONE,
+            ItemId::NONE,
+        ];
+    }
+    if (5..15).contains(&level) {
+        return [
+            COARSE_WEIGHTSTONE,
+            COARSE_SHARPENING_STONE,
+            ItemId::NONE,
+            ItemId::NONE,
+        ];
+    }
+    if (15..25).contains(&level) {
+        return [
+            HEAVY_WEIGHTSTONE,
+            HEAVY_SHARPENING_STONE,
+            ItemId::NONE,
+            ItemId::NONE,
+        ];
+    }
+    if (25..35).contains(&level) {
+        return [
+            SOL_SHARPENING_STONE,
+            SOLID_WEIGHTSTONE,
+            ItemId::NONE,
+            ItemId::NONE,
+        ];
+    }
+    #[cfg(feature = "vanilla")]
+    {
+        if level >= 35 {
+            return [
+                DENSE_WEIGHTSTONE,
+                DENSE_SHARPENING_STONE,
+                ItemId::NONE,
+                ItemId::NONE,
+            ];
+        }
+    }
+    #[cfg(not(feature = "vanilla"))]
+    {
+        if (35..50).contains(&level) {
+            return [
+                DENSE_WEIGHTSTONE,
+                DENSE_SHARPENING_STONE,
+                ItemId::NONE,
+                ItemId::NONE,
+            ];
+        }
+        if (50..60).contains(&level) {
+            return [
+                FEL_SHARPENING_STONE,
+                FEL_WEIGHTSTONE,
+                ItemId::NONE,
+                ItemId::NONE,
+            ];
+        }
+        if level >= 60 {
+            return [
+                ADAMANTITE_WEIGHTSTONE,
+                ADAMANTITE_SHARPENING_STONE,
+                ItemId::NONE,
+                ItemId::NONE,
+            ];
+        }
+    }
+    EMPTY_PLAN
+}
+
+/// Rogue instant / deadly / crippling / mind poisons — the busiest plan
+/// because the old C++ method gates on narrow level windows.
+fn rogue_poison_plan(level: u32) -> AdditionalPlan {
+    match level {
+        20..=27 => [
+            INSTANT_POISON,
+            CRIPPLING_POISON,
+            ItemId::NONE,
+            ItemId::NONE,
+        ],
+        28..=29 => [
+            INSTANT_POISON_II,
+            CRIPPLING_POISON,
+            MIND_POISON,
+            ItemId::NONE,
+        ],
+        30..=35 => [
+            DEADLY_POISON,
+            INSTANT_POISON_II,
+            CRIPPLING_POISON,
+            MIND_POISON,
+        ],
+        36..=37 => [
+            DEADLY_POISON,
+            INSTANT_POISON_III,
+            CRIPPLING_POISON,
+            MIND_POISON,
+        ],
+        38..=43 => [
+            DEADLY_POISON_II,
+            INSTANT_POISON_III,
+            CRIPPLING_POISON,
+            MIND_POISON_II,
+        ],
+        44..=45 => [
+            DEADLY_POISON_II,
+            INSTANT_POISON_IV,
+            CRIPPLING_POISON,
+            MIND_POISON_II,
+        ],
+        46..=51 => [
+            DEADLY_POISON_III,
+            INSTANT_POISON_IV,
+            CRIPPLING_POISON,
+            MIND_POISON_II,
+        ],
+        52..=53 => [
+            DEADLY_POISON_III,
+            INSTANT_POISON_V,
+            CRIPPLING_POISON_II,
+            MIND_POISON_III,
+        ],
+        54..=59 => [
+            DEADLY_POISON_IV,
+            INSTANT_POISON_V,
+            CRIPPLING_POISON_II,
+            MIND_POISON_III,
+        ],
+        60..=61 => [
+            DEADLY_POISON_V,
+            INSTANT_POISON_VI,
+            CRIPPLING_POISON_II,
+            MIND_POISON_III,
+        ],
+        62..=67 => [
+            DEADLY_POISON_VI,
+            INSTANT_POISON_VI,
+            ItemId::NONE,
+            ItemId::NONE,
+        ],
+        68..=69 => [
+            DEADLY_POISON_VI,
+            INSTANT_POISON_VII,
+            ItemId::NONE,
+            ItemId::NONE,
+        ],
+        70..=72 => [
+            DEADLY_POISON_VII,
+            INSTANT_POISON_VII,
+            ItemId::NONE,
+            ItemId::NONE,
+        ],
+        73..=75 => [
+            DEADLY_POISON_VII,
+            INSTANT_POISON_VIII,
+            ItemId::NONE,
+            ItemId::NONE,
+        ],
+        76..=78 => [
+            DEADLY_POISON_VIII,
+            INSTANT_POISON_VIII,
+            ItemId::NONE,
+            ItemId::NONE,
+        ],
+        79 => [
+            DEADLY_POISON_VIII,
+            INSTANT_POISON_IX,
+            ItemId::NONE,
+            ItemId::NONE,
+        ],
+        80 => [
+            DEADLY_POISON_IX,
+            INSTANT_POISON_IX,
+            ItemId::NONE,
+            ItemId::NONE,
+        ],
+        _ => EMPTY_PLAN,
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::factory::with_tx;
+    use crate::factory::{with_tx, ConsumableKind};
     use cmangos::{BotSpellInfo, MockEvent, MockWorld};
 
     fn make_spell(id: u32) -> BotSpellInfo {
@@ -476,5 +830,184 @@ mod tests {
         let mut w = MockWorld::default();
         with_tx(&mut w, |tx| init_reagents(tx, CLASS_WARRIOR, 80));
         assert!(added_ids(&w).is_empty());
+    }
+
+    // ── AddConsumables (caster oils / melee stones / rogue poisons) ─────
+
+    #[test]
+    fn additional_noop_for_unknown_class() {
+        let mut w = MockWorld::default();
+        with_tx(&mut w, |tx| {
+            init_additional_consumables(tx, CLASS_DEATHKNIGHT, 60);
+        });
+        assert!(added_ids(&w).is_empty());
+    }
+
+    #[test]
+    fn additional_noop_for_druid() {
+        // Druid is a caster but `AddConsumables` deliberately excludes it.
+        let mut w = MockWorld::default();
+        with_tx(&mut w, |tx| init_additional_consumables(tx, CLASS_DRUID, 60));
+        assert!(added_ids(&w).is_empty());
+    }
+
+    #[test]
+    fn additional_warrior_level_1_rough_stones() {
+        let mut w = MockWorld::default();
+        with_tx(&mut w, |tx| {
+            init_additional_consumables(tx, CLASS_WARRIOR, 1);
+        });
+        assert_eq!(
+            added_ids(&w),
+            vec![ROUGH_SHARPENING_STONE, ROUGH_WEIGHTSTONE]
+        );
+    }
+
+    #[test]
+    fn additional_paladin_level_25_solid() {
+        let mut w = MockWorld::default();
+        with_tx(&mut w, |tx| {
+            init_additional_consumables(tx, CLASS_PALADIN, 25);
+        });
+        assert_eq!(added_ids(&w), vec![SOL_SHARPENING_STONE, SOLID_WEIGHTSTONE]);
+    }
+
+    #[test]
+    #[cfg(feature = "vanilla")]
+    fn additional_hunter_level_60_dense_on_vanilla() {
+        let mut w = MockWorld::default();
+        with_tx(&mut w, |tx| {
+            init_additional_consumables(tx, CLASS_HUNTER, 60);
+        });
+        assert_eq!(
+            added_ids(&w),
+            vec![DENSE_WEIGHTSTONE, DENSE_SHARPENING_STONE]
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "vanilla"))]
+    fn additional_hunter_level_60_adamantite_on_tbc_wotlk() {
+        let mut w = MockWorld::default();
+        with_tx(&mut w, |tx| {
+            init_additional_consumables(tx, CLASS_HUNTER, 60);
+        });
+        assert_eq!(
+            added_ids(&w),
+            vec![ADAMANTITE_WEIGHTSTONE, ADAMANTITE_SHARPENING_STONE]
+        );
+    }
+
+    #[test]
+    fn additional_mage_level_10_minor_wizard_oil() {
+        let mut w = MockWorld::default();
+        with_tx(&mut w, |tx| init_additional_consumables(tx, CLASS_MAGE, 10));
+        assert_eq!(added_ids(&w), vec![MINOR_WIZARD_OIL]);
+    }
+
+    #[test]
+    fn additional_priest_level_30_minor_mana_and_wizard() {
+        let mut w = MockWorld::default();
+        with_tx(&mut w, |tx| {
+            init_additional_consumables(tx, CLASS_PRIEST, 30);
+        });
+        assert_eq!(added_ids(&w), vec![MINOR_MANA_OIL, MINOR_WIZARD_OIL]);
+    }
+
+    #[test]
+    #[cfg(feature = "vanilla")]
+    fn additional_warlock_level_60_brilliant_oils_on_vanilla() {
+        let mut w = MockWorld::default();
+        with_tx(&mut w, |tx| {
+            init_additional_consumables(tx, CLASS_WARLOCK, 60);
+        });
+        assert_eq!(
+            added_ids(&w),
+            vec![BRILLIANT_MANA_OIL, BRILLIANT_WIZARD_OIL]
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "vanilla"))]
+    fn additional_warlock_level_60_superior_oils_on_tbc_wotlk() {
+        let mut w = MockWorld::default();
+        with_tx(&mut w, |tx| {
+            init_additional_consumables(tx, CLASS_WARLOCK, 60);
+        });
+        assert_eq!(
+            added_ids(&w),
+            vec![SUPERIOR_MANA_OIL, SUPERIOR_WIZARD_OIL]
+        );
+    }
+
+    #[test]
+    fn additional_rogue_level_30_four_poisons() {
+        let mut w = MockWorld::default();
+        with_tx(&mut w, |tx| init_additional_consumables(tx, CLASS_ROGUE, 30));
+        assert_eq!(
+            added_ids(&w),
+            vec![DEADLY_POISON, INSTANT_POISON_II, CRIPPLING_POISON, MIND_POISON]
+        );
+    }
+
+    #[test]
+    fn additional_rogue_level_60_four_poisons_with_crippling_ii() {
+        let mut w = MockWorld::default();
+        with_tx(&mut w, |tx| init_additional_consumables(tx, CLASS_ROGUE, 60));
+        assert_eq!(
+            added_ids(&w),
+            vec![
+                DEADLY_POISON_V,
+                INSTANT_POISON_VI,
+                CRIPPLING_POISON_II,
+                MIND_POISON_III,
+            ]
+        );
+    }
+
+    #[test]
+    fn additional_rogue_level_19_empty() {
+        // Below the rogue poison window — no items.
+        let mut w = MockWorld::default();
+        with_tx(&mut w, |tx| init_additional_consumables(tx, CLASS_ROGUE, 19));
+        assert!(added_ids(&w).is_empty());
+    }
+
+    #[test]
+    fn additional_dedupes_items_already_stacked_to_five() {
+        // Warrior at level 1 normally adds ROUGH_WEIGHTSTONE + ROUGH_SHARPENING_STONE.
+        // Seed the bot's bags with 5 of each → both should be skipped.
+        let mut w = MockWorld::builder()
+            .item_in_bags(ROUGH_WEIGHTSTONE.0, 5)
+            .item_in_bags(ROUGH_SHARPENING_STONE.0, 5)
+            .build();
+        with_tx(&mut w, |tx| {
+            init_additional_consumables(tx, CLASS_WARRIOR, 1);
+        });
+        assert!(added_ids(&w).is_empty());
+    }
+
+    #[test]
+    fn additional_stocks_when_bot_has_less_than_five() {
+        // Bot has 4 of ROUGH_WEIGHTSTONE (< 5 threshold), so it should still
+        // be re-stocked. ROUGH_SHARPENING_STONE has no count, so it too.
+        let mut w = MockWorld::builder()
+            .item_in_bags(ROUGH_WEIGHTSTONE.0, 4)
+            .build();
+        with_tx(&mut w, |tx| {
+            init_additional_consumables(tx, CLASS_WARRIOR, 1);
+        });
+        assert_eq!(
+            added_ids(&w),
+            vec![ROUGH_SHARPENING_STONE, ROUGH_WEIGHTSTONE]
+        );
+    }
+
+    #[test]
+    fn additional_via_dispatcher_uses_kind_three() {
+        assert_eq!(
+            ConsumableKind::from_kind(3),
+            Some(ConsumableKind::AdditionalConsumables)
+        );
     }
 }

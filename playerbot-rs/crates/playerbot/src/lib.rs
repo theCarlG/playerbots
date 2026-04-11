@@ -27,6 +27,7 @@ pub mod logging;
 pub mod login;
 pub mod noncombat;
 pub mod random;
+pub mod random_mgr;
 pub mod rtsc;
 pub mod strategies;
 pub mod travel;

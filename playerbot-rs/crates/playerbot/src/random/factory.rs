@@ -28,7 +28,7 @@ use crate::random::races::{
 use crate::random::races::{RACE_NIGHTELF, RACE_TAUREN, RACE_UNDEAD};
 use crate::random::selection::{FactoryRng, get_random_class, get_random_race, name_postfix};
 
-/// `DEFAULT_MAX_LEVEL` on the current expansion — 80 on WotLK, 70 on
+/// `DEFAULT_MAX_LEVEL` on the current expansion — 80 on `WotLK`, 70 on
 /// TBC, 60 on Classic. Matches the core `DEFAULT_MAX_LEVEL` macro that
 /// the legacy arena-team code used as the captain level gate.
 ///
@@ -41,7 +41,7 @@ const DEFAULT_MAX_LEVEL: u8 = 70;
 #[cfg(all(test, not(any(feature = "tbc", feature = "wotlk"))))]
 const DEFAULT_MAX_LEVEL: u8 = 60;
 
-/// Per-account character cap — 10 on WotLK (death knight extra slot),
+/// Per-account character cap — 10 on `WotLK` (death knight extra slot),
 /// 9 on Classic / TBC.
 #[cfg(feature = "wotlk")]
 const ACCOUNT_CHAR_LIMIT: u32 = 10;
@@ -364,16 +364,17 @@ fn generate_random_password(world: &dyn RandomFactoryWorld) -> String {
     out
 }
 
-/// Split the name pool rows into free / all / used maps. The "used"
-/// map mirrors the C++ `std::unordered_map<std::string, bool>` — the
-/// bool value is ignored and the map is really a set membership check.
-fn build_name_pools(
-    rows: Vec<NamePoolRow>,
-) -> (
+/// Triplet returned by [`build_name_pools`] — `(free, all, used)`.
+type NamePoolMaps = (
     HashMap<NameRaceAndGender, Vec<String>>,
     HashMap<NameRaceAndGender, Vec<String>>,
     HashMap<String, bool>,
-) {
+);
+
+/// Split the name pool rows into free / all / used maps. The "used"
+/// map mirrors the C++ `std::unordered_map<std::string, bool>` — the
+/// bool value is ignored and the map is really a set membership check.
+fn build_name_pools(rows: Vec<NamePoolRow>) -> NamePoolMaps {
     let mut free_names: HashMap<NameRaceAndGender, Vec<String>> = HashMap::new();
     let mut all_names: HashMap<NameRaceAndGender, Vec<String>> = HashMap::new();
     let mut used: HashMap<String, bool> = HashMap::new();
@@ -393,7 +394,7 @@ fn build_name_pools(
 
 /// Fallback name synthesis used when `ai_playerbot_names` is not
 /// loaded. Mirrors the "update the name database" branch in the
-/// legacy C++ code which walks NameRaceAndGender variants 2..=17,
+/// legacy C++ code which walks `NameRaceAndGender` variants 2..=17,
 /// uppercases the first letter, and prefixes a bijective base-26
 /// postfix onto existing generic names.
 fn synthesise_name_pool_from_generic(
@@ -427,12 +428,14 @@ fn synthesise_name_pool_from_generic(
             let new_name = String::from_utf8(bytes).unwrap_or_default();
 
             all_names.entry(target_key).or_default().push(new_name.clone());
-            if !used.contains_key(&new_name) {
+            if let std::collections::hash_map::Entry::Vacant(slot) =
+                used.entry(new_name.clone())
+            {
                 free_names
                     .entry(target_key)
                     .or_default()
-                    .push(new_name.clone());
-                used.insert(new_name, false);
+                    .push(new_name);
+                slot.insert(false);
             }
         }
     }
@@ -554,12 +557,11 @@ fn create_random_bot(
         GENDER_FEMALE
     };
 
-    let race = match input_race {
-        Some(r) => r,
-        None => {
-            let mut rng = WorldRng { world };
-            get_random_race(cfg, cls, &mut rng)
-        }
+    let race = if let Some(r) = input_race {
+        r
+    } else {
+        let mut rng = WorldRng { world };
+        get_random_race(cfg, cls, &mut rng)
     };
 
     let race_and_gender = combine_race_and_gender(gender, race);
@@ -680,10 +682,11 @@ pub fn create_random_guilds(
                 guild_number += 1;
                 state.random_bot_guilds.push(guild_id);
             }
-        } else if let Some(snap) = world.get_player_snapshot(*leader) {
-            if snap.guild_id == 0 && snap.level >= 10 {
-                available_leaders.push(*leader);
-            }
+        } else if let Some(snap) = world.get_player_snapshot(*leader)
+            && snap.guild_id == 0
+            && snap.level >= 10
+        {
+            available_leaders.push(*leader);
         }
     }
 
@@ -917,9 +920,7 @@ pub fn create_random_arena_teams(
             if member.team != snap.team {
                 continue;
             }
-            if !world.add_arena_team_member(team_id, possible_member) {
-                continue;
-            }
+            let _ = world.add_arena_team_member(team_id, possible_member);
         }
 
         if world.get_arena_team_members_size(team_id) < u32::from(ty) {

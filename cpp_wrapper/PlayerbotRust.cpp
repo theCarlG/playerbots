@@ -20,6 +20,8 @@
 #include "ItemBridge.h"
 #include "LoginBridge.h"
 #include "RandomFactoryBridge.h"
+#include "RandomMgrBridge.h"
+#include "playerbot/RandomPlayerbotMgr.h"
 #include "Spells/Spell.h"
 
 // Spell id used by the RTSC "Aedm" marker to encode ground-targeted positions.
@@ -73,10 +75,20 @@ void PlayerbotRust::InitRustModule()
     // never called until RandomPlayerbotMgr decides to refill bots.
     RandomFactoryCallbacks randomFactoryCbs = RandomFactoryBridge::MakeCallbacks();
     playerbot_random_factory_init(&randomFactoryCbs);
+
+    // Phase H: install the random-mgr vtable and spawn the Rust worker
+    // thread. The Rust `random_mgr` module now owns the entire random
+    // bot lifecycle (event cache, PID scaler, BG/LFG buckets, teleport
+    // cache, stats) and drives it from its own thread; the vtable is
+    // the narrow surface through which it reaches CMaNGOS for SQL,
+    // per-bot dispatch, and live game state.
+    RandomMgrCallbacks randomMgrCbs = RandomMgrBridge::MakeCallbacks();
+    playerbot_random_mgr_init(&randomMgrCbs);
 }
 
 void PlayerbotRust::ShutdownRustModule()
 {
+    playerbot_random_mgr_shutdown();
     playerbot_random_factory_shutdown();
     playerbot_login_shutdown();
     playerbot_itempool_shutdown();
@@ -86,6 +98,25 @@ void PlayerbotRust::ShutdownRustModule()
 void PlayerbotRust::WorldUpdate(uint32_t elapsed_ms)
 {
     playerbot_world_update(elapsed_ms);
+
+    // Phase E: build the real-player snapshot the login queue consumes.
+    // Must run every tick even when the config has `asyncBotLogin=false`
+    // so the worker's bookkeeping stays current. Uses a thread_local
+    // buffer to avoid per-tick allocation.
+    if (sPlayerbotAIConfig.asyncBotLogin)
+    {
+        static thread_local std::vector<BotRealPlayerInfo> s_realBuf;
+        s_realBuf.resize(sRandomPlayerbotMgr.GetPlayers().size());
+        uint32_t n = LoginBridge::BuildRealPlayerSnapshot(
+            s_realBuf.data(),
+            static_cast<uint32_t>(s_realBuf.size()));
+        playerbot_login_update(s_realBuf.data(), n);
+    }
+
+    // Phase H: drive one tick of the Rust random-mgr worker. This sends a
+    // tick request to the worker and drains any replies it queued since
+    // the last call; the main thread never blocks on the worker.
+    playerbot_random_mgr_update(elapsed_ms);
 }
 
 // ── Constructor / Destructor ──────────────────────────────────────────────
@@ -594,6 +625,97 @@ void PlayerbotRust::FactoryInitTalentsTreeViaRust(bool incremental)
 {
     if (m_rustState)
         playerbot_factory_init_talents_tree(m_rustState.get(), incremental);
+}
+
+void PlayerbotRust::FactoryRefreshViaRust()
+{
+    if (m_rustState)
+        playerbot_factory_refresh(m_rustState.get());
+}
+
+void PlayerbotRust::FactoryPrepareViaRust(uint32_t level)
+{
+    if (m_rustState)
+        playerbot_factory_prepare(m_rustState.get(), level);
+}
+
+void PlayerbotRust::FactoryInitQuestsViaRust(const uint32_t* ids, size_t len)
+{
+    if (m_rustState)
+        playerbot_factory_init_quests(m_rustState.get(), ids, len);
+}
+
+void PlayerbotRust::FactoryInitArenaTeamViaRust()
+{
+    if (m_rustState)
+        playerbot_factory_init_arena_team(m_rustState.get());
+}
+
+void PlayerbotRust::FactoryInitGuildViaRust()
+{
+    if (m_rustState)
+        playerbot_factory_init_guild(m_rustState.get());
+}
+
+void PlayerbotRust::FactoryInitAllSkillsViaRust()
+{
+    if (m_rustState)
+        playerbot_factory_init_all_skills(m_rustState.get());
+}
+
+void PlayerbotRust::FactoryInitTradeSkillsViaRust()
+{
+    if (m_rustState)
+        playerbot_factory_init_trade_skills(m_rustState.get());
+}
+
+void PlayerbotRust::FactoryInitEquipmentViaRust(uint32_t flags, uint32_t itemQuality)
+{
+    if (m_rustState)
+        playerbot_factory_init_equipment(m_rustState.get(), flags, itemQuality);
+}
+
+void PlayerbotRust::FactoryInitPetViaRust()
+{
+    if (m_rustState)
+        playerbot_factory_init_pet(m_rustState.get());
+}
+
+void PlayerbotRust::FactoryInitPetSpellsViaRust()
+{
+    if (m_rustState)
+        playerbot_factory_init_pet_spells(m_rustState.get());
+}
+
+void PlayerbotRust::FactoryRandomizeViaRust(uint32_t level,
+                                             bool     incremental,
+                                             bool     syncWithMaster,
+                                             uint32_t itemQuality)
+{
+    if (m_rustState)
+        playerbot_factory_randomize(m_rustState.get(),
+                                    level,
+                                    incremental,
+                                    syncWithMaster,
+                                    itemQuality);
+}
+
+void PlayerbotRust::FactoryInitAmmoViaRust()
+{
+    if (m_rustState)
+        playerbot_factory_init_ammo(m_rustState.get());
+}
+
+void PlayerbotRust::FactoryEnchantEquipmentViaRust()
+{
+    if (m_rustState)
+        playerbot_factory_enchant_equipment(m_rustState.get());
+}
+
+void PlayerbotRust::FactoryInitGemsViaRust()
+{
+    if (m_rustState)
+        playerbot_factory_init_gems(m_rustState.get());
 }
 
 bool PlayerbotRust::ToggleMonitor()

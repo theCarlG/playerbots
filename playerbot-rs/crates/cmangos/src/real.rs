@@ -14,7 +14,7 @@
 
 use crate::{
     BotAuraInfo, BotCallbacks, BotHandle, BotMailSummary, BotPosition, BotRole, BotSpellInfo,
-    BotUnitSnapshot, BotWorldSnapshot, ItemId, SpellId, UnitHandle, World,
+    BotUnitSnapshot, BotWorldSnapshot, GuildSummary, ItemId, SpellId, UnitHandle, World,
     owned::{
         AuraList, BotSpellList, Free, GatherableList, InventoryList, OwnedList, QuestLog,
         ReputationList, SkillList, TalentList, TaxiNodeList, ThreatList, TravelDestList,
@@ -829,8 +829,289 @@ impl World for VtableWorld {
         unsafe { (self.cbs.bot_update_skills_for_level.unwrap())(self.handle) }
     }
 
+    fn bot_cheat_mask(&self) -> u32 {
+        unsafe { (self.cbs.bot_cheat_mask.unwrap())(self.handle) }
+    }
+
+    fn bot_save_to_db_if_not_busy(&self) {
+        unsafe { (self.cbs.bot_save_to_db_if_not_busy.unwrap())(self.handle) }
+    }
+
+    fn bot_resurrect_full(&self) {
+        unsafe { (self.cbs.bot_resurrect_full.unwrap())(self.handle) }
+    }
+
+    fn bot_combat_stop(&self) {
+        unsafe { (self.cbs.bot_combat_stop.unwrap())(self.handle) }
+    }
+
+    fn bot_set_level_and_reset_xp(&self, level: u32) {
+        unsafe { (self.cbs.bot_set_level_and_reset_xp.unwrap())(self.handle, level) }
+    }
+
+    fn bot_set_player_flag(&self, flag: u32, set: bool) {
+        unsafe { (self.cbs.bot_set_player_flag.unwrap())(self.handle, flag, set) }
+    }
+
+    fn factory_config_disable_random_levels(&self) -> bool {
+        unsafe { (self.cbs.factory_config_disable_random_levels.unwrap())(self.handle) }
+    }
+
+    fn factory_config_random_bot_show_helmet(&self) -> bool {
+        unsafe { (self.cbs.factory_config_random_bot_show_helmet.unwrap())(self.handle) }
+    }
+
+    fn factory_config_random_bot_show_cloak(&self) -> bool {
+        unsafe { (self.cbs.factory_config_random_bot_show_cloak.unwrap())(self.handle) }
+    }
+
+    fn factory_is_random_bot(&self) -> bool {
+        unsafe { (self.cbs.factory_is_random_bot.unwrap())(self.handle) }
+    }
+
+    fn factory_has_real_player_master(&self) -> bool {
+        unsafe { (self.cbs.factory_has_real_player_master.unwrap())(self.handle) }
+    }
+
+    fn factory_is_in_real_guild(&self) -> bool {
+        unsafe { (self.cbs.factory_is_in_real_guild.unwrap())(self.handle) }
+    }
+
+    fn factory_config_min_enchanting_bot_level(&self) -> u32 {
+        unsafe { (self.cbs.factory_config_min_enchanting_bot_level.unwrap())(self.handle) }
+    }
+
+    fn factory_load_enchant_container(&self) {
+        unsafe { (self.cbs.factory_load_enchant_container.unwrap())(self.handle) }
+    }
+
+    fn bot_reset_talents(&self) {
+        unsafe { (self.cbs.bot_reset_talents.unwrap())(self.handle) }
+    }
+
+    fn bot_learn_quest_rewarded_spells(&self) {
+        unsafe { (self.cbs.bot_learn_quest_rewarded_spells.unwrap())(self.handle) }
+    }
+
+    fn bot_get_money(&self) -> u32 {
+        unsafe { (self.cbs.bot_get_money.unwrap())(self.handle) }
+    }
+
+    fn bot_set_money(&self, amount: u32) {
+        unsafe { (self.cbs.bot_set_money.unwrap())(self.handle, amount) }
+    }
+
+    fn factory_init_all_gems(&self) {
+        unsafe { (self.cbs.factory_init_all_gems.unwrap())(self.handle) }
+    }
+
+    fn factory_enchant_all_equipment(&self) {
+        unsafe { (self.cbs.factory_enchant_all_equipment.unwrap())(self.handle) }
+    }
+
+    fn quest_is_eligible_for_bot(&self, quest_id: u32) -> bool {
+        unsafe { (self.cbs.quest_is_eligible_for_bot.unwrap())(self.handle, quest_id) }
+    }
+
+    fn bot_reward_quest_complete(&self, quest_id: u32) {
+        unsafe { (self.cbs.bot_reward_quest_complete.unwrap())(self.handle, quest_id) }
+    }
+
+    fn bot_get_account_id(&self) -> u32 {
+        unsafe { (self.cbs.bot_get_account_id.unwrap())(self.handle) }
+    }
+
+    fn factory_bot_guild_id(&self) -> u32 {
+        unsafe { (self.cbs.factory_bot_guild_id.unwrap())(self.handle) }
+    }
+
+    fn factory_query_guild_summary(&self, guild_id: u32) -> Option<GuildSummary> {
+        let mut leader_team: u8 = 0;
+        let mut member_size: u32 = 0;
+        let mut max_members_hint: u32 = 0;
+        let mut name_buf = [0u8; 128];
+        let ok = unsafe {
+            (self.cbs.factory_query_guild_summary.unwrap())(
+                self.handle,
+                guild_id,
+                &mut leader_team,
+                &mut member_size,
+                &mut max_members_hint,
+                name_buf.as_mut_ptr().cast::<core::ffi::c_char>(),
+                name_buf.len() as u32,
+            )
+        };
+        if !ok {
+            return None;
+        }
+        let end = name_buf.iter().position(|&b| b == 0).unwrap_or(name_buf.len());
+        let name = core::str::from_utf8(&name_buf[..end]).unwrap_or("?").to_string();
+        Some(GuildSummary {
+            leader_team,
+            member_size,
+            max_members_hint,
+            name,
+        })
+    }
+
+    fn factory_guild_add_member(&self, guild_id: u32, rank: u32) -> bool {
+        unsafe { (self.cbs.factory_guild_add_member.unwrap())(self.handle, guild_id, rank) }
+    }
+
+    fn factory_get_guild_rank_name(&self, guild_id: u32, rank: u32) -> Option<String> {
+        let mut buf = [0u8; 64];
+        let ok = unsafe {
+            (self.cbs.factory_get_guild_rank_name.unwrap())(
+                self.handle,
+                guild_id,
+                rank,
+                buf.as_mut_ptr().cast::<core::ffi::c_char>(),
+                buf.len() as u32,
+            )
+        };
+        if !ok {
+            return None;
+        }
+        let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        Some(core::str::from_utf8(&buf[..end]).unwrap_or("?").to_string())
+    }
+
+    fn factory_kv_get_u32(&self, key: &str) -> u32 {
+        // NUL-terminated key for the C side. Small fixed stack buffer keeps
+        // the common case alloc-free; overlong keys fall back to a heap
+        // allocation via CString.
+        use std::ffi::CString;
+        let Ok(c_key) = CString::new(key) else {
+            return 0;
+        };
+        unsafe { (self.cbs.factory_kv_get_u32.unwrap())(self.handle, c_key.as_ptr()) }
+    }
+
+    fn factory_kv_set_u32(&self, key: &str, value: u32) {
+        use std::ffi::CString;
+        let Ok(c_key) = CString::new(key) else {
+            return;
+        };
+        unsafe { (self.cbs.factory_kv_set_u32.unwrap())(self.handle, c_key.as_ptr(), value) }
+    }
+
+    fn factory_learn_tradeskill_recipes(&self) {
+        unsafe { (self.cbs.factory_learn_tradeskill_recipes.unwrap())(self.handle) }
+    }
+
     fn item_prototype_quality(&self, item_id: u32) -> u32 {
         unsafe { (self.cbs.item_prototype_quality.unwrap())(self.handle, item_id) }
+    }
+
+    fn factory_bot_guid_low(&self) -> u32 {
+        unsafe { (self.cbs.factory_bot_guid_low.unwrap())(self.handle) }
+    }
+
+    fn factory_bot_equipped_item_in_slot(&self, slot: u8) -> u32 {
+        unsafe { (self.cbs.factory_bot_equipped_item_in_slot.unwrap())(self.handle, slot) }
+    }
+
+    fn factory_destroy_all_equipped_items(&self) {
+        unsafe { (self.cbs.factory_destroy_all_equipped_items.unwrap())(self.handle) }
+    }
+
+    fn factory_equip_new_item_in_slot(
+        &self,
+        slot: u8,
+        item_id: u32,
+        random_enchant_id: u32,
+        apply_enchants: bool,
+    ) -> bool {
+        unsafe {
+            (self.cbs.factory_equip_new_item_in_slot.unwrap())(
+                self.handle,
+                slot,
+                item_id,
+                random_enchant_id,
+                apply_enchants,
+            )
+        }
+    }
+
+    fn factory_init_stats_for_level_and_update(&self) {
+        unsafe { (self.cbs.factory_init_stats_for_level_and_update.unwrap())(self.handle) }
+    }
+
+    fn factory_master_equip_gear_score(&self) -> Option<u32> {
+        let mut gs: u32 = 0;
+        let ok = unsafe {
+            (self.cbs.factory_master_equip_gear_score.unwrap())(self.handle, &mut gs as *mut u32)
+        };
+        if ok {
+            Some(gs)
+        } else {
+            None
+        }
+    }
+
+    fn factory_tell_master(&self, msg: &str) {
+        let c_msg = std::ffi::CString::new(msg).unwrap_or_default();
+        unsafe { (self.cbs.factory_tell_master.unwrap())(self.handle, c_msg.as_ptr()) }
+    }
+
+    fn factory_bot_has_pet(&self) -> bool {
+        unsafe { (self.cbs.factory_bot_has_pet.unwrap())(self.handle) }
+    }
+
+    fn factory_pet_entry(&self) -> u32 {
+        unsafe { (self.cbs.factory_pet_entry.unwrap())(self.handle) }
+    }
+
+    fn factory_pet_family(&self) -> u32 {
+        unsafe { (self.cbs.factory_pet_family.unwrap())(self.handle) }
+    }
+
+    fn factory_pet_level(&self) -> u32 {
+        unsafe { (self.cbs.factory_pet_level.unwrap())(self.handle) }
+    }
+
+    fn factory_pet_has_spell(&self, spell_id: u32) -> bool {
+        unsafe { (self.cbs.factory_pet_has_spell.unwrap())(self.handle, spell_id) }
+    }
+
+    fn factory_pet_autocast_candidate_spells(&self) -> BotSpellList<'_> {
+        let mut count: u32 = 0;
+        let ptr = unsafe {
+            (self.cbs.factory_pet_autocast_candidate_spells.unwrap())(self.handle, &mut count)
+        };
+        // Reuses free_bot_spells — same malloc/free contract (uint32_t array).
+        unsafe { ffi_list(ptr, count, self.cbs.free_bot_spells.unwrap()) }
+    }
+
+    fn factory_tameable_creatures_for_bot_level(&self) -> BotSpellList<'_> {
+        let mut count: u32 = 0;
+        let ptr = unsafe {
+            (self.cbs.factory_tameable_creatures_for_bot_level.unwrap())(self.handle, &mut count)
+        };
+        // Reuses free_bot_spells — same malloc/free contract (uint32_t array).
+        unsafe { ffi_list(ptr, count, self.cbs.free_bot_spells.unwrap()) }
+    }
+
+    fn factory_create_hunter_pet(&self, creature_entry: u32) -> bool {
+        unsafe { (self.cbs.factory_create_hunter_pet.unwrap())(self.handle, creature_entry) }
+    }
+
+    fn factory_pet_refresh_stats(&self) {
+        unsafe { (self.cbs.factory_pet_refresh_stats.unwrap())(self.handle) }
+    }
+
+    fn factory_pet_learn_spell(&self, spell_id: u32) {
+        unsafe { (self.cbs.factory_pet_learn_spell.unwrap())(self.handle, spell_id) }
+    }
+
+    fn factory_pet_toggle_autocast(&self, spell_id: u32, enable: bool) {
+        unsafe {
+            (self.cbs.factory_pet_toggle_autocast.unwrap())(self.handle, spell_id, enable)
+        }
+    }
+
+    fn factory_pet_force_dismiss(&self) {
+        unsafe { (self.cbs.factory_pet_force_dismiss.unwrap())(self.handle) }
     }
 
     fn factory_pick_trade_for_level(&self, level: u32) -> u32 {

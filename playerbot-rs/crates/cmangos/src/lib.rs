@@ -28,6 +28,8 @@ pub mod owned;
 #[allow(unsafe_code)]
 pub mod random_factory_world;
 #[allow(unsafe_code)]
+pub mod random_mgr_world;
+#[allow(unsafe_code)]
 pub mod real;
 pub mod snapshot;
 pub mod unit;
@@ -35,15 +37,17 @@ pub mod world;
 
 // Re-export every POD type from cmangos-sys at the crate root.
 pub use cmangos_sys::{
-    BotAuraInfo, BotCallbacks, BotCandidateInfo, BotCharAppearance, BotCharacterAccount,
-    BotCreateParams, BotDeleteEventState, BotDispelTarget, BotEnchantInfo, BotGemPropertiesRow,
-    BotHandle, BotInventoryItem, BotItemEnchantmentRow, BotItemProtoDamage, BotItemProtoSocket,
-    BotItemProtoSpellRef, BotItemProtoStat, BotItemPrototype, BotItemRarityRow, BotMailSummary,
-    BotNamePoolRow, BotPlayerItemCtx, BotPlayerSnapshot, BotPosition, BotQuestInfo,
-    BotQuestItemRow, BotRealPlayerInfo, BotReputationEntry, BotSafePosition, BotSkillEntry,
-    BotSpellEntryInfo, BotSpellInfo, BotTalentEntry, BotTaxiNode, BotThreatEntry, BotTravelDest,
-    BotUnitSnapshot, BotVendorItemRow, BotWeightScaleRow, BotWeightScaleStatRow,
-    BotWorldSnapshot, ItemCallbacks, LoginCallbacks, RandomFactoryCallbacks, UnitHandle,
+    BotAhMirrorRow, BotAuraInfo, BotBgQueueEntry, BotCallbacks, BotCandidateInfo,
+    BotCharAppearance, BotCharacterAccount, BotCreateParams, BotDeleteEventState, BotDispelTarget,
+    BotEnchantInfo, BotEventRow, BotGemPropertiesRow, BotHandle, BotInventoryItem,
+    BotItemEnchantmentRow, BotItemProtoDamage, BotItemProtoSocket, BotItemProtoSpellRef,
+    BotItemProtoStat, BotItemPrototype, BotItemRarityRow, BotLfgQueueEntry, BotMailSummary,
+    BotNamedLocationRow, BotNamePoolRow, BotPlayerItemCtx, BotPlayerSnapshot, BotPosition,
+    BotQuestInfo, BotQuestItemRow, BotRealPlayerInfo, BotRealPlayerLevel, BotReputationEntry,
+    BotSafePosition, BotSkillEntry, BotSpellEntryInfo, BotSpellInfo, BotStatsRow, BotTalentEntry,
+    BotTaxiNode, BotTeleportRow, BotThreatEntry, BotTravelDest, BotUnitSnapshot, BotVendorItemRow,
+    BotWeightScaleRow, BotWeightScaleStatRow, BotWorldDiffSample, BotWorldSnapshot, ItemCallbacks,
+    LoginCallbacks, RandomFactoryCallbacks, RandomMgrCallbacks, UnitHandle,
 };
 
 pub use ids::{BotRole, ItemId, SkillId, SpellId, TalentId};
@@ -58,14 +62,21 @@ pub use owned::{
     ReputationList, SkillList, TalentList, TaxiNodeList, ThreatList, TravelDestList, UnitList,
 };
 #[cfg(any(test, feature = "mock"))]
-pub use mock::{MockEvent, MockState, MockWorld, MockWorldBuilder};
+pub use mock::{MockEvent, MockState, MockWorld, MockWorldBuilder, PetCreature};
 pub use random_factory_world::{
     BotDeleteEvent, CharAppearance, CharacterAccount, CreateParams, NamePoolRow, PlayerSnapshot,
     RandomFactoryWorld, VtableRandomFactoryWorld,
 };
 #[cfg(any(test, feature = "mock"))]
 pub use random_factory_world::{MockRandomFactoryEvent, MockRandomFactoryWorld};
+pub use random_mgr_world::{
+    AhMirrorRow, BgQueueEntry, BotStatsFlags, BotStatsSnapshotRow, EventRow, LfgQueueEntry,
+    NamedLocationRow, RandomMgrWorld, RealPlayerLevel, TeleportRow, VtableRandomMgrWorld,
+    WorldDiffSample,
+};
+#[cfg(any(test, feature = "mock"))]
+pub use random_mgr_world::{MockRandomMgrEvent, MockRandomMgrWorld};
 pub use real::VtableWorld;
 pub use snapshot::{UnitSnapshotExt, WorldSnapshotExt};
 pub use unit::UnitRef;
-pub use world::World;
+pub use world::{GuildSummary, World};

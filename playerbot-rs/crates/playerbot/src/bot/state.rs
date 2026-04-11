@@ -40,6 +40,31 @@ pub enum PlayerClass {
     Druid = 11,
 }
 
+impl PlayerClass {
+    /// Decode a raw class id from `BotUnitSnapshot::class_id`. Returns
+    /// `None` for any unknown id so callers can cleanly skip
+    /// class-specific branches rather than defaulting to Warrior.
+    #[must_use]
+    pub fn from_class_id(class_id: u8) -> Option<Self> {
+        use PlayerClass::{
+            DeathKnight, Druid, Hunter, Mage, Paladin, Priest, Rogue, Shaman, Warlock, Warrior,
+        };
+        Some(match class_id {
+            1 => Warrior,
+            2 => Paladin,
+            3 => Hunter,
+            4 => Rogue,
+            5 => Priest,
+            6 => DeathKnight,
+            7 => Shaman,
+            8 => Mage,
+            9 => Warlock,
+            11 => Druid,
+            _ => return None,
+        })
+    }
+}
+
 /// Which specialization / role this bot plays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayerSpec {

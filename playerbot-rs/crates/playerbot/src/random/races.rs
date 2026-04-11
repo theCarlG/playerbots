@@ -9,7 +9,7 @@
 //! (blood elf, draenei, death knight support) are only present when the
 //! `wotlk` / `tbc` feature is active.
 //!
-//! The CMaNGOS core uses `RACE_*` values that are not contiguous (race ids
+//! The `CMaNGOS` core uses `RACE_*` values that are not contiguous (race ids
 //! 1..10 inclusive; id 9 is unused / `RACE_GOBLIN` which is never allowed).
 //! The table is stored as a `bool` matrix `[MAX_CLASSES][MAX_RACES]`
 //! instead of a list-per-class so that `is_available_race` is an `O(1)`
@@ -50,7 +50,7 @@ pub const CLASS_HUNTER: u8 = 3;
 pub const CLASS_ROGUE: u8 = 4;
 /// `CLASS_PRIEST` (5).
 pub const CLASS_PRIEST: u8 = 5;
-/// `CLASS_DEATH_KNIGHT` (6) — WotLK only.
+/// `CLASS_DEATH_KNIGHT` (6) — `WotLK` only.
 pub const CLASS_DEATH_KNIGHT: u8 = 6;
 /// `CLASS_SHAMAN` (7).
 pub const CLASS_SHAMAN: u8 = 7;
@@ -67,7 +67,7 @@ pub const GENDER_MALE: u8 = 0;
 pub const GENDER_FEMALE: u8 = 1;
 
 /// Race/gender combination used as the key into the `ai_playerbot_names`
-/// table on the CMaNGOS side. Mirrors the `NameRaceAndGender` enum in
+/// table on the `CMaNGOS` side. Mirrors the `NameRaceAndGender` enum in
 /// `playerbot/RandomPlayerbotFactory.h` with identical ordering (Generic
 /// covers human + undead as the C++ version does).
 #[repr(u8)]
@@ -198,7 +198,7 @@ pub const fn availability() -> &'static [[bool; MAX_RACES]; MAX_CLASSES] {
 /// callers that only need a flat view.
 ///
 /// Build-time feature flags (`vanilla`/`tbc`/`wotlk`) select which rows
-/// include the TBC+ races and the WotLK death-knight row.
+/// include the TBC+ races and the `WotLK` death-knight row.
 const AVAILABLE: [[bool; MAX_RACES]; MAX_CLASSES] = build_matrix();
 
 const fn build_matrix() -> [[bool; MAX_RACES]; MAX_CLASSES] {
@@ -356,7 +356,7 @@ pub fn is_available_race(cls: u8, race: u8) -> bool {
 ///
 /// The two differ notably for [`CLASS_HUNTER`] (insertion puts
 /// [`RACE_DWARF`] first; numeric-ascending would hit [`RACE_ORC`]) and
-/// the WotLK [`CLASS_DEATH_KNIGHT`] row (insertion puts
+/// the `WotLK` [`CLASS_DEATH_KNIGHT`] row (insertion puts
 /// [`RACE_NIGHTELF`] first).
 #[must_use]
 pub const fn first_available_race(cls: u8) -> u8 {

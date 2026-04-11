@@ -695,9 +695,289 @@ typedef struct BotCallbacks {
     /* Player::UpdateSkillsForLevel(true). */
     void     (*bot_update_skills_for_level)(BotHandle bot);
 
+    /* ── Factory: refresh (cheat mask + DB save) ─────────────────────── */
+    /* Bitmask of cheats currently enabled on this bot (the BotCheatMask
+     * enum parsed from `AiPlayerbot.BotCheats`). Bit 5 = item cheat; the
+     * Rust factory `refresh` path gates consumable top-ups on this. Returns
+     * 0 when no cheats are set. */
+    uint32_t (*bot_cheat_mask)(BotHandle bot);
+    /* Player::SaveToDB() guarded by
+     * `sRandomPlayerbotMgr.GetDatabaseDelay("CharacterDatabase") < 10ms`
+     * (mirrors the tail of `PlayerbotFactory::Refresh`). No-op when the
+     * CharacterDatabase worker queue is busy. */
+    void     (*bot_save_to_db_if_not_busy)(BotHandle bot);
+
+    /* ── Factory: prepare ────────────────────────────────────────────── */
+    /* Player::ResurrectPlayer(1.0f, false) followed by
+     * Player::SpawnCorpseBones(). Brings a dead bot back to life in one
+     * atomic FFI call — the C++ side of `PlayerbotFactory::Prepare` always
+     * does both together. */
+    void     (*bot_resurrect_full)(BotHandle bot);
+    /* Player::CombatStop(true) — drops target, clears threat, stops any
+     * in-progress cast. Called by `Prepare` before reshaping the bot. */
+    void     (*bot_combat_stop)(BotHandle bot);
+    /* Set level to `level`, reset current XP to 0, and set next-level XP
+     * to `sObjectMgr.GetXPForLevel(level)`. Atomic wrapper around the
+     * three C++ field writes in `PlayerbotFactory::Prepare`. */
+    void     (*bot_set_level_and_reset_xp)(BotHandle bot, uint32_t level);
+    /* Set (set=true) or clear (set=false) a bit in PLAYER_FLAGS via
+     * Player::SetFlag / Player::RemoveFlag. Used by `Prepare` for the
+     * helmet / cloak display flags; generalised so future factory steps
+     * can reuse it. */
+    void     (*bot_set_player_flag)(BotHandle bot, uint32_t flag, bool set);
+    /* sPlayerbotAIConfig.disableRandomLevels — when true, factory runs
+     * skip the level / XP reset in `Prepare` and bail out of `Randomize`. */
+    bool     (*factory_config_disable_random_levels)(BotHandle bot);
+    /* sPlayerbotAIConfig.randomBotShowHelmet — when false, bots get the
+     * PLAYER_FLAGS_HIDE_HELM flag set during `Prepare`. */
+    bool     (*factory_config_random_bot_show_helmet)(BotHandle bot);
+    /* sPlayerbotAIConfig.randomBotShowCloak — when false, bots get the
+     * PLAYER_FLAGS_HIDE_CLOAK flag set during `Prepare`. */
+    bool     (*factory_config_random_bot_show_cloak)(BotHandle bot);
+
+    /* ── Factory: Randomize orchestration ────────────────────────────── */
+    /* sRandomPlayerbotMgr.IsRandomBot(bot) — is the bot currently tracked
+     * in the random-bot account list? `PlayerbotFactory::Randomize` uses
+     * this to decide whether to run the full re-roll pipeline. */
+    bool     (*factory_is_random_bot)(BotHandle bot);
+    /* ai->HasRealPlayerMaster() — does the bot have a live human master?
+     * Part of the "claimed random bot" gate in `Randomize`. */
+    bool     (*factory_has_real_player_master)(BotHandle bot);
+    /* ai->IsInRealGuild() — is the bot in a guild with at least one real
+     * player? Part of the "claimed random bot" gate in `Randomize`. */
+    bool     (*factory_is_in_real_guild)(BotHandle bot);
+    /* sPlayerbotAIConfig.minEnchantingBotLevel — the cut-off level below
+     * which `Randomize` skips `LoadEnchantContainer`. */
+    uint32_t (*factory_config_min_enchanting_bot_level)(BotHandle bot);
+    /* PlayerbotFactory::LoadEnchantContainer — pull per-bot enchant
+     * templates out of the world DB. Called from `Randomize` after the
+     * min-enchanting-level gate passes. */
+    void     (*factory_load_enchant_container)(BotHandle bot);
+    /* bot->resetTalents(true) — wipe every learned talent. Called by
+     * `Randomize` in the non-incremental random-bot branch. */
+    void     (*bot_reset_talents)(BotHandle bot);
+    /* bot->learnQuestRewardedSpells() — fold every quest-reward spell the
+     * bot qualifies for into its spellbook in one pass. Called by
+     * `Randomize` after rewarding the "special quest list" on a real
+     * random bot. */
+    void     (*bot_learn_quest_rewarded_spells)(BotHandle bot);
+    /* bot->GetMoney() — current copper balance. */
+    uint32_t (*bot_get_money)(BotHandle bot);
+    /* bot->SetMoney(amount) — set the bot's copper balance. */
+    void     (*bot_set_money)(BotHandle bot, uint32_t amount);
+    /* PlayerbotFactory::InitGems — socket gem fan-out for TBC / WotLK.
+     * Ports the whole per-slot CMSG_SOCKET_GEMS construction loop in one
+     * atomic callback. No-op on Classic bridges. */
+    void     (*factory_init_all_gems)(BotHandle bot);
+    /* PlayerbotFactory::EnchantEquipment — per-slot enchant template
+     * dispatch. Atomic "for every equipped item, look up an enchant
+     * template and call EnchantItem on it" loop. */
+    void     (*factory_enchant_all_equipment)(BotHandle bot);
+
+    /* ── Factory: quests ─────────────────────────────────────────────── */
+    /* Combined class/race/min-level eligibility filter from
+     * `PlayerbotFactory::InitQuests`. C++ side looks up the quest template,
+     * so Rust only needs the id. Returns false when the quest is unknown or
+     * any of the three PB2 predicates reject it. */
+    bool     (*quest_is_eligible_for_bot)(BotHandle bot, uint32_t quest_id);
+    /* Set quest status to complete and hand the bot the reward. Wraps
+     * `Player::SetQuestStatus(id, QUEST_STATUS_COMPLETE)` and
+     * `Player::RewardQuest(q, 0, bot, false)`. Silent no-op on unknown ids. */
+    void     (*bot_reward_quest_complete)(BotHandle bot, uint32_t quest_id);
+
+    /* ── Factory: arena team ─────────────────────────────────────────── */
+    /* `bot->GetSession()->GetAccountId()` — account that owns this bot
+     * character. Used by `PlayerbotFactory::InitArenaTeam` to gate random-
+     * bot factory work against the live random-bot account list. Returns
+     * 0 when the session is unavailable. */
+    uint32_t (*bot_get_account_id)(BotHandle bot);
+
+    /* ── Factory: guild ─────────────────────────────────────────────────
+     * These back `PlayerbotFactory::InitGuild`. The legacy C++ body reads
+     * `sPlayerbotAIConfig.randomBotGuilds`, filters to guilds whose leader
+     * is on the same team as the bot, picks one at random, and joins it as
+     * a random rank between GR_OFFICER and GR_INITIATE. The runtime guild
+     * list itself lives in the Rust `random` factory singleton; the
+     * callbacks here cover the per-guild lookups and the join action. */
+
+    /* Read-only guild summary: populates `out` with the leader team
+     * (0=Alliance, 1=Horde), current member count, the `atoi(GetGINFO())`
+     * max-member hint (0 when the GINFO string is not numeric), the guild
+     * name, and the "bot is already a member" flag. Returns false when
+     * the guild id is unknown. */
+    bool     (*factory_query_guild_summary)(BotHandle bot,
+                                            uint32_t guild_id,
+                                            uint8_t* out_leader_team,
+                                            uint32_t* out_member_size,
+                                            uint32_t* out_max_members_hint,
+                                            char* out_name,
+                                            uint32_t name_buf_len);
+
+    /* `guild->AddMember(bot->GetObjectGuid(), rank_id)` — join the bot
+     * to an existing guild at the given rank. Returns false when the
+     * guild id is unknown or the add failed (bot already in a guild,
+     * guild full, etc.). */
+    bool     (*factory_guild_add_member)(BotHandle bot,
+                                         uint32_t guild_id,
+                                         uint32_t rank_id);
+
+    /* `guild->GetRankName(rank_id)` — write the rank name into
+     * `out_name` for log output. Returns false when the guild id is
+     * unknown or `rank_id` is out of range (no write on failure). */
+    bool     (*factory_get_guild_rank_name)(BotHandle bot,
+                                            uint32_t guild_id,
+                                            uint32_t rank_id,
+                                            char* out_name,
+                                            uint32_t name_buf_len);
+
+    /* `bot->GetGuildId()` — the bot's currently-joined guild. Returns 0
+     * when the bot is not in a guild. Used by `InitGuild` to skip the
+     * filter/pick pass when the bot already belongs to one. */
+    uint32_t (*factory_bot_guild_id)(BotHandle bot);
+
+    /* ── Factory: per-bot key/value store ────────────────────────────── */
+    /* `sRandomPlayerbotMgr.GetValue(bot, key)` / `SetValue(bot, key, value)` —
+     * read/write a per-bot scalar in the random_bot_event table. Used by
+     * `InitTradeSkills` to cache the two professions assigned to a bot so
+     * subsequent re-rolls hand out the same pair. Unknown keys return 0. */
+    uint32_t (*factory_kv_get_u32)(BotHandle bot, const char* key);
+    void     (*factory_kv_set_u32)(BotHandle bot, const char* key, uint32_t value);
+
+    /* Trainer-iteration tail of `PlayerbotFactory::InitTradeSkills` —
+     * walk every creature template, look at its trainer spell list, and
+     * `bot->learnSpell` any recipe the bot qualifies for under the
+     * "Apprentice + chosen profession or secondary" gate. Delegated to
+     * C++ because the loop touches sCreatureStorage + sSpellTemplate +
+     * m_trainerSpells. */
+    void     (*factory_learn_tradeskill_recipes)(BotHandle bot);
+
     /* ── Factory: item prototype queries ─────────────────────────────── */
     /* ItemPrototype.Quality (0..7 — poor/common/uncommon/rare/epic/...). */
     uint32_t (*item_prototype_quality)(BotHandle bot, uint32_t item_id);
+
+    /* ── Factory: equipment ──────────────────────────────────────────── */
+    /* `bot->GetGUIDLow()` — the low 32 bits of the bot's object guid, used
+     * as the per-player cache key by the Rust itempool. Returns 0 when the
+     * bot handle is unavailable. */
+    uint32_t (*factory_bot_guid_low)(BotHandle bot);
+
+    /* Item id currently equipped in `slot` (see EquipmentSlots / 0..=18),
+     * or 0 when the slot is empty. Mirrors
+     * `bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot)->GetProto()->ItemId`
+     * as used by `PlayerbotFactory::InitEquipment`. */
+    uint32_t (*factory_bot_equipped_item_in_slot)(BotHandle bot, uint8_t slot);
+
+    /* Destroy every equipped item. Mirrors
+     * `DestroyItemsVisitor(bot);
+     *  ai->InventoryIterateItems(&visitor, ITERATE_ITEMS_IN_EQUIP)`
+     * at the top of `InitEquipment`'s non-incremental branch. */
+    void     (*factory_destroy_all_equipped_items)(BotHandle bot);
+
+    /* Atomic equip-and-enchant used by the tail of `InitEquipment`'s
+     * per-slot loop. Destroys any existing item in `slot`, equips
+     * `item_id` via `Player::EquipNewItem`, optionally overwrites its
+     * random property with `random_enchant_id` (0 = no rewrite), and
+     * optionally runs `PlayerbotFactory::EnchantItem` on the newly
+     * equipped item. Returns `true` when the equip succeeded. */
+    bool     (*factory_equip_new_item_in_slot)(BotHandle bot,
+                                                uint8_t slot,
+                                                uint32_t item_id,
+                                                uint32_t random_enchant_id,
+                                                bool apply_enchants);
+
+    /* `Player::InitStatsForLevel(true)` + `Player::UpdateAllStats()` —
+     * used at the tail of `InitEquipment` so newly-equipped items take
+     * effect in the bot's stat block. */
+    void     (*factory_init_stats_for_level_and_update)(BotHandle bot);
+
+    /* `ai->GetMaster()->GetEquipGearScore(..)` — master's current gear
+     * score. Writes the score into `*out_gs` and returns true when the
+     * bot has a master, otherwise returns false and leaves `*out_gs`
+     * untouched. Used by `InitEquipment`'s `syncWithMaster` branch. */
+    bool     (*factory_master_equip_gear_score)(BotHandle bot, uint32_t* out_gs);
+
+    /* `ai->TellPlayerNoFacing(ai->GetMaster(), msg)` — broadcast a
+     * user-facing message to the bot's master. Silent no-op when the
+     * bot has no master. */
+    void     (*factory_tell_master)(BotHandle bot, const char* msg);
+
+    /* ── Factory: pet ────────────────────────────────────────────────── */
+    /* `bot->GetPet() != nullptr` — does the bot currently have an active
+     * pet? Used by both `InitPet` (to decide whether to create one) and
+     * `InitPetSpells` (which short-circuits when there is no pet). */
+    bool     (*factory_bot_has_pet)(BotHandle bot);
+
+    /* `bot->GetPet()->GetEntry()` — creature template id for the active
+     * pet. Returns 0 when the bot has no pet. Drives the warlock per-
+     * pet spell dispatch in `InitPetSpells`. */
+    uint32_t (*factory_pet_entry)(BotHandle bot);
+
+    /* `sObjectMgr.GetCreatureTemplate(pet_entry)->Family` — the
+     * CreatureFamily bucket (1=Wolf, 2=Cat, 3=Spider, …). Drives the
+     * hunter pet spell dispatch on vanilla. Returns 0 when the bot has
+     * no pet or the template lookup fails. */
+    uint32_t (*factory_pet_family)(BotHandle bot);
+
+    /* `bot->GetPet()->GetLevel()` — the pet's current level (usually
+     * matches the bot but re-queried rather than assumed). Returns 0
+     * when the bot has no pet. */
+    uint32_t (*factory_pet_level)(BotHandle bot);
+
+    /* `pet->HasSpell(spell_id)` — does the pet already know this spell?
+     * Used to avoid double-learning in `InitPetSpells`. */
+    bool     (*factory_pet_has_spell)(BotHandle bot, uint32_t spell_id);
+
+    /* Non-passive, non-removed spell IDs from the pet's `PetSpellMap`.
+     * Used at the end of `InitPet` for the mass-toggle-autocast pass.
+     * Returned as a freshly-allocated `malloc` array; caller frees via
+     * the existing `free_bot_spells` allocator (same contract as
+     * `get_bot_spells`). `*out_count` receives the element count. */
+    uint32_t* (*factory_pet_autocast_candidate_spells)(BotHandle bot,
+                                                        uint32_t* out_count);
+
+    /* Tameable creature ids whose `MinLevel <= bot->GetLevel()`. One-
+     * shot enumeration used by `InitPet` to pick a random hunter pet.
+     * On WotLK the C++ side additionally gates on `CanTameExoticPets`.
+     * Returned as a freshly-allocated `malloc` array; caller frees via
+     * `free_bot_spells` (shared uint32 allocator). */
+    uint32_t* (*factory_tameable_creatures_for_bot_level)(BotHandle bot,
+                                                           uint32_t* out_count);
+
+    /* Atomic hunter-pet creation — mirrors the body of the 100-
+     * iteration retry loop in `PlayerbotFactory::InitPet` minus the
+     * retry itself. Runs the full `Pet::Create` → faction/level/
+     * happiness setup → `AIM_Initialize` → `InitPetCreateSpells` →
+     * `LearnPetPassives` → `CastPetAuras` → `UpdateAllStats` →
+     * `SetPet`/`SetPetGuid` → `SavePetToDB` → `PetSpellInitialize`
+     * chain in one shot. Returns true on success. */
+    bool     (*factory_create_hunter_pet)(BotHandle bot, uint32_t creature_entry);
+
+    /* Re-run the pet refresh block at the tail of `InitPet`:
+     *   pet->InitStatsForLevel(bot->GetLevel());
+     *   pet->SetLevel(bot->GetLevel());
+     *   pet->SetLoyaltyLevel(BEST_FRIEND);   // non-WotLK only
+     *   pet->SetPower(POWER_HAPPINESS, HAPPINESS_LEVEL_SIZE * 2);
+     *   pet->SetHealth(pet->GetMaxHealth());
+     *   pet->SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_PLAYER_CONTROLLED);
+     *   pet->AI()->SetReactState(REACT_DEFENSIVE);
+     * No-op when the bot has no pet. */
+    void     (*factory_pet_refresh_stats)(BotHandle bot);
+
+    /* `pet->learnSpell(spell_id)` — add a spell to the pet's spellbook.
+     * No-op when the bot has no pet. */
+    void     (*factory_pet_learn_spell)(BotHandle bot, uint32_t spell_id);
+
+    /* `pet->ToggleAutocast(spell_id, enable)` — flip the autocast bit
+     * on a pet spell. Used by both the mass-on pass at the end of
+     * `InitPet` and the per-spell Cower toggle in `InitPetSpells`. */
+    void     (*factory_pet_toggle_autocast)(BotHandle bot,
+                                             uint32_t spell_id,
+                                             bool enable);
+
+    /* `pet->SetDeathState(JUST_DIED)` — the "force dismiss pet to fix
+     * missing flags" workaround at the end of `InitPet`. Caller only
+     * invokes this when the pet is currently alive. */
+    void     (*factory_pet_force_dismiss)(BotHandle bot);
 
     /* ── Factory: random item picks ──────────────────────────────────── */
     /* Wraps sRandomItemMgr.GetRandomTrade(level). Returns an item id or 0. */
@@ -1830,6 +2110,196 @@ typedef struct RandomFactoryCallbacks {
     void (*log_debug)(const char* msg);
 } RandomFactoryCallbacks;
 
+/* ─────────────────────────────────────────────────────────────────────
+ * RandomMgrCallbacks — module-level vtable used by the Rust random
+ * playerbot manager (Phase H of the C++ → Rust migration).
+ *
+ * Phase H moves `playerbot/RandomPlayerbotMgr.cpp` (≈4100 LOC) into the
+ * Rust `playerbot` crate's `random_mgr` module. These callbacks cover
+ * every CMaNGOS-side operation the legacy class did: DB I/O against the
+ * `ai_playerbot_random_bots` event store, teleport-cache maintenance,
+ * named-location loading, per-bot action dispatch (Randomize / Revive /
+ * teleport / etc.), BG / LFG / arena queue inspection, auction-house
+ * mirroring, and the world-diff / DB-delay sampling that feeds the PID
+ * controller.
+ *
+ * Thread model: the Rust random-mgr worker thread owns a handle to this
+ * vtable and performs DB reads from that thread. Per-bot action dispatch
+ * (`dispatch_*`) is forwarded back to the main thread by the worker
+ * through its command channel; `playerbot_random_mgr_update` drains
+ * that channel on the main tick so the actual mutation happens under
+ * the CMaNGOS world lock.
+ *
+ * The vtable is installed once at startup via `playerbot_random_mgr_init`.
+ * ───────────────────────────────────────────────────────────────────── */
+
+/* One row of `ai_playerbot_random_bots`. Strings are inline char
+ * buffers so the whole struct is POD and bindgen-safe. */
+typedef struct {
+    uint32_t bot;
+    char     event[32];
+    uint32_t value;
+    uint32_t last_change_time;       /* unix epoch seconds */
+    uint32_t valid_in;               /* TTL in seconds; 0 = no TTL */
+    char     data[256];
+} BotEventRow;
+
+/* Snapshot of a world-diff sample — the three counters
+ * `sWorld.GetCurrentDiff()`, `sWorld.GetAverageDiff()`, and
+ * `sWorld.GetMaxDiff()` the legacy `ScaleBotActivity` fed into the PID
+ * controller. */
+typedef struct {
+    float current_diff_ms;
+    float average_diff_ms;
+    float max_diff_ms;
+} BotWorldDiffSample;
+
+/* One row of the random-bot teleport cache. */
+typedef struct {
+    uint32_t level;
+    uint32_t map_id;
+    float    x;
+    float    y;
+    float    z;
+} BotTeleportRow;
+
+/* One row of `ai_playerbot_named_location`. */
+typedef struct {
+    char     name[64];
+    uint32_t map_id;
+    float    x;
+    float    y;
+    float    z;
+    float    orientation;
+} BotNamedLocationRow;
+
+/* One row in the BG / arena queue snapshot the worker consumes per
+ * tick to rebuild the `BgPlayers`/`BgBots`/`ArenaBots` bucket matrix.
+ * `arena_type == 0` marks a non-arena BG row. */
+typedef struct {
+    uint32_t queue_type;
+    uint32_t bracket_id;
+    uint32_t team_id;                /* 0=Alliance, 1=Horde */
+    bool     is_bot;
+    uint32_t level;
+    uint32_t map_id;
+    uint32_t arena_rating;
+    uint8_t  arena_type;             /* 0=non-arena, 2=2v2, 3=3v3, 5=5v5 */
+} BotBgQueueEntry;
+
+/* One row in the LFG queue snapshot. Classic/TBC leaves this empty. */
+typedef struct {
+    uint8_t  team_id;                /* 0=Alliance, 1=Horde, 2=both */
+    uint32_t dungeon_id;
+    uint32_t role_mask;
+} BotLfgQueueEntry;
+
+/* One row of the auction house mirror (per currently-listed auction). */
+typedef struct {
+    uint32_t item_id;
+    uint32_t buyout;
+    uint32_t count;
+} BotAhMirrorRow;
+
+/* Real-player level summary used by `CheckPlayers` to drive the
+ * `playersLevel` running average. */
+typedef struct {
+    uint32_t level;
+    uint32_t total_time;
+} BotRealPlayerLevel;
+
+/* Per-bot snapshot used by `PrintStats` to render the /bot stats
+ * console output. One row per currently-owned bot. The `flags` field
+ * is a bitmask of `PLAYERBOT_STATS_FLAG_*` entries below. */
+typedef struct {
+    uint32_t guid;
+    uint8_t  race;     /* Mangos `Races` enum value */
+    uint8_t  class_id; /* Mangos `Classes` enum value */
+    uint8_t  team;     /* 0 = Alliance, 1 = Horde */
+    uint32_t level;
+    uint32_t flags;
+} BotStatsRow;
+
+/* Bitflags for `BotStatsRow::flags` — keep in sync with
+ * `crates/cmangos/src/random_mgr_world.rs`. */
+#define PLAYERBOT_STATS_FLAG_ACTIVE  (1u << 0)
+#define PLAYERBOT_STATS_FLAG_DEAD    (1u << 1)
+#define PLAYERBOT_STATS_FLAG_COMBAT  (1u << 2)
+#define PLAYERBOT_STATS_FLAG_TAXI    (1u << 3)
+#define PLAYERBOT_STATS_FLAG_MOVING  (1u << 4)
+#define PLAYERBOT_STATS_FLAG_MOUNTED (1u << 5)
+#define PLAYERBOT_STATS_FLAG_AFK     (1u << 6)
+
+typedef struct RandomMgrCallbacks {
+    /* ── RNG ──────────────────────────────────────────────────────── */
+    uint32_t (*urand_range)(uint32_t min, uint32_t max);
+
+    /* ── World globals ───────────────────────────────────────────── */
+    uint32_t (*current_ms_time)(void);
+    bool     (*is_shutting_down)(void);
+    uint32_t (*world_max_level)(void);
+    void     (*world_diff_sample)(BotWorldDiffSample* out);
+    void     (*database_ping)(void);
+    uint32_t (*database_delay_ms)(const char* db);
+
+    /* ── Event KV store (ai_playerbot_random_bots) ────────────────── */
+    uint32_t (*query_all_events)(uint32_t /*unused*/, BotEventRow** out_rows);
+    uint32_t (*query_events_for_bot)(uint32_t bot, BotEventRow** out_rows);
+    void     (*free_event_row_list)(BotEventRow* rows, uint32_t count);
+    void     (*upsert_event)(const BotEventRow* row);
+    void     (*delete_event)(uint32_t bot, const char* event);
+    void     (*delete_all_events_for_bot)(uint32_t bot);
+    void     (*delete_all_events)(void);
+    void     (*bump_event_times)(uint32_t delta_seconds);
+
+    /* ── Bot roster / per-bot actions ─────────────────────────────── */
+    uint32_t (*owned_bot_guids)(uint32_t** out_ids);
+    void     (*free_u32_list)(uint32_t* ids, uint32_t count);
+    bool     (*bot_level)(uint32_t guid, uint32_t* out_level);
+    bool     (*has_player_bot)(uint32_t guid);
+
+    void     (*dispatch_randomize)(uint32_t guid);
+    void     (*dispatch_insta_randomize)(uint32_t guid);
+    void     (*dispatch_randomize_first)(uint32_t guid);
+    void     (*dispatch_update_gear_spells)(uint32_t guid);
+    void     (*dispatch_refresh)(uint32_t guid);
+    bool     (*dispatch_random_teleport_for_level)(uint32_t guid, bool active_only);
+    bool     (*dispatch_random_teleport_for_rpg)(uint32_t guid, bool active_only);
+    void     (*dispatch_random_teleport)(uint32_t guid);
+    void     (*dispatch_revive)(uint32_t guid);
+    void     (*dispatch_change_strategy)(uint32_t guid);
+    void     (*dispatch_remove)(uint32_t guid);
+    void     (*dispatch_logout)(uint32_t guid);
+
+    /* ── Teleport cache (`ai_playerbot_tele_cache`) ───────────────── */
+    uint32_t (*query_teleport_cache)(BotTeleportRow** out_rows);
+    void     (*free_teleport_row_list)(BotTeleportRow* rows, uint32_t count);
+    void     (*rebuild_teleport_cache)(void);
+
+    /* ── Named locations ──────────────────────────────────────────── */
+    uint32_t (*query_named_locations)(BotNamedLocationRow** out_rows);
+    void     (*free_named_location_list)(BotNamedLocationRow* rows, uint32_t count);
+
+    /* ── BG / LFG / AH / real-player ──────────────────────────────── */
+    uint32_t (*query_bg_queue)(BotBgQueueEntry** out_rows);
+    void     (*free_bg_queue_list)(BotBgQueueEntry* rows, uint32_t count);
+    uint32_t (*query_lfg_queue)(BotLfgQueueEntry** out_rows);
+    void     (*free_lfg_queue_list)(BotLfgQueueEntry* rows, uint32_t count);
+    uint32_t (*query_ah_rows)(BotAhMirrorRow** out_rows);
+    void     (*free_ah_row_list)(BotAhMirrorRow* rows, uint32_t count);
+    uint32_t (*query_real_player_levels)(BotRealPlayerLevel** out_rows);
+    void     (*free_real_player_level_list)(BotRealPlayerLevel* rows, uint32_t count);
+
+    /* ── Per-bot stats snapshot (used by `PrintStats`) ────────────── */
+    uint32_t (*query_bot_stats)(BotStatsRow** out_rows);
+    void     (*free_bot_stats_list)(BotStatsRow* rows, uint32_t count);
+
+    /* ── Logging sinks ────────────────────────────────────────────── */
+    void     (*log_info)(const char* msg);
+    void     (*log_error)(const char* msg);
+    void     (*log_file)(const char* file, const char* line);
+} RandomMgrCallbacks;
+
 /* ── Rust exports (entry points CMaNGOS calls into Rust) ─────────────────── */
 
 /* ── Logging sink ────────────────────────────────────────────────────────── */
@@ -2146,6 +2616,167 @@ void playerbot_factory_init_talents(void* state, uint32_t spec_no);
 void playerbot_factory_init_talents_tree(void* state, bool incremental);
 
 /**
+ * Top up consumables on a bot via the Rust factory module. Ports
+ * `PlayerbotFactory::Refresh`: gated on the bot's item-cheat bit, then
+ * re-runs Init{Ammo,Food,Potions,Reagents} and AddConsumables, finishing
+ * with a SaveToDB when the character DB queue is idle.
+ */
+void playerbot_factory_refresh(void* state);
+
+/**
+ * Reset the bot chassis before a factory re-roll. Ports
+ * `PlayerbotFactory::Prepare`: resurrect + combat-stop, set level / reset XP
+ * (unless `disableRandomLevels`), apply the helmet / cloak hide flags per
+ * config. `level` is the target level the caller wants.
+ */
+void playerbot_factory_prepare(void* state, uint32_t level);
+
+/**
+ * Reward every quest in the caller-supplied list that the bot is eligible
+ * for. Ports `PlayerbotFactory::InitQuests(std::list<uint32>&)`: each id is
+ * filtered by the combined class/race/min-level predicate, and on success
+ * the quest is marked complete and its reward is handed out.
+ *
+ *   ids — pointer to `len` contiguous u32 quest ids (may be null when len=0)
+ *   len — number of quest ids pointed to by `ids`
+ */
+void playerbot_factory_init_quests(void* state, const uint32_t* ids, size_t len);
+
+/**
+ * Port of `PlayerbotFactory::InitArenaTeam`. Gates the call on two
+ * conditions: (a) the bot's owning account is in the live
+ * `random_bot_accounts` tracking list, and (b) the current tracked
+ * arena-team count is below `AiPlayerbot.RandomBotArenaTeamCount`. When
+ * both pass the Rust side forwards to
+ * `playerbot_random_factory_create_arena_teams`. On Classic the entry
+ * point is a silent no-op because arena teams do not exist.
+ */
+void playerbot_factory_init_arena_team(void* state);
+
+/**
+ * Port of `PlayerbotFactory::InitGuild`. Stocks a guild tabard if the
+ * bot is already in a guild; otherwise filters the live
+ * `random_bot_guilds` list (owned by the Rust random-factory singleton)
+ * to guilds whose leader is on the bot's team, picks one at random,
+ * checks the current member count against the `atoi(GetGINFO())` hint
+ * (fallback to `urand(10,15)`), and joins the guild at a random rank
+ * between GR_OFFICER and GR_INITIATE. Stocks a guild tabard on join
+ * when the bot is above level 9 and passes a 4/5 probability roll.
+ * Silent no-op when the random-factory module has not been initialised
+ * or the filtered guild list is empty.
+ */
+void playerbot_factory_init_guild(void* state);
+
+/**
+ * Port of `PlayerbotFactory::InitAllSkills`. Runs `InitSkills`
+ * (weapons/armor/riding) followed by `InitTradeSkills` (two professions
+ * + first aid + fishing + cooking + the TBC+ armorsmith spell chain for
+ * plate classes + the opaque trainer-iteration loop). The profession
+ * pair is cached in the per-bot KV store under `firstSkill`/`secondSkill`
+ * so re-rolls hand out the same pair.
+ */
+void playerbot_factory_init_all_skills(void* state);
+
+/**
+ * Port of `PlayerbotFactory::InitEquipment`. Drives the per-slot re-roll
+ * loop that ports the equip-cache queries, stat-weight comparisons,
+ * filter chain (locked legendaries, unavailable id blacklist, config
+ * blacklist, quality/level caps, caster/tank weapon gates), random
+ * enchant selection, off-hand-vs-main-hand ladder check, and equip +
+ * `EnchantItem` tail. Bit-for-bit parity with the C++ source: same
+ * quality descent, same shuffle order, same logging points.
+ *
+ * Modes (flag bits):
+ *   * bit 0 = incremental — keep existing items unless the new roll
+ *             scores strictly higher (legacy `incremental` arg).
+ *   * bit 1 = sync with master — clamp the item-level ceiling to the
+ *             master's gear score + config diff, skip progression
+ *             scaling, and broadcast a summary message to the master
+ *             on completion (legacy `syncWithMaster` arg).
+ *   * bit 2 = progressive — rolling quality ladder keyed on bot level
+ *             (legacy `progressive` arg).
+ *   * bit 3 = partial upgrade — only touch a 1..=4 subset of slots
+ *             chosen from empty slots + worst-scored worn items
+ *             (legacy `partialUpgrade` arg).
+ *   * `item_quality` — when non-zero, pins the quality tier searched in
+ *             each slot (legacy `itemQuality` member of the command
+ *             struct — used by `gear` chat commands). `0` means
+ *             "follow the progressive/incremental ladder".
+ */
+void playerbot_factory_init_equipment(void* state,
+                                       uint32_t flags,
+                                       uint32_t item_quality);
+
+/**
+ * Port of `PlayerbotFactory::InitPet`. Hunter-only: walks the tameable
+ * creature list, picks one at random (up to 100 retries), and calls the
+ * atomic `factory_create_hunter_pet` callback to run the full CMaNGOS
+ * creation sequence. Finishes by refreshing pet stats, mass-toggling
+ * autocast on every non-passive pet spell, and force-dismissing the pet
+ * to clear the missing-flags bug from the legacy C++ code. Every other
+ * class is a no-op.
+ */
+void playerbot_factory_init_pet(void* state);
+
+/**
+ * Port of `PlayerbotFactory::InitPetSpells`. Per-class / per-expansion
+ * pet spell learning: vanilla hunter dispatches on `CreatureInfo::Family`
+ * to a per-pet-type spell table and additionally learns rank-appropriate
+ * Growl / Natural Armor / Great Stamina plus resistances at pet level
+ * ≥ 20. Vanilla+TBC warlock dispatches on the pet's creature template
+ * entry and learns the level-gated spell list. Hunter + warlock only.
+ */
+void playerbot_factory_init_pet_spells(void* state);
+
+/**
+ * Port of `PlayerbotFactory::InitTradeSkills`. Runs only the tradeskill
+ * half of `InitAllSkills` — profession assignment, first aid / fishing /
+ * cooking / the two professions, the TBC+ armorsmith spell chain, and
+ * the opaque trainer-iteration loop — skipping the weapons / armor /
+ * riding pass of `InitSkills`.
+ */
+void playerbot_factory_init_trade_skills(void* state);
+
+/**
+ * Port of `PlayerbotFactory::Randomize(bool incremental, bool syncWithMaster)`.
+ * Top-level "re-roll this bot from scratch" pass — chains Prepare + every
+ * other Init* step behind the two random-bot predicates (isRealRandomBot,
+ * isRandomBot) and saves to DB at the tail. `level` is the target level the
+ * caller wants; `item_quality` is the `.py equip <quality>` override
+ * (0 = follow the progressive ladder).
+ */
+void playerbot_factory_randomize(void* state,
+                                 uint32_t level,
+                                 bool     incremental,
+                                 bool     sync_with_master,
+                                 uint32_t item_quality);
+
+/**
+ * Port of `PlayerbotFactory::InitAmmo`. Top up ranged-weapon ammo for
+ * warrior / rogue / hunter bots. Reads the bot's class and level from a
+ * snapshot on the Rust side.
+ */
+void playerbot_factory_init_ammo(void* state);
+
+/**
+ * Port of `PlayerbotFactory::EnchantEquipment`. Applies per-slot enchants
+ * to every equipped item. The full body (enchant-container load, spec-tab
+ * dispatch, per-slot iteration) lives on the C++ bridge side because it
+ * still touches live `Item*` pointers — this is a thin wrapper that
+ * forwards into `factory_enchant_all_equipment`.
+ */
+void playerbot_factory_enchant_equipment(void* state);
+
+/**
+ * Port of `PlayerbotFactory::InitGems`. Sockets a random gem into every
+ * empty socket on the bot's equipment. The full body (socket iteration,
+ * random-item-manager gem list, stat-weight check, `CMSG_SOCKET_GEMS`
+ * dispatch) lives on the C++ bridge side. Classic is a compile-time
+ * no-op because the game has no gems pre-TBC.
+ */
+void playerbot_factory_init_gems(void* state);
+
+/**
  * Toggle the per-bot debug monitor. Returns true if monitoring is now ON,
  * false if OFF. When toggled on, the Rust side dumps a full settings snapshot
  * to the monitor log file. The log file is written via bot_append_log_file.
@@ -2400,6 +3031,97 @@ uint32_t playerbot_random_factory_get_guilds(uint32_t* out_ids, uint32_t max_out
 /** Query the current `random_bot_arena_teams` runtime list. WotLK/TBC
  *  only; on Classic always returns 0. */
 uint32_t playerbot_random_factory_get_arena_teams(uint32_t* out_ids, uint32_t max_out);
+
+/* ─────────────────────────────────────────────────────────────────────
+ * Random-playerbot manager (`playerbot_random_mgr_*`)
+ *
+ * Phase H of the C++ → Rust migration moved `playerbot/RandomPlayerbotMgr.cpp`
+ * (≈4100 LOC) into the Rust `playerbot` crate's `random_mgr` module.
+ * The C++ side keeps a thin shim at `cpp_wrapper/RandomMgrBridge.{h,cpp}`
+ * that implements `RandomMgrCallbacks` and re-exposes the legacy
+ * `sRandomPlayerbotMgr` façade so `PlayerbotHolder`-based core hooks
+ * still have a singleton to call.
+ *
+ * Call order:
+ *   1. playerbot_config_load(...);                // file parser
+ *   2. playerbot_itempool_init(&item_cbs);        // phase F
+ *   3. playerbot_login_init(&login_cbs);          // phase E
+ *   4. playerbot_random_factory_init(&factory_cbs); // phase G
+ *   5. playerbot_random_mgr_init(&random_mgr_cbs);  // phase H
+ *   6. playerbot_random_mgr_update(elapsed_ms)      // every world tick
+ *   7. playerbot_random_mgr_shutdown();           // server stop
+ * ───────────────────────────────────────────────────────────────────── */
+
+/** Install the random-mgr vtable and spawn its background worker.
+ *  Must be called exactly once, after `playerbot_random_factory_init`.
+ *  Passing a null pointer is a no-op. */
+void playerbot_random_mgr_init(const RandomMgrCallbacks* cbs);
+
+/** Main tick. Called from the same world-update hook that used to drive
+ *  `RandomPlayerbotMgr::UpdateAIInternal`. Forwards the elapsed time to
+ *  the worker and drains any pending command output on the main thread. */
+void playerbot_random_mgr_update(uint32_t elapsed_ms);
+
+/** `RandomPlayerbotMgr::GetValue(guid, key)` — thin FFI passthrough
+ *  that reads the in-memory event cache the worker maintains. Safe to
+ *  call from any thread; returns 0 when the bot / event pair is
+ *  unknown. */
+uint32_t playerbot_random_mgr_get_value(uint32_t guid, const char* key);
+
+/** `RandomPlayerbotMgr::SetValue(guid, key, value, validIn)` — thin
+ *  FFI passthrough that updates both the in-memory cache and the DB
+ *  via the worker. `valid_in_s == -1` means "use the configured
+ *  default TTL for this event key". */
+void playerbot_random_mgr_set_value(uint32_t guid,
+                                    const char* key,
+                                    uint32_t value,
+                                    int32_t valid_in_s);
+
+/** Current average level of the online real players. Mirrors the C++
+ *  `sRandomPlayerbotMgr.GetPlayersLevel()`. */
+uint32_t playerbot_random_mgr_get_players_level(void);
+
+/** Current target bot population — the `bot_count` event. */
+uint32_t playerbot_random_mgr_get_max_online_bot_count(void);
+
+/** `sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL)` cache. Bridged
+ *  here so `LoginBridge.cpp` can forward its own `random_mgr_*`
+ *  callbacks into Rust instead of keeping state in two places. */
+uint32_t playerbot_random_mgr_get_world_max_level(void);
+
+/** Last observed CharacterDatabase round-trip in milliseconds. */
+uint32_t playerbot_random_mgr_get_database_delay_ms(void);
+
+/** Issue an async DB ping so the next
+ *  `playerbot_random_mgr_get_database_delay_ms` call sees a fresh
+ *  value. */
+void playerbot_random_mgr_database_ping(void);
+
+/** True iff the given guid is a random bot (present in the manager's
+ *  `currentBots` list). */
+bool playerbot_random_mgr_is_random_bot(uint32_t guid);
+
+/** Schedule a per-bot `Randomize` in `delay_s` seconds. */
+void playerbot_random_mgr_schedule_randomize(uint32_t guid, uint32_t delay_s);
+
+/** Schedule a per-bot teleport in `delay_s` seconds. */
+void playerbot_random_mgr_schedule_teleport(uint32_t guid, uint32_t delay_s);
+
+/** Schedule a per-bot strategy change in `delay_s` seconds. */
+void playerbot_random_mgr_schedule_change_strategy(uint32_t guid, uint32_t delay_s);
+
+/** Forward a chat / console command to the manager. `text` is the raw
+ *  argument string (no leading command name); returns true iff the
+ *  command was recognised. Used by `HandlePlayerbotConsoleCommand`. */
+bool playerbot_random_mgr_handle_command(const char* text);
+
+/** Print the running stats block into the log sink (mirrors the legacy
+ *  `PrintStats` call). */
+void playerbot_random_mgr_print_stats(uint32_t requester_guid);
+
+/** Join the worker, flush pending DB writes, and drop the vtable.
+ *  Safe to call more than once. */
+void playerbot_random_mgr_shutdown(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

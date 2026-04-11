@@ -49,7 +49,7 @@ pub struct NamePoolRow {
 
 /// Rust-side decoding of `BotCharAppearance`. The `facial_hair` field is
 /// zero for races / genders without facial hair (tauren, non-night-elf
-/// non-undead females) and always zero on WotLK — the C++ `excludeCheck`
+/// non-undead females) and always zero on `WotLK` — the C++ `excludeCheck`
 /// logic lives on the bridge side, not in Rust.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct CharAppearance {
@@ -113,7 +113,7 @@ pub struct CharacterAccount {
 pub trait RandomFactoryWorld: Send + Sync {
     // ─── RNG ──────────────────────────────────────────────────────────
     /// Pseudo-random integer in `[min, max]` (both inclusive). Wraps
-    /// CMaNGOS `urand`.
+    /// `CMaNGOS` `urand`.
     fn urand_range(&self, min: u32, max: u32) -> u32;
 
     // ─── Bot delete event ─────────────────────────────────────────────
@@ -413,7 +413,7 @@ impl RandomFactoryWorld for VtableRandomFactoryWorld {
                 name_buf.as_ptr().cast(),
                 pass_buf.as_ptr().cast(),
                 max_expansion,
-            )
+            );
         };
     }
 
@@ -665,7 +665,7 @@ impl RandomFactoryWorld for VtableRandomFactoryWorld {
                     border_style,
                     border_color,
                     background_color,
-                )
+                );
             };
         }
     }
@@ -776,7 +776,7 @@ impl RandomFactoryWorld for VtableRandomFactoryWorld {
                     color,
                     border_style,
                     border_color,
-                )
+                );
             };
         }
     }

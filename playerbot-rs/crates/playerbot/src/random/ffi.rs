@@ -198,6 +198,60 @@ pub unsafe extern "C" fn playerbot_random_factory_get_arena_teams(
     unsafe { copy_list(out_ids, max_out, |st| &st.random_bot_arena_teams) }
 }
 
+// ── Gate helpers (consumed by `factory::arena_team`) ─────────────────────
+
+/// PB2 `PlayerbotFactory::InitArenaTeam` gate — returns true iff
+/// `bot_account_id` is tracked as a random-bot account and the current
+/// `random_bot_arena_teams` count is strictly below `target`. Both
+/// fields are read from the live random-factory state under a single
+/// lock acquisition so the returned decision is internally consistent.
+/// Returns false when the random-factory module is uninitialised.
+/// Gated on `tbc` / `wotlk` because Classic has no arena teams — the
+/// only caller (`factory::arena_team::init_arena_team`) is similarly
+/// gated.
+#[cfg(any(feature = "tbc", feature = "wotlk"))]
+pub(crate) fn should_create_arena_teams(bot_account_id: u32, target: u32) -> bool {
+    let guard = match state().lock() {
+        Ok(g) => g,
+        Err(e) => e.into_inner(),
+    };
+    let Some(st) = guard.as_ref() else {
+        return false;
+    };
+    st.state.random_bot_accounts.contains(&bot_account_id)
+        && (st.state.random_bot_arena_teams.len() as u32) < target
+}
+
+/// PB2 `PlayerbotFactory::InitGuild` gate — returns the current count of
+/// tracked random-bot guild ids. Consumed by `factory::guild::init_guild`
+/// to decide whether to kick off another `create_random_guilds` pass.
+/// Returns 0 when the random-factory module is uninitialised.
+pub(crate) fn random_bot_guilds_count() -> u32 {
+    let guard = match state().lock() {
+        Ok(g) => g,
+        Err(e) => e.into_inner(),
+    };
+    let Some(st) = guard.as_ref() else {
+        return 0;
+    };
+    st.state.random_bot_guilds.len() as u32
+}
+
+/// Snapshot the currently-tracked random-bot guild ids for `factory::
+/// guild::init_guild`. Returns an empty vec when the random-factory
+/// module is uninitialised. The clone is cheap because the list is
+/// typically a few dozen ids at most.
+pub(crate) fn random_bot_guilds() -> Vec<u32> {
+    let guard = match state().lock() {
+        Ok(g) => g,
+        Err(e) => e.into_inner(),
+    };
+    let Some(st) = guard.as_ref() else {
+        return Vec::new();
+    };
+    st.state.random_bot_guilds.clone()
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────
 
 /// Grab an Arc-clone of the vtable wrapper and move the runtime state

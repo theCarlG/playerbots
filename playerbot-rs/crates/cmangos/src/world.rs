@@ -22,6 +22,26 @@ use crate::{
     },
 };
 
+/// Summary data pulled from `Guild*` for `PlayerbotFactory::InitGuild`.
+///
+/// Backs `World::factory_query_guild_summary`. The C++ side looks up the
+/// guild by id, reads the leader's team via `sObjectMgr.GetPlayerTeamByGUID`,
+/// grabs the live member count, parses the `GINFO` string as a cap, and
+/// returns the guild name for logging.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GuildSummary {
+    /// Team of the guild leader. 0 = Alliance, 1 = Horde.
+    pub leader_team: u8,
+    /// `guild->GetMemberSize()`.
+    pub member_size: u32,
+    /// `atoi(guild->GetGINFO().c_str())`. 0 when the GINFO string is empty
+    /// or non-numeric — `PlayerbotFactory::InitGuild` falls back to
+    /// `urand(10, 15)` in that case.
+    pub max_members_hint: u32,
+    /// `guild->GetName()` — captured for log output.
+    pub name: String,
+}
+
 /// The complete interface a bot has to the game world.
 ///
 /// List-returning methods hand back an `OwnedList<'_, T>` (RAII guard around
@@ -772,12 +792,402 @@ pub trait World: Send {
     /// `Player::UpdateSkillsForLevel(true)`.
     fn bot_update_skills_for_level(&self) {}
 
+    /* ── Factory: refresh ────────────────────────────────────────────── */
+
+    /// Bitmask of cheats currently enabled on this bot (parsed from
+    /// `AiPlayerbot.BotCheats`). Bit 5 = item cheat; `PlayerbotFactory::Refresh`
+    /// gates consumable top-ups on this. Returns 0 when no cheats are set.
+    fn bot_cheat_mask(&self) -> u32 {
+        0
+    }
+
+    /// `Player::SaveToDB()` guarded by a CharacterDatabase worker-queue check
+    /// (mirrors `sRandomPlayerbotMgr.GetDatabaseDelay("CharacterDatabase") <
+    /// 10ms` in `PlayerbotFactory::Refresh`). No-op when the queue is busy.
+    fn bot_save_to_db_if_not_busy(&self) {}
+
+    /* ── Factory: prepare ────────────────────────────────────────────── */
+
+    /// `Player::ResurrectPlayer(1.0, false)` followed by
+    /// `Player::SpawnCorpseBones()`. Brings a dead bot back to life in one
+    /// atomic FFI call — the C++ side of `PlayerbotFactory::Prepare` always
+    /// does both together.
+    fn bot_resurrect_full(&self) {}
+
+    /// `Player::CombatStop(true)` — drops target, clears threat, stops any
+    /// in-progress cast. Called by `Prepare` before reshaping the bot.
+    fn bot_combat_stop(&self) {}
+
+    /// Set the bot's level to `level` and reset its current XP to 0 plus
+    /// next-level XP to `sObjectMgr.GetXPForLevel(level)`. Atomic wrapper
+    /// around the three C++ field writes in `PlayerbotFactory::Prepare`.
+    fn bot_set_level_and_reset_xp(&self, _level: u32) {}
+
+    /// Set or clear a bit in `PLAYER_FLAGS` via `Player::SetFlag` /
+    /// `Player::RemoveFlag`. Used by `Prepare` for the helmet / cloak
+    /// display flags; generalised so future factory steps can reuse it.
+    fn bot_set_player_flag(&self, _flag: u32, _set: bool) {}
+
+    /// `sPlayerbotAIConfig.disableRandomLevels` — when true, factory runs
+    /// skip the level / XP reset in `Prepare` and bail out of `Randomize`.
+    fn factory_config_disable_random_levels(&self) -> bool {
+        false
+    }
+
+    /// `sPlayerbotAIConfig.randomBotShowHelmet` — when false, bots get the
+    /// `PLAYER_FLAGS_HIDE_HELM` flag set during `Prepare`.
+    fn factory_config_random_bot_show_helmet(&self) -> bool {
+        true
+    }
+
+    /// `sPlayerbotAIConfig.randomBotShowCloak` — when false, bots get the
+    /// `PLAYER_FLAGS_HIDE_CLOAK` flag set during `Prepare`.
+    fn factory_config_random_bot_show_cloak(&self) -> bool {
+        true
+    }
+
+    /* ── Factory: Randomize orchestration ────────────────────────────── */
+
+    /// `sRandomPlayerbotMgr.IsRandomBot(bot)` — is the bot currently tracked
+    /// in the random-bot account list? `PlayerbotFactory::Randomize` uses this
+    /// to decide whether to run the full re-roll pipeline or just the "real
+    /// player factory request" (incremental) slice.
+    fn factory_is_random_bot(&self) -> bool {
+        false
+    }
+
+    /// `ai->HasRealPlayerMaster()` — proxy through the PlayerbotRust accessor.
+    /// Used by `Randomize` to distinguish a random bot that is claimed by a
+    /// live player (do not wipe inventory / talents / auras) from a truly
+    /// unclaimed random bot.
+    fn factory_has_real_player_master(&self) -> bool {
+        false
+    }
+
+    /// `ai->IsInRealGuild()` — same "is this bot claimed" gate as
+    /// [`factory_has_real_player_master`], but checks the bot's guild instead
+    /// of its master. A random bot in a guild that contains any real player
+    /// is treated as claimed.
+    fn factory_is_in_real_guild(&self) -> bool {
+        false
+    }
+
+    /// `sPlayerbotAIConfig.minEnchantingBotLevel` — the cut-off level below
+    /// which `PlayerbotFactory::Randomize` skips `LoadEnchantContainer`. The
+    /// enchant container population happens C++-side when this returns true;
+    /// the Rust layer only needs the scalar to decide whether to forward the
+    /// trigger callback.
+    fn factory_config_min_enchanting_bot_level(&self) -> u32 {
+        0
+    }
+
+    /// `PlayerbotFactory::LoadEnchantContainer` — populate the per-bot
+    /// enchant template container from the world DB. Called from
+    /// `Randomize` after the min-enchanting-level gate passes. Delegated to
+    /// C++ because the container lives on the (deleted) factory object; the
+    /// Rust side has no table for it.
+    fn factory_load_enchant_container(&self) {}
+
+    /// `bot->resetTalents(true)` — wipe every learned talent. Called by
+    /// `Randomize` in the non-incremental random-bot branch before learning
+    /// fresh talents. The `true` arg tells CMaNGOS to refund the gold cost.
+    fn bot_reset_talents(&self) {}
+
+    /// `bot->learnQuestRewardedSpells()` — fold every quest-reward spell the
+    /// bot qualifies for into its spellbook in one pass. Called by
+    /// `Randomize` after rewarding the "special quest list" on a real random
+    /// bot.
+    fn bot_learn_quest_rewarded_spells(&self) {}
+
+    /// `bot->GetMoney()` — current copper balance. Used by `Randomize` to
+    /// top up rather than overwrite gold in the incremental branch.
+    fn bot_get_money(&self) -> u32 {
+        0
+    }
+
+    /// `bot->SetMoney(amount)` — set the bot's copper balance. Called by
+    /// `Randomize` at the tail of the random-bot branch to hand out a small
+    /// random stipend.
+    fn bot_set_money(&self, _amount: u32) {}
+
+    /// `PlayerbotFactory::InitGems` — socket gem fan-out for TBC / WotLK.
+    /// Ports the whole per-slot `CMSG_SOCKET_GEMS` construction loop in one
+    /// atomic callback. Classic has no sockets, so Rust only forwards this
+    /// for `tbc`/`wotlk` feature builds. No-op on Classic bridges.
+    fn factory_init_all_gems(&self) {}
+
+    /// `PlayerbotFactory::EnchantEquipment` — per-slot enchant template
+    /// dispatch. Ports the whole "for every equipped item, look up an
+    /// enchant template and call `EnchantItem` on it" loop in one atomic
+    /// callback. The C++ side is the only place that owns the enchant
+    /// container, so the policy layer has nothing to iterate over itself.
+    fn factory_enchant_all_equipment(&self) {}
+
+    /* ── Factory: quests ─────────────────────────────────────────────── */
+
+    /// Wraps `Player::SatisfyQuestClass(q,false) && q->GetMinLevel() <=
+    /// bot->GetLevel() && Player::SatisfyQuestRace(q,false)` — the combined
+    /// eligibility filter from `PlayerbotFactory::InitQuests`. The C++ side
+    /// looks up the quest template, so the Rust caller only needs the id.
+    /// Returns false when the quest is unknown.
+    fn quest_is_eligible_for_bot(&self, _quest_id: u32) -> bool {
+        false
+    }
+
+    /// Wraps `Player::SetQuestStatus(id, QUEST_STATUS_COMPLETE)` followed by
+    /// `Player::RewardQuest(q, 0, bot, false)` — the mutation half of
+    /// `PlayerbotFactory::InitQuests`. Silent no-op when the quest is unknown.
+    fn bot_reward_quest_complete(&self, _quest_id: u32) {}
+
+    /* ── Factory: arena team ─────────────────────────────────────────── */
+
+    /// `bot->GetSession()->GetAccountId()` — the account id that owns this
+    /// bot character. Used by `PlayerbotFactory::InitArenaTeam` to gate
+    /// random-bot-only factory work against the live random-bot account
+    /// list. Returns 0 when the session is unavailable.
+    fn bot_get_account_id(&self) -> u32 {
+        0
+    }
+
+    /* ── Factory: guild ──────────────────────────────────────────────── */
+
+    /// `bot->GetGuildId()` — 0 when the bot has no guild. Used by
+    /// `PlayerbotFactory::InitGuild` to skip the filter/pick pass when the
+    /// bot is already a member. The guild id lives on `BotWorldSnapshot`
+    /// too, but `InitGuild` runs outside a snapshot window so we route
+    /// through a dedicated getter to keep the call site short.
+    fn factory_bot_guild_id(&self) -> u32 {
+        0
+    }
+
+    /// Read-only guild summary used by `PlayerbotFactory::InitGuild` to
+    /// filter and rank the `random_bot_guilds` candidate list. Returns
+    /// `None` when the guild id is unknown.
+    fn factory_query_guild_summary(&self, _guild_id: u32) -> Option<GuildSummary> {
+        None
+    }
+
+    /// `guild->AddMember(bot->GetObjectGuid(), rank)` — join an existing
+    /// guild at `rank`. Returns false when the guild is unknown or the
+    /// add failed. `PlayerbotFactory::InitGuild` calls this with a random
+    /// rank between `GR_OFFICER` and `GR_INITIATE` (1..=4 in
+    /// `Guild::Rank`).
+    fn factory_guild_add_member(&self, _guild_id: u32, _rank: u32) -> bool {
+        false
+    }
+
+    /// `guild->GetRankName(rank)` — look up the display name of a rank
+    /// for log output. Returns `None` when the guild is unknown or the
+    /// rank is out of range.
+    fn factory_get_guild_rank_name(&self, _guild_id: u32, _rank: u32) -> Option<String> {
+        None
+    }
+
+    /* ── Factory: per-bot KV store ───────────────────────────────────── */
+
+    /// `sRandomPlayerbotMgr.GetValue(bot, key)` — read a per-bot scalar
+    /// persisted in the random-bot event table. Used by
+    /// `PlayerbotFactory::InitTradeSkills` to cache the two professions
+    /// assigned to a bot so re-rolls keep the same pair.
+    ///
+    /// Returns 0 when the key is absent.
+    fn factory_kv_get_u32(&self, _key: &str) -> u32 {
+        0
+    }
+
+    /// `sRandomPlayerbotMgr.SetValue(bot, key, value)` — write a per-bot
+    /// scalar back to the event table. The C++ manager is the sole
+    /// authoritative store; the Rust `EventCache` picks up the update
+    /// on its next tick.
+    fn factory_kv_set_u32(&self, _key: &str, _value: u32) {}
+
+    /// `PlayerbotFactory::InitTradeSkills` trainer-iteration loop —
+    /// walk every creature template, inspect the trainer spell list,
+    /// and call `bot->learnSpell` for every recipe the bot qualifies
+    /// for under the "Apprentice + chosen profession or secondary"
+    /// filter. Delegated to C++ because the iteration touches
+    /// `sCreatureStorage` + `sSpellTemplate` + `m_trainerSpells` and
+    /// would require several new FFI surfaces (plus adding
+    /// `effect_trigger_spell` to `BotSpellInfo`) for zero behavioural
+    /// benefit — the policy layer above is thin enough that moving
+    /// just the loop across keeps the Rust port useful without
+    /// bloating the vtable.
+    fn factory_learn_tradeskill_recipes(&self) {}
+
     /* ── Item prototype queries ──────────────────────────────────────── */
 
     /// `ItemPrototype::Quality` (0..7). Returns 0 when the item id is unknown.
     fn item_prototype_quality(&self, _item_id: u32) -> u32 {
         0
     }
+
+    /* ── Factory: equipment ──────────────────────────────────────────── */
+
+    /// `bot->GetGUIDLow()` — used as the key into the itempool's
+    /// per-player caches (`live_stat_weight`, `has_same_quest_rewards`).
+    /// Returns 0 when the bot handle is unavailable.
+    fn factory_bot_guid_low(&self) -> u32 {
+        0
+    }
+
+    /// Item id currently equipped in `slot` (0..=18 per
+    /// `EquipmentSlots`). Returns 0 when the slot is empty or the bot
+    /// handle is unavailable. Mirrors `bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot)`
+    /// followed by `GetProto()->ItemId` in `InitEquipment`.
+    fn factory_bot_equipped_item_in_slot(&self, _slot: u8) -> u32 {
+        0
+    }
+
+    /// Walk every equipped slot and `Player::DestroyItem` each one.
+    /// Mirrors the `DestroyItemsVisitor(bot)` +
+    /// `InventoryIterateItems(ITERATE_ITEMS_IN_EQUIP)` pass at the top
+    /// of `PlayerbotFactory::InitEquipment` (non-incremental branch).
+    fn factory_destroy_all_equipped_items(&self) {}
+
+    /// Equip `item_id` in `slot`, optionally overwriting the existing
+    /// item's random property with `random_enchant_id` (0 = no rewrite)
+    /// and applying `PlayerbotFactory::EnchantItem` after a successful
+    /// equip. Mirrors the atomic equip-and-enchant tail at the bottom of
+    /// `InitEquipment`'s per-slot loop:
+    ///
+    /// ```text
+    /// if (CanEquipUnseenItem(..., eDest, ...) == EQUIP_ERR_OK) {
+    ///     if (oldItem) bot->DestroyItem(...);
+    ///     Item* pItem = bot->EquipNewItem(eDest, newItemId, true);
+    ///     if (pItem) {
+    ///         if (randomEnchBestId) SetItemRandomProperties(...);
+    ///         if (apply_enchants) EnchantItem(pItem);
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// The C++ side is responsible for destroying any existing item in
+    /// the same slot before equipping the new one. Returns `true` when
+    /// the equip succeeded (`pItem != nullptr`).
+    fn factory_equip_new_item_in_slot(
+        &self,
+        _slot: u8,
+        _item_id: u32,
+        _random_enchant_id: u32,
+        _apply_enchants: bool,
+    ) -> bool {
+        false
+    }
+
+    /// `Player::InitStatsForLevel(true)` + `Player::UpdateAllStats()` —
+    /// the stat-refresh tail of `InitEquipment` so newly-equipped items
+    /// actually contribute to the bot's stat block.
+    fn factory_init_stats_for_level_and_update(&self) {}
+
+    /// `ai->GetMaster()->GetEquipGearScore(..)` — the master's current
+    /// gear score, or `None` when the bot has no master. Used by
+    /// `InitEquipment` when `syncWithMaster` is set.
+    fn factory_master_equip_gear_score(&self) -> Option<u32> {
+        None
+    }
+
+    /// `ai->TellPlayerNoFacing(ai->GetMaster(), msg)` — broadcast a
+    /// human-readable message to the bot's master. Silent no-op when
+    /// the bot has no master. Used by the master-sync tail of
+    /// `InitEquipment`.
+    fn factory_tell_master(&self, _msg: &str) {}
+
+    /* ── Factory: pet ────────────────────────────────────────────────── */
+
+    /// `bot->GetPet() != nullptr` — does this bot currently have an
+    /// active pet? Used by both `InitPet` (to decide whether to create
+    /// one) and `InitPetSpells` (which short-circuits when there is no
+    /// pet). Mirrors `PlayerbotFactory.cpp:320` / `:450`.
+    fn factory_bot_has_pet(&self) -> bool {
+        false
+    }
+
+    /// `bot->GetPet()->GetEntry()` — creature template id for the
+    /// active pet, or `0` when the bot has no pet. Used by
+    /// `InitPetSpells` to fan out to per-pet warlock tables and to
+    /// decode the hunter pet family.
+    fn factory_pet_entry(&self) -> u32 {
+        0
+    }
+
+    /// `sObjectMgr.GetCreatureTemplate(pet_entry)->Family` — the
+    /// CreatureFamily bucket (1=Wolf, 2=Cat, 3=Spider, …). Drives the
+    /// hunter pet spell dispatch on vanilla. Returns `0` when the bot
+    /// has no pet or the template lookup fails.
+    fn factory_pet_family(&self) -> u32 {
+        0
+    }
+
+    /// `bot->GetPet()->GetLevel()` — the pet's current level. Usually
+    /// matches the bot (InitPet sets it that way) but we re-query
+    /// rather than depending on the assumption. Returns `0` when the
+    /// bot has no pet.
+    fn factory_pet_level(&self) -> u32 {
+        0
+    }
+
+    /// `pet->HasSpell(spell_id)` — is this spell already in the pet's
+    /// spellbook? Used to avoid double-learning in `InitPetSpells`.
+    fn factory_pet_has_spell(&self, _spell_id: u32) -> bool {
+        false
+    }
+
+    /// Non-passive, non-removed spell IDs from the pet's current
+    /// `PetSpellMap`. Used at the end of `InitPet` to mass-toggle
+    /// autocast. The C++ side filters out `PETSPELL_REMOVED` entries
+    /// and spells where `IsPassiveSpell` returns true, matching
+    /// `PlayerbotFactory.cpp:425-435`.
+    fn factory_pet_autocast_candidate_spells(&self) -> BotSpellList<'_> {
+        OwnedList::empty()
+    }
+
+    /// Tameable creature ids whose `MinLevel <= bot_level`. One-shot
+    /// enumeration used by `InitPet` to pick a random hunter pet;
+    /// mirrors the `sCreatureStorage.LookupEntry<CreatureInfo>` walk
+    /// at `PlayerbotFactory.cpp:327-345`. On WotLK the C++ side
+    /// additionally gates on `CanTameExoticPets`.
+    fn factory_tameable_creatures_for_bot_level(&self) -> BotSpellList<'_> {
+        OwnedList::empty()
+    }
+
+    /// Atomic hunter-pet creation. Mirrors the body of the
+    /// 100-iteration retry loop in `PlayerbotFactory::InitPet` minus
+    /// the retry itself — the Rust caller owns the retry policy so the
+    /// callback runs the whole `Pet::Create` → `AIM_Initialize` →
+    /// `SavePetToDB` sequence in one shot. Returns `true` on success.
+    fn factory_create_hunter_pet(&self, _creature_entry: u32) -> bool {
+        false
+    }
+
+    /// Re-run the pet refresh block that lives at the tail of
+    /// `PlayerbotFactory::InitPet`:
+    ///
+    /// ```text
+    /// pet->InitStatsForLevel(bot->GetLevel());
+    /// pet->SetLevel(bot->GetLevel());
+    /// pet->SetLoyaltyLevel(BEST_FRIEND);        // non-WotLK only
+    /// pet->SetPower(POWER_HAPPINESS, HAPPINESS_LEVEL_SIZE * 2);
+    /// pet->SetHealth(pet->GetMaxHealth());
+    /// pet->SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_PLAYER_CONTROLLED);
+    /// pet->AI()->SetReactState(REACT_DEFENSIVE);
+    /// ```
+    ///
+    /// No-op when the bot has no pet.
+    fn factory_pet_refresh_stats(&self) {}
+
+    /// `pet->learnSpell(spell_id)` — add a spell to the pet's
+    /// spellbook. No-op when the bot has no pet.
+    fn factory_pet_learn_spell(&self, _spell_id: u32) {}
+
+    /// `pet->ToggleAutocast(spell_id, enable)` — flip the autocast bit
+    /// on a pet spell. Used by `InitPet` for the mass-on pass and by
+    /// `InitPetSpells` to switch Cower off per-spell.
+    fn factory_pet_toggle_autocast(&self, _spell_id: u32, _enable: bool) {}
+
+    /// `pet->SetDeathState(JUST_DIED)` — the "force dismiss pet to fix
+    /// missing flags" workaround at the end of `InitPet`. The Rust
+    /// caller only invokes this when the pet is currently alive.
+    fn factory_pet_force_dismiss(&self) {}
 
     /* ── Random item picks ───────────────────────────────────────────── */
 

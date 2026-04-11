@@ -2,7 +2,6 @@
 
 #include "playerbot/playerbot.h"
 #include "BotConfig.h"
-#include "playerbot/PlayerbotFactory.h"
 #include "Accounts/AccountMgr.h"
 #include "Globals/ObjectMgr.h"
 #include "Database/DatabaseEnv.h"
@@ -499,140 +498,15 @@ void RandomPlayerbotMgr::LogPlayerLocation()
 
 void RandomPlayerbotMgr::UpdateAIInternal(uint32 elapsed, bool minimal)
 {
-    // Global Rust coordination tick (runs on the world thread).
+    // Phase H: the Rust `random_mgr` module now owns the entire random
+    // bot tick loop (event cache, PID scaler, BG/LFG buckets, stats,
+    // scheduling, process loop). `PlayerbotRust::WorldUpdate` forwards
+    // this tick to the worker through `playerbot_random_mgr_update`;
+    // the legacy body that used to live here has been retired and the
+    // worker dispatches per-bot actions back to C++ through the bridge.
     PlayerbotRust::WorldUpdate(static_cast<uint32_t>(elapsed));
 
-    if (!sPlayerbotAIConfig.randomBotAutologin || !sPlayerbotAIConfig.enabled)
-        return;
-
-    if (!playersLevel)
-        playersLevel = sPlayerbotAIConfig.syncLevelNoPlayer;
-
-    ScaleBotActivity();
-    if (sPlayerbotAIConfig.asyncBotLogin)
-    {
-        // Phase E: the login queue lives in Rust. Build the real-player
-        // snapshot on this thread and hand it to `playerbot_login_update`,
-        // which both forwards the tick to the Rust worker and drains any
-        // pending `perform_login`/`perform_logout` commands on this thread.
-        static thread_local std::vector<BotRealPlayerInfo> s_realBuf;
-        s_realBuf.resize(players.size());
-        uint32_t n = LoginBridge::BuildRealPlayerSnapshot(
-            s_realBuf.data(),
-            static_cast<uint32_t>(s_realBuf.size()));
-        playerbot_login_update(s_realBuf.data(), n);
-    }
-
-    uint32 maxAllowedBotCount = GetEventValue(0, "bot_count");
-    if (!maxAllowedBotCount || ((uint32)maxAllowedBotCount < sPlayerbotAIConfig.minRandomBots || (uint32)maxAllowedBotCount > sPlayerbotAIConfig.maxRandomBots))
-    {
-        maxAllowedBotCount = urand(sPlayerbotAIConfig.minRandomBots, sPlayerbotAIConfig.maxRandomBots);
-        SetEventValue(0, "bot_count", maxAllowedBotCount,
-            urand(sPlayerbotAIConfig.randomBotCountChangeMinInterval, sPlayerbotAIConfig.randomBotCountChangeMaxInterval));
-    }
-
-    std::list<uint32> availableBots = GetBots();    
-    uint32 availableBotCount = availableBots.size();
-    uint32 onlineBotCount = GetPlayerbotsAmount();
-    
     SetAIInternalUpdateDelay(sPlayerbotAIConfig.randomBotUpdateInterval);
-
-    if (time(nullptr) > (EventTimeSyncTimer + 30))
-        SaveCurTime();
-
-    if (availableBotCount < maxAllowedBotCount && !sWorld.IsShutdowning())
-    {
-        bool logInAllowed = true;
-        if (sPlayerbotAIConfig.randomBotLoginWithPlayer)
-        {
-            logInAllowed = !players.empty();
-        }
-
-        if (logInAllowed)
-        {
-            AddRandomBots();
-        }
-    }
-
-    if (sPlayerbotAIConfig.syncLevelWithPlayers && players.size())
-    {
-        if (time(nullptr) > (PlayersCheckTimer + 60))
-            CheckPlayers();
-    }
-
-    if (sPlayerbotAIConfig.randomBotJoinLfg && players.size())
-    {
-        if (time(nullptr) > (LfgCheckTimer + 30))
-            CheckLfgQueue();
-    }
-
-    if (sPlayerbotAIConfig.randomBotJoinBG/* && players.size()*/)
-    {
-        if (time(nullptr) > (BgCheckTimer + 30))
-            CheckBgQueue();
-    }
-
-    if (time(nullptr) > (OfflineGroupBotsTimer + 5) && players.size())
-        AddOfflineGroupBots();
-
-    uint32 updateBots = sPlayerbotAIConfig.randomBotsPerInterval == 0 ? UINT32_MAX : sPlayerbotAIConfig.randomBotsPerInterval;
-
-    //Update bots
-    for (auto bot : availableBots)
-    {
-        if (GetPlayerBot(bot))
-        {
-            if (ProcessBot(bot))
-                updateBots--;
-
-            if (!updateBots)
-                break;
-        }
-    }
-
-    uint32 maxLogins = sPlayerbotAIConfig.randomBotsMaxLoginsPerInterval;
-
-    //Log in bots
-    if (sRandomPlayerbotMgr.GetDatabaseDelay("CharacterDatabase") < 10 * IN_MILLISECONDS && !sPlayerbotAIConfig.asyncBotLogin && onlineBotCount < maxAllowedBotCount && maxLogins > 0)
-    {
-        for (auto bot : availableBots)
-        {
-            if (GetPlayerBot(bot))
-                continue;   
-
-            if (!eventCache[bot].empty() && GetEventValue(bot, "login"))
-            {
-                onlineBotCount++;
-                continue;
-            }
-
-            if (GetEventValue(bot, "login"))
-                onlineBotCount++;
-
-            if (onlineBotCount >= maxAllowedBotCount)
-                break;
-
-            if (ProcessBot(bot)) {
-                --maxLogins;
-            }
-
-            if (maxLogins == 0)
-                break;
-        }
-    }
-
-    LoginFreeBots();
-
-    //sLog.outString("[char %d, bot %d]", CharacterDatabase.m_threadBody->m_sqlQueue.size(), CharacterDatabase.m_threadBody->m_sqlQueue.size());
-   
-    LogPlayerLocation();
-
-    DelayedFacingFix();
-
-    MirrorAh();
-
-    //Ping character database.
-    CharacterDatabase.AsyncPQuery(&RandomPlayerbotMgr::DatabasePing, sWorld.GetCurrentMSTime(), std::string("CharacterDatabase"), "SELECT 1");
 }
 
 void RandomPlayerbotMgr::ScaleBotActivity()
@@ -2728,8 +2602,8 @@ void RandomPlayerbotMgr::UpdateGearSpells(Player* bot)
 
     uint32 lastLevel = GetValue(bot, "level");
     uint32 level = bot->GetLevel();
-    PlayerbotFactory factory(bot, level);
-    factory.Randomize(true, false);
+    if (PlayerbotRust* ai = bot->GetPlayerbotAI())
+        ai->FactoryRandomizeViaRust(level, /*incremental*/ true, /*sync*/ false, 0);
 
     if (lastLevel != level)
         SetValue(bot, "level", level);
@@ -2778,8 +2652,8 @@ void RandomPlayerbotMgr::RandomizeFirst(Player* bot)
         return;
 
     SetValue(bot, "level", level);
-    PlayerbotFactory factory(bot, level);
-    factory.Randomize(false, false);
+    if (PlayerbotRust* ai = bot->GetPlayerbotAI())
+        ai->FactoryRandomizeViaRust(level, /*incremental*/ false, /*sync*/ false, 0);
 
     // schedule randomise
     uint32 randomTime = urand(sPlayerbotAIConfig.minRandomBotRandomizeTime, sPlayerbotAIConfig.maxRandomBotRandomizeTime);
@@ -2843,8 +2717,8 @@ void RandomPlayerbotMgr::Refresh(Player* bot)
 	bot->SetHealthPercent(100);
 	bot->SetPvP(true);
 
-    PlayerbotFactory factory(bot, bot->GetLevel());
-    factory.Refresh();
+    if (PlayerbotRust* ai = bot->GetPlayerbotAI())
+        ai->FactoryRefreshViaRust();
 
     if (bot->GetMaxPower(POWER_MANA) > 0)
         bot->SetPower(POWER_MANA, bot->GetMaxPower(POWER_MANA));
@@ -3684,48 +3558,19 @@ uint32 RandomPlayerbotMgr::GetBattleMasterEntry(Player* bot, BattleGroundTypeId 
 
 void RandomPlayerbotMgr::Hotfix(Player* bot, uint32 version)
 {
-    PlayerbotFactory factory(bot, bot->GetLevel());
-    uint32 exp = bot->GetUInt32Value(PLAYER_XP);
-    uint32 level = bot->GetLevel();
-    uint32 id = bot->GetGUIDLow();
+    PlayerbotRust* ai = bot->GetPlayerbotAI();
+    const uint32 level = bot->GetLevel();
 
     for (int fix = version; fix <= MANGOSBOT_VERSION; fix++)
     {
-        int count = 0;
         switch (fix)
         {
-            case 1: // Apply class quests to previously made random bots
-
-                if (level < 10)
-                {
-                    break;
-                }
-
-                for (std::list<uint32>::iterator i = factory.classQuestIds.begin(); i != factory.classQuestIds.end(); ++i)
-                {
-                    uint32 questId = *i;
-                    Quest const *quest = sObjectMgr.GetQuestTemplate(questId);
-
-                    if (!bot->SatisfyQuestClass(quest, false) ||
-                        quest->GetMinLevel() > bot->GetLevel() ||
-                        !bot->SatisfyQuestRace(quest, false) || bot->GetQuestStatus(questId) == QUEST_STATUS_COMPLETE)
-                        continue;
-
-                    bot->SetQuestStatus(questId, QUEST_STATUS_COMPLETE);
-                    bot->RewardQuest(quest, 0, bot, false);
-                    bot->SetLevel(level);
-                    bot->SetUInt32Value(PLAYER_XP, exp);
-                    sLog.outDetail("Bot %d rewarded quest %d",
-                        bot->GetGUIDLow(), questId);
-                    count++;
-                }
-
-                if (count > 0)
-                {
-                    sLog.outDetail("Bot %d hotfix (Class Quests), %d quests rewarded",
-                        bot->GetGUIDLow(), count);
-                    count = 0;
-                }
+            case 1:
+                // Original hotfix awarded "class-quest" rewards to previously
+                // made random bots by iterating `PlayerbotFactory::classQuestIds`.
+                // That populator (`PlayerbotFactory::Init`) is no longer called
+                // anywhere in this fork, so the list is always empty and the
+                // loop was a no-op. Dropped entirely during the Rust port.
                 break;
             case 2: // Init Riding skill fix
 
@@ -3733,7 +3578,8 @@ void RandomPlayerbotMgr::Hotfix(Player* bot, uint32 version)
                 {
                     break;
                 }
-                factory.InitSkills();
+                if (ai)
+                    ai->FactoryInitAllSkillsViaRust();
                 sLog.outDetail("Bot %d hotfix (Riding Skill) applied",
                     bot->GetGUIDLow());
                 break;
