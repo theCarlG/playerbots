@@ -1500,6 +1500,12 @@ typedef struct ItemCallbacks {
     uint32_t (*get_player_skill_value)(uint32_t guid_low, uint32_t skill_id);
     /* Returns the bitmask defined above; 0 = unknown quest. */
     uint32_t (*player_quest_status)(uint32_t guid_low, uint32_t quest_id);
+    /* Equivalent to `player->HasItemCount(item_id, 1, true)` — checks
+     * bags + bank for at least one copy of the item. Used by
+     * `HasSameQuestRewards` to skip duplicate quest rewards during
+     * factory gearing. Returns `false` when the guid is not a logged-in
+     * player. */
+    bool     (*player_has_item)(uint32_t guid_low, uint32_t item_id);
     /* Returns the bot's best talent-tab index (0..2) and sets
      * `*out_meditation_rank` to the rank of the Meditation talent
      * (used by priest disc/holy disambiguation). 0 = no points. */
@@ -1516,6 +1522,313 @@ typedef struct ItemCallbacks {
      * `sLog` when `itempool debug` is flipped on. */
     void (*log_debug)(const char* msg);
 } ItemCallbacks;
+
+/* ─────────────────────────────────────────────────────────────────────
+ * RandomFactoryCallbacks — module-level vtable used by the Rust random
+ * bot factory (Phase G of the C++ → Rust migration).
+ *
+ * Unlike `BotCallbacks`, none of these are per-bot. They cover every
+ * CMaNGOS-side operation the legacy `playerbot/RandomPlayerbotFactory.cpp`
+ * performed: DB scans over accounts/characters/names/guilds/arena teams,
+ * the async account-creation fan-out, `Player::Create` + object accessor
+ * bookkeeping, and the guild/arena team lifecycle helpers on
+ * `sGuildMgr`/`sObjectMgr`. Everything else (race/class availability,
+ * probability-based class/race selection, name-pool expansion via the
+ * bijective-base-26 postfix helper, orchestration of the three public
+ * entry points) is owned by the Rust `random` module and does not need a
+ * callback.
+ *
+ * Memory ownership: every `query_*_list`-shaped callback allocates a
+ * freshly-malloc'd array that the C++ bridge owns; Rust releases it via
+ * the matching `free_*_list` callback before returning control. Single-
+ * row string callbacks (`query_random_bot_name`, `query_random_guild_name`,
+ * `query_random_arena_team_name`) instead write into a caller-provided
+ * buffer and return `false` on miss.
+ *
+ * Thread model: all callbacks are invoked from the thread that runs the
+ * Rust `create_random_bots` / `create_random_guilds` /
+ * `create_random_arena_teams` entry points. The legacy C++ version used
+ * `std::async` to fan out account creation and per-character saves; the
+ * Rust port runs synchronously and relies on CMaNGOS' own
+ * `CharacterDatabase` queue to absorb the burst. The bridge is therefore
+ * safe to implement with ordinary blocking DB calls.
+ *
+ * The vtable is installed once at startup via
+ * `playerbot_random_factory_init`.
+ * ───────────────────────────────────────────────────────────────────── */
+
+/* Single-row result of `query_bot_delete_event`, mirroring the legacy
+ * `select value from ai_playerbot_random_bots where event = 'bot_delete'`
+ * shape. When no row is present `scheduled` is false and
+ * `delete_friends` is ignored. When the row's value is > 1 the caller
+ * removes every random-bot character regardless of friend/guild status;
+ * otherwise friends/guild members are preserved. */
+typedef struct {
+    bool scheduled;
+    bool delete_friends;
+} BotDeleteEventState;
+
+/* One row from `ai_playerbot_names` left-joined against `characters`.
+ * `gender_index` matches the `NameRaceAndGender` enum (0..17).
+ * `is_taken` is true iff the joined character row has a non-null guid
+ * — used to seed the in-Rust `freeNames` / `allNames` split. */
+typedef struct {
+    uint8_t gender_index;
+    char    name[16];                  /* null-terminated; Blizzard char
+                                        * names are max 12 chars */
+    bool    is_taken;
+} BotNamePoolRow;
+
+/* Character appearance slice picked by the bridge from
+ * `sCharSectionMap` for a given (race, gender). Mirrors the local
+ * variables the C++ `CreateRandomBot` built before calling
+ * `Player::Create`. `success` is false when no matching sections exist
+ * (which is the cue for the Rust side to skip the class/race pair). */
+typedef struct {
+    uint8_t skin_color;                /* `face.second` in the C++ port */
+    uint8_t face_id;                   /* `face.first` */
+    uint8_t face_color;                /* duplicate of skin_color — the
+                                        * legacy code reused `face.second`
+                                        * for the skin colour slot */
+    uint8_t hair_style;                /* `hair.first` */
+    uint8_t hair_color;                /* `hair.second` */
+    uint8_t facial_hair;               /* 0 for excluded races/genders
+                                        * (tauren, non-nightelf/undead
+                                        * females) and always 0 on
+                                        * WotLK — see C++ `excludeCheck` */
+    bool    success;
+} BotCharAppearance;
+
+/* Full parameter bundle passed to `create_random_bot_character`. The
+ * bridge is responsible for instantiating `WorldSession` + `Player`,
+ * calling `Player::Create`, `setCinematic`, `SetAtLoginFlag`, and
+ * `sObjectAccessor.AddObject`. Returns `true` on success. The Rust
+ * side does not retain any pointer to the created player. */
+typedef struct {
+    uint32_t account_id;
+    uint8_t  race;
+    uint8_t  cls;
+    uint8_t  gender;
+    char     name[16];                 /* null-terminated */
+    uint8_t  skin_color;
+    uint8_t  face_id;
+    uint8_t  face_color;
+    uint8_t  hair_style;
+    uint8_t  hair_color;
+    uint8_t  facial_hair;
+} BotCreateParams;
+
+/* Snapshot of an in-world player read during guild/arena leader
+ * selection. `in_world` is false when the guid is not a currently
+ * logged-in player — the rest of the fields are then ignored. */
+typedef struct {
+    bool     in_world;
+    uint8_t  level;
+    uint32_t guild_id;                 /* 0 = no guild */
+    uint32_t team;                     /* 0 = Alliance, 1 = Horde */
+    char     name[16];                 /* null-terminated; used in log
+                                        * strings to match the legacy
+                                        * `sLog.outBasic` format */
+} BotPlayerSnapshot;
+
+/* One row of `query_character_accounts` — the `(account, guid)` pair
+ * from the `characters` table used to group bot characters by their
+ * owning account when building the guild-leader candidate list. */
+typedef struct {
+    uint32_t account_id;
+    uint32_t guid_low;
+} BotCharacterAccount;
+
+/* Arena team kind identifiers — values match CMaNGOS `ArenaType`. */
+#define PLAYERBOT_ARENA_TYPE_2V2 2
+#define PLAYERBOT_ARENA_TYPE_3V3 3
+#define PLAYERBOT_ARENA_TYPE_5V5 5
+
+typedef struct RandomFactoryCallbacks {
+    /* ── RNG ────────────────────────────────────────────────────────
+     * Wraps CMaNGOS `urand(min, max)`. Inclusive on both ends. Rust
+     * calls this wherever the legacy C++ path would have called
+     * `urand` directly. Tests plug in a deterministic `SequentialRng`
+     * instead. */
+    uint32_t (*urand_range)(uint32_t min, uint32_t max);
+
+    /* ── Bot delete event ──────────────────────────────────────────
+     * Read `ai_playerbot_random_bots WHERE event = 'bot_delete'`.
+     * `out` is always written — on miss it is zeroed. */
+    void (*query_bot_delete_event)(BotDeleteEventState* out);
+
+    /* ── Account scan / create / delete ─────────────────────────────
+     * Look up an account id by exact username match. Returns 0 when
+     * the account does not exist. */
+    uint32_t (*query_account_id_by_name)(const char* name);
+
+    /* Scan every account whose username begins with `prefix` (case-
+     * insensitively) and allocate an id array into `*out_ids`. The
+     * return value is the array length; caller frees via
+     * `free_u32_list`. */
+    uint32_t (*query_account_ids_like_prefix)(const char* prefix, uint32_t** out_ids);
+    void     (*free_u32_list)(uint32_t* ptr, uint32_t count);
+
+    /* Create an account (synchronous). `password` may be empty,
+     * meaning "use the account name as the password". `max_expansion`
+     * is `MAX_EXPANSION` on TBC/WotLK and 0 on Classic. */
+    void (*create_account)(const char* name, const char* password, uint8_t max_expansion);
+    /* Delete an account and every character on it. */
+    void (*delete_account)(uint32_t account_id);
+
+    /* ── Character count / query / friend list ──────────────────────
+     * `sAccountMgr.GetCharactersCount(account_id)`. */
+    uint32_t (*get_character_count)(uint32_t account_id);
+
+    /* Enumerate every character guid on `account_id`. Caller frees
+     * via `free_u32_list`. */
+    uint32_t (*query_characters_by_account)(uint32_t account_id, uint32_t** out_guids);
+
+    /* Load every friend guid from `character_social` where
+     * `flags=SOCIAL_FLAG_FRIEND`. Caller frees via `free_u32_list`. */
+    uint32_t (*query_friend_guids)(uint32_t** out_guids);
+
+    /* `sRandomPlayerbotMgr.OnPlayerLoginError(guid)` — invoked before
+     * a character row is deleted so the login queue drops any
+     * pending state for it. */
+    void (*on_player_login_error)(uint32_t guid_low);
+
+    /* `Player::DeleteFromDB(ObjectGuid, account, false, true)` —
+     * removes the character row and its associated tables. */
+    void (*delete_character_from_db)(uint32_t guid_low, uint32_t account_id);
+
+    /* `CharacterDatabase.Execute("DELETE FROM ai_playerbot_random_bots
+     * WHERE bot NOT IN (SELECT guid FROM characters)")` — invoked once
+     * at the end of the delete pass. */
+    void (*prune_random_bots_table)(void);
+
+    /* ── Name pool ─────────────────────────────────────────────────
+     * Load every row of `ai_playerbot_names` joined against
+     * `characters` so the Rust side can decide which names are free
+     * to use. One row per name; `is_taken` encodes the join result.
+     * Caller frees via `free_name_pool_list`. An empty result means
+     * the name DB has not been loaded and Rust falls back to the
+     * legacy character-names path. */
+    uint32_t (*query_name_pool)(BotNamePoolRow** out_rows);
+    void     (*free_name_pool_list)(BotNamePoolRow* rows, uint32_t count);
+
+    /* Fallback load used when `ai_playerbot_names` is unpopulated —
+     * returns every existing character name with `gender_index = 0`
+     * and `is_taken = true`. Rust then builds the postfix-expanded
+     * pool on top of those seeds. */
+    uint32_t (*query_existing_character_names)(BotNamePoolRow** out_rows);
+
+    /* Single-row fallback used by `CreateRandomBotName` when the Rust
+     * name pool is empty for a given race/gender. `out_buf` is
+     * caller-provided; writes a null-terminated name and returns
+     * true on success. */
+    bool (*query_random_bot_name)(uint8_t race_and_gender, char* out_buf, uint32_t buf_len);
+
+    /* ── Character creation ────────────────────────────────────────
+     * Resolve the appearance options for `(race, gender)` by scanning
+     * `sCharSectionMap`. On success fills `out` and returns true;
+     * returns false if no sections match. */
+    bool (*query_char_appearance)(uint8_t race, uint8_t gender, BotCharAppearance* out);
+
+    /* Create a single random-bot character using the supplied
+     * appearance/class/race/name. Wraps `WorldSession` allocation,
+     * `Player::Create`, `SetAtLoginFlag`, and
+     * `sObjectAccessor.AddObject`. Returns true on success. */
+    bool (*create_random_bot_character)(const BotCreateParams* params);
+
+    /* Save every currently-in-world player (random bot session) and
+     * tear them down — `SaveToDB` + `LogoutPlayer` + delete-session
+     * delete-player loop. Called once at the end of `CreateRandomBots`
+     * to release the sessions/players spawned during the pass. */
+    void (*save_and_logout_all_online)(void);
+
+    /* ── Guild enumeration / creation ──────────────────────────────
+     * Scan every `(account, guid)` pair from the `characters` table
+     * (used to build the per-account guid buckets for guild leader
+     * selection). Caller frees via `free_character_account_list`. */
+    uint32_t (*query_character_accounts)(BotCharacterAccount** out_rows);
+    void     (*free_character_account_list)(BotCharacterAccount* rows, uint32_t count);
+
+    /* `sGuildMgr.GetGuildByLeader(guid)->GetId()` — returns 0 when
+     * the guid does not lead a guild. */
+    uint32_t (*get_guild_id_by_leader)(uint32_t leader_guid_low);
+    /* `sObjectMgr.GetPlayerAccountIdByGUID(guild->GetLeaderGuid())`
+     * — used when deciding whether a random bot guild's leader is
+     * itself a random bot account. Returns 0 on miss. */
+    uint32_t (*get_guild_leader_account_id)(uint32_t guild_id);
+    /* `guild->Disband()`. */
+    void (*disband_guild)(uint32_t guild_id);
+
+    /* `sObjectMgr.GetPlayer(guid)` wrapper; returns false when the
+     * guid is not a currently logged-in player. Fills `out` on
+     * success. */
+    bool (*get_player_snapshot)(uint32_t guid_low, BotPlayerSnapshot* out);
+
+    /* Single-row query against `ai_playerbot_guild_names`. Writes a
+     * null-terminated name into `out_buf` on success; returns false
+     * when no row is available. */
+    bool (*query_random_guild_name)(char* out_buf, uint32_t buf_len);
+
+    /* `Guild::Create(player, name)` + `sGuildMgr.AddGuild` — returns
+     * the new guild id, or 0 on failure. */
+    uint32_t (*create_random_guild)(uint32_t leader_guid_low, const char* name);
+
+    /* `guild->SetEmblem(st, cl, br, bc, bg)`. Matches the legacy
+     * argument order verbatim. */
+    void (*set_guild_emblem)(uint32_t guild_id,
+                             uint32_t style, uint32_t color,
+                             uint32_t border_style, uint32_t border_color,
+                             uint32_t background_color);
+    /* `guild->SetGINFO(info)` — used to stamp a random age label. */
+    void (*set_guild_info)(uint32_t guild_id, const char* info);
+
+    /* ── Arena team (wotlk only — may be NULL on Classic/TBC) ──────
+     * Read `ai_playerbot_random_bots WHERE event = 'add'` — used as
+     * the captain candidate pool in `CreateRandomArenaTeams`. Caller
+     * frees via `free_u32_list`. */
+    uint32_t (*query_random_bot_add_event)(uint32_t** out_guids);
+
+    /* `sObjectMgr.GetArenaTeamByCaptain(guid)`; fills out params and
+     * returns true when a team exists. */
+    bool (*get_arena_team_by_captain)(uint32_t captain_guid_low,
+                                      uint32_t* out_team_id, uint8_t* out_type);
+    /* `arenateam->Disband(NULL)`. */
+    void (*disband_arena_team)(uint32_t team_id);
+    /* `player->GetArenaTeamId(ArenaTeam::GetSlotByType(team_type))`.
+     * Returns 0 when the player is not on an arena team of that
+     * type. */
+    uint32_t (*get_player_arena_team_id_by_type)(uint32_t guid_low, uint8_t team_type);
+
+    /* Single-row query against `ai_playerbot_arena_team_names` —
+     * returns both the name and the `type` column (one of
+     * PLAYERBOT_ARENA_TYPE_{2V2,3V3,5V5}). Writes `out_name` as a
+     * null-terminated string and sets `*out_type` on success. */
+    bool (*query_random_arena_team_name)(char* out_name, uint32_t buf_len, uint8_t* out_type);
+
+    /* `ArenaTeam::Create` + `SetCaptain` + `sObjectMgr.AddArenaTeam`
+     * — returns the new team id, or 0 on failure. */
+    uint32_t (*create_arena_team)(uint32_t captain_guid_low, uint8_t team_type, const char* name);
+
+    /* `arenateam->AddMember(member_guid)`. Returns true on success. */
+    bool (*add_arena_team_member)(uint32_t team_id, uint32_t member_guid_low);
+    /* `arenateam->GetMembersSize()`. */
+    uint32_t (*get_arena_team_members_size)(uint32_t team_id);
+    /* `arenateam->SetEmblem(background_color, style, color,
+     * border_style, border_color)`. Argument order matches the C++
+     * signature. */
+    void (*set_arena_team_emblem)(uint32_t team_id,
+                                   uint32_t background_color, uint32_t style,
+                                   uint32_t color, uint32_t border_style,
+                                   uint32_t border_color);
+    /* `arenateam->SetRatingForAll(rating)`. */
+    void (*set_arena_team_rating)(uint32_t team_id, uint32_t rating);
+    /* `arenateam->SaveToDB()`. */
+    void (*save_arena_team)(uint32_t team_id);
+
+    /* ── Debug logging ─────────────────────────────────────────────
+     * Optional; routed to `sLog.outBasic`. */
+    void (*log_debug)(const char* msg);
+} RandomFactoryCallbacks;
 
 /* ── Rust exports (entry points CMaNGOS calls into Rust) ─────────────────── */
 
@@ -2018,6 +2331,75 @@ uint32_t playerbot_itempool_get_random_food(uint32_t level, uint32_t category);
 
 /** Equivalent to `RandomItemMgr::GetRandomTrade(level)`. */
 uint32_t playerbot_itempool_get_random_trade(uint32_t level);
+
+/* ─────────────────────────────────────────────────────────────────────
+ * Random factory (`playerbot_random_factory_*`)
+ *
+ * Phase G of the C++ → Rust migration moved the full
+ * `RandomPlayerbotFactory` class (race/class availability, probability-
+ * weighted selection, name-pool expansion, delete/create orchestration,
+ * guild + arena-team lifecycle) from `playerbot/RandomPlayerbotFactory.cpp`
+ * into the Rust `playerbot` crate's `random` module. The C++ side keeps
+ * a thin shim at `cpp_wrapper/RandomFactoryBridge.{h,cpp}` that
+ * implements `RandomFactoryCallbacks` and forwards the few DB / game-
+ * object calls still needed to CMaNGOS. The legacy C++ class is gone —
+ * `RandomPlayerbotMgr` calls `playerbot_random_factory_*` directly.
+ *
+ * Call order:
+ *   1. playerbot_config_load(...);                    // file parser
+ *   2. playerbot_random_factory_init(&factory_cbs);   // installs vtable
+ *   3. playerbot_random_factory_create_bots();        // from RPBM::Init
+ *   4. playerbot_random_factory_create_guilds();      // from RPBM::Init
+ *   5. playerbot_random_factory_create_arena_teams(); // wotlk only
+ *   6. playerbot_random_factory_shutdown();           // server stop
+ * ───────────────────────────────────────────────────────────────────── */
+
+/** Install the random-factory vtable. Must be called exactly once,
+ *  after `playerbot_config_load`. Passing a null pointer is a no-op
+ *  (the module stays uninitialised and every subsequent call returns
+ *  without touching the game state). */
+void playerbot_random_factory_init(const RandomFactoryCallbacks* cbs);
+
+/** Drop the vtable. Safe to call more than once; second call is a
+ *  no-op. */
+void playerbot_random_factory_shutdown(void);
+
+/** Port of `RandomPlayerbotFactory::CreateRandomBots()`. Scans the
+ *  existing random-bot accounts, optionally runs the delete pass,
+ *  creates any missing accounts, and fills every account with random-
+ *  bot characters using the expansion-appropriate class/race probability
+ *  tables. Runs synchronously on the calling thread; returns when all
+ *  characters have been created and their `WorldSession`s have been
+ *  torn down. */
+void playerbot_random_factory_create_bots(void);
+
+/** Port of `RandomPlayerbotFactory::CreateRandomGuilds()`. Walks the
+ *  current random-bot character list, optionally disbands every
+ *  existing random-bot guild, and populates the configured number of
+ *  new random-bot guilds. */
+void playerbot_random_factory_create_guilds(void);
+
+/** Port of `RandomPlayerbotFactory::CreateRandomArenaTeams()`. TBC/WotLK
+ *  only — on Classic the implementation is a no-op. Builds random-bot
+ *  2v2/3v3/5v5 arena teams with a 40%/30%/30% split, optionally
+ *  disbanding the existing ones first. */
+void playerbot_random_factory_create_arena_teams(void);
+
+/** Query the current `random_bot_accounts` runtime list — the ids of
+ *  every account the factory tracked during the most recent
+ *  `create_bots` pass. Copies into a caller-provided buffer up to
+ *  `max_out` ids and returns the total number of ids. Used by
+ *  `PlayerbotAIConfig::loadFreeAltBotAccounts` during shim fill-up. */
+uint32_t playerbot_random_factory_get_accounts(uint32_t* out_ids, uint32_t max_out);
+
+/** Query the current `random_bot_guilds` runtime list — the ids of
+ *  every random-bot guild the factory tracked during the most recent
+ *  `create_guilds` pass. Same shape as `get_accounts`. */
+uint32_t playerbot_random_factory_get_guilds(uint32_t* out_ids, uint32_t max_out);
+
+/** Query the current `random_bot_arena_teams` runtime list. WotLK/TBC
+ *  only; on Classic always returns 0. */
+uint32_t playerbot_random_factory_get_arena_teams(uint32_t* out_ids, uint32_t max_out);
 
 #ifdef __cplusplus
 } /* extern "C" */

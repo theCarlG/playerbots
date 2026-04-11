@@ -67,6 +67,15 @@ pub mod weapon_sub {
 }
 
 #[allow(dead_code)]
+pub mod gem_sub {
+    /// `ITEM_SUBCLASS_GEM_SIMPLE` — the "simple" meta-less gem that
+    /// `GetGemsList` intentionally filters out because it's only used for
+    /// the prismatic socket weight calculation and never rolled into the
+    /// bot loadout.
+    pub const SIMPLE: u32 = 7;
+}
+
+#[allow(dead_code)]
 pub mod armor_sub {
     pub const MISC: u32 = 0;
     pub const CLOTH: u32 = 1;

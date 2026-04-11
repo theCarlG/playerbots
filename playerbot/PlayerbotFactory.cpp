@@ -9,7 +9,7 @@
 #include "Database/DBCStore.h"
 #include "Globals/SharedDefines.h"
 #include "RandomItemMgr.h"
-#include "RandomPlayerbotFactory.h"
+#include "botffi.h"
 #include "Guilds/GuildMgr.h"
 
 #ifndef MANGOSBOT_ZERO
@@ -3335,7 +3335,7 @@ void PlayerbotFactory::InitGuild()
         return;
 
     if (sPlayerbotAIConfig.randomBotGuilds.size() < sPlayerbotAIConfig.randomBotGuildCount)
-        RandomPlayerbotFactory::CreateRandomGuilds();
+        playerbot_random_factory_create_guilds();
 
     std::vector<uint32> guilds;
     for (std::list<uint32>::iterator i = sPlayerbotAIConfig.randomBotGuilds.begin(); i != sPlayerbotAIConfig.randomBotGuilds.end(); ++i)
@@ -3386,7 +3386,7 @@ void PlayerbotFactory::InitArenaTeam()
         return;
 
     if (sPlayerbotAIConfig.randomBotArenaTeams.size() < sPlayerbotAIConfig.randomBotArenaTeamCount)
-        RandomPlayerbotFactory::CreateRandomArenaTeams();
+        playerbot_random_factory_create_arena_teams();
 }
 #endif
 

@@ -17,7 +17,9 @@
 #include "MotionGenerators/MotionMaster.h"
 #include "MotionGenerators/MovementGenerator.h"
 #include "BotBridge.h"
+#include "ItemBridge.h"
 #include "LoginBridge.h"
+#include "RandomFactoryBridge.h"
 #include "Spells/Spell.h"
 
 // Spell id used by the RTSC "Aedm" marker to encode ground-targeted positions.
@@ -50,17 +52,34 @@ void PlayerbotRust::InitRustModule()
     // `playerbot_config_load()` — called from `PlayerbotAIConfig::Initialize()`
     // in `cpp_wrapper/BotConfig.cpp`. No per-field forwarding required here.
 
+    // Phase F: install the item-pool vtable and snapshot every table
+    // the legacy `RandomItemMgr::Init()` used to build. Must run before
+    // `playerbot_login_init` because login candidate selection reads
+    // item-pool state (quest rewards, stat weights) indirectly.
+    ItemCallbacks itemCbs = ItemBridge::MakeCallbacks();
+    playerbot_itempool_init(&itemCbs);
+
     // Phase E: spawn the Rust login worker and install the
     // `LoginCallbacks` vtable. Must happen after the config has been
     // loaded (it is — `PlayerbotAIConfig::Initialize` runs before the
     // CMaNGOS core calls this init function).
     LoginCallbacks loginCbs = LoginBridge::MakeCallbacks();
     playerbot_login_init(&loginCbs);
+
+    // Phase G: install the random-factory vtable. The Rust side owns
+    // race/class availability, name-pool expansion, and orchestration
+    // of CreateRandomBots/Guilds/ArenaTeams; the bridge only hands it
+    // DB/game-state primitives. Safe to initialise here because it is
+    // never called until RandomPlayerbotMgr decides to refill bots.
+    RandomFactoryCallbacks randomFactoryCbs = RandomFactoryBridge::MakeCallbacks();
+    playerbot_random_factory_init(&randomFactoryCbs);
 }
 
 void PlayerbotRust::ShutdownRustModule()
 {
+    playerbot_random_factory_shutdown();
     playerbot_login_shutdown();
+    playerbot_itempool_shutdown();
     playerbot_shutdown();
 }
 

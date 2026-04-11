@@ -134,6 +134,85 @@ pub extern "C" fn playerbot_itempool_get_min_level(item_id: u32) -> u32 {
     with_state(0, |st| st.manager.min_level(item_id))
 }
 
+/// Resolve the spec id for a logged-in player via the bridge's talent
+/// tab snapshot. Returns `0` when the bridge has no context, the spec
+/// name can't be derived, or no scale matches.
+#[unsafe(no_mangle)]
+pub extern "C" fn playerbot_itempool_get_player_spec_id(guid_low: u32) -> u32 {
+    with_state(0, |st| st.manager.player_spec_id(st.world.as_ref(), guid_low))
+}
+
+/// Live (filtered) stat weight for `(guid_low, item_id, spec_id)`.
+/// When `spec_id == 0`, falls back to the talent-tab lookup. Mirrors
+/// `RandomItemMgr::GetLiveStatWeight`.
+#[unsafe(no_mangle)]
+pub extern "C" fn playerbot_itempool_get_live_stat_weight(
+    guid_low: u32,
+    item_id: u32,
+    spec_id: u32,
+) -> u32 {
+    with_state(0, |st| {
+        st.manager
+            .live_stat_weight(st.world.as_ref(), guid_low, item_id, spec_id)
+    })
+}
+
+/// Best enchant score rollable on `item_id` under `spec_id`.
+/// Mirrors `RandomItemMgr::GetBestRandomEnchantStatWeight`.
+#[unsafe(no_mangle)]
+pub extern "C" fn playerbot_itempool_get_best_random_enchant_stat_weight(
+    item_id: u32,
+    spec_id: u32,
+) -> u32 {
+    with_state(0, |st| {
+        st.manager
+            .best_random_enchant_stat_weight(st.world.as_ref(), item_id, spec_id)
+    })
+}
+
+/// `true` when the player already holds a reward item from any quest
+/// that can grant `item_id`. Mirrors
+/// `RandomItemMgr::HasSameQuestRewards`.
+#[unsafe(no_mangle)]
+pub extern "C" fn playerbot_itempool_has_same_quest_rewards(
+    guid_low: u32,
+    item_id: u32,
+) -> bool {
+    with_state(false, |st| {
+        st.manager
+            .has_same_quest_rewards(st.world.as_ref(), guid_low, item_id)
+    })
+}
+
+/// Owned copy of the full gem list. Empty on vanilla; allocated as a
+/// `Box<[u32]>` on TBC/WotLK and freed via
+/// [`playerbot_itempool_free_u32_list`].
+///
+/// * Empty result is `(NULL, 0)` with a `true` return value.
+/// * `false` is returned only when `out_ptr` or `out_len` is null.
+///
+/// # Safety
+///
+/// `out_ptr` and `out_len` must both be valid, writable pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_itempool_get_gems(
+    out_ptr: *mut *mut u32,
+    out_len: *mut usize,
+) -> bool {
+    if out_ptr.is_null() || out_len.is_null() {
+        log_error!("playerbot_itempool_get_gems: null out pointer");
+        return false;
+    }
+    let gems: Vec<u32> = with_state(Vec::new(), |st| st.manager.gems_list().to_vec());
+    // Safety: caller guarantees `out_ptr` / `out_len` are valid.
+    unsafe {
+        let (ptr, len) = into_raw_u32_slice(gems);
+        out_ptr.write(ptr);
+        out_len.write(len);
+    }
+    true
+}
+
 /// Rarity for `item_id`. Returns the DB-cached value if present,
 /// otherwise a heuristic derived from the item quality. Returns `0.0`
 /// when the item is not in the info cache.
@@ -373,6 +452,34 @@ mod tests {
             playerbot_itempool_calculate_best_random_enchant_id(1, 1, 42),
             0
         );
+    }
+
+    #[test]
+    fn live_scoring_returns_zero_without_init() {
+        playerbot_itempool_shutdown();
+
+        assert_eq!(playerbot_itempool_get_player_spec_id(42), 0);
+        assert_eq!(playerbot_itempool_get_live_stat_weight(42, 1234, 1), 0);
+        assert_eq!(
+            playerbot_itempool_get_best_random_enchant_stat_weight(1234, 1),
+            0
+        );
+        assert!(!playerbot_itempool_has_same_quest_rewards(42, 1234));
+    }
+
+    #[test]
+    fn get_gems_returns_empty_without_init() {
+        playerbot_itempool_shutdown();
+
+        let mut ptr: *mut u32 = std::ptr::null_mut();
+        let mut len: usize = 0;
+        // Safety: local pointers are valid for the duration of the call.
+        let ok = unsafe {
+            playerbot_itempool_get_gems(&mut ptr as *mut _, &mut len as *mut _)
+        };
+        assert!(ok);
+        assert!(ptr.is_null());
+        assert_eq!(len, 0);
     }
 
     #[test]

@@ -62,8 +62,12 @@ set(CppWrapper_Source
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/BotBridge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/BotConfig.h
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/BotConfig.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/ItemBridge.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/ItemBridge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/LoginBridge.h
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/LoginBridge.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/RandomFactoryBridge.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/RandomFactoryBridge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/PlayerbotRust.h
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp_wrapper/PlayerbotRust.cpp
 )

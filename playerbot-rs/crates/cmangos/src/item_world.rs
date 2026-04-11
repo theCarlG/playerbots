@@ -131,6 +131,11 @@ pub trait ItemWorld: Send + Sync {
     /// Quest status bitmask for `(player, quest)`.
     fn player_quest_status(&self, guid_low: u32, quest_id: u32) -> QuestStatus;
 
+    /// `true` when the player currently holds at least one copy of
+    /// `item_id` in bags or bank. Mirrors
+    /// `player->HasItemCount(item_id, 1, true)` in the legacy C++.
+    fn player_has_item(&self, guid_low: u32, item_id: u32) -> bool;
+
     /// Player's best talent tab and meditation rank.
     fn player_talent_tab(&self, guid_low: u32) -> TalentTabInfo;
 
@@ -361,6 +366,12 @@ impl ItemWorld for VtableItemWorld {
         )
     }
 
+    fn player_has_item(&self, guid_low: u32, item_id: u32) -> bool {
+        self.cbs
+            .player_has_item
+            .is_some_and(|f| unsafe { f(guid_low, item_id) })
+    }
+
     fn player_talent_tab(&self, guid_low: u32) -> TalentTabInfo {
         let Some(f) = self.cbs.get_player_talent_tab else {
             return TalentTabInfo::default();
@@ -426,6 +437,7 @@ mod mock_impl {
         PlayerReputation { guid: u32, faction: u32 },
         PlayerSkill { guid: u32, skill: u32 },
         PlayerQuestStatus { guid: u32, quest: u32 },
+        PlayerHasItem { guid: u32, item: u32 },
         PlayerTalentTab(u32),
         UrandRange { min: u32, max: u32, result: u32 },
         Debug(String),
@@ -448,6 +460,7 @@ mod mock_impl {
         reputation: HashMap<(u32, u32), i32>,
         skill: HashMap<(u32, u32), u32>,
         quest_status: HashMap<(u32, u32), QuestStatus>,
+        has_item: HashMap<(u32, u32), bool>,
         talent_tab: HashMap<u32, TalentTabInfo>,
         urand_next: Vec<u32>,
         urand_deterministic: bool,
@@ -559,6 +572,17 @@ mod mock_impl {
                 .unwrap()
                 .quest_status
                 .insert((guid, quest), status);
+        }
+
+        /// Seed an inventory-has-item flag. Defaults to `false` for
+        /// unseeded keys, matching `player->HasItemCount` on a player
+        /// that doesn't hold the item.
+        pub fn set_player_has_item(&self, guid: u32, item: u32, has: bool) {
+            self.state
+                .lock()
+                .unwrap()
+                .has_item
+                .insert((guid, item), has);
         }
 
         /// Seed a talent tab snapshot.
@@ -676,6 +700,18 @@ mod mock_impl {
                 .get(&(guid_low, quest_id))
                 .copied()
                 .unwrap_or(QuestStatus::NONE)
+        }
+
+        fn player_has_item(&self, guid_low: u32, item_id: u32) -> bool {
+            let mut s = self.state.lock().unwrap();
+            s.events.push(MockItemEvent::PlayerHasItem {
+                guid: guid_low,
+                item: item_id,
+            });
+            s.has_item
+                .get(&(guid_low, item_id))
+                .copied()
+                .unwrap_or(false)
         }
 
         fn player_talent_tab(&self, guid_low: u32) -> TalentTabInfo {

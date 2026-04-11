@@ -48,8 +48,16 @@ fn main() {
         .allowlist_type("BotItemRarityRow")
         .allowlist_type("BotGemPropertiesRow")
         .allowlist_type("BotPlayerItemCtx")
+        .allowlist_type("RandomFactoryCallbacks")
+        .allowlist_type("BotDeleteEventState")
+        .allowlist_type("BotNamePoolRow")
+        .allowlist_type("BotCharAppearance")
+        .allowlist_type("BotCreateParams")
+        .allowlist_type("BotPlayerSnapshot")
+        .allowlist_type("BotCharacterAccount")
         .allowlist_var("PLAYERBOT_HOLDER_.*")
         .allowlist_var("PLAYERBOT_QUEST_.*")
+        .allowlist_var("PLAYERBOT_ARENA_TYPE_.*")
         // The Rust → C exports are implemented in the playerbot crate;
         // bindgen must not generate them here.
         .blocklist_function("playerbot_.*")

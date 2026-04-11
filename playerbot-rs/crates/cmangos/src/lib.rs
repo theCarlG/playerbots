@@ -26,6 +26,8 @@ pub mod mock;
 #[allow(unsafe_code)]
 pub mod owned;
 #[allow(unsafe_code)]
+pub mod random_factory_world;
+#[allow(unsafe_code)]
 pub mod real;
 pub mod snapshot;
 pub mod unit;
@@ -33,14 +35,15 @@ pub mod world;
 
 // Re-export every POD type from cmangos-sys at the crate root.
 pub use cmangos_sys::{
-    BotAuraInfo, BotCallbacks, BotCandidateInfo, BotDispelTarget, BotEnchantInfo,
-    BotGemPropertiesRow, BotHandle, BotInventoryItem, BotItemEnchantmentRow, BotItemProtoDamage,
-    BotItemProtoSocket, BotItemProtoSpellRef, BotItemProtoStat, BotItemPrototype,
-    BotItemRarityRow, BotMailSummary, BotPlayerItemCtx, BotPosition, BotQuestInfo,
+    BotAuraInfo, BotCallbacks, BotCandidateInfo, BotCharAppearance, BotCharacterAccount,
+    BotCreateParams, BotDeleteEventState, BotDispelTarget, BotEnchantInfo, BotGemPropertiesRow,
+    BotHandle, BotInventoryItem, BotItemEnchantmentRow, BotItemProtoDamage, BotItemProtoSocket,
+    BotItemProtoSpellRef, BotItemProtoStat, BotItemPrototype, BotItemRarityRow, BotMailSummary,
+    BotNamePoolRow, BotPlayerItemCtx, BotPlayerSnapshot, BotPosition, BotQuestInfo,
     BotQuestItemRow, BotRealPlayerInfo, BotReputationEntry, BotSafePosition, BotSkillEntry,
     BotSpellEntryInfo, BotSpellInfo, BotTalentEntry, BotTaxiNode, BotThreatEntry, BotTravelDest,
     BotUnitSnapshot, BotVendorItemRow, BotWeightScaleRow, BotWeightScaleStatRow,
-    BotWorldSnapshot, ItemCallbacks, LoginCallbacks, UnitHandle,
+    BotWorldSnapshot, ItemCallbacks, LoginCallbacks, RandomFactoryCallbacks, UnitHandle,
 };
 
 pub use ids::{BotRole, ItemId, SkillId, SpellId, TalentId};
@@ -56,6 +59,12 @@ pub use owned::{
 };
 #[cfg(any(test, feature = "mock"))]
 pub use mock::{MockEvent, MockState, MockWorld, MockWorldBuilder};
+pub use random_factory_world::{
+    BotDeleteEvent, CharAppearance, CharacterAccount, CreateParams, NamePoolRow, PlayerSnapshot,
+    RandomFactoryWorld, VtableRandomFactoryWorld,
+};
+#[cfg(any(test, feature = "mock"))]
+pub use random_factory_world::{MockRandomFactoryEvent, MockRandomFactoryWorld};
 pub use real::VtableWorld;
 pub use snapshot::{UnitSnapshotExt, WorldSnapshotExt};
 pub use unit::UnitRef;
