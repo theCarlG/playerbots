@@ -2,6 +2,7 @@
 #include "BotConfig.h"
 #include "playerbot/RandomPlayerbotMgr.h"
 #include "PlayerbotRust.h"
+#include "botffi.h"
 #include "Chat/ChannelMgr.h"
 #include "Social/SocialMgr.h"
 
@@ -447,17 +448,34 @@ std::string PlayerbotHolder::ProcessBotCommand(std::string cmd, ObjectGuid guid,
         cmd = cmd.substr(0, eqPos);
     }
 
+    // ── Try Rust dispatch first (factory-related commands) ──────────────
+    PlayerbotRust* ai = bot ? bot->GetPlayerbotAI() : nullptr;
+    if (ai && ai->GetRustState())
+    {
+        std::string rustParam = subType.empty() ? param : subType;
+        uint32 masterLevel = master ? master->GetLevel() : (bot ? bot->GetLevel() : 1);
+        char* result = playerbot_mgr_bot_command(
+            ai->GetRustState(), cmd.c_str(), rustParam.c_str(), masterLevel);
+        if (result)
+        {
+            std::string msg(result);
+            playerbot_free_string(result);
+            return msg;
+        }
+    }
+
+    // ── Fall through to C++ handler map ──────────────────────────────────
     auto it = m_botCommandHandlers.find(cmd);
     if (it != m_botCommandHandlers.end())
     {
         std::string realParam;
-        
+
         if (!subType.empty())
             realParam = subType;
         else if (it->second == &PlayerbotHolder::HandleBotAddLogin || it->second == &PlayerbotHolder::HandleBotAlways)
-            realParam = std::to_string(guid.GetRawValue());        
+            realParam = std::to_string(guid.GetRawValue());
         else
-            realParam = param;            
+            realParam = param;
 
         return (this->*it->second)(bot, master, realParam);
     }

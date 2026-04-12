@@ -3,7 +3,7 @@
 
 #include "Common.h"
 #include "PlayerbotAIBase.h"
-#include "PlayerbotMgr.h"
+#include "MgrBridge.h"
 #include "BotConfig.h"
 #include <map>
 #include <list>

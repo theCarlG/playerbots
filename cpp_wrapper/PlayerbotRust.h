@@ -111,6 +111,7 @@ public:
     Player* GetBot() const { return m_bot; }
     Player* GetMaster() const;
     ObjectGuid GetMasterGuid() const { return m_masterGuid; }
+    void* GetRustState() const { return m_rustState.get(); }
 
     // ── Management hooks (called by PlayerbotMgr/RandomPlayerbotMgr) ──
     //

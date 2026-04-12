@@ -757,6 +757,61 @@ pub unsafe extern "C" fn playerbot_factory_init_gems(state: *mut ()) {
     tx.commit();
 }
 
+// ── Manager command dispatch ─────────────────────────────────────────────
+
+/// Try to handle a `.bot <name> <cmd> [param]` command on the Rust side.
+///
+/// Returns a heap-allocated C string if the command was handled (caller must
+/// free with [`playerbot_free_string`]), or null if the C++ side should
+/// process the command instead.
+///
+/// # Safety
+/// `state` must be a valid pointer from `playerbot_create`.
+/// `cmd` and `param` must be valid null-terminated C strings.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_mgr_bot_command(
+    state: *mut (),
+    cmd: *const std::os::raw::c_char,
+    param: *const std::os::raw::c_char,
+    master_level: u32,
+) -> *mut std::os::raw::c_char {
+    if state.is_null() || cmd.is_null() || param.is_null() {
+        return std::ptr::null_mut();
+    }
+    let cmd_str = unsafe { std::ffi::CStr::from_ptr(cmd) };
+    let param_str = unsafe { std::ffi::CStr::from_ptr(param) };
+    let (Ok(cmd_str), Ok(param_str)) = (cmd_str.to_str(), param_str.to_str()) else {
+        return std::ptr::null_mut();
+    };
+
+    let bot = unsafe { &mut *state.cast::<BotState>() };
+    match crate::manager::dispatch_bot_command(
+        bot.interface.as_mut(),
+        cmd_str,
+        param_str,
+        master_level,
+    ) {
+        crate::manager::BotCommandResult::Handled(msg) => {
+            match std::ffi::CString::new(msg) {
+                Ok(cs) => cs.into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            }
+        }
+        crate::manager::BotCommandResult::NotHandled => std::ptr::null_mut(),
+    }
+}
+
+/// Free a string previously returned by [`playerbot_mgr_bot_command`].
+///
+/// # Safety
+/// `ptr` must be null or a pointer returned by `playerbot_mgr_bot_command`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_free_string(ptr: *mut std::os::raw::c_char) {
+    if !ptr.is_null() {
+        drop(unsafe { std::ffi::CString::from_raw(ptr) });
+    }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 unsafe fn packet_bytes(data: *const u8, len: u32) -> Vec<u8> {

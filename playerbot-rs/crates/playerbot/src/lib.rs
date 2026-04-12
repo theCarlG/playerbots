@@ -25,6 +25,7 @@ pub mod itempool;
 pub mod logging;
 #[allow(unsafe_code)]
 pub mod login;
+pub mod manager;
 pub mod noncombat;
 pub mod random;
 pub mod random_mgr;

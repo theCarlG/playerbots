@@ -11,7 +11,7 @@
 
 #include "botpch.h"
 #include "Chat/Chat.h"
-#include "PlayerbotMgr.h"
+#include "MgrBridge.h"
 #include "RandomPlayerbotMgr.h"
 
 #include <cstring>

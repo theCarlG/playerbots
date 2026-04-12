@@ -16,7 +16,7 @@
 #include "Guilds/Guild.h"
 
 #include "playerbotDefs.h"
-#include "PlayerbotMgr.h"
+#include "MgrBridge.h"
 #include "playerbot/RandomPlayerbotMgr.h"
 #include "PlayerbotAI.h"
 

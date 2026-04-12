@@ -2783,6 +2783,23 @@ void playerbot_factory_init_gems(void* state);
  */
 bool playerbot_toggle_monitor(void* state);
 
+/* ── Manager command dispatch ─────────────────────────────────────────── */
+
+/**
+ * Try to handle a `.bot <name> <cmd> [param]` command in Rust.
+ *
+ * Returns a heap-allocated C string if the command was handled (caller must
+ * free with playerbot_free_string), or NULL if the C++ side should process
+ * the command.
+ */
+char* playerbot_mgr_bot_command(void* state,
+                                const char* cmd,
+                                const char* param,
+                                uint32_t master_level);
+
+/** Free a string returned by playerbot_mgr_bot_command. NULL-safe. */
+void playerbot_free_string(char* ptr);
+
 /* ─────────────────────────────────────────────────────────────────────
  * Login queue (`playerbot_login_*`)
  *
