@@ -157,7 +157,7 @@ RandomPlayerbotMgr::RandomPlayerbotMgr()
     // Initialize the Rust AI module once at server startup.
     PlayerbotRust::InitRustModule();
 
-    if (sPlayerbotAIConfig.enabled && sPlayerbotAIConfig.randomBotAutologin)
+    if (playerbot_config_enabled() && playerbot_config_random_bot_autologin())
     {
         PrepareTeleportCache();
 
@@ -272,7 +272,7 @@ void RandomPlayerbotMgr::UpdateAIInternal(uint32 elapsed, bool minimal)
     // worker dispatches per-bot actions back to C++ through the bridge.
     PlayerbotRust::WorldUpdate(static_cast<uint32_t>(elapsed));
 
-    SetAIInternalUpdateDelay(sPlayerbotAIConfig.randomBotUpdateInterval);
+    SetAIInternalUpdateDelay(playerbot_config_random_bot_update_interval());
 }
 
 
@@ -311,7 +311,7 @@ void RandomPlayerbotMgr::SyncEventTimers()
 void RandomPlayerbotMgr::ScheduleTeleport(uint32 bot, uint32 time)
 {
     if (!time)
-        time = 60 + urand(sPlayerbotAIConfig.randomBotTeleportMinInterval, sPlayerbotAIConfig.randomBotTeleportMaxInterval);
+        time = 60 + urand(playerbot_config_random_bot_teleport_min_interval(), playerbot_config_random_bot_teleport_max_interval());
     SetEventValue(bot, "teleport", 1, time);
 }
 
@@ -333,10 +333,10 @@ bool RandomPlayerbotMgr::AddRandomBot(uint32 bot)
     if (!GetEventValue(bot, "login"))
     {
         AddPlayerBot(bot, 0);
-        SetEventValue(bot, "add", 1, urand(sPlayerbotAIConfig.minRandomBotInWorldTime, sPlayerbotAIConfig.maxRandomBotInWorldTime));
+        SetEventValue(bot, "add", 1, urand(playerbot_config_min_random_bot_in_world_time(), playerbot_config_max_random_bot_in_world_time()));
         SetEventValue(bot, "logout", 0, 0);
         SetEventValue(bot, "login", 1, -1);
-        uint32 randomTime = urand(sPlayerbotAIConfig.minRandomBotReviveTime, sPlayerbotAIConfig.maxRandomBotReviveTime);
+        uint32 randomTime = urand(playerbot_config_min_random_bot_revive_time(), playerbot_config_max_random_bot_revive_time());
         SetEventValue(bot, "update", 1, randomTime);
         currentBots.push_back(bot);
         sLog.outDetail("Random bot added #%d", bot);
@@ -347,7 +347,7 @@ bool RandomPlayerbotMgr::AddRandomBot(uint32 bot)
 
 void RandomPlayerbotMgr::MovePlayerBot(uint32 guid, PlayerbotHolder* newHolder)
 {
-    if (!sPlayerbotAIConfig.enabled)
+    if (!playerbot_config_enabled())
         return;
 
     players[guid] = this->GetPlayerBot(guid);
@@ -413,7 +413,7 @@ void RandomPlayerbotMgr::RandomTeleport(Player* bot, std::vector<WorldLocation> 
     }
 
     // teleport to active areas only
-    if (sPlayerbotAIConfig.randomBotTeleportNearPlayer && activeOnly)
+    if (playerbot_config_random_bot_teleport_near_player() && activeOnly)
     {
         tlocs.erase(std::remove_if(tlocs.begin(), tlocs.end(), [this](const WorldLocation& l)
         {
@@ -424,10 +424,10 @@ void RandomPlayerbotMgr::RandomTeleport(Player* bot, std::vector<WorldLocation> 
                 uint32 zoneId = sTerrainMgr.GetZoneId(mapId, l.coord_x, l.coord_y, l.coord_z);
                 if (tMap->HasActiveZone(zoneId))
                 {
-                    if (sPlayerbotAIConfig.randomBotTeleportNearPlayerMaxAmount > 0 && sPlayerbotAIConfig.randomBotTeleportNearPlayerMaxAmountRadius > 0.0f)
+                    if (playerbot_config_random_bot_teleport_near_player_max_amount() > 0 && playerbot_config_random_bot_teleport_near_player_max_amount_radius() > 0.0f)
                     {
                         uint32 botsNearTeleportPoint = 0;
-                        float maxRadiusSq = sPlayerbotAIConfig.randomBotTeleportNearPlayerMaxAmountRadius * sPlayerbotAIConfig.randomBotTeleportNearPlayerMaxAmountRadius;
+                        float maxRadiusSq = playerbot_config_random_bot_teleport_near_player_max_amount_radius() * playerbot_config_random_bot_teleport_near_player_max_amount_radius();
                         ForEachPlayerbot([&](Player* otherBot)
                         {
                             if (otherBot && !otherBot->IsBeingTeleported() && zoneId == otherBot->GetZoneId())
@@ -441,7 +441,7 @@ void RandomPlayerbotMgr::RandomTeleport(Player* bot, std::vector<WorldLocation> 
                             }
                         });
 
-                        return botsNearTeleportPoint >= sPlayerbotAIConfig.randomBotTeleportNearPlayerMaxAmount;
+                        return botsNearTeleportPoint >= playerbot_config_random_bot_teleport_near_player_max_amount();
                     }
                     else
                     {
@@ -565,8 +565,8 @@ void RandomPlayerbotMgr::RandomTeleport(Player* bot, std::vector<WorldLocation> 
             }
 #endif
 
-            float x = loc.coord_x + (attemtps > 0 ? urand(0, sPlayerbotAIConfig.grindDistance) - sPlayerbotAIConfig.grindDistance / 2 : 0);
-            float y = loc.coord_y + (attemtps > 0 ? urand(0, sPlayerbotAIConfig.grindDistance) - sPlayerbotAIConfig.grindDistance / 2 : 0);
+            float x = loc.coord_x + (attemtps > 0 ? urand(0, playerbot_config_grind_distance()) - playerbot_config_grind_distance() / 2 : 0);
+            float y = loc.coord_y + (attemtps > 0 ? urand(0, playerbot_config_grind_distance()) - playerbot_config_grind_distance() / 2 : 0);
             float z = loc.coord_z;
 
             Map* map = sMapMgr.FindMap(loc.mapid, 0);
@@ -647,7 +647,7 @@ std::vector<std::pair<uint32, uint32>> RandomPlayerbotMgr::RpgLocationsNear(cons
     float minDist = FLT_MAX;
     std::string hasZone = "-", wantZone = GetAreaNameForLocation(pos);
 
-    for (uint32 level = 1; level < sPlayerbotAIConfig.randomBotMaxLevel + 1; level++)
+    for (uint32 level = 1; level < playerbot_config_random_bot_max_level() + 1; level++)
     {
         for (uint32 r = 1; r < MAX_RACES; r++)
         {
@@ -688,7 +688,7 @@ std::vector<std::pair<uint32, uint32>> RandomPlayerbotMgr::RpgLocationsNear(cons
 
 void RandomPlayerbotMgr::PrepareTeleportCache()
 {
-    uint32 maxLevel = sPlayerbotAIConfig.randomBotMaxLevel;
+    uint32 maxLevel = playerbot_config_random_bot_max_level();
     if (maxLevel > sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL))
         maxLevel = sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL);
 
@@ -720,7 +720,7 @@ void RandomPlayerbotMgr::PrepareTeleportCache()
                 "FROM creature c INNER JOIN creature_template t ON c.id = t.entry WHERE t.CreatureType != 8 AND t.NpcFlags = 0 AND t.Rank = 0 AND NOT (t.extraFlags & 1024 OR t.extraFlags & 65536 OR t.extraflags & 64 OR t.unitFlags & 256 OR t.unitFlags & 512) AND t.lootid != 0) q "
                 "WHERE delta >= 0 AND delta <= %u AND map in (%s)",
                 level,
-                sPlayerbotAIConfig.randomBotTeleLevel,
+                playerbot_config_random_bot_tele_level(),
                 sPlayerbotAIConfig.randomBotMapsAsString.c_str()
             );
             if (results)
@@ -756,7 +756,7 @@ void RandomPlayerbotMgr::PrepareTeleportCache()
     {
         do
         {
-            for (uint32 level = 1; level < sPlayerbotAIConfig.randomBotMaxLevel + 1; level++)
+            for (uint32 level = 1; level < playerbot_config_random_bot_max_level() + 1; level++)
             {
                 Field* fields = results->Fetch();
                 uint16 mapId = fields[0].GetUInt16();
@@ -785,7 +785,7 @@ void RandomPlayerbotMgr::PrepareTeleportCache()
 
     std::map<uint32, std::map<uint32, std::vector<std::string>>> areaNames;
 
-    for (uint32 level = 1; level < sPlayerbotAIConfig.randomBotMaxLevel + 1; level++)
+    for (uint32 level = 1; level < playerbot_config_random_bot_max_level() + 1; level++)
     {
         for (uint32 r = 1; r < MAX_RACES; r++)
         {
@@ -946,7 +946,7 @@ void RandomPlayerbotMgr::Randomize(Player* bot)
         return;
 
     bool initialRandom = false;
-    if (bot->GetLevel() <= sPlayerbotAIConfig.randombotStartingLevel)
+    if (bot->GetLevel() <= playerbot_config_randombot_starting_level())
         initialRandom = true;
 #ifdef MANGOSBOT_TWO
     else if (bot->GetLevel() < 60 && bot->getClass() == CLASS_DEATH_KNIGHT)
@@ -954,10 +954,10 @@ void RandomPlayerbotMgr::Randomize(Player* bot)
 #endif
 
     // give bot random level if is above or below level sync
-    if (!initialRandom && players.size() && sPlayerbotAIConfig.syncLevelWithPlayers)
+    if (!initialRandom && players.size() && playerbot_config_sync_level_with_players())
     {
-        uint32 maxLevel = std::max(sPlayerbotAIConfig.randomBotMinLevel, std::min(playersLevel + sPlayerbotAIConfig.syncLevelMaxAbove, sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL)));
-        if (bot->GetLevel() > maxLevel || (bot->GetLevel() + sPlayerbotAIConfig.syncLevelMaxAbove) < playersLevel)
+        uint32 maxLevel = std::max(playerbot_config_random_bot_min_level(), std::min(playersLevel + playerbot_config_sync_level_max_above(), sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL)));
+        if (bot->GetLevel() > maxLevel || (bot->GetLevel() + playerbot_config_sync_level_max_above()) < playersLevel)
             initialRandom = true;
     }
 
@@ -966,7 +966,7 @@ void RandomPlayerbotMgr::Randomize(Player* bot)
         RandomizeFirst(bot);
         sLog.outDetail("Bot #%d %s:%d <%s>: gear/level randomised", bot->GetGUIDLow(), bot->GetTeam() == ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName());
     }
-    else if (sPlayerbotAIConfig.randomGearUpgradeEnabled)
+    else if (playerbot_config_random_gear_upgrade_enabled())
     {
         UpdateGearSpells(bot);
         sLog.outDetail("Bot #%d %s:%d <%s>: gear upgraded", bot->GetGUIDLow(), bot->GetTeam() == ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName());
@@ -974,7 +974,7 @@ void RandomPlayerbotMgr::Randomize(Player* bot)
     else
     {
         // schedule randomise
-        uint32 randomTime = urand(sPlayerbotAIConfig.minRandomBotRandomizeTime, sPlayerbotAIConfig.maxRandomBotRandomizeTime);
+        uint32 randomTime = urand(playerbot_config_min_random_bot_randomize_time(), playerbot_config_max_random_bot_randomize_time());
         SetEventValue(bot->GetGUIDLow(), "randomize", 1, randomTime);
     }
 
@@ -983,7 +983,7 @@ void RandomPlayerbotMgr::Randomize(Player* bot)
 
 void RandomPlayerbotMgr::UpdateGearSpells(Player* bot)
 {
-    uint32 maxLevel = sPlayerbotAIConfig.randomBotMaxLevel;
+    uint32 maxLevel = playerbot_config_random_bot_max_level();
     if (maxLevel > sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL))
         maxLevel = sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL);
 
@@ -996,28 +996,28 @@ void RandomPlayerbotMgr::UpdateGearSpells(Player* bot)
         SetValue(bot, "level", level);
 
     // schedule randomise
-    uint32 randomTime = urand(sPlayerbotAIConfig.minRandomBotRandomizeTime, sPlayerbotAIConfig.maxRandomBotRandomizeTime);
+    uint32 randomTime = urand(playerbot_config_min_random_bot_randomize_time(), playerbot_config_max_random_bot_randomize_time());
     SetEventValue(bot->GetGUIDLow(), "randomize", 1, randomTime);
 }
 
 void RandomPlayerbotMgr::RandomizeFirst(Player* bot)
 {
-    uint32 maxLevel = sPlayerbotAIConfig.randomBotMaxLevel;
+    uint32 maxLevel = playerbot_config_random_bot_max_level();
     if (maxLevel > sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL))
         maxLevel = sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL);
 
     // if lvl sync is enabled, max level is limited by online players lvl
-    if (sPlayerbotAIConfig.syncLevelWithPlayers)
-        maxLevel = std::max(sPlayerbotAIConfig.randomBotMinLevel, std::min(playersLevel+ sPlayerbotAIConfig.syncLevelMaxAbove, sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL)));
+    if (playerbot_config_sync_level_with_players())
+        maxLevel = std::max(playerbot_config_random_bot_min_level(), std::min(playersLevel+ playerbot_config_sync_level_max_above(), sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL)));
 
-    uint32 level = urand(std::max(uint32(sWorld.getConfig(CONFIG_UINT32_START_PLAYER_LEVEL)), sPlayerbotAIConfig.randomBotMinLevel), maxLevel);
+    uint32 level = urand(std::max(uint32(sWorld.getConfig(CONFIG_UINT32_START_PLAYER_LEVEL)), playerbot_config_random_bot_min_level()), maxLevel);
 
 #ifdef MANGOSBOT_TWO
     if (bot->getClass() == CLASS_DEATH_KNIGHT)
         level = urand(std::max(bot->GetLevel(), sWorld.getConfig(CONFIG_UINT32_START_HEROIC_PLAYER_LEVEL)), std::max(sWorld.getConfig(CONFIG_UINT32_START_HEROIC_PLAYER_LEVEL), maxLevel));
 #endif
 
-    if (urand(0, 100) < 100 * sPlayerbotAIConfig.randomBotMaxLevelChance && level < maxLevel)
+    if (urand(0, 100) < 100 * playerbot_config_random_bot_max_level_chance() && level < maxLevel)
         level = maxLevel;
 
 #ifndef MANGOSBOT_ZERO
@@ -1043,7 +1043,7 @@ void RandomPlayerbotMgr::RandomizeFirst(Player* bot)
         ai->FactoryRandomizeViaRust(level, /*incremental*/ false, /*sync*/ false, 0);
 
     // schedule randomise
-    uint32 randomTime = urand(sPlayerbotAIConfig.minRandomBotRandomizeTime, sPlayerbotAIConfig.maxRandomBotRandomizeTime);
+    uint32 randomTime = urand(playerbot_config_min_random_bot_randomize_time(), playerbot_config_max_random_bot_randomize_time());
     SetEventValue(bot->GetGUIDLow(), "randomize", 1, randomTime);
 
     if (bot->GetGroup())
@@ -1062,7 +1062,7 @@ void RandomPlayerbotMgr::Refresh(Player* bot)
         bot->SpawnCorpseBones();
     }
 
-    if (sPlayerbotAIConfig.disableRandomLevels)
+    if (playerbot_config_disable_random_levels())
         return;
 
     if (bot->InBattleGround())
@@ -1175,7 +1175,7 @@ void RandomPlayerbotMgr::SetValue(Player* bot, std::string type, uint32 value, s
 
 bool RandomPlayerbotMgr::HandlePlayerbotConsoleCommand(ChatHandler* handler, char const* args)
 {
-    if (!sPlayerbotAIConfig.enabled)
+    if (!playerbot_config_enabled())
     {
         sLog.outError("Playerbot system is currently disabled!");
         return false;
@@ -1314,7 +1314,7 @@ void RandomPlayerbotMgr::OnBotLoginInternal(Player * const bot)
 
 void RandomPlayerbotMgr::OnPlayerLogin(Player* player)
 {
-    if (!sPlayerbotAIConfig.enabled)
+    if (!playerbot_config_enabled())
         return;
 
     // Master/strategy management is no longer available on PlayerbotRust
@@ -1357,7 +1357,7 @@ void RandomPlayerbotMgr::ChangeStrategy(Player* player)
 {
     uint32 bot = player->GetGUIDLow();
 
-    if (urand(0, 100) > 100 * sPlayerbotAIConfig.randomBotRpgChance) // select grind / pvp
+    if (urand(0, 100) > 100 * playerbot_config_random_bot_rpg_chance()) // select grind / pvp
     {
         sLog.outDetail("Bot #%d %s:%d <%s>: sent to grind spot", bot, player->GetTeam() == ALLIANCE ? "A" : "H", player->GetLevel(), player->GetName());
         // teleport in different places only if players are online

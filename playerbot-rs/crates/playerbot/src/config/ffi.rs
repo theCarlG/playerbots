@@ -398,6 +398,45 @@ config_scalar_getter!(
     bool,
     random_bot_timed_offline
 );
+config_scalar_getter!(playerbot_config_enabled, bool, enabled);
+config_scalar_getter!(playerbot_config_random_bot_max_level, u32, random_bot_max_level);
+config_scalar_getter!(playerbot_config_random_bot_min_level, u32, random_bot_min_level);
+config_scalar_getter!(playerbot_config_grind_distance, f32, grind_distance);
+config_scalar_getter!(playerbot_config_sync_level_max_above, u32, sync_level_max_above);
+config_scalar_getter!(playerbot_config_sync_level_with_players, bool, sync_level_with_players);
+config_scalar_getter!(playerbot_config_randombot_starting_level, u32, randombot_starting_level);
+config_scalar_getter!(playerbot_config_random_gear_upgrade_enabled, bool, random_gear_upgrade_enabled);
+config_scalar_getter!(playerbot_config_random_bot_update_interval, u32, random_bot_update_interval);
+config_scalar_getter!(playerbot_config_random_bot_autologin, bool, random_bot_autologin);
+config_scalar_getter!(playerbot_config_disable_random_levels, bool, disable_random_levels);
+config_scalar_getter!(playerbot_config_random_bot_tele_level, u32, random_bot_tele_level);
+config_scalar_getter!(playerbot_config_random_bot_rpg_chance, f32, random_bot_rpg_chance);
+config_scalar_getter!(playerbot_config_random_bot_max_level_chance, f32, random_bot_max_level_chance);
+config_scalar_getter!(playerbot_config_min_random_bot_randomize_time, u32, min_random_bot_randomize_time);
+config_scalar_getter!(playerbot_config_max_random_bot_randomize_time, u32, max_random_bot_randomize_time);
+config_scalar_getter!(playerbot_config_min_random_bot_revive_time, u32, min_random_bot_revive_time);
+config_scalar_getter!(playerbot_config_max_random_bot_revive_time, u32, max_random_bot_revive_time);
+config_scalar_getter!(playerbot_config_random_bot_teleport_near_player, bool, random_bot_teleport_near_player);
+config_scalar_getter!(
+    playerbot_config_random_bot_teleport_near_player_max_amount,
+    u32,
+    random_bot_teleport_near_player_max_amount
+);
+config_scalar_getter!(
+    playerbot_config_random_bot_teleport_near_player_max_amount_radius,
+    f32,
+    random_bot_teleport_near_player_max_amount_radius
+);
+config_scalar_getter!(
+    playerbot_config_random_bot_teleport_min_interval,
+    u32,
+    random_bot_teleport_min_interval
+);
+config_scalar_getter!(
+    playerbot_config_random_bot_teleport_max_interval,
+    u32,
+    random_bot_teleport_max_interval
+);
 
 /// Read a fixed class/race count. Returns `-1` if `use_fixed_class_race_counts`
 /// is disabled or the entry is absent; otherwise the stored count.
