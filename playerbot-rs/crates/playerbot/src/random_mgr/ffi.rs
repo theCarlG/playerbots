@@ -368,60 +368,110 @@ fn schedule_event(guid: u32, key: &str, delay_s: u32) {
 
 // ─── Console command / stats dispatch ──────────────────────────────────────
 
-/// `/bot <args>` passthrough. Returns `true` if the command parsed into
-/// a known [`super::commands::ParsedCommand`] and the side effects
-/// ran, `false` otherwise.
+/// Side-effect flags returned via the `out_flags` out-param of
+/// [`playerbot_random_mgr_console_command`]. Rust performs every effect it
+/// owns (DB event wipe, in-memory cache clear, worker reset, worker PID
+/// retune); these two are genuinely CMaNGOS-side and are signalled back
+/// for the C++ caller to perform, plus the login-debug toggle which lives
+/// behind the separate login-worker FFI singleton.
+pub const CONSOLE_FLAG_UPDATE_TICK: u32 = 1 << 0;
+pub const CONSOLE_FLAG_CLEAN_MAP: u32 = 1 << 1;
+pub const CONSOLE_FLAG_LOGIN_DEBUG: u32 = 1 << 2;
+
+/// `RandomPlayerbotMgr::HandlePlayerbotConsoleCommand` core. Parses and
+/// dispatches a console or per-bot command and returns the newline-joined
+/// output lines as a freshly allocated C string (free with
+/// `playerbot_free_string`), or NULL when the command is not recognised —
+/// in which case the C++ caller falls through to the holder command
+/// handler. `*out_flags` receives `CONSOLE_FLAG_*` bits for the side
+/// effects the C++ caller must perform (force-tick, clean-map, login-debug
+/// toggle); every other side effect (event wipe, worker reset, PID retune)
+/// is applied here against the real worker / world.
 ///
 /// # Safety
 ///
-/// `text` must be a valid null-terminated C string.
+/// `text` must be a valid null-terminated C string. `out_flags` must be a
+/// valid pointer to a `uint32_t` (or null).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn playerbot_random_mgr_handle_command(text: *const c_char) -> bool {
+pub unsafe extern "C" fn playerbot_random_mgr_console_command(
+    text: *const c_char,
+    out_flags: *mut u32,
+) -> *mut c_char {
+    use super::commands::{parse, run_console_command, ConsoleCommand, ParsedCommand};
+
+    if !out_flags.is_null() {
+        unsafe { *out_flags = 0 };
+    }
     let Some(text) = (unsafe { c_str_to_owned(text) }) else {
-        return false;
+        return core::ptr::null_mut();
     };
-    with_state(false, |st| {
-        let parsed = super::commands::parse(&text);
-        match parsed {
-            super::commands::ParsedCommand::Console { cmd, args } => {
-                // Console commands that mutate state go through the
-                // worker (so all the state lives on one thread). For
-                // now we dispatch them on the main thread against a
-                // throw-away state — the worker will replay the same
-                // command via its own channel when we wire the RA
-                // path end-to-end. The stats command still produces a
-                // chat line that we log out directly.
-                let mut tmp = super::state::RandomMgrState::new();
-                let out = super::commands::run_console_command(
-                    cmd,
-                    &args,
-                    &mut tmp,
-                    st.world.as_ref(),
-                );
-                for line in out.messages {
-                    st.world.log_info(&line);
-                }
-                true
-            }
-            super::commands::ParsedCommand::Bot { cmd, name_prefix, params } => {
+
+    with_state(core::ptr::null_mut(), |st| {
+        let mut flags: u32 = 0;
+        let messages: Vec<String> = match parse(&text) {
+            ParsedCommand::Unknown => return core::ptr::null_mut(),
+            ParsedCommand::Bot { cmd, name_prefix, params } => {
                 let guids = matching_bot_guids(st.world.as_ref(), &name_prefix);
-                let mut cache = match st.cache_snapshot.lock() {
-                    Ok(c) => c,
-                    Err(e) => e.into_inner(),
-                };
-                let out = super::commands::run_bot_command(
-                    cmd,
-                    &guids,
-                    &params,
-                    &mut cache,
-                    st.world.as_ref(),
-                );
-                for line in out.messages {
-                    st.world.log_info(&line);
-                }
-                true
+                let mut cache = lock_cache(st);
+                super::commands::run_bot_command(cmd, &guids, &params, &mut cache, st.world.as_ref())
+                    .messages
             }
-            super::commands::ParsedCommand::Unknown => false,
+            ParsedCommand::Console { cmd, args } => {
+                // `stats` renders against the live shared event cache;
+                // every other console command's output is independent of
+                // worker state, so a scratch state produces the correct
+                // lines while the real side effects below hit the worker.
+                let out = if cmd == ConsoleCommand::Stats {
+                    let rows = st.world.query_bot_stats();
+                    let mut cache = lock_cache(st);
+                    super::stats::print_stats(
+                        &rows,
+                        &mut cache,
+                        st.world.as_ref(),
+                        now_epoch_s(),
+                        st.world.world_max_level(),
+                    )
+                } else {
+                    let mut scratch = super::state::RandomMgrState::new();
+                    run_console_command(cmd, &args, &mut scratch, st.world.as_ref())
+                };
+
+                match cmd {
+                    ConsoleCommand::Update => flags |= CONSOLE_FLAG_UPDATE_TICK,
+                    ConsoleCommand::CleanMap => flags |= CONSOLE_FLAG_CLEAN_MAP,
+                    ConsoleCommand::LoginDebug => flags |= CONSOLE_FLAG_LOGIN_DEBUG,
+                    ConsoleCommand::Pid => {
+                        // `run_console_command` already produced the echo
+                        // message; retune the *worker's* PID for real.
+                        let p: Vec<f64> = args
+                            .split_ascii_whitespace()
+                            .map(|s| s.parse::<f64>().unwrap_or(0.0))
+                            .collect();
+                        st.worker.adjust_pid(
+                            p.first().copied().unwrap_or(0.0),
+                            p.get(1).copied().unwrap_or(0.0),
+                            p.get(2).copied().unwrap_or(0.0),
+                        );
+                    }
+                    ConsoleCommand::Reset => {
+                        // `run_console_command` already fired the DB-side
+                        // `world.delete_all_events()`; clear the shared
+                        // cache mirror and wipe the worker's in-memory state.
+                        lock_cache(st).clear();
+                        st.worker.reset();
+                    }
+                    _ => {}
+                }
+                out.messages
+            }
+        };
+
+        if !out_flags.is_null() {
+            unsafe { *out_flags = flags };
+        }
+        match std::ffi::CString::new(messages.join("\n")) {
+            Ok(cs) => cs.into_raw(),
+            Err(_) => core::ptr::null_mut(),
         }
     })
 }
@@ -451,6 +501,14 @@ pub extern "C" fn playerbot_random_mgr_print_stats(_requester_guid: u32) {
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
+
+/// Lock the shared event-cache snapshot, recovering from a poisoned mutex.
+fn lock_cache(st: &RandomMgrFfiState) -> std::sync::MutexGuard<'_, EventCache> {
+    match st.cache_snapshot.lock() {
+        Ok(c) => c,
+        Err(e) => e.into_inner(),
+    }
+}
 
 /// Filter the world's bot roster by the legacy "name prefix" rules:
 /// * `%` matches every bot.

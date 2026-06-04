@@ -71,7 +71,6 @@ public:
         void OnPlayerLoginError(uint32 bot);
         PlayerBotMap& GetPlayers() { return players; };
         Player* GetPlayer(uint32 playerGuid);
-        void PrintStats(uint32 requesterGuid);
         void Refresh(Player* bot);
         void RandomTeleportForLevel(Player* bot, bool activeOnly);
         void RandomTeleportForLevel(Player* bot) { return RandomTeleportForLevel(bot, true); }
@@ -112,33 +111,6 @@ public:
         void RandomTeleport(Player* bot);
         void RandomTeleport(Player* bot, std::vector<WorldLocation> &locs, bool hearth = false, bool activeOnly = false);
         void PrepareTeleportCache();
-        typedef std::list<std::string> (RandomPlayerbotMgr::*ConsoleCommandHandler) (std::string param);
-        typedef std::list<std::string> (RandomPlayerbotMgr::*ConsolePlayerCommandHandler) (Player*);
-
-        std::string consoleCmdParams;
-
-        std::list<std::string> HandleHelp(std::string param);
-        std::list<std::string> HandleConsoleReset(std::string param);
-        std::list<std::string> HandleConsoleStats(std::string param);
-        std::list<std::string> HandleConsoleReload(std::string param);
-        std::list<std::string> HandleConsoleUpdate(std::string param);
-        std::list<std::string> HandleConsolePid(std::string param);
-        std::list<std::string> HandleConsoleDiff(std::string param);
-        std::list<std::string> HandleConsoleCleanMap(std::string param);
-        std::list<std::string> HandleConsoleLoginDebug(std::string param);
-
-    public:
-        static std::string GetCommandTexts(const std::string& command);
-        static std::unordered_map<std::string, std::string> GetCommandTexts();
-        std::list<std::string> HandleRandomizeFirst(Player* bot);
-        std::list<std::string> HandleUpdateGearSpells(Player* bot);
-        std::list<std::string> HandleRefresh(Player* bot);
-        std::list<std::string> HandleRandomTeleportForLevel(Player* bot);
-        std::list<std::string> HandleRandomTeleportForRpg(Player* bot);
-        std::list<std::string> HandleRevive(Player* bot);
-        std::list<std::string> HandleRandomTeleport(Player* bot);
-        std::list<std::string> HandleChangeStrategy(Player* bot);
-        std::list<std::string> HandleRemove(Player* bot);
 
     private:
         PlayerBotMap players;
@@ -150,8 +122,6 @@ public:
         std::list<uint32> currentBots;
         std::list<uint32> arenaTeamMembers;
         uint32 playersLevel = 0;
-        uint32 botCount = 0;
-        uint32 activeBots = 0;
 
         std::vector<std::pair<uint32, uint32>> RpgLocationsNear(const WorldLocation pos, const std::map<uint32, std::map<uint32, std::vector<std::string>>>& areaNames, uint32 radius = 2000);
 

@@ -3177,10 +3177,17 @@ void playerbot_random_mgr_schedule_teleport(uint32_t guid, uint32_t delay_s);
 /** Schedule a per-bot strategy change in `delay_s` seconds. */
 void playerbot_random_mgr_schedule_change_strategy(uint32_t guid, uint32_t delay_s);
 
-/** Forward a chat / console command to the manager. `text` is the raw
- *  argument string (no leading command name); returns true iff the
- *  command was recognised. Used by `HandlePlayerbotConsoleCommand`. */
-bool playerbot_random_mgr_handle_command(const char* text);
+/** Dispatch a `rndbot ...` console / per-bot command. `text` is the full
+ *  argument string (command name + params). Returns the newline-joined
+ *  output lines as a malloc'd C string (free with `playerbot_free_string`),
+ *  or NULL when the command is unrecognised — in which case the caller
+ *  falls through to the holder command handler. `*out_flags` receives
+ *  PLAYERBOT_CONSOLE_FLAG_* bits for side effects the C++ caller must
+ *  perform. Used by `HandlePlayerbotConsoleCommand`. */
+#define PLAYERBOT_CONSOLE_FLAG_UPDATE_TICK 0x1u
+#define PLAYERBOT_CONSOLE_FLAG_CLEAN_MAP   0x2u
+#define PLAYERBOT_CONSOLE_FLAG_LOGIN_DEBUG 0x4u
+char* playerbot_random_mgr_console_command(const char* text, uint32_t* out_flags);
 
 /** Print the running stats block into the log sink (mirrors the legacy
  *  `PrintStats` call). */

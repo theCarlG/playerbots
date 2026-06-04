@@ -48,6 +48,9 @@ pub enum WorkerRequest {
     /// Run [`sync_event_timers`] once. Called on first startup after
     /// the event cache has been hydrated.
     SyncEventTimers { now_epoch_s: u32 },
+    /// Re-tune the PID controller gains. Called from the
+    /// `rndbot pid <p> <i> <d>` console command.
+    AdjustPid { p: f64, i: f64, d: f64 },
     /// Stop the worker. The thread exits as soon as it pops this
     /// message.
     Shutdown,
@@ -66,6 +69,8 @@ pub enum WorkerResponse {
     ResetDone,
     /// `SyncEventTimers` acknowledgement.
     SyncEventTimersDone,
+    /// `AdjustPid` acknowledgement.
+    PidAdjusted,
 }
 
 /// Handle the main thread uses to talk to the spawned worker. Wraps
@@ -138,6 +143,12 @@ impl RandomMgrWorkerHandle {
             .is_ok()
     }
 
+    /// Send an `AdjustPid` request. Returns `false` if the worker has
+    /// exited.
+    pub fn adjust_pid(&self, p: f64, i: f64, d: f64) -> bool {
+        self.tx.send(WorkerRequest::AdjustPid { p, i, d }).is_ok()
+    }
+
     /// Block until the next response arrives. Used by tests for
     /// deterministic sequencing; production code uses
     /// [`drain_responses`](Self::drain_responses).
@@ -200,6 +211,12 @@ fn worker_loop(
             WorkerRequest::Reset => {
                 state.reset_in_memory();
                 if resp_tx.send(WorkerResponse::ResetDone).is_err() {
+                    break;
+                }
+            }
+            WorkerRequest::AdjustPid { p, i, d } => {
+                state.pid.adjust(p, i, d);
+                if resp_tx.send(WorkerResponse::PidAdjusted).is_err() {
                     break;
                 }
             }
@@ -319,6 +336,20 @@ mod tests {
         match handle.recv_response() {
             Some(WorkerResponse::ResetDone) => {}
             other => panic!("expected ResetDone, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn worker_adjust_pid_acks() {
+        let _g = TEST_LOCK.lock().unwrap();
+        install_cfg();
+
+        let mock = mk_world();
+        let handle = RandomMgrWorkerHandle::spawn(mock);
+        assert!(handle.adjust_pid(0.05, 0.001, 0.05));
+        match handle.recv_response() {
+            Some(WorkerResponse::PidAdjusted) => {}
+            other => panic!("expected PidAdjusted, got {:?}", other),
         }
     }
 
