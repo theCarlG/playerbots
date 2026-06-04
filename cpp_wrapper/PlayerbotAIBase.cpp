@@ -1,6 +1,6 @@
 
 #include "PlayerbotAIBase.h"
-#include "BotConfig.h"
+#include "botffi.h"
 #include "playerbotDefs.h"
 #include "Entities/Player.h"
 #include "Globals/SharedDefines.h"
@@ -43,13 +43,14 @@ void PlayerbotAIBase::IncreaseAIInternalUpdateDelay(uint32 delay)
 
 void PlayerbotAIBase::YieldAIInternalThread(bool minimal)
 {
-    if (aiInternalUpdateDelay < sPlayerbotAIConfig.reactDelay)
-        aiInternalUpdateDelay = minimal ? sPlayerbotAIConfig.reactDelay * 10 : sPlayerbotAIConfig.reactDelay;
+    uint32 reactDelay = playerbot_config_react_delay();
+    if (aiInternalUpdateDelay < reactDelay)
+        aiInternalUpdateDelay = minimal ? reactDelay * 10 : reactDelay;
 }
 
 bool PlayerbotAIBase::IsActive() const
 {
-    return (int)aiInternalUpdateDelay < (int)sPlayerbotAIConfig.maxWaitForMove;
+    return (int)aiInternalUpdateDelay < (int)playerbot_config_max_wait_for_move();
 }
 
 bool IsAlliance(uint8 race) {

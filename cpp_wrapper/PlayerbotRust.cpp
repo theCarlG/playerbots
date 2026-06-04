@@ -365,7 +365,7 @@ BotSecurityLevel PlayerbotRust::ComputeSenderSecurity(Player& sender) const
     //    senders bypass this.
     int32 levelDiff = int32(m_bot->GetLevel()) - int32(sender.GetLevel());
     bool sameGuild  = m_bot->GetGuildId() && m_bot->GetGuildId() == sender.GetGuildId();
-    if (levelDiff > sPlayerbotAIConfig.levelCheck && !sameGuild)
+    if (levelDiff > playerbot_config_level_check() && !sameGuild)
         return BOT_SECURITY_TALK;
 
     // 7) Battleground queue gate.

@@ -2441,6 +2441,17 @@ uint32_t playerbot_config_get_class_race_probability_total(void);
 int64_t  playerbot_config_get_fixed_class_race_count(uint32_t cls, uint32_t race);
 uint32_t playerbot_config_get_level_probability(uint32_t level);
 
+/* Named typed config getters — replacing string-keyed reads of the
+ * deleted `BotConfig` C++ mirror (Phase M). One per field a C++ consumer
+ * needs; values are live (reflect `/bot reload`). */
+uint32_t playerbot_config_react_delay(void);
+uint32_t playerbot_config_max_wait_for_move(void);
+int32_t  playerbot_config_level_check(void);
+uint32_t playerbot_config_min_random_bot_in_world_time(void);
+uint32_t playerbot_config_max_random_bot_in_world_time(void);
+bool     playerbot_config_random_bot_timed_logout(void);
+bool     playerbot_config_random_bot_timed_offline(void);
+
 uint32_t playerbot_config_get_gear_min_item_level(uint32_t phase);
 uint32_t playerbot_config_get_gear_max_item_level(uint32_t phase);
 int32_t  playerbot_config_get_gear_item(uint32_t phase, uint32_t cls, uint32_t spec, uint32_t slot);

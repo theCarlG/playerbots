@@ -381,12 +381,12 @@ bool LoginBridge::CB_PerformLogin(uint32_t guid)
 
     // Apply the legacy "add" TTL so the bot stays in world for a
     // randomised interval before the timed-logout path picks it up.
-    if (sPlayerbotAIConfig.randomBotTimedLogout)
+    if (playerbot_config_random_bot_timed_logout())
     {
         sRandomPlayerbotMgr.SetValue(
             guid, "add", 1, "",
-            urand(sPlayerbotAIConfig.minRandomBotInWorldTime,
-                  sPlayerbotAIConfig.maxRandomBotInWorldTime));
+            urand(playerbot_config_min_random_bot_in_world_time(),
+                  playerbot_config_max_random_bot_in_world_time()));
     }
 
     // Confirm the bot is actually in world after HandlePlayerLogin.
@@ -408,12 +408,12 @@ bool LoginBridge::CB_PerformLogout(uint32_t guid)
     if (sObjectMgr.GetPlayer(og, false))
         return false;
 
-    if (sPlayerbotAIConfig.randomBotTimedOffline)
+    if (playerbot_config_random_bot_timed_offline())
     {
         sRandomPlayerbotMgr.SetValue(
             guid, "logout", 1, "",
-            urand(sPlayerbotAIConfig.minRandomBotInWorldTime,
-                  sPlayerbotAIConfig.maxRandomBotInWorldTime));
+            urand(playerbot_config_min_random_bot_in_world_time(),
+                  playerbot_config_max_random_bot_in_world_time()));
     }
     return true;
 }

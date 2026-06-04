@@ -361,6 +361,44 @@ pub extern "C" fn playerbot_config_get_class_race_probability_total() -> u32 {
     state().load().typed.class_race_probability_total
 }
 
+/// Named typed config getters — the `BotConfig.{h,cpp}` C++ mirror is
+/// being deleted (Phase M); every C++ `sPlayerbotAIConfig.<field>` reader
+/// migrates to one of these instead of a string-keyed lookup, honouring
+/// the "no string-keyed dispatch at the boundary" rule. Each returns the
+/// live value off the typed config so `/bot reload` is reflected.
+macro_rules! config_scalar_getter {
+    ($name:ident, $ret:ty, $field:ident) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $name() -> $ret {
+            state().load().typed.$field
+        }
+    };
+}
+
+config_scalar_getter!(playerbot_config_react_delay, u32, react_delay);
+config_scalar_getter!(playerbot_config_max_wait_for_move, u32, max_wait_for_move);
+config_scalar_getter!(playerbot_config_level_check, i32, level_check);
+config_scalar_getter!(
+    playerbot_config_min_random_bot_in_world_time,
+    u32,
+    min_random_bot_in_world_time
+);
+config_scalar_getter!(
+    playerbot_config_max_random_bot_in_world_time,
+    u32,
+    max_random_bot_in_world_time
+);
+config_scalar_getter!(
+    playerbot_config_random_bot_timed_logout,
+    bool,
+    random_bot_timed_logout
+);
+config_scalar_getter!(
+    playerbot_config_random_bot_timed_offline,
+    bool,
+    random_bot_timed_offline
+);
+
 /// Read a fixed class/race count. Returns `-1` if `use_fixed_class_race_counts`
 /// is disabled or the entry is absent; otherwise the stored count.
 #[unsafe(no_mangle)]
