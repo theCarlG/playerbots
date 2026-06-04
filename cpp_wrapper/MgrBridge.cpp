@@ -832,7 +832,7 @@ uint32 PlayerbotHolder::GetPlayerbotsAmount() const
     return amount;
 }
 
-PlayerbotMgr::PlayerbotMgr(Player* const master) : PlayerbotHolder(),  master(master), lastErrorTell(0)
+PlayerbotMgr::PlayerbotMgr(Player* const master) : PlayerbotHolder(),  master(master)
 {
 }
 
@@ -843,7 +843,6 @@ PlayerbotMgr::~PlayerbotMgr()
 void PlayerbotMgr::UpdateAIInternal(uint32 elapsed, bool minimal)
 {
     SetAIInternalUpdateDelay(sPlayerbotAIConfig.reactDelay);
-    CheckTellErrors(elapsed);
 }
 
 void PlayerbotMgr::HandleCommand(uint32 type, const std::string& text, uint32 lang)
@@ -1000,55 +999,6 @@ void PlayerbotMgr::OnPlayerLogin(Player* player)
 
         HandlePlayerbotCommand(out.str().c_str(), player);
     }
-}
-
-void PlayerbotMgr::TellError(std::string botName, std::string text)
-{
-    std::set<std::string> names = errors[text];
-    if (names.find(botName) == names.end())
-    {
-        names.insert(botName);
-    }
-    errors[text] = names;
-}
-
-std::vector<std::string> PlayerbotMgr::GetBotErrors(std::string botName)
-{
-    std::vector<std::string> botErrors;
-    for (auto& [error, names] : errors)
-    {
-        if (names.find(botName) != names.end())
-            botErrors.push_back(error);
-    }
-
-    return botErrors;
-}
-
-void PlayerbotMgr::CheckTellErrors(uint32 elapsed)
-{
-    time_t now = time(0);
-    if ((now - lastErrorTell) < sPlayerbotAIConfig.errorDelay / 1000)
-        return;
-
-    lastErrorTell = now;
-
-    for (PlayerBotErrorMap::iterator i = errors.begin(); i != errors.end(); ++i)
-    {
-        std::string text = i->first;
-        std::set<std::string> names = i->second;
-
-        std::ostringstream out;
-        bool first = true;
-        for (std::set<std::string>::iterator j = names.begin(); j != names.end(); ++j)
-        {
-            if (!first) out << ", "; else first = false;
-            out << *j;
-        }
-        out << "|cfff00000: " << text;
-        
-        ChatHandler(master->GetSession()).PSendSysMessage("%s", out.str().c_str());
-    }
-    errors.clear();
 }
 
 std::list<std::string> PlayerbotHolder::HandleList(Player* master, const std::string param, AccountTypes security)

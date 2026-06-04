@@ -15,7 +15,6 @@ class Object;
 class Item;
 
 typedef std::map<uint32, Player*> PlayerBotMap;
-typedef std::map<std::string, std::set<std::string> > PlayerBotErrorMap;
 
 class PlayerbotHolder : public PlayerbotAIBase
 {
@@ -57,8 +56,6 @@ private:
     typedef std::string (PlayerbotHolder::*BotCommandHandler)(Player* bot, Player* master, const std::string param);
 
     ObjectGuid GetSpoofGuid() const { return m_spoofGuid; }
-
-    virtual std::vector<std::string> GetBotErrors(std::string botName) { return {}; }
 
 
     std::list<std::string> HandleList(Player* master, const std::string param, AccountTypes security);
@@ -121,8 +118,6 @@ public:
     void CancelLogout();
 
     virtual void UpdateAIInternal(uint32 elapsed, bool minimal = false) override;
-    void TellError(std::string botName, std::string text);
-    virtual std::vector<std::string> GetBotErrors(std::string botName) override;
 
     Player* GetMaster() const { return master; };
 
@@ -130,12 +125,9 @@ public:
 
 protected:
     virtual void OnBotLoginInternal(Player * const bot) override;
-    void CheckTellErrors(uint32 elapsed);
 
 private:
     Player* const master;
-    PlayerBotErrorMap errors;
-    time_t lastErrorTell;
 };
 
 #endif
