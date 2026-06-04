@@ -83,7 +83,6 @@ private:
 
     std::string HandleBotAddLogin(Player* bot, Player* master, const std::string param);
     std::string HandleBotRemoveLogout(Player* bot, Player* master, const std::string param);
-    std::string HandleBotRefresh(Player* bot, Player* master, const std::string param);
     std::string HandleBotRandom(Player* bot, Player* master, const std::string param);
 
     PlayerBotMap playerBots;

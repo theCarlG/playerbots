@@ -1571,15 +1571,6 @@ std::string PlayerbotHolder::HandleBotRemoveLogout(Player* bot, Player* master, 
 
 
 
-std::string PlayerbotHolder::HandleBotRefresh(Player* bot, Player* /*master*/, const std::string /*param*/)
-{
-    PlayerbotRust* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "bot has no AI";
-    ai->FactoryRefreshViaRust();
-    return "ok";
-}
-
 std::string PlayerbotHolder::HandleBotRandom(Player* bot, Player* master, const std::string param)
 {
     sRandomPlayerbotMgr.Randomize(bot);
