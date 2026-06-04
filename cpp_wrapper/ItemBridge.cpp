@@ -601,6 +601,73 @@ void ItemBridge::CB_FreeRarityList(BotItemRarityRow* rows, uint32_t /*count*/)
     std::free(rows);
 }
 
+// ── Pre-built equip / random-item caches ─────────────────────────────────
+
+uint32_t ItemBridge::CB_QueryEquipCacheRows(BotEquipCacheRow** out_rows)
+{
+    if (!out_rows)
+        return 0;
+    *out_rows = nullptr;
+
+    std::vector<BotEquipCacheRow> rows;
+
+    auto result = CharacterDatabase.Query(
+        "SELECT clazz, spec, lvl, slot, quality, item FROM ai_playerbot_equip_cache");
+    if (!result)
+        return 0;
+
+    do
+    {
+        Field* f = result->Fetch();
+        BotEquipCacheRow r{};
+        r.clazz   = f[0].GetUInt32();
+        r.spec    = f[1].GetUInt32();
+        r.level   = f[2].GetUInt32();
+        r.slot    = f[3].GetUInt32();
+        r.quality = f[4].GetUInt32();
+        r.item_id = f[5].GetUInt32();
+        rows.push_back(r);
+    } while (result->NextRow());
+
+    return HandOff(rows, out_rows);
+}
+
+void ItemBridge::CB_FreeEquipCacheList(BotEquipCacheRow* rows, uint32_t /*count*/)
+{
+    std::free(rows);
+}
+
+uint32_t ItemBridge::CB_QueryRandomCacheRows(BotRandomCacheRow** out_rows)
+{
+    if (!out_rows)
+        return 0;
+    *out_rows = nullptr;
+
+    std::vector<BotRandomCacheRow> rows;
+
+    auto result = CharacterDatabase.Query(
+        "SELECT lvl, type, item FROM ai_playerbot_rnditem_cache");
+    if (!result)
+        return 0;
+
+    do
+    {
+        Field* f = result->Fetch();
+        BotRandomCacheRow r{};
+        r.level_bucket = f[0].GetUInt32();
+        r.kind         = f[1].GetUInt32();
+        r.item_id      = f[2].GetUInt32();
+        rows.push_back(r);
+    } while (result->NextRow());
+
+    return HandOff(rows, out_rows);
+}
+
+void ItemBridge::CB_FreeRandomCacheList(BotRandomCacheRow* rows, uint32_t /*count*/)
+{
+    std::free(rows);
+}
+
 // ── Gem properties (empty on Classic) ────────────────────────────────────
 
 uint32_t ItemBridge::CB_QueryGemProperties(BotGemPropertiesRow** out_rows)
@@ -745,6 +812,10 @@ ItemCallbacks ItemBridge::MakeCallbacks()
     cbs.lookup_random_property_enchants = &ItemBridge::CB_LookupRandomPropertyEnchants;
     cbs.query_rarity_rows              = &ItemBridge::CB_QueryRarityRows;
     cbs.free_rarity_list               = &ItemBridge::CB_FreeRarityList;
+    cbs.query_equip_cache_rows         = &ItemBridge::CB_QueryEquipCacheRows;
+    cbs.free_equip_cache_list          = &ItemBridge::CB_FreeEquipCacheList;
+    cbs.query_random_cache_rows        = &ItemBridge::CB_QueryRandomCacheRows;
+    cbs.free_random_cache_list         = &ItemBridge::CB_FreeRandomCacheList;
     cbs.query_gem_properties           = &ItemBridge::CB_QueryGemProperties;
     cbs.free_gem_list                  = &ItemBridge::CB_FreeGemList;
     cbs.get_player_item_ctx            = &ItemBridge::CB_GetPlayerItemCtx;

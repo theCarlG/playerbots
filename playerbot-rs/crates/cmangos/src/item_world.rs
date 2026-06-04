@@ -22,9 +22,9 @@
 //! its own Vec during init and releases the raw arrays before returning.
 
 use crate::{
-    BotEnchantInfo, BotGemPropertiesRow, BotItemEnchantmentRow, BotItemPrototype,
-    BotItemRarityRow, BotPlayerItemCtx, BotQuestItemRow, BotSpellEntryInfo, BotVendorItemRow,
-    BotWeightScaleRow, BotWeightScaleStatRow, ItemCallbacks,
+    BotEnchantInfo, BotEquipCacheRow, BotGemPropertiesRow, BotItemEnchantmentRow,
+    BotItemPrototype, BotItemRarityRow, BotPlayerItemCtx, BotQuestItemRow, BotRandomCacheRow,
+    BotSpellEntryInfo, BotVendorItemRow, BotWeightScaleRow, BotWeightScaleStatRow, ItemCallbacks,
 };
 
 /// Bitflags used by [`ItemWorld::player_quest_status`]. Mirrors the
@@ -113,6 +113,16 @@ pub trait ItemWorld: Send + Sync {
     /// the cache table was not created; the Rust side will fall back
     /// to its computed rarity heuristic.
     fn query_rarity_rows(&self) -> Vec<BotItemRarityRow>;
+
+    /// Optional `ai_playerbot_equip_cache` rows — a pre-built equip
+    /// cache. An empty vec forces the item pool to rebuild the cache
+    /// from scratch during init (a multi-billion-iteration scan over
+    /// every item prototype, run synchronously on the startup thread).
+    fn query_equip_cache_rows(&self) -> Vec<BotEquipCacheRow>;
+
+    /// Optional `ai_playerbot_rnditem_cache` rows — a pre-built
+    /// random-item cache. Empty → rebuild from scratch.
+    fn query_random_cache_rows(&self) -> Vec<BotRandomCacheRow>;
 
     /// `sGemPropertiesStore` contents. Empty on Classic.
     fn query_gem_properties(&self) -> Vec<BotGemPropertiesRow>;
@@ -323,6 +333,28 @@ impl ItemWorld for VtableItemWorld {
         )
     }
 
+    fn query_equip_cache_rows(&self) -> Vec<BotEquipCacheRow> {
+        drain_list(
+            self.cbs.query_equip_cache_rows.map(|f| {
+                move |out_ptr: &mut *mut BotEquipCacheRow| unsafe { f(out_ptr) }
+            }),
+            self.cbs.free_equip_cache_list.map(|f| {
+                move |ptr: *mut BotEquipCacheRow, count: u32| unsafe { f(ptr, count) }
+            }),
+        )
+    }
+
+    fn query_random_cache_rows(&self) -> Vec<BotRandomCacheRow> {
+        drain_list(
+            self.cbs.query_random_cache_rows.map(|f| {
+                move |out_ptr: &mut *mut BotRandomCacheRow| unsafe { f(out_ptr) }
+            }),
+            self.cbs.free_random_cache_list.map(|f| {
+                move |ptr: *mut BotRandomCacheRow, count: u32| unsafe { f(ptr, count) }
+            }),
+        )
+    }
+
     fn query_gem_properties(&self) -> Vec<BotGemPropertiesRow> {
         drain_list(
             self.cbs.query_gem_properties.map(|f| {
@@ -416,10 +448,10 @@ pub use mock_impl::{MockItemEvent, MockItemWorld};
 #[cfg(any(test, feature = "mock"))]
 mod mock_impl {
     use super::{
-        BotEnchantInfo, BotGemPropertiesRow, BotItemEnchantmentRow, BotItemPrototype,
-        BotItemRarityRow, BotPlayerItemCtx, BotQuestItemRow, BotSpellEntryInfo,
-        BotVendorItemRow, BotWeightScaleRow, BotWeightScaleStatRow, ItemWorld, QuestStatus,
-        TalentTabInfo,
+        BotEnchantInfo, BotEquipCacheRow, BotGemPropertiesRow, BotItemEnchantmentRow,
+        BotItemPrototype, BotItemRarityRow, BotPlayerItemCtx, BotQuestItemRow, BotRandomCacheRow,
+        BotSpellEntryInfo, BotVendorItemRow, BotWeightScaleRow, BotWeightScaleStatRow, ItemWorld,
+        QuestStatus, TalentTabInfo,
     };
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -455,6 +487,8 @@ mod mock_impl {
         enchants: HashMap<u32, BotEnchantInfo>,
         random_property_enchants: HashMap<i32, [u32; 4]>,
         rarity_rows: Vec<BotItemRarityRow>,
+        equip_cache_rows: Vec<BotEquipCacheRow>,
+        random_cache_rows: Vec<BotRandomCacheRow>,
         gem_properties: Vec<BotGemPropertiesRow>,
         player_ctx: HashMap<u32, BotPlayerItemCtx>,
         reputation: HashMap<(u32, u32), i32>,
@@ -539,6 +573,16 @@ mod mock_impl {
         /// Replace the rarity cache fixture.
         pub fn set_rarity_rows(&self, rows: Vec<BotItemRarityRow>) {
             self.state.lock().unwrap().rarity_rows = rows;
+        }
+
+        /// Replace the pre-built equip cache fixture.
+        pub fn set_equip_cache_rows(&self, rows: Vec<BotEquipCacheRow>) {
+            self.state.lock().unwrap().equip_cache_rows = rows;
+        }
+
+        /// Replace the pre-built random-item cache fixture.
+        pub fn set_random_cache_rows(&self, rows: Vec<BotRandomCacheRow>) {
+            self.state.lock().unwrap().random_cache_rows = rows;
         }
 
         /// Replace the gem properties fixture.
@@ -659,6 +703,14 @@ mod mock_impl {
             self.state.lock().unwrap().rarity_rows.clone()
         }
 
+        fn query_equip_cache_rows(&self) -> Vec<BotEquipCacheRow> {
+            self.state.lock().unwrap().equip_cache_rows.clone()
+        }
+
+        fn query_random_cache_rows(&self) -> Vec<BotRandomCacheRow> {
+            self.state.lock().unwrap().random_cache_rows.clone()
+        }
+
         fn query_gem_properties(&self) -> Vec<BotGemPropertiesRow> {
             self.state.lock().unwrap().gem_properties.clone()
         }
@@ -777,6 +829,38 @@ mod mock_impl {
             assert_eq!(rows.len(), 1);
             assert_eq!(rows[0].item_id, 25);
             assert_eq!(rows[0].quality, 2);
+        }
+
+        #[test]
+        fn equip_and_random_cache_rows_round_trip() {
+            let m = MockItemWorld::new();
+            // Default fixtures are empty — an empty cache forces a rebuild.
+            assert!(m.query_equip_cache_rows().is_empty());
+            assert!(m.query_random_cache_rows().is_empty());
+
+            m.set_equip_cache_rows(vec![BotEquipCacheRow {
+                clazz: 1,
+                spec: 2,
+                level: 60,
+                slot: 3,
+                quality: 4,
+                item_id: 18231,
+            }]);
+            m.set_random_cache_rows(vec![BotRandomCacheRow {
+                level_bucket: 6,
+                kind: 1,
+                item_id: 765,
+            }]);
+
+            let equip = m.query_equip_cache_rows();
+            assert_eq!(equip.len(), 1);
+            assert_eq!(equip[0].item_id, 18231);
+            assert_eq!(equip[0].quality, 4);
+
+            let random = m.query_random_cache_rows();
+            assert_eq!(random.len(), 1);
+            assert_eq!(random[0].level_bucket, 6);
+            assert_eq!(random[0].item_id, 765);
         }
 
         #[test]

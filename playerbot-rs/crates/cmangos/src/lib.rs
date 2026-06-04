@@ -39,7 +39,8 @@ pub mod world;
 pub use cmangos_sys::{
     BotAhMirrorRow, BotAuraInfo, BotBgQueueEntry, BotCallbacks, BotCandidateInfo,
     BotCharAppearance, BotCharacterAccount, BotCreateParams, BotDeleteEventState, BotDispelTarget,
-    BotEnchantInfo, BotEventRow, BotGemPropertiesRow, BotHandle, BotInventoryItem,
+    BotEnchantInfo, BotEquipCacheRow, BotEventRow, BotGemPropertiesRow, BotHandle, BotInventoryItem,
+    BotRandomCacheRow,
     BotItemEnchantmentRow, BotItemProtoDamage, BotItemProtoSocket, BotItemProtoSpellRef,
     BotItemProtoStat, BotItemPrototype, BotItemRarityRow, BotLfgQueueEntry, BotMailSummary,
     BotNamedLocationRow, BotNamePoolRow, BotPlayerItemCtx, BotPlayerSnapshot, BotPosition,

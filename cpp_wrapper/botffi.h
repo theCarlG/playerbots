@@ -1666,6 +1666,27 @@ typedef struct {
     float    rarity;
 } BotItemRarityRow;
 
+/* One row from `ai_playerbot_equip_cache` — a pre-built equip cache
+ * keyed by (class, spec, level, slot, quality). When the table is empty
+ * the bridge returns 0 rows and Rust rebuilds the cache from scratch
+ * (an expensive multi-billion-iteration scan over every item prototype). */
+typedef struct {
+    uint32_t clazz;
+    uint32_t spec;
+    uint32_t level;
+    uint32_t slot;
+    uint32_t quality;
+    uint32_t item_id;
+} BotEquipCacheRow;
+
+/* One row from `ai_playerbot_rnditem_cache` — a pre-built random-item
+ * cache keyed by (level decade, random-item type). Empty → Rust rebuilds. */
+typedef struct {
+    uint32_t level_bucket;
+    uint32_t kind;
+    uint32_t item_id;
+} BotRandomCacheRow;
+
 /* Subset of `GemProperties.dbc` — the gem metadata the socket-weight
  * calculation needs on TBC/WotLK. Empty on Classic. */
 typedef struct {
@@ -1764,6 +1785,17 @@ typedef struct ItemCallbacks {
      * computed rarity heuristic. */
     uint32_t (*query_rarity_rows)(BotItemRarityRow** out_rows);
     void     (*free_rarity_list)(BotItemRarityRow* rows, uint32_t count);
+
+    /* ── Optional pre-built equip / random-item caches ──────────────
+     * If `ai_playerbot_equip_cache` / `ai_playerbot_rnditem_cache`
+     * hold rows, return them so the Rust item pool loads instead of
+     * rebuilding. Returning 0 rows forces a full rebuild during
+     * `playerbot_itempool_init` (very slow — minutes on the main
+     * thread). The caller frees via the paired `free_*` callback. */
+    uint32_t (*query_equip_cache_rows)(BotEquipCacheRow** out_rows);
+    void     (*free_equip_cache_list)(BotEquipCacheRow* rows, uint32_t count);
+    uint32_t (*query_random_cache_rows)(BotRandomCacheRow** out_rows);
+    void     (*free_random_cache_list)(BotRandomCacheRow* rows, uint32_t count);
 
     /* ── Gem properties (TBC/WotLK) ─────────────────────────────────
      * Return `sGemPropertiesStore` contents. Returns 0 rows on Classic. */

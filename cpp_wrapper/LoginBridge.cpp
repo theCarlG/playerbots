@@ -325,8 +325,14 @@ uint32_t LoginBridge::CB_RandomMgrGetPlayersLevel(void)
 
 uint32_t LoginBridge::CB_RandomMgrGetMaxOnlineBotCount(void)
 {
-    // Matches `PlayerBotLoginMgr::GetMaxOnlineBotCount`.
-    return sRandomPlayerbotMgr.GetValue(uint32(0), "bot_count");
+    // The target online-bot population is computed by the Rust
+    // random-mgr worker (PID-scaled `bot_count`, mirroring PB2's
+    // `RandomPlayerbotMgr::ScaleBotActivity` + `bot_count` event) and
+    // surfaced through this FFI getter. Reading the legacy C++
+    // `GetValue(0, "bot_count")` instead returns 0 whenever the DB
+    // `bot_count` event has expired, which starves the login worker so
+    // no random bots ever log in.
+    return playerbot_random_mgr_get_max_online_bot_count();
 }
 
 uint32_t LoginBridge::CB_RandomMgrGetWorldMaxLevel(void)

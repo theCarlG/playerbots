@@ -31,7 +31,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use cmangos::{BotItemPrototype, ItemCallbacks, ItemWorld, VtableItemWorld};
 
+use crate::itempool::equip_cache::EquipCacheRow;
 use crate::itempool::manager::{ItemPoolManager, ManagerInputs, PreloadedCaches};
+use crate::itempool::random_cache::RandomCacheRow;
 use crate::log_error;
 
 /// Singleton state owned by the FFI layer. `None` until
@@ -96,7 +98,33 @@ pub unsafe extern "C" fn playerbot_itempool_init(cbs: *const ItemCallbacks) {
         enchant_rows: world.query_item_enchantment_template(),
         preloaded: PreloadedCaches {
             rarity_rows: world.query_rarity_rows(),
-            ..PreloadedCaches::default()
+            // Load the pre-built equip / random-item caches from the DB
+            // (`ai_playerbot_equip_cache` / `ai_playerbot_rnditem_cache`).
+            // When these are non-empty the manager loads them directly;
+            // an empty vec forces a full rebuild — a multi-billion-
+            // iteration scan that runs synchronously on the startup
+            // thread and stalls server boot for minutes.
+            equip_rows: world
+                .query_equip_cache_rows()
+                .iter()
+                .map(|r| EquipCacheRow {
+                    clazz: r.clazz as u8,
+                    spec: r.spec as u8,
+                    level: r.level,
+                    slot: r.slot as u8,
+                    quality: r.quality,
+                    item_id: r.item_id,
+                })
+                .collect(),
+            random_rows: world
+                .query_random_cache_rows()
+                .iter()
+                .map(|r| RandomCacheRow {
+                    level_bucket: r.level_bucket,
+                    kind_raw: r.kind,
+                    item_id: r.item_id,
+                })
+                .collect(),
         },
     };
 

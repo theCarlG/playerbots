@@ -65,6 +65,11 @@ namespace ItemBridge
     uint32_t CB_QueryRarityRows(BotItemRarityRow** out_rows);
     void     CB_FreeRarityList(BotItemRarityRow* rows, uint32_t count);
 
+    uint32_t CB_QueryEquipCacheRows(BotEquipCacheRow** out_rows);
+    void     CB_FreeEquipCacheList(BotEquipCacheRow* rows, uint32_t count);
+    uint32_t CB_QueryRandomCacheRows(BotRandomCacheRow** out_rows);
+    void     CB_FreeRandomCacheList(BotRandomCacheRow* rows, uint32_t count);
+
     uint32_t CB_QueryGemProperties(BotGemPropertiesRow** out_rows);
     void     CB_FreeGemList(BotGemPropertiesRow* rows, uint32_t count);
 

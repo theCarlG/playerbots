@@ -99,11 +99,15 @@ void PlayerbotRust::WorldUpdate(uint32_t elapsed_ms)
 {
     playerbot_world_update(elapsed_ms);
 
-    // Phase E: build the real-player snapshot the login queue consumes.
-    // Must run every tick even when the config has `asyncBotLogin=false`
-    // so the worker's bookkeeping stays current. Uses a thread_local
-    // buffer to avoid per-tick allocation.
-    if (sPlayerbotAIConfig.asyncBotLogin)
+    // Phase E: build the real-player snapshot the login queue consumes
+    // and drive one tick of the Rust login worker. This MUST run every
+    // tick regardless of `asyncBotLogin`: the worker is the module's
+    // only random-bot login path (the legacy synchronous C++ login was
+    // removed in the migration), and it needs the fresh real-player
+    // snapshot every tick to size the online-bot population. Gating it
+    // behind `asyncBotLogin` (default false) left the worker un-driven,
+    // so no random bots ever logged in. Uses a thread_local buffer to
+    // avoid per-tick allocation.
     {
         static thread_local std::vector<BotRealPlayerInfo> s_realBuf;
         s_realBuf.resize(sRandomPlayerbotMgr.GetPlayers().size());
