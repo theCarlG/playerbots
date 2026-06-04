@@ -2297,7 +2297,7 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         BotCommand::ListSkills => {
             let list = bot.interface.bot_get_learned_skills();
             let mut sorted: Vec<_> = list.iter().copied().collect();
-            sorted.sort_by(|a, b| b.value.cmp(&a.value));
+            sorted.sort_by_key(|b| std::cmp::Reverse(b.value));
             let top: Vec<String> = sorted
                 .iter()
                 .take(5)

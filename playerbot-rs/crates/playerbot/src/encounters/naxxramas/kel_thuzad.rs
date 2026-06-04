@@ -80,10 +80,8 @@ impl EncounterFsm for KelThuzadFsm {
                         self.phase = KtPhase::KtActive;
                     }
                 }
-                KtPhase::KtActive => {
-                    if boss_hp_pct < 0.45 {
-                        self.phase = KtPhase::AddsSummoned;
-                    }
+                KtPhase::KtActive if boss_hp_pct < 0.45 => {
+                    self.phase = KtPhase::AddsSummoned;
                 }
                 _ => {}
             },

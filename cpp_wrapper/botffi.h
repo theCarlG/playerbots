@@ -3126,6 +3126,24 @@ void playerbot_random_mgr_set_value(uint32_t guid,
                                     uint32_t value,
                                     int32_t valid_in_s);
 
+/** `RandomPlayerbotMgr::SetEventValue(guid, key, value, validIn, data)` —
+ *  faithful low-level event write. `valid_in_s` is the raw seconds TTL
+ *  with NO `-1` sentinel: 0 means "no TTL", `0xFFFFFFFF` (the C++
+ *  `(uint32)-1`) means "effectively never expires". `data` may be "". */
+void playerbot_random_mgr_set_event_value(uint32_t guid,
+                                          const char* key,
+                                          uint32_t value,
+                                          uint32_t valid_in_s,
+                                          const char* data);
+
+/** `RandomPlayerbotMgr::Remove(bot)` cache half — drop every cached event
+ *  row for `guid` (DB delete is issued by the C++ caller). */
+void playerbot_random_mgr_drop_bot_events(uint32_t guid);
+
+/** `RandomPlayerbotMgr::HandleConsoleReset` cache half — clear the entire
+ *  event cache (DB wipe is issued by the C++ caller). */
+void playerbot_random_mgr_clear_event_cache(void);
+
 /** Current average level of the online real players. Mirrors the C++
  *  `sRandomPlayerbotMgr.GetPlayersLevel()`. */
 uint32_t playerbot_random_mgr_get_players_level(void);

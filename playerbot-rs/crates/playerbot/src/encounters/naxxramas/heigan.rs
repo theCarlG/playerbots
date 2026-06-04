@@ -118,12 +118,11 @@ impl EncounterFsm for HeiganFsm {
                 self.phase = HeiganPhase::Idle;
             }
 
-            EncounterEvent::None => {
+            EncounterEvent::None
                 if self.phase == HeiganPhase::DancePhase
-                    && time_ms.saturating_sub(self.dance_start_ms) > 45_000
-                {
-                    self.phase = HeiganPhase::DpsPhase;
-                }
+                    && time_ms.saturating_sub(self.dance_start_ms) > 45_000 =>
+            {
+                self.phase = HeiganPhase::DpsPhase;
             }
 
             _ => {}

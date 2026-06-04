@@ -223,6 +223,73 @@ pub unsafe extern "C" fn playerbot_random_mgr_set_value(
     });
 }
 
+/// `RandomPlayerbotMgr::SetEventValue(guid, key, value, validIn, data)` —
+/// the faithful low-level event write. Unlike
+/// [`playerbot_random_mgr_set_value`], `valid_in_s` is the raw `u32` TTL
+/// in seconds with **no** `-1` sentinel: `0` means "no TTL" and a large
+/// value (e.g. `0xFFFFFFFF`, the C++ `(uint32)-1`) means "effectively
+/// never expires". This preserves the exact C++ `SetEventValue` semantics.
+///
+/// # Safety
+///
+/// `key` and `data` must be valid null-terminated C strings (`data` may
+/// be a pointer to an empty string).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn playerbot_random_mgr_set_event_value(
+    guid: u32,
+    key: *const c_char,
+    value: u32,
+    valid_in_s: u32,
+    data: *const c_char,
+) {
+    let Some(key) = (unsafe { c_str_to_owned(key) }) else {
+        return;
+    };
+    let data = unsafe { c_str_to_owned(data) }.unwrap_or_default();
+    with_state((), |st| {
+        let mut cache = match st.cache_snapshot.lock() {
+            Ok(c) => c,
+            Err(e) => e.into_inner(),
+        };
+        cache.set_value(
+            guid,
+            &key,
+            value,
+            valid_in_s,
+            &data,
+            now_epoch_s(),
+            st.world.as_ref(),
+        );
+    });
+}
+
+/// `RandomPlayerbotMgr::Remove(bot)` cache half — drop every cached
+/// event row for `guid`. The DB delete is issued separately by the C++
+/// caller; this clears the Rust-side mirror.
+#[unsafe(no_mangle)]
+pub extern "C" fn playerbot_random_mgr_drop_bot_events(guid: u32) {
+    with_state((), |st| {
+        let mut cache = match st.cache_snapshot.lock() {
+            Ok(c) => c,
+            Err(e) => e.into_inner(),
+        };
+        cache.drop_bot(guid);
+    });
+}
+
+/// `RandomPlayerbotMgr::HandleConsoleReset` cache half — clear the entire
+/// event cache. The DB wipe is issued separately by the C++ caller.
+#[unsafe(no_mangle)]
+pub extern "C" fn playerbot_random_mgr_clear_event_cache() {
+    with_state((), |st| {
+        let mut cache = match st.cache_snapshot.lock() {
+            Ok(c) => c,
+            Err(e) => e.into_inner(),
+        };
+        cache.clear();
+    });
+}
+
 // ─── Scalar getters ────────────────────────────────────────────────────────
 
 /// Current average level of online real players. Served from the

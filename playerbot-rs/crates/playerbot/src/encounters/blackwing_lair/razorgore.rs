@@ -52,10 +52,12 @@ impl EncounterFsm for RazorgoreFsm {
             }
             // Transition to burn phase when boss becomes attackable.
             // Heuristic: if boss HP starts dropping, eggs are done.
-            EncounterEvent::None if self.phase == RazorgorePhase::EggDestroy => {
-                if boss_hp_pct < 0.99 && boss_hp_pct > 0.0 {
-                    self.phase = RazorgorePhase::Burn;
-                }
+            EncounterEvent::None
+                if self.phase == RazorgorePhase::EggDestroy
+                    && boss_hp_pct < 0.99
+                    && boss_hp_pct > 0.0 =>
+            {
+                self.phase = RazorgorePhase::Burn;
             }
             _ => {}
         }
