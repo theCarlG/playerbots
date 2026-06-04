@@ -437,6 +437,35 @@ config_scalar_getter!(
     u32,
     random_bot_teleport_max_interval
 );
+// self_bot_level / bot_autologin are stored as u32 (the C++ side casts to
+// its BotSelfBotLevel / BotAutoLogin enums).
+config_scalar_getter!(playerbot_config_self_bot_level, u32, self_bot_level);
+config_scalar_getter!(playerbot_config_bot_autologin, u32, bot_autologin);
+config_scalar_getter!(playerbot_config_random_gear_progression, bool, random_gear_progression);
+config_scalar_getter!(playerbot_config_instant_randomize, bool, instant_randomize);
+config_scalar_getter!(playerbot_config_allow_multi_account_alt_bots, bool, allow_multi_account_alt_bots);
+config_scalar_getter!(playerbot_config_allow_guild_bots, bool, allow_guild_bots);
+config_scalar_getter!(playerbot_config_min_enchanting_bot_level, u32, min_enchanting_bot_level);
+config_scalar_getter!(playerbot_config_follow_distance, f32, follow_distance);
+config_scalar_getter!(playerbot_config_rnd_bot_cheat_mask, u32, rnd_bot_cheat_mask);
+config_scalar_getter!(playerbot_config_bot_cheat_mask, u32, bot_cheat_mask);
+config_scalar_getter!(playerbot_config_random_bot_show_helmet, bool, random_bot_show_helmet);
+config_scalar_getter!(playerbot_config_random_bot_show_cloak, bool, random_bot_show_cloak);
+config_scalar_getter!(playerbot_config_tweak_value, u32, tweak_value);
+
+/// Named typed `String` config getters — return a freshly allocated C
+/// string (free with `playerbot_config_free_cstr`).
+macro_rules! config_string_getter {
+    ($name:ident, $field:ident) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $name() -> *mut c_char {
+            into_owned_cstr(&state().load().typed.$field)
+        }
+    };
+}
+
+config_string_getter!(playerbot_config_command_separator, command_separator);
+config_string_getter!(playerbot_config_random_bot_maps_as_string, random_bot_maps_as_string);
 
 /// Read a fixed class/race count. Returns `-1` if `use_fixed_class_race_counts`
 /// is disabled or the entry is absent; otherwise the stored count.

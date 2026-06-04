@@ -2474,6 +2474,22 @@ uint32_t playerbot_config_random_bot_teleport_near_player_max_amount(void);
 float    playerbot_config_random_bot_teleport_near_player_max_amount_radius(void);
 uint32_t playerbot_config_random_bot_teleport_min_interval(void);
 uint32_t playerbot_config_random_bot_teleport_max_interval(void);
+uint32_t playerbot_config_self_bot_level(void);
+uint32_t playerbot_config_bot_autologin(void);
+bool     playerbot_config_random_gear_progression(void);
+bool     playerbot_config_instant_randomize(void);
+bool     playerbot_config_allow_multi_account_alt_bots(void);
+bool     playerbot_config_allow_guild_bots(void);
+uint32_t playerbot_config_min_enchanting_bot_level(void);
+float    playerbot_config_follow_distance(void);
+uint32_t playerbot_config_rnd_bot_cheat_mask(void);
+uint32_t playerbot_config_bot_cheat_mask(void);
+bool     playerbot_config_random_bot_show_helmet(void);
+bool     playerbot_config_random_bot_show_cloak(void);
+uint32_t playerbot_config_tweak_value(void);
+/* String getters — free the result with playerbot_config_free_cstr(). */
+char*    playerbot_config_command_separator(void);
+char*    playerbot_config_random_bot_maps_as_string(void);
 
 uint32_t playerbot_config_get_gear_min_item_level(uint32_t phase);
 uint32_t playerbot_config_get_gear_max_item_level(uint32_t phase);

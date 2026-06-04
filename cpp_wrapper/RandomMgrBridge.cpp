@@ -231,7 +231,7 @@ std::vector<BotTeleportRow> QueryTeleportCacheImpl()
 /// table is empty.
 void RebuildTeleportCacheImpl()
 {
-    uint32 maxLevel = sPlayerbotAIConfig.randomBotMaxLevel;
+    uint32 maxLevel = playerbot_config_random_bot_max_level();
     const uint32 worldMax = sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL);
     if (maxLevel > worldMax)
         maxLevel = worldMax;
@@ -241,6 +241,10 @@ void RebuildTeleportCacheImpl()
 
     // Clear any stale rows first so the rebuild is idempotent.
     CharacterDatabase.Execute("DELETE FROM ai_playerbot_tele_cache");
+
+    char* mapsRaw = playerbot_config_random_bot_maps_as_string();
+    std::string randomBotMaps = mapsRaw ? mapsRaw : "";
+    playerbot_config_free_cstr(mapsRaw);
 
     for (uint32 level = 1; level <= maxLevel; ++level)
     {
@@ -256,8 +260,8 @@ void RebuildTeleportCacheImpl()
             "AND t.lootid != 0) q "
             "WHERE delta >= 0 AND delta <= %u AND map in (%s)",
             level,
-            sPlayerbotAIConfig.randomBotTeleLevel,
-            sPlayerbotAIConfig.randomBotMapsAsString.c_str());
+            playerbot_config_random_bot_tele_level(),
+            randomBotMaps.c_str());
         if (!results)
             continue;
 

@@ -1904,8 +1904,8 @@ bool BotBridge::CB_SummonToPlayer(BotHandle bot, uint64_t requester_guid)
     if (b->IsBeingTeleported() || b->IsTaxiFlying())
         return false;
 
-    const float followRange = sPlayerbotAIConfig.followDistance > 0.0f
-                                  ? sPlayerbotAIConfig.followDistance
+    const float followRange = playerbot_config_follow_distance() > 0.0f
+                                  ? playerbot_config_follow_distance()
                                   : 3.0f;
 
     // PB2 iterates angle ± π in π/4 steps starting from the bot's follow
@@ -4369,7 +4369,7 @@ uint32_t BotBridge::CB_BotCheatMask(BotHandle bot)
     // identical behavior to "all bots share the config cheats".
     Player* b = FindBot(bot);
     if (!b) return 0;
-    return sPlayerbotAIConfig.botCheatMask | sPlayerbotAIConfig.rndBotCheatMask;
+    return playerbot_config_bot_cheat_mask() | playerbot_config_rnd_bot_cheat_mask();
 }
 
 void BotBridge::CB_BotSaveToDbIfNotBusy(BotHandle bot)
@@ -4425,17 +4425,17 @@ void BotBridge::CB_BotSetPlayerFlag(BotHandle bot, uint32_t flag, bool set)
 
 bool BotBridge::CB_FactoryConfigDisableRandomLevels(BotHandle /*bot*/)
 {
-    return sPlayerbotAIConfig.disableRandomLevels;
+    return playerbot_config_disable_random_levels();
 }
 
 bool BotBridge::CB_FactoryConfigRandomBotShowHelmet(BotHandle /*bot*/)
 {
-    return sPlayerbotAIConfig.randomBotShowHelmet;
+    return playerbot_config_random_bot_show_helmet();
 }
 
 bool BotBridge::CB_FactoryConfigRandomBotShowCloak(BotHandle /*bot*/)
 {
-    return sPlayerbotAIConfig.randomBotShowCloak;
+    return playerbot_config_random_bot_show_cloak();
 }
 
 // ── Factory: Randomize orchestration ──────────────────────────────────────
@@ -4478,7 +4478,7 @@ bool BotBridge::CB_FactoryIsInRealGuild(BotHandle bot)
 
 uint32_t BotBridge::CB_FactoryConfigMinEnchantingBotLevel(BotHandle /*bot*/)
 {
-    return sPlayerbotAIConfig.minEnchantingBotLevel;
+    return playerbot_config_min_enchanting_bot_level();
 }
 
 void BotBridge::CB_BotResetTalents(BotHandle bot)
@@ -4626,7 +4626,7 @@ namespace
     {
         if (!item || !bot)
             return;
-        if (bot->GetLevel() < sPlayerbotAIConfig.minEnchantingBotLevel)
+        if (bot->GetLevel() < playerbot_config_min_enchanting_bot_level())
             return;
         int tab = ComputePlayerSpecTab(bot);
         uint32 tempId = uint32((uint32)bot->getClass() * (uint32)10);
@@ -4804,7 +4804,7 @@ void BotBridge::CB_FactoryEnchantAllEquipment(BotHandle bot)
     Player* b = FindBot(bot);
     if (!b)
         return;
-    if (b->GetLevel() < sPlayerbotAIConfig.minEnchantingBotLevel)
+    if (b->GetLevel() < playerbot_config_min_enchanting_bot_level())
         return;
     if (!g_enchant_loaded)
         DoLoadEnchantContainer();

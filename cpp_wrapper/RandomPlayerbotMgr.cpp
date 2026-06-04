@@ -711,6 +711,9 @@ void RandomPlayerbotMgr::PrepareTeleportCache()
     else
     {
         sLog.outString("Preparing random teleport caches for %d levels...", maxLevel);
+        char* mapsRaw = playerbot_config_random_bot_maps_as_string();
+        std::string randomBotMaps = mapsRaw ? mapsRaw : "";
+        playerbot_config_free_cstr(mapsRaw);
         BarGoLink bar(maxLevel);
         for (uint8 level = 1; level <= maxLevel; level++)
         {
@@ -721,7 +724,7 @@ void RandomPlayerbotMgr::PrepareTeleportCache()
                 "WHERE delta >= 0 AND delta <= %u AND map in (%s)",
                 level,
                 playerbot_config_random_bot_tele_level(),
-                sPlayerbotAIConfig.randomBotMapsAsString.c_str()
+                randomBotMaps.c_str()
             );
             if (results)
             {
