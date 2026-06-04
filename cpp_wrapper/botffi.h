@@ -2490,6 +2490,11 @@ uint32_t playerbot_config_tweak_value(void);
 /* String getters — free the result with playerbot_config_free_cstr(). */
 char*    playerbot_config_command_separator(void);
 char*    playerbot_config_random_bot_maps_as_string(void);
+/* Collection getters. */
+uint32_t playerbot_config_spec_probability(uint32_t cls, uint32_t idx);
+bool     playerbot_config_is_random_bot_map(uint32_t map_id);
+size_t   playerbot_config_random_bot_spell_ids_len(void);
+uint32_t playerbot_config_random_bot_spell_ids_at(size_t idx);
 
 uint32_t playerbot_config_get_gear_min_item_level(uint32_t phase);
 uint32_t playerbot_config_get_gear_max_item_level(uint32_t phase);

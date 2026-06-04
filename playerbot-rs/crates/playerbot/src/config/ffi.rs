@@ -467,6 +467,44 @@ macro_rules! config_string_getter {
 config_string_getter!(playerbot_config_command_separator, command_separator);
 config_string_getter!(playerbot_config_random_bot_maps_as_string, random_bot_maps_as_string);
 
+/// `specProbability[cls][idx]` — spec-pick probability cell. 0 for
+/// out-of-range indices.
+#[unsafe(no_mangle)]
+pub extern "C" fn playerbot_config_spec_probability(cls: u32, idx: u32) -> u32 {
+    let guard = state().load();
+    guard
+        .typed
+        .spec_probability
+        .get(cls as usize)
+        .and_then(|row| row.get(idx as usize))
+        .copied()
+        .unwrap_or(0)
+}
+
+/// Membership test for `randomBotMaps` (the maps bots may be teleported to).
+#[unsafe(no_mangle)]
+pub extern "C" fn playerbot_config_is_random_bot_map(map_id: u32) -> bool {
+    state().load().typed.random_bot_maps.contains(&map_id)
+}
+
+/// `randomBotSpellIds` list — length + per-index accessor (mirrors the
+/// world-buffs accessor style; no allocation crosses the boundary).
+#[unsafe(no_mangle)]
+pub extern "C" fn playerbot_config_random_bot_spell_ids_len() -> usize {
+    state().load().typed.random_bot_spell_ids.len()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn playerbot_config_random_bot_spell_ids_at(idx: usize) -> u32 {
+    state()
+        .load()
+        .typed
+        .random_bot_spell_ids
+        .get(idx)
+        .copied()
+        .unwrap_or(0)
+}
+
 /// Read a fixed class/race count. Returns `-1` if `use_fixed_class_race_counts`
 /// is disabled or the entry is absent; otherwise the stored count.
 #[unsafe(no_mangle)]

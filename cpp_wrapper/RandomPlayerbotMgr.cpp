@@ -403,7 +403,7 @@ void RandomPlayerbotMgr::RandomTeleport(Player* bot, std::vector<WorldLocation> 
     std::vector<WorldLocation> tlocs(locs);
 
     //Do not teleport to maps disabled in config
-    tlocs.erase(std::remove_if(tlocs.begin(), tlocs.end(), [](const WorldLocation& l) {std::vector<uint32>::iterator i = find(sPlayerbotAIConfig.randomBotMaps.begin(), sPlayerbotAIConfig.randomBotMaps.end(), l.mapid); return i == sPlayerbotAIConfig.randomBotMaps.end(); }), tlocs.end());
+    tlocs.erase(std::remove_if(tlocs.begin(), tlocs.end(), [](const WorldLocation& l) { return !playerbot_config_is_random_bot_map(l.mapid); }), tlocs.end());
 
     //Random shuffle
     if (tlocs.size() > 1)

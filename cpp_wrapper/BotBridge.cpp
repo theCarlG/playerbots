@@ -5803,8 +5803,8 @@ uint32_t BotBridge::CB_BotPickSpecNo(BotHandle bot, bool incremental)
 
     uint32 point = urand(0, 100);
     uint8 cls = b->getClass();
-    uint32 p1 = sPlayerbotAIConfig.specProbability[cls][0];
-    uint32 p2 = p1 + sPlayerbotAIConfig.specProbability[cls][1];
+    uint32 p1 = playerbot_config_spec_probability(cls, 0);
+    uint32 p2 = p1 + playerbot_config_spec_probability(cls, 1);
 
     uint32 picked = (point < p1 ? 0u : (point < p2 ? 1u : 2u));
     sRandomPlayerbotMgr.SetValue(b, "specNo", picked + 1);
@@ -5858,18 +5858,16 @@ uint32_t* BotBridge::CB_GetRandomBotSpellIds(BotHandle /*bot*/, uint32_t* out_co
     if (!out_count)
         return nullptr;
 
-    std::list<uint32> const& list = sPlayerbotAIConfig.randomBotSpellIds;
-    if (list.empty())
+    uint32_t count = static_cast<uint32_t>(playerbot_config_random_bot_spell_ids_len());
+    if (count == 0)
         return nullptr;
 
-    uint32_t count = static_cast<uint32_t>(list.size());
     uint32_t* arr = static_cast<uint32_t*>(std::malloc(count * sizeof(uint32_t)));
     if (!arr)
         return nullptr;
 
-    uint32_t i = 0;
-    for (std::list<uint32>::const_iterator it = list.begin(); it != list.end(); ++it)
-        arr[i++] = *it;
+    for (uint32_t i = 0; i < count; ++i)
+        arr[i] = playerbot_config_random_bot_spell_ids_at(i);
     *out_count = count;
     return arr;
 }
@@ -6558,17 +6556,24 @@ uint32_t BotBridge::CB_GetNeededWorldBuffs(BotHandle bot, uint32_t* out_spells, 
     if (!b || !out_spells || max_out == 0)
         return 0;
 
-    if (sPlayerbotAIConfig.worldBuffs.empty())
+    size_t worldBuffCount = playerbot_config_world_buffs_len();
+    if (worldBuffCount == 0)
         return 0;
 
     // 1 = Alliance, 2 = Horde (matches PB2's worldBuff.factionId convention)
     uint32 factionId = (b->GetTeam() == ALLIANCE) ? 1 : 2;
 
     uint32_t count = 0;
-    for (auto& wb : sPlayerbotAIConfig.worldBuffs)
+    for (size_t wbIdx = 0; wbIdx < worldBuffCount; ++wbIdx)
     {
         if (count >= max_out)
             break;
+
+        struct { uint32 spellId, factionId, classId, specId, minLevel, maxLevel, eventId; } wb{};
+        if (!playerbot_config_world_buff_at(wbIdx, &wb.spellId, &wb.factionId,
+                                            &wb.classId, &wb.specId, &wb.minLevel,
+                                            &wb.maxLevel, &wb.eventId))
+            continue;
 
         if (wb.factionId != 0 && wb.factionId != factionId)
             continue;
