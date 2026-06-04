@@ -83,18 +83,6 @@ private:
 
     std::string HandleBotAddLogin(Player* bot, Player* master, const std::string param);
     std::string HandleBotRemoveLogout(Player* bot, Player* master, const std::string param);
-    std::string HandleBotGear(Player* bot, Player* master, const std::string param);
-    std::string HandleBotTrainLearn(Player* bot, Player* master, const std::string param);
-    std::string HandleBotFoodDrink(Player* bot, Player* master, const std::string param);
-    std::string HandleBotPotions(Player* bot, Player* master, const std::string param);
-    std::string HandleBotConsumes(Player* bot, Player* master, const std::string param);
-    std::string HandleBotReagents(Player* bot, Player* master, const std::string param);
-    std::string HandleBotPrepare(Player* bot, Player* master, const std::string param);
-    std::string HandleBotInit(Player* bot, Player* master, const std::string param);
-    std::string HandleBotEnchants(Player* bot, Player* master, const std::string param);
-    std::string HandleBotAmmo(Player* bot, Player* master, const std::string param);
-    std::string HandleBotPet(Player* bot, Player* master, const std::string param);
-    std::string HandleBotLevelUp(Player* bot, Player* master, const std::string param);
     std::string HandleBotRefresh(Player* bot, Player* master, const std::string param);
     std::string HandleBotRandom(Player* bot, Player* master, const std::string param);
 

@@ -27,28 +27,10 @@ PlayerbotHolder::PlayerbotHolder() : PlayerbotAIBase()
     m_botCommandHandlers["remove"] = &PlayerbotHolder::HandleBotRemoveLogout;
     m_botCommandHandlers["logout"] = &PlayerbotHolder::HandleBotRemoveLogout;
     m_botCommandHandlers["rm"] = &PlayerbotHolder::HandleBotRemoveLogout;
-    m_botCommandHandlers["gear"] = &PlayerbotHolder::HandleBotGear;
-    m_botCommandHandlers["equip"] = &PlayerbotHolder::HandleBotGear;
-    m_botCommandHandlers["train"] = &PlayerbotHolder::HandleBotTrainLearn;
-    m_botCommandHandlers["learn"] = &PlayerbotHolder::HandleBotTrainLearn;
-    m_botCommandHandlers["food"] = &PlayerbotHolder::HandleBotFoodDrink;
-    m_botCommandHandlers["drink"] = &PlayerbotHolder::HandleBotFoodDrink;
-    m_botCommandHandlers["potions"] = &PlayerbotHolder::HandleBotPotions;
-    m_botCommandHandlers["pots"] = &PlayerbotHolder::HandleBotPotions;
-    m_botCommandHandlers["consumes"] = &PlayerbotHolder::HandleBotConsumes;
-    m_botCommandHandlers["consumables"] = &PlayerbotHolder::HandleBotConsumes;
-    m_botCommandHandlers["consums"] = &PlayerbotHolder::HandleBotConsumes;
-    m_botCommandHandlers["regs"] = &PlayerbotHolder::HandleBotReagents;
-    m_botCommandHandlers["reg"] = &PlayerbotHolder::HandleBotReagents;
-    m_botCommandHandlers["reagents"] = &PlayerbotHolder::HandleBotReagents;
-    m_botCommandHandlers["prepare"] = &PlayerbotHolder::HandleBotPrepare;
-    m_botCommandHandlers["prep"] = &PlayerbotHolder::HandleBotPrepare;
-    m_botCommandHandlers["init"] = &PlayerbotHolder::HandleBotInit;
-    m_botCommandHandlers["enchants"] = &PlayerbotHolder::HandleBotEnchants;
-    m_botCommandHandlers["ammo"] = &PlayerbotHolder::HandleBotAmmo;
-    m_botCommandHandlers["pet"] = &PlayerbotHolder::HandleBotPet;
-    m_botCommandHandlers["levelup"] = &PlayerbotHolder::HandleBotLevelUp;
-    m_botCommandHandlers["level"] = &PlayerbotHolder::HandleBotLevelUp;
+    // Factory commands (gear/equip/train/learn/food/drink/potions/consumes/
+    // reagents/prepare/init/enchants/ammo/pet/levelup) are dispatched on the
+    // Rust side via playerbot_mgr_bot_command (see ProcessBotCommand); no C++
+    // fallback handlers needed.
     m_botCommandHandlers["random"] = &PlayerbotHolder::HandleBotRandom;
 
     m_botCommandHandlers["always"] = &PlayerbotHolder::HandleBotAlways;
@@ -1577,203 +1559,17 @@ std::string PlayerbotHolder::HandleBotRemoveLogout(Player* bot, Player* master, 
     return "ok";
 }
 
-std::string PlayerbotHolder::HandleBotGear(Player* bot, Player* /*master*/, const std::string param)
-{
-    PlayerbotRust* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "bot has no AI";
 
-    // Flag bits mirror `PlayerbotFactory::InitEquipment(incremental,
-    // syncWithMaster, progressive, partialUpgrade)`:
-    //   bit 0 = incremental, bit 1 = sync, bit 2 = progressive, bit 3 = partial.
-    const uint32_t kProgressiveBit =
-        playerbot_config_random_gear_progression() ? (1u << 2) : 0;
 
-    if (param.empty())
-    {
-        // `EquipGear()` → `InitEquipment(false, false) + InitGems()`.
-        ai->FactoryInitEquipmentViaRust(kProgressiveBit, ITEM_QUALITY_NORMAL);
-        ai->FactoryInitGemsViaRust();
-        return "random gear equipped";
-    }
-    if (param == "green" || param == "uncommon")
-    {
-        ai->FactoryInitEquipmentViaRust(kProgressiveBit, ITEM_QUALITY_UNCOMMON);
-        ai->FactoryInitGemsViaRust();
-        return "random green gear equipped";
-    }
-    if (param == "blue" || param == "rare")
-    {
-        ai->FactoryInitEquipmentViaRust(kProgressiveBit, ITEM_QUALITY_RARE);
-        ai->FactoryInitGemsViaRust();
-        return "random blue gear equipped";
-    }
-    if (param == "purple" || param == "epic")
-    {
-        ai->FactoryInitEquipmentViaRust(kProgressiveBit, ITEM_QUALITY_EPIC);
-        ai->FactoryInitGemsViaRust();
-        return "random epic gear equipped";
-    }
-    if (param == "upgrade")
-    {
-        // `UpgradeGear(false)` → `InitEquipment(true, false)` (incremental).
-        ai->FactoryInitEquipmentViaRust((1u << 0) | kProgressiveBit, ITEM_QUALITY_NORMAL);
-        return "gear upgraded";
-    }
-    if (param == "sync")
-    {
-        // `UpgradeGear(true)` → `InitEquipment(false, true)` (syncWithMaster).
-        ai->FactoryInitEquipmentViaRust((1u << 1) | kProgressiveBit, ITEM_QUALITY_NORMAL);
-        return "gear upgraded";
-    }
-    if (param == "best")
-    {
-        // `EquipGearBest()` → `InitEquipment(false, false, /*progressive=*/false)`.
-        ai->FactoryInitEquipmentViaRust(0, ITEM_QUALITY_NORMAL);
-        return "random best gear equipped";
-    }
-    if (param == "partial")
-    {
-        // `EquipGearPartialUpgrade()` → `InitEquipment(false, false, /*progressive=*/true, /*partialUpgrade=*/true)`.
-        ai->FactoryInitEquipmentViaRust((1u << 2) | (1u << 3), ITEM_QUALITY_NORMAL);
-        return "random gear upgraded to some slots";
-    }
 
-    return "unknown gear command";
-}
 
-std::string PlayerbotHolder::HandleBotTrainLearn(Player* bot, Player* master, const std::string param)
-{
-#ifndef MANGOSBOT_ONE
-    bot->learnClassLevelSpells();
-#endif
-    return "class level spells learned";
-}
 
-std::string PlayerbotHolder::HandleBotFoodDrink(Player* bot, Player* /*master*/, const std::string /*param*/)
-{
-    // `AddFood() → InitFood()` is now routed through the Rust consumables
-    // dispatcher (kind 1 = food). The bot's own level / class / mana-user
-    // status are read from the snapshot on the Rust side.
-    PlayerbotRust* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "bot has no AI";
-    ai->InitConsumablesViaRust(1);
-    return "food added";
-}
 
-std::string PlayerbotHolder::HandleBotPotions(Player* bot, Player* /*master*/, const std::string /*param*/)
-{
-    PlayerbotRust* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "bot has no AI";
-    ai->InitConsumablesViaRust(0); // 0 = potions
-    return "potions added";
-}
 
-std::string PlayerbotHolder::HandleBotConsumes(Player* bot, Player* /*master*/, const std::string /*param*/)
-{
-    PlayerbotRust* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "bot has no AI";
-    ai->InitConsumablesViaRust(3); // 3 = class-specific weapon consumables
-    return "consumables added";
-}
 
-std::string PlayerbotHolder::HandleBotReagents(Player* bot, Player* /*master*/, const std::string /*param*/)
-{
-    PlayerbotRust* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "bot has no AI";
-    ai->InitConsumablesViaRust(2); // 2 = reagents
-    return "reagents added";
-}
 
-std::string PlayerbotHolder::HandleBotPrepare(Player* bot, Player* /*master*/, const std::string /*param*/)
-{
-    PlayerbotRust* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "bot has no AI";
-    ai->FactoryRefreshViaRust();
-    return "consumes/regs added";
-}
 
-std::string PlayerbotHolder::HandleBotInit(Player* bot, Player* master, const std::string param)
-{
-    PlayerbotRust* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "bot has no AI";
 
-    const uint32 level = master ? master->GetLevel() : bot->GetLevel();
-
-    if (param.empty())
-    {
-        ai->FactoryRandomizeViaRust(level, /*incremental*/ true, /*sync*/ false, ITEM_QUALITY_NORMAL);
-    }
-    else if (param == "white" || param == "common")
-    {
-        ai->FactoryRandomizeViaRust(level, false, false, ITEM_QUALITY_NORMAL);
-    }
-    else if (param == "green" || param == "uncommon")
-    {
-        ai->FactoryRandomizeViaRust(level, false, false, ITEM_QUALITY_UNCOMMON);
-    }
-    else if (param == "blue" || param == "rare")
-    {
-        ai->FactoryRandomizeViaRust(level, false, false, ITEM_QUALITY_RARE);
-    }
-    else if (param == "epic" || param == "purple")
-    {
-        ai->FactoryRandomizeViaRust(level, false, false, ITEM_QUALITY_EPIC);
-    }
-    else if (param == "legendary" || param == "yellow")
-    {
-        ai->FactoryRandomizeViaRust(level, false, false, ITEM_QUALITY_LEGENDARY);
-    }
-    else if (param == "sync")
-    {
-        ai->FactoryRandomizeViaRust(level, false, true, ITEM_QUALITY_LEGENDARY);
-    }
-
-    return "ok";
-}
-
-std::string PlayerbotHolder::HandleBotEnchants(Player* bot, Player* /*master*/, const std::string /*param*/)
-{
-    PlayerbotRust* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "bot has no AI";
-    ai->FactoryEnchantEquipmentViaRust();
-    return "ok";
-}
-
-std::string PlayerbotHolder::HandleBotAmmo(Player* bot, Player* /*master*/, const std::string /*param*/)
-{
-    PlayerbotRust* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "bot has no AI";
-    ai->FactoryInitAmmoViaRust();
-    return "ok";
-}
-
-std::string PlayerbotHolder::HandleBotPet(Player* bot, Player* /*master*/, const std::string /*param*/)
-{
-    PlayerbotRust* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "bot has no AI";
-    ai->FactoryInitPetViaRust();
-    ai->FactoryInitPetSpellsViaRust();
-    return "ok";
-}
-
-std::string PlayerbotHolder::HandleBotLevelUp(Player* bot, Player* /*master*/, const std::string /*param*/)
-{
-    PlayerbotRust* ai = bot->GetPlayerbotAI();
-    if (!ai)
-        return "bot has no AI";
-    ai->FactoryRandomizeViaRust(bot->GetLevel(), /*incremental*/ true, /*sync*/ false, 0);
-    return "ok";
-}
 
 std::string PlayerbotHolder::HandleBotRefresh(Player* bot, Player* /*master*/, const std::string /*param*/)
 {
