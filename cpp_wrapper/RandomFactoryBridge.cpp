@@ -41,7 +41,7 @@
 #include "Util/Util.h"
 
 #include "BotConfig.h"
-#include "playerbot/RandomPlayerbotMgr.h"
+#include "RandomPlayerbotMgr.h"
 
 #ifndef MANGOSBOT_ZERO
 #ifdef CMANGOS

@@ -30,8 +30,9 @@
 #include "Entities/ItemPrototype.h"
 #include "BotConfig.h"
 #include "playerbot/PlayerbotAI.h"
-#include "playerbot/RandomItemMgr.h"
-#include "playerbot/RandomPlayerbotMgr.h"
+// RandomItemMgr façade eliminated in Phase K — calls inlined to
+// playerbot_itempool_* FFI entry points.
+#include "RandomPlayerbotMgr.h"
 #include "Util/Util.h"
 #include "Globals/ObjectAccessor.h"
 #include "Spells/SpellMgr.h"
@@ -3738,12 +3739,12 @@ uint32_t BotBridge::CB_ItemMaxStackSize(BotHandle /*bot*/, uint32_t item_id)
 
 uint32_t BotBridge::CB_FactoryPickPotionForLevel(BotHandle /*bot*/, uint32_t level, uint32_t effect)
 {
-    return sRandomItemMgr.GetRandomPotion(level, effect);
+    return playerbot_itempool_get_random_potion(level, effect);
 }
 
 uint32_t BotBridge::CB_FactoryPickFoodForLevel(BotHandle /*bot*/, uint32_t level, uint32_t category)
 {
-    return sRandomItemMgr.GetFood(level, category);
+    return playerbot_itempool_get_food(level, category);
 }
 
 uint32_t BotBridge::CB_RandomU32(BotHandle /*bot*/, uint32_t min, uint32_t max)
@@ -4322,7 +4323,7 @@ uint32_t BotBridge::CB_BotCurrentAmmoId(BotHandle bot)
 
 uint32_t BotBridge::CB_FactoryPickAmmoForLevel(BotHandle /*bot*/, uint32_t level, uint32_t ammo_subclass)
 {
-    return sRandomItemMgr.GetAmmo(level, ammo_subclass);
+    return playerbot_itempool_get_ammo(level, ammo_subclass);
 }
 
 void BotBridge::CB_BotSetAmmo(BotHandle bot, uint32_t item_id)
@@ -4827,7 +4828,12 @@ void BotBridge::CB_FactoryInitAllGems(BotHandle bot)
     if (!b)
         return;
 
-    std::vector<uint32> gems = sRandomItemMgr.GetGemsList();
+    uint32_t* gems_ptr = nullptr;
+    size_t gems_len = 0;
+    if (!playerbot_itempool_get_gems(&gems_ptr, &gems_len) || !gems_ptr || gems_len == 0)
+        return;
+    std::vector<uint32> gems(gems_ptr, gems_ptr + gems_len);
+    playerbot_itempool_free_u32_list(gems_ptr, gems_len);
     for (int slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; slot++)
     {
         Item* item = b->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
@@ -5636,7 +5642,7 @@ uint32_t BotBridge::CB_ItemPrototypeQuality(BotHandle /*bot*/, uint32_t item_id)
 
 uint32_t BotBridge::CB_FactoryPickTradeForLevel(BotHandle /*bot*/, uint32_t level)
 {
-    return sRandomItemMgr.GetRandomTrade(level);
+    return playerbot_itempool_get_random_trade(level);
 }
 
 // ── Factory: taxi nodes ───────────────────────────────────────────────────

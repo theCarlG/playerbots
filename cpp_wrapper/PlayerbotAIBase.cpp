@@ -1,8 +1,9 @@
 
-#include "playerbot/PlayerbotAIBase.h"
+#include "PlayerbotAIBase.h"
 #include "BotConfig.h"
-#include "playerbot/playerbotDefs.h"
+#include "playerbotDefs.h"
 #include "Entities/Player.h"
+#include "Globals/SharedDefines.h"
 
 WorldPosition::WorldPosition(Player* p)
     : x(p->GetPositionX()), y(p->GetPositionY()), z(p->GetPositionZ()),
@@ -49,4 +50,16 @@ void PlayerbotAIBase::YieldAIInternalThread(bool minimal)
 bool PlayerbotAIBase::IsActive() const
 {
     return (int)aiInternalUpdateDelay < (int)sPlayerbotAIConfig.maxWaitForMove;
+}
+
+bool IsAlliance(uint8 race) {
+    return race == RACE_HUMAN || race == RACE_DWARF || race == RACE_NIGHTELF
+        || race == RACE_GNOME
+#ifdef MANGOSBOT_ONE
+        || race == RACE_DRAENEI
+#endif
+#ifdef MANGOSBOT_TWO
+        || race == RACE_DRAENEI
+#endif
+        ;
 }

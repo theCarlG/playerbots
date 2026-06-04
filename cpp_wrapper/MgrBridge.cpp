@@ -1,6 +1,6 @@
-#include "playerbot/playerbot.h"
+#include "playerbot.h"
 #include "BotConfig.h"
-#include "playerbot/RandomPlayerbotMgr.h"
+#include "RandomPlayerbotMgr.h"
 #include "PlayerbotRust.h"
 #include "botffi.h"
 #include "Chat/ChannelMgr.h"

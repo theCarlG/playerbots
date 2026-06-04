@@ -35,7 +35,7 @@
 #include "World/World.h"
 
 #include "playerbot/PlayerbotAI.h"
-#include "playerbot/RandomPlayerbotMgr.h"
+#include "RandomPlayerbotMgr.h"
 
 // ── Small helpers ────────────────────────────────────────────────────────
 

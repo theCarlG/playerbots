@@ -6,7 +6,7 @@
 //!   * [`init_pet`] — mirrors `PlayerbotFactory::InitPet`. Hunter-only.
 //!     If the bot has no pet it walks the tameable creature list, picks
 //!     one at random (up to 100 retries), and calls the atomic
-//!     `factory_create_hunter_pet` callback to run the full CMaNGOS
+//!     `factory_create_hunter_pet` callback to run the full `CMaNGOS`
 //!     creation sequence. Finishes by refreshing pet stats, mass-
 //!     toggling autocast on every non-passive pet spell, and force-
 //!     dismissing the pet to clear a missing-flags bug in the legacy
@@ -20,7 +20,7 @@
 //!     pet's creature template entry (`PET_IMP` et al.) and learns
 //!     the level-gated spell list from the hard-coded warlock table.
 //!
-//! Everything is pure data + policy — no CMaNGOS glue. The FFI layer
+//! Everything is pure data + policy — no `CMaNGOS` glue. The FFI layer
 //! hands us `factory_tameable_creatures_for_bot_level` /
 //! `factory_create_hunter_pet` /
 //! `factory_pet_autocast_candidate_spells` as one-shot callbacks and
@@ -33,6 +33,7 @@ use crate::bot::state::PlayerClass;
 
 /// Internal enum for the hunter pet family dispatch. Mirrors the
 /// `HunterPetType` enum inlined inside `PlayerbotFactory::InitPetSpells`.
+#[cfg(feature = "vanilla")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum HunterPetType {
     Wolf,
@@ -57,6 +58,7 @@ enum HunterPetType {
 /// Decode the vanilla `CreatureInfo::Family` value into a
 /// [`HunterPetType`]. Mirrors the `GetHunterPetTypeFromEntry` lambda in
 /// `PlayerbotFactory.cpp:927-953`.
+#[cfg(feature = "vanilla")]
 const fn hunter_pet_type_from_family(family: u32) -> Option<HunterPetType> {
     match family {
         1 => Some(HunterPetType::Wolf),
@@ -85,6 +87,7 @@ const fn hunter_pet_type_from_family(family: u32) -> Option<HunterPetType> {
 /// Shared `Bite` rank table for every hunter pet with a bite. Mirrors
 /// the inline `{1, 17253}, ..., {56, 17261}` sequence repeated in
 /// `PlayerbotFactory.cpp` for every pet type that learns Bite.
+#[cfg(feature = "vanilla")]
 const BITE_RANKS: &[(u32, u32)] = &[
     (1, 17253),
     (8, 17255),
@@ -97,6 +100,7 @@ const BITE_RANKS: &[(u32, u32)] = &[
 ];
 
 /// Shared `Claw` rank table for every hunter pet that gets Claw.
+#[cfg(feature = "vanilla")]
 const CLAW_RANKS: &[(u32, u32)] = &[
     (1, 16827),
     (8, 16828),
@@ -111,6 +115,7 @@ const CLAW_RANKS: &[(u32, u32)] = &[
 /// Shared `Cower` rank table. Every vanilla hunter pet learns Cower.
 /// Autocast is toggled *off* per-spell-id via [`COWER_SPELL_IDS`]
 /// below.
+#[cfg(feature = "vanilla")]
 const COWER_RANKS: &[(u32, u32)] = &[
     (5, 1742),
     (15, 1753),
@@ -121,27 +126,33 @@ const COWER_RANKS: &[(u32, u32)] = &[
 ];
 
 /// Shared `Dash` rank table (Wolf/Boar/Cat/Hyena/Tallstrider).
+#[cfg(feature = "vanilla")]
 const DASH_RANKS: &[(u32, u32)] = &[(30, 23099), (40, 23109), (50, 23110)];
 
 /// Shared `Dive` rank table (Bat/Carrion Bird/Owl/Wind Serpent).
+#[cfg(feature = "vanilla")]
 const DIVE_RANKS: &[(u32, u32)] = &[(30, 23145), (40, 23146), (50, 23147)];
 
 /// Shared `Screech` rank table for Bat/Carrion Bird — Carrion Bird's
 /// rank 4 is `27051` (different from Owl's `24579`).
+#[cfg(feature = "vanilla")]
 const SCREECH_RANKS_CARRION: &[(u32, u32)] =
     &[(8, 24423), (24, 24577), (40, 24578), (56, 27051)];
 
 /// `Screech` rank table for Owl — rank 4 is `24579`.
+#[cfg(feature = "vanilla")]
 const SCREECH_RANKS_OWL: &[(u32, u32)] = &[(8, 24423), (24, 24577), (40, 24578), (56, 24579)];
 
 /// Cower spell IDs — autocast is set *off* by default after the mass
 /// `ToggleAutocast(true)` pass. Matches the `cowerSpellIds`
 /// `unordered_set` at `PlayerbotFactory.cpp:961`.
+#[cfg(feature = "vanilla")]
 const COWER_SPELL_IDS: &[u32] = &[1742, 1753, 1754, 1755, 1756, 16697];
 
 /// Return the full `(level, spell_id)` table for a given hunter pet
 /// type. Order matches `PlayerbotFactory::InitPetSpells` — stable so
 /// the autocast dispatch order is deterministic.
+#[cfg(feature = "vanilla")]
 fn hunter_pet_spell_table(pet: HunterPetType) -> Vec<(u32, u32)> {
     // Seed with the rank tables that apply to this pet type, then
     // append the per-pet extras. Using a Vec keeps the signature tidy
@@ -277,6 +288,7 @@ fn hunter_pet_spell_table(pet: HunterPetType) -> Vec<(u32, u32)> {
 
 /// Growl ranks learned by every hunter pet. Highest rank whose
 /// `min_level <= pet_level` wins.
+#[cfg(feature = "vanilla")]
 const GROWL_RANKS: &[(u32, u32)] = &[
     (1, 2649),
     (10, 14916),
@@ -288,9 +300,11 @@ const GROWL_RANKS: &[(u32, u32)] = &[
 ];
 
 /// Natural Armor passive ranks.
+#[cfg(feature = "vanilla")]
 const NATURAL_ARMOR_RANKS: &[(u32, u32)] = &[(1, 24545), (12, 24549), (18, 24550), (24, 24551)];
 
 /// Great Stamina passive ranks.
+#[cfg(feature = "vanilla")]
 const GREAT_STAMINA_RANKS: &[(u32, u32)] = &[
     (1, 4187),
     (12, 4188),
@@ -306,20 +320,27 @@ const GREAT_STAMINA_RANKS: &[(u32, u32)] = &[
 
 /// Resistance spells learned at pet level ≥ 20:
 /// Arcane / Fire / Frost / Nature / Shadow.
+#[cfg(feature = "vanilla")]
 const PET_RESISTANCE_SPELLS: &[u32] = &[24493, 23992, 24446, 24492, 24488];
 
 /* ── Warlock pet entries + spell tables ───────────────────────────────── */
 
+#[cfg(any(feature = "vanilla", feature = "tbc"))]
 const PET_IMP: u32 = 416;
+#[cfg(any(feature = "vanilla", feature = "tbc"))]
 const PET_FELHUNTER: u32 = 417;
+#[cfg(any(feature = "vanilla", feature = "tbc"))]
 const PET_VOIDWALKER: u32 = 1860;
+#[cfg(any(feature = "vanilla", feature = "tbc"))]
 const PET_SUCCUBUS: u32 = 1863;
+#[cfg(any(feature = "vanilla", feature = "tbc"))]
 const PET_FELGUARD: u32 = 17252;
 
 /// Return the `(level, spell_id)` list for a given warlock pet entry.
 /// Mirrors the `spellList` map population in
 /// `PlayerbotFactory.cpp:1100-1260`. Empty for any entry that isn't a
 /// known warlock pet.
+#[cfg(any(feature = "vanilla", feature = "tbc"))]
 fn warlock_pet_spell_table(pet_entry: u32) -> &'static [(u32, u32)] {
     match pet_entry {
         PET_IMP => &[
@@ -463,6 +484,7 @@ fn warlock_pet_spell_table(pet_entry: u32) -> &'static [(u32, u32)] {
 /// Scan a `(min_level, spell_id)` rank table and return the highest
 /// spell id whose `min_level <= level`. Returns `0` when no row
 /// qualifies. Mirrors the rolling `growlSpellId = rank.spellId` loop.
+#[cfg(feature = "vanilla")]
 fn highest_rank(ranks: &[(u32, u32)], level: u32) -> u32 {
     let mut chosen = 0u32;
     for &(min_level, spell_id) in ranks {

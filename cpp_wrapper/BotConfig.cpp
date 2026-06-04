@@ -22,7 +22,7 @@
 #include "Database/DatabaseEnv.h"
 #include "Log/Log.h"
 #include "Policies/Singleton.h"
-#include "playerbot/RandomPlayerbotMgr.h"
+#include "RandomPlayerbotMgr.h"
 
 #include <algorithm>
 #include <cctype>

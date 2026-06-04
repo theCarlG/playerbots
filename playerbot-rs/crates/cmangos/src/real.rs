@@ -1106,7 +1106,7 @@ impl World for VtableWorld {
 
     fn factory_pet_toggle_autocast(&self, spell_id: u32, enable: bool) {
         unsafe {
-            (self.cbs.factory_pet_toggle_autocast.unwrap())(self.handle, spell_id, enable)
+            (self.cbs.factory_pet_toggle_autocast.unwrap())(self.handle, spell_id, enable);
         }
     }
 

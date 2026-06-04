@@ -13,7 +13,7 @@
 
 #include <memory>
 
-#include "playerbot/PlayerbotAIBase.h"
+#include "PlayerbotAIBase.h"
 #include "BotConfig.h"
 #include "Entities/ObjectGuid.h"
 #include "botffi.h"
@@ -22,6 +22,7 @@
 class Player;
 class Unit;
 class Item;
+struct AreaTrigger;
 
 // Chat-command security tiers. Mirrors PB2's PlayerbotSecurityLevel but
 // collapses GUILD into TALK. The byte value is what the Rust FFI receives
@@ -170,123 +171,49 @@ public:
     void InventoryIterateItems(IterateItemsVisitor* /*v*/, IterateItemsMask /*mask*/) {}
     uint32_t GetEquipGearScore(Player* /*p*/, bool /*withBags*/, bool /*withBank*/) { return 0; }
 
-    /// Clear the bot's inventory via the Rust factory module.
-    ///   mode = 0: equipped + carried bags (bank left intact)
-    ///   mode = 1: everything including bank
-    /// Porting plan: more factory operations (potions/food/reagents restock,
-    /// gear re-roll) will route through similar FFI entry points as they move
-    /// from C++ PlayerbotFactory into playerbot-rs/src/factory/.
-    void ClearInventoryViaRust(uint8_t mode);
-
-    /// Initialize consumables via the Rust factory module.
-    ///   kind = 0: potions, 1: food, 2: reagents
-    void InitConsumablesViaRust(uint8_t kind);
-
-    /// Wipe a slice of the bot's progression via the Rust factory module.
-    ///   kind = 0: trade skills, 1: spells, 2: quests
-    void ResetProgressionViaRust(uint8_t kind);
-
-    /// Run a miscellaneous factory step via the Rust factory module.
-    ///   kind = 0: cancel auras, 1: init skill tool kit
-    void FactoryMiscViaRust(uint8_t kind);
-
-    /// Learn talents for one spec tab (0..2) via the Rust factory module.
-    void FactoryInitTalentsViaRust(uint32_t spec_no);
-
-    /// Pick a spec and spend all talent points across it (plus any leftover
-    /// into the complementary tab) via the Rust factory module.
-    void FactoryInitTalentsTreeViaRust(bool incremental);
-
-    /// Top up consumables on a bot via the Rust factory module (ports
-    /// `PlayerbotFactory::Refresh`). Gated on the bot's item cheat bit.
-    void FactoryRefreshViaRust();
-
-    /// Reset the bot's chassis (resurrect, combat-stop, level + XP, helmet
-    /// / cloak flags) via the Rust factory module. Ports
-    /// `PlayerbotFactory::Prepare`. `level` is the target level handed to
-    /// the C++ factory ctor.
-    void FactoryPrepareViaRust(uint32_t level);
-
-    /// Reward every eligible quest from a caller-owned list via the Rust
-    /// factory module. Ports `PlayerbotFactory::InitQuests`. `ids` / `len`
-    /// describe the PB2 `std::list<uint32>` flattened to a contiguous array.
-    void FactoryInitQuestsViaRust(const uint32_t* ids, size_t len);
-
-    /// Kick off a random arena-team creation pass when the bot qualifies, via
-    /// the Rust factory module. Ports `PlayerbotFactory::InitArenaTeam`. The
-    /// Rust side consults the random-factory singleton for both gates
-    /// (account in random list, current arena-team count below target) and
-    /// forwards to `playerbot_random_factory_create_arena_teams` when they
-    /// pass. On Classic this is a silent no-op.
-    void FactoryInitArenaTeamViaRust();
-
-    /// Stock a guild tabard if the bot is already guilded, otherwise pick a
-    /// same-team random guild from the random-factory singleton's
-    /// `random_bot_guilds` list, join it at a random rank, and stock a tabard
-    /// on join, via the Rust factory module. Ports
-    /// `PlayerbotFactory::InitGuild`.
-    void FactoryInitGuildViaRust();
-
-    /// Run `InitSkills` (weapons/armor/riding) followed by `InitTradeSkills`
-    /// (professions + first aid/fishing/cooking + TBC+ armorsmith chain +
-    /// opaque trainer-iteration loop) via the Rust factory module. Ports
-    /// `PlayerbotFactory::InitAllSkills`.
-    void FactoryInitAllSkillsViaRust();
-
-    /// Run only the tradeskill half of `InitAllSkills` — profession
-    /// assignment, universal secondaries, plate-class armorsmith chain,
-    /// and the opaque trainer-iteration callback. Ports
-    /// `PlayerbotFactory::InitTradeSkills`.
-    void FactoryInitTradeSkillsViaRust();
-
-    /// Re-roll the bot's equipped gear from the itempool cache via the
-    /// Rust factory module. Ports `PlayerbotFactory::InitEquipment`.
-    /// `flags` packs the four legacy boolean parameters:
-    ///   bit 0 = incremental, bit 1 = syncWithMaster,
-    ///   bit 2 = progressive, bit 3 = partialUpgrade.
-    /// `itemQuality` pins the quality tier when non-zero (`0` = follow
-    /// the progressive/incremental ladder).
-    void FactoryInitEquipmentViaRust(uint32_t flags, uint32_t itemQuality);
-
-    /// Hunter-only pet creation + stat refresh + mass-autocast + force-
-    /// dismiss pass via the Rust factory module. Ports
-    /// `PlayerbotFactory::InitPet`. No-op for every non-hunter class.
-    void FactoryInitPetViaRust();
-
-    /// Per-class / per-expansion pet spell learning via the Rust factory
-    /// module. Ports `PlayerbotFactory::InitPetSpells`. Hunter + warlock
-    /// only; every other class is a no-op on the Rust side.
-    void FactoryInitPetSpellsViaRust();
-
-    /// Top-level "re-roll this bot from scratch" pass via the Rust factory
-    /// module. Ports `PlayerbotFactory::Randomize(bool incremental,
-    /// bool syncWithMaster)`. `level` is the target level from the factory
-    /// ctor; `itemQuality` is the `.py equip <quality>` override
-    /// (0 = follow the progressive ladder).
-    void FactoryRandomizeViaRust(uint32_t level,
-                                  bool     incremental,
-                                  bool     syncWithMaster,
-                                  uint32_t itemQuality);
-
-    /// Top up ranged-weapon ammo for warrior / rogue / hunter bots via the
-    /// Rust factory module. Ports `PlayerbotFactory::InitAmmo`. No-op for
-    /// every other class.
-    void FactoryInitAmmoViaRust();
-
-    /// Enchant every equipped slot via the Rust factory module. Ports
-    /// `PlayerbotFactory::EnchantEquipment`. The full body (enchant-
-    /// container load, spec-tab dispatch, per-slot iteration) lives on the
-    /// C++ bridge side; this is a thin wrapper that forwards.
-    void FactoryEnchantEquipmentViaRust();
-
-    /// Socket a random gem into every empty socket via the Rust factory
-    /// module. Ports `PlayerbotFactory::InitGems`. Classic is a
-    /// compile-time no-op on the bridge side.
-    void FactoryInitGemsViaRust();
+    // ── Factory FFI wrappers ──────────────────────────────────────────────
+    // Each method forwards a single call to the Rust factory module.
+    // Inlined here to keep PlayerbotRust.cpp focused on non-trivial logic.
+    void ClearInventoryViaRust(uint8_t mode)              { if (m_rustState) playerbot_factory_clear_inventory(m_rustState.get(), mode); }
+    void InitConsumablesViaRust(uint8_t kind)              { if (m_rustState) playerbot_factory_init_consumables(m_rustState.get(), kind); }
+    void ResetProgressionViaRust(uint8_t kind)             { if (m_rustState) playerbot_factory_reset_progression(m_rustState.get(), kind); }
+    void FactoryMiscViaRust(uint8_t kind)                  { if (m_rustState) playerbot_factory_misc(m_rustState.get(), kind); }
+    void FactoryInitTalentsViaRust(uint32_t spec_no)       { if (m_rustState) playerbot_factory_init_talents(m_rustState.get(), spec_no); }
+    void FactoryInitTalentsTreeViaRust(bool inc)           { if (m_rustState) playerbot_factory_init_talents_tree(m_rustState.get(), inc); }
+    void FactoryRefreshViaRust()                           { if (m_rustState) playerbot_factory_refresh(m_rustState.get()); }
+    void FactoryPrepareViaRust(uint32_t level)             { if (m_rustState) playerbot_factory_prepare(m_rustState.get(), level); }
+    void FactoryInitQuestsViaRust(const uint32_t* ids, size_t len) { if (m_rustState) playerbot_factory_init_quests(m_rustState.get(), ids, len); }
+    void FactoryInitArenaTeamViaRust()                     { if (m_rustState) playerbot_factory_init_arena_team(m_rustState.get()); }
+    void FactoryInitGuildViaRust()                         { if (m_rustState) playerbot_factory_init_guild(m_rustState.get()); }
+    void FactoryInitAllSkillsViaRust()                     { if (m_rustState) playerbot_factory_init_all_skills(m_rustState.get()); }
+    void FactoryInitTradeSkillsViaRust()                   { if (m_rustState) playerbot_factory_init_trade_skills(m_rustState.get()); }
+    void FactoryInitEquipmentViaRust(uint32_t f, uint32_t q) { if (m_rustState) playerbot_factory_init_equipment(m_rustState.get(), f, q); }
+    void FactoryInitPetViaRust()                           { if (m_rustState) playerbot_factory_init_pet(m_rustState.get()); }
+    void FactoryInitPetSpellsViaRust()                     { if (m_rustState) playerbot_factory_init_pet_spells(m_rustState.get()); }
+    void FactoryRandomizeViaRust(uint32_t level, bool inc, bool sync, uint32_t q) { if (m_rustState) playerbot_factory_randomize(m_rustState.get(), level, inc, sync, q); }
+    void FactoryInitAmmoViaRust()                          { if (m_rustState) playerbot_factory_init_ammo(m_rustState.get()); }
+    void FactoryEnchantEquipmentViaRust()                  { if (m_rustState) playerbot_factory_enchant_equipment(m_rustState.get()); }
+    void FactoryInitGemsViaRust()                          { if (m_rustState) playerbot_factory_init_gems(m_rustState.get()); }
 
     void TellPlayerNoFacing(Player* /*target*/, const std::string& /*msg*/) {}
     void CastSpell(uint32_t /*spellId*/, Unit* /*target*/) {}
     void EnchantItemT(uint32_t /*spellId*/, uint8_t /*slot*/, Item* /*item*/) {}
+
+    // ── Core callback stubs (ex-PlayerbotAI shim) ───────────────────────
+    // The fork's Player.cpp calls back into PlayerbotAI from a handful of
+    // places (durability loss, area-trigger gating). The old strategy engine
+    // implemented these; the Rust AI does not yet, so they're no-ops here.
+    void DurabilityLoss(Item* /*item*/, double /*percent*/) {}
+    bool CanEnterArea(AreaTrigger const* /*at*/) { return false; }
+
+    // Outgoing packet hook: core WorldSession::SendPacket forwards every
+    // packet destined for this bot through here.
+    void HandleBotOutgoingPacket(const WorldPacket& packet);
+
+    // Spell.cpp queries for bot-specific immunity overrides and for whether
+    // the bot is carrying the items a spell requires. No Rust backing yet.
+    bool IsImmuneToSpell(uint32 /*spellId*/) { return false; }
+    bool HasSpellItems(uint32 /*spellId*/, Item const* /*castItem*/) const { return true; }
 
     // ── Global init/shutdown (call from RandomPlayerbotMgr) ─────────────
     static void InitRustModule();

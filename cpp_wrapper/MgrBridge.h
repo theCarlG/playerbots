@@ -2,7 +2,7 @@
 #define _PLAYERBOTMGR_H
 
 #include "Common.h"
-#include "playerbot/PlayerbotAIBase.h"
+#include "PlayerbotAIBase.h"
 #include "Entities/ObjectGuid.h"
 #include "Database/DatabaseEnv.h"
 #include "Globals/SharedDefines.h"

@@ -43,7 +43,7 @@ const CLASS_WARLOCK: u8 = 9;
 
 /// Port of `PlayerbotFactory::Randomize(bool incremental, bool syncWithMaster)`.
 ///
-/// `level` is the target level from the PlayerbotFactory ctor; `item_quality`
+/// `level` is the target level from the `PlayerbotFactory` ctor; `item_quality`
 /// is the `.py equip <quality>` override (0 = follow the progressive ladder).
 ///
 /// The C++ body is ~165 lines, but every step is a direct forward to a Rust

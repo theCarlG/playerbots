@@ -21,7 +21,7 @@
 #include "LoginBridge.h"
 #include "RandomFactoryBridge.h"
 #include "RandomMgrBridge.h"
-#include "playerbot/RandomPlayerbotMgr.h"
+#include "RandomPlayerbotMgr.h"
 #include "Spells/Spell.h"
 
 // Spell id used by the RTSC "Aedm" marker to encode ground-targeted positions.
@@ -591,131 +591,32 @@ void PlayerbotRust::HandleMasterOutgoingPacket(const WorldPacket& packet)
                          data, size);
 }
 
-void PlayerbotRust::ClearInventoryViaRust(uint8_t mode)
-{
-    if (m_rustState)
-        playerbot_factory_clear_inventory(m_rustState.get(), mode);
-}
+// ── Core callback: outgoing packet hook (ex-PlayerbotAI) ────────────────
 
-void PlayerbotRust::InitConsumablesViaRust(uint8_t kind)
+void PlayerbotRust::HandleBotOutgoingPacket(const WorldPacket& packet)
 {
-    if (m_rustState)
-        playerbot_factory_init_consumables(m_rustState.get(), kind);
-}
+    switch (packet.GetOpcode())
+    {
+        case SMSG_TRADE_STATUS:
+        {
+            Player* bot = GetBot();
+            if (!bot || !bot->GetTrader())
+                break;
 
-void PlayerbotRust::ResetProgressionViaRust(uint8_t kind)
-{
-    if (m_rustState)
-        playerbot_factory_reset_progression(m_rustState.get(), kind);
-}
+            WorldPacket p(packet);
+            uint32 status;
+            p >> status;
+            p.resize(4);
 
-void PlayerbotRust::FactoryMiscViaRust(uint8_t kind)
-{
-    if (m_rustState)
-        playerbot_factory_misc(m_rustState.get(), kind);
-}
-
-void PlayerbotRust::FactoryInitTalentsViaRust(uint32_t spec_no)
-{
-    if (m_rustState)
-        playerbot_factory_init_talents(m_rustState.get(), spec_no);
-}
-
-void PlayerbotRust::FactoryInitTalentsTreeViaRust(bool incremental)
-{
-    if (m_rustState)
-        playerbot_factory_init_talents_tree(m_rustState.get(), incremental);
-}
-
-void PlayerbotRust::FactoryRefreshViaRust()
-{
-    if (m_rustState)
-        playerbot_factory_refresh(m_rustState.get());
-}
-
-void PlayerbotRust::FactoryPrepareViaRust(uint32_t level)
-{
-    if (m_rustState)
-        playerbot_factory_prepare(m_rustState.get(), level);
-}
-
-void PlayerbotRust::FactoryInitQuestsViaRust(const uint32_t* ids, size_t len)
-{
-    if (m_rustState)
-        playerbot_factory_init_quests(m_rustState.get(), ids, len);
-}
-
-void PlayerbotRust::FactoryInitArenaTeamViaRust()
-{
-    if (m_rustState)
-        playerbot_factory_init_arena_team(m_rustState.get());
-}
-
-void PlayerbotRust::FactoryInitGuildViaRust()
-{
-    if (m_rustState)
-        playerbot_factory_init_guild(m_rustState.get());
-}
-
-void PlayerbotRust::FactoryInitAllSkillsViaRust()
-{
-    if (m_rustState)
-        playerbot_factory_init_all_skills(m_rustState.get());
-}
-
-void PlayerbotRust::FactoryInitTradeSkillsViaRust()
-{
-    if (m_rustState)
-        playerbot_factory_init_trade_skills(m_rustState.get());
-}
-
-void PlayerbotRust::FactoryInitEquipmentViaRust(uint32_t flags, uint32_t itemQuality)
-{
-    if (m_rustState)
-        playerbot_factory_init_equipment(m_rustState.get(), flags, itemQuality);
-}
-
-void PlayerbotRust::FactoryInitPetViaRust()
-{
-    if (m_rustState)
-        playerbot_factory_init_pet(m_rustState.get());
-}
-
-void PlayerbotRust::FactoryInitPetSpellsViaRust()
-{
-    if (m_rustState)
-        playerbot_factory_init_pet_spells(m_rustState.get());
-}
-
-void PlayerbotRust::FactoryRandomizeViaRust(uint32_t level,
-                                             bool     incremental,
-                                             bool     syncWithMaster,
-                                             uint32_t itemQuality)
-{
-    if (m_rustState)
-        playerbot_factory_randomize(m_rustState.get(),
-                                    level,
-                                    incremental,
-                                    syncWithMaster,
-                                    itemQuality);
-}
-
-void PlayerbotRust::FactoryInitAmmoViaRust()
-{
-    if (m_rustState)
-        playerbot_factory_init_ammo(m_rustState.get());
-}
-
-void PlayerbotRust::FactoryEnchantEquipmentViaRust()
-{
-    if (m_rustState)
-        playerbot_factory_enchant_equipment(m_rustState.get());
-}
-
-void PlayerbotRust::FactoryInitGemsViaRust()
-{
-    if (m_rustState)
-        playerbot_factory_init_gems(m_rustState.get());
+            if (status == TRADE_STATUS_BEGIN_TRADE)
+                bot->GetSession()->HandleBeginTradeOpcode(p);
+            else if (status == TRADE_STATUS_TRADE_ACCEPT)
+                bot->GetSession()->HandleAcceptTradeOpcode(p);
+            break;
+        }
+        default:
+            break;
+    }
 }
 
 bool PlayerbotRust::ToggleMonitor()

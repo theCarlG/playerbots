@@ -3,7 +3,7 @@
 //!
 //! Commands that only need the bot's `World` interface (gear, consumables,
 //! enchants, pets, etc.) are handled here. Commands that require additional
-//! CMaNGOS globals (`add`, `remove`, `always`, `debug`, etc.) remain in the
+//! `CMaNGOS` globals (`add`, `remove`, `always`, `debug`, etc.) remain in the
 //! C++ bridge (`cpp_wrapper/MgrBridge.cpp`).
 
 use crate::config;

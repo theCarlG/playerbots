@@ -3,7 +3,7 @@
 #include "ItemBag.h"
 #include "AhBotConfig.h"
 #include "Database/DatabaseEnv.h"
-#include "playerbot/RandomItemMgr.h"
+#include "botffi.h"
 #include "ahbot/AhBot.h"
 
 using namespace ahbot;
@@ -114,7 +114,7 @@ uint32 PricingStrategy::GetBuyPrice(ItemPrototype const* proto, uint32 auctionHo
 
 double PricingStrategy::GetRarityPriceMultiplier(uint32 itemId)
 {
-    float x = sRandomItemMgr.GetItemRarity(itemId);
+    float x = playerbot_itempool_get_item_rarity(itemId);
     if (x < 0.001) return 1.0f;
     return 0.75 + exp((140 - x) / 50) / 6;
 }

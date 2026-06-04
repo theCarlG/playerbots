@@ -33,7 +33,7 @@
 
 #include "BotConfig.h"
 #include "MgrBridge.h"
-#include "playerbot/RandomPlayerbotMgr.h"
+#include "RandomPlayerbotMgr.h"
 
 // ── Mirror of the core LoginQueryHolder classes ───────────────────────────
 //

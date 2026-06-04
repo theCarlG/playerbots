@@ -55,7 +55,6 @@ const MAX_ITEM_PROTO_DAMAGES: usize = 5;
 
 /// Cached bot guid-low / master guid are implicit through the
 /// `FactoryTransaction` for the single-bot calls here — no constant.
-
 /// Hard-coded legendary / artifact blacklist. Mirrors the `lockedItems`
 /// push-back sequence at `PlayerbotFactory.cpp:1829-1844`. The comment
 /// on each id is preserved from the C++ source so `grep` stays useful.
@@ -90,7 +89,7 @@ const UNAVAILABLE_ITEMS_SRC: &str = include_str!("data/unavailable_items_wotlk.t
 const UNAVAILABLE_ITEMS_SRC: &str = "";
 
 /// Lazily-parsed view over [`UNAVAILABLE_ITEMS_SRC`]. One-shot build on
-/// first call; subsequent calls are a plain HashSet lookup. The data
+/// first call; subsequent calls are a plain `HashSet` lookup. The data
 /// files are one id per line — blank lines are skipped so the embedded
 /// files don't need a strict format.
 fn unavailable_item_ids() -> &'static HashSet<u32> {
@@ -111,6 +110,7 @@ fn unavailable_item_ids() -> &'static HashSet<u32> {
 /// `item_quality` mirrors the C++ method's `itemQuality` local (set by
 /// `.py` commands like `equip rare`): when non-zero it pins the quality
 /// tier and disables the fresh-reroll quality-table branch.
+#[allow(clippy::fn_params_excessive_bools)]
 pub fn init_equipment(
     tx: &mut FactoryTransaction<'_>,
     incremental: bool,
@@ -303,15 +303,15 @@ pub fn init_equipment(
     // Tail: recompute stats + optional master sync announce.
     tx.factory_init_stats_for_level_and_update();
 
-    if sync_with_master {
-        if let Some(master_gs_val) = tx.factory_master_equip_gear_score() {
-            let new_snap = tx.get_snapshot();
-            let new_gs = new_snap.equip_gear_score;
-            tx.factory_tell_master(&format!(
-                "Synced gear with master. Old GS: {} New GS: {} Master GS: {}",
-                old_gs, new_gs, master_gs_val
-            ));
-        }
+    if sync_with_master
+        && let Some(master_gs_val) = tx.factory_master_equip_gear_score()
+    {
+        let new_snap = tx.get_snapshot();
+        let new_gs = new_snap.equip_gear_score;
+        tx.factory_tell_master(&format!(
+            "Synced gear with master. Old GS: {} New GS: {} Master GS: {}",
+            old_gs, new_gs, master_gs_val
+        ));
     }
 }
 
@@ -420,7 +420,7 @@ fn progressive_quality_floor(level: u32, incremental: bool, tx: &mut FactoryTran
         if level < 60 {
             return quality::UNCOMMON;
         }
-        return quality::RARE;
+        quality::RARE
     }
     #[cfg(feature = "tbc")]
     {
@@ -430,7 +430,7 @@ fn progressive_quality_floor(level: u32, incremental: bool, tx: &mut FactoryTran
         if level < 70 {
             return quality::UNCOMMON;
         }
-        return quality::RARE;
+        quality::RARE
     }
     #[cfg(feature = "wotlk")]
     {
@@ -443,7 +443,7 @@ fn progressive_quality_floor(level: u32, incremental: bool, tx: &mut FactoryTran
         if level < 80 {
             return quality::UNCOMMON;
         }
-        return quality::RARE;
+        quality::RARE
     }
     #[cfg(not(any(feature = "vanilla", feature = "tbc", feature = "wotlk")))]
     quality::UNCOMMON
@@ -492,11 +492,9 @@ fn select_partial_upgrade_slots(
     // Sort ascending by `quality * ilvl` (PB2 lambda sort).
     item_ids.sort_by(|a, b| {
         let weight_a = itempool::prototype(*a)
-            .map(|p| p.quality * p.item_level)
-            .unwrap_or(0);
+            .map_or(0, |p| p.quality * p.item_level);
         let weight_b = itempool::prototype(*b)
-            .map(|p| p.quality * p.item_level)
-            .unwrap_or(0);
+            .map_or(0, |p| p.quality * p.item_level);
         weight_a.cmp(&weight_b)
     });
 
@@ -935,19 +933,19 @@ fn try_equipment_slot(
 
         if off_hand_weapon_gate {
             let mh_item = tx.factory_bot_equipped_item_in_slot(slot::MAINHAND);
-            if mh_item != 0 {
-                if let Some(mh_proto) = itempool::prototype(mh_item) {
-                    let mh_stat = itempool::live_stat_weight(guid_low, mh_item, spec_id);
-                    let better_value = new_stat_value > mh_stat;
+            if mh_item != 0
+                && let Some(mh_proto) = itempool::prototype(mh_item)
+            {
+                let mh_stat = itempool::live_stat_weight(guid_low, mh_item, spec_id);
+                let better_value = new_stat_value > mh_stat;
 
-                    let (mh_damage, mh_dps) = compute_weapon_damage_and_dps(&mh_proto);
-                    let (oh_damage, oh_dps) = compute_weapon_damage_and_dps(&proto);
+                let (mh_damage, mh_dps) = compute_weapon_damage_and_dps(&mh_proto);
+                let (oh_damage, oh_dps) = compute_weapon_damage_and_dps(&proto);
 
-                    let better_dps = oh_dps > mh_dps;
-                    let better_damage = oh_damage > mh_damage;
-                    if better_dps || (better_damage && better_value) {
-                        continue;
-                    }
+                let better_dps = oh_dps > mh_dps;
+                let better_damage = oh_damage > mh_damage;
+                if better_dps || (better_damage && better_value) {
+                    continue;
                 }
             }
         }

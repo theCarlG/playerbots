@@ -674,7 +674,7 @@ pub unsafe extern "C" fn playerbot_factory_init_pet_spells(state: *mut ()) {
 /// step into a single call. See [`factory::randomize::randomize`] for
 /// the full control flow.
 ///
-/// `level` is the target level from the PlayerbotFactory ctor in C++;
+/// `level` is the target level from the `PlayerbotFactory` ctor in C++;
 /// `incremental` and `sync_with_master` are the two boolean params on
 /// the PB2 method; `item_quality` is the `.py equip <quality>` override
 /// (0 = follow the progressive ladder).

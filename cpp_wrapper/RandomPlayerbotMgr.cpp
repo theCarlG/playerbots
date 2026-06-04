@@ -1,6 +1,6 @@
 #include "Config/Config.h"
 
-#include "playerbot/playerbot.h"
+#include "playerbot.h"
 #include "BotConfig.h"
 #include "Accounts/AccountMgr.h"
 #include "Globals/ObjectMgr.h"
