@@ -51,6 +51,7 @@ pub enum MockEvent {
     Follow { target: UnitHandle, dist: f32, angle: f32 },
     StopMoving,
     Attack(UnitHandle),
+    PetAttack(UnitHandle),
     AutoAttack(bool),
     Say { msg: String, lang: u32 },
     Whisper { target: u64, msg: String },
@@ -1297,6 +1298,11 @@ impl World for MockWorld {
 
     fn attack(&self, target: UnitHandle) -> bool {
         record(&self.0, MockEvent::Attack(target));
+        true
+    }
+
+    fn pet_attack(&self, target: UnitHandle) -> bool {
+        record(&self.0, MockEvent::PetAttack(target));
         true
     }
 

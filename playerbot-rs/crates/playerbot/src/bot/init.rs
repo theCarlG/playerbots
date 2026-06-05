@@ -360,6 +360,16 @@ fn combat_wrapper(class_rotation: Bt) -> Bt {
                 Bt::EngageTarget,
                 Sel!(reactive::mark_rti_subtree(), Bt::Noop),
             ))),
+            // B.1b — Pet attack: send the hunter/warlock pet at the bot's
+            //         current target (PB2 AttackAction). Optional so it never
+            //         blocks the rotation; throttled because the C++ side only
+            //         needs an occasional re-issue (it skips when the pet is
+            //         already on that victim). Without this a REACT_DEFENSIVE
+            //         pet ignores a mob the bot pulled at range.
+            Bt::Optional(Box::new(Bt::throttle(
+                1_000,
+                Seq!(Bt::IsPetClass, Bt::HasPet, Bt::PetAlive, Bt::PetAttack),
+            ))),
             // B.2 — Positioning (fire-and-forget). ONE movement system per
             //        bot type to avoid conflicting chase commands.
             //

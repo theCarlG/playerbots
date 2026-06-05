@@ -480,6 +480,11 @@ typedef struct BotCallbacks {
     bool    (*summon_pet)(BotHandle bot);
     bool    (*revive_pet)(BotHandle bot);
     bool    (*feed_pet)(BotHandle bot);
+    /* Command the bot's pet to attack `target` (PB2 AttackAction:
+     * pet->AI()->AttackStart). No-op + false if the pet is passive or
+     * absent. Defensive pets otherwise only react when the owner is hit,
+     * so without this a freshly-pulled mob is ignored by the pet. */
+    bool    (*pet_attack)(BotHandle bot, UnitHandle target);
 
     /* ── Dispel / party queries ──────────────────────────────────────── */
     /* Find a nearby group member (or self when solo) with a dispellable

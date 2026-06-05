@@ -311,6 +311,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.summon_pet          = CB_SummonPet;
     cbs.revive_pet          = CB_RevivePet;
     cbs.feed_pet            = CB_FeedPet;
+    cbs.pet_attack          = CB_PetAttack;
 
     // Dispel / party queries
     cbs.find_dispellable_target = CB_FindDispellableTarget;
@@ -2776,6 +2777,32 @@ bool BotBridge::CB_FeedPet(BotHandle bot)
         break;
     }
     return false;
+}
+
+bool BotBridge::CB_PetAttack(BotHandle bot, UnitHandle target)
+{
+    Player* b = FindBot(bot);
+    Unit* t   = FindUnit(bot, target);
+    if (!b || !t)
+        return false;
+
+    Pet* pet = b->GetPet();
+    if (!pet)
+        return false;
+
+    // Mirror PB2 AttackAction: send the pet at the owner's target unless it
+    // is set passive. A master-less defensive pet is the common case.
+    UnitAI* petAI = static_cast<Creature*>(pet)->AI();
+    if (!petAI || petAI->GetReactState() == REACT_PASSIVE)
+        return false;
+
+    // Skip if the pet is already engaged on this victim — re-issuing
+    // AttackStart restarts the chase spline and stutters the pet.
+    if (pet->GetVictim() == t)
+        return true;
+
+    petAI->AttackStart(t);
+    return true;
 }
 
 // ── Dispel / party queries ────────────────────────────────────────────────

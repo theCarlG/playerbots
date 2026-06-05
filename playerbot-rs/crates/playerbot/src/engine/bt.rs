@@ -704,6 +704,9 @@ pub enum Bt {
     SummonPet,
     /// Feed unhappy pet (Hunter).
     FeedPet,
+    /// Command the pet to attack the bot's current target (PB2
+    /// `AttackAction`). Without this a defensive pet ignores a fresh pull.
+    PetAttack,
     /// Find and attack a level-appropriate mob for grinding.
     GrindTarget,
 
@@ -1960,6 +1963,10 @@ impl BtNode for Bt {
                     BtResult::Failure
                 }
             }
+            Bt::PetAttack => match ctx.current_target() {
+                Some(t) if ctx.interface.pet_attack(t) => BtResult::Success,
+                _ => BtResult::Failure,
+            },
             Bt::GrindTarget => tick_grind(ctx),
 
             // ── Actions — 11f ────────────────────────────────────────
@@ -5197,6 +5204,9 @@ mod tests {
         fn attack(&self, _: UnitHandle) -> bool {
             true
         }
+        fn pet_attack(&self, _: UnitHandle) -> bool {
+            true
+        }
         fn auto_attack(&self, _: bool) -> bool {
             true
         }
@@ -6333,6 +6343,24 @@ mod tests {
             Bt::CcCastOnNearest(SpellId(118)).tick(&mut ctx),
             BtResult::Failure
         );
+    }
+
+    #[test]
+    fn pet_attack_commands_pet_on_current_target() {
+        let mock = Mock11a::new();
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.current_target = 7;
+        let mut ctx = ctx_with_iface(&mut owned, &mock);
+        assert_eq!(Bt::PetAttack.tick(&mut ctx), BtResult::Success);
+    }
+
+    #[test]
+    fn pet_attack_fails_without_target() {
+        let mock = Mock11a::new();
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.current_target = 0;
+        let mut ctx = ctx_with_iface(&mut owned, &mock);
+        assert_eq!(Bt::PetAttack.tick(&mut ctx), BtResult::Failure);
     }
 
     // ── 11h: consumables / racials / trinkets ─────────────────────────

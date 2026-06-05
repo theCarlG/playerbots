@@ -374,6 +374,11 @@ pub trait World: Send {
     fn feed_pet(&self) -> bool {
         false
     }
+    /// Command the bot's pet to attack `target` (PB2 AttackAction). Returns
+    /// false if the pet is passive/absent or already on that victim.
+    fn pet_attack(&self, _target: UnitHandle) -> bool {
+        false
+    }
 
     /* ── Dispel / party aura queries ────────────────────────────────── */
 

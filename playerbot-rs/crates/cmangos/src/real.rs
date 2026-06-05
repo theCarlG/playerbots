@@ -472,6 +472,10 @@ impl World for VtableWorld {
         unsafe { (self.cbs.feed_pet.unwrap())(self.handle) }
     }
 
+    fn pet_attack(&self, target: UnitHandle) -> bool {
+        unsafe { (self.cbs.pet_attack.unwrap())(self.handle, target) }
+    }
+
     /* ── Dispel / party queries ─────────────────────────────────────── */
 
     fn find_dispellable_target(&self, dispel_mask: u8) -> Option<(UnitHandle, SpellId)> {
