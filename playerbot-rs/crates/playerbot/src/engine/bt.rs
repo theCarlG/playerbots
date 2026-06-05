@@ -4124,17 +4124,31 @@ fn tick_grind(ctx: &mut TickContext<'_>) -> BtResult {
     {
         return BtResult::Success;
     }
-    // Find a level-appropriate attackable mob.
-    let my_level = ctx.snap.self_.level;
-    let target = ctx.nearby.iter().copied().find(|&unit| {
+    // Pick the NEAREST attackable mob in a realistic grind band anywhere in
+    // sight (not just inside the 40y combat range) — attacking enters the
+    // combat FSM, whose positioning then closes the gap. Previously this only
+    // looked within `max_combat_range` and a tight ±3 levels, so a bot that
+    // wandered near, but not on top of, mobs never engaged and just kept
+    // roaming (the "~30% moving, 0 in combat" symptom).
+    let my_level = i16::from(ctx.snap.self_.level);
+    let mut best: Option<UnitHandle> = None;
+    let mut best_dist = f32::MAX;
+    for &unit in ctx.nearby.iter() {
         if !ctx.interface.is_attackable(unit) {
-            return false;
+            continue;
         }
-        let level = ctx.interface.get_unit_level(unit);
-        let diff = (level as i16 - my_level as i16).unsigned_abs();
-        diff <= 3 && ctx.interface.unit_distance(unit) < ctx.settings.max_combat_range
-    });
-    if let Some(t) = target
+        let level = i16::from(ctx.interface.get_unit_level(unit));
+        // From a few levels below (still safe, some XP) to a couple above.
+        if level < my_level - 8 || level > my_level + 2 {
+            continue;
+        }
+        let d = ctx.interface.unit_distance(unit);
+        if d < best_dist {
+            best_dist = d;
+            best = Some(unit);
+        }
+    }
+    if let Some(t) = best
         && ctx.attack(t)
     {
         return BtResult::Success;

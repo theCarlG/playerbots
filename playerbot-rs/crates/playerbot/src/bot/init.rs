@@ -456,9 +456,15 @@ fn mode_dispatch() -> Bt {
                 // master/group rather than falling through to travel/grind —
                 // otherwise after a fight it wanders off toward the entrance.
                 Seq!(Bt::InInstance, Follow),
+                // Fight first: a masterless bot grinds nearby level-appropriate
+                // mobs before wandering off. This was LAST, so travel and
+                // especially rpg's RpgWander always preempted it — bots roamed
+                // (~30% moving) but were almost never in combat (0-3 of ~989).
+                // With grind ahead, they actually kill mobs, loot, and level;
+                // travel/rpg only fire when there's nothing nearby to fight.
+                world::grind::grind_subtree(),
                 crate::strategies::travel::build(),
                 world::rpg::rpg_subtree(),
-                world::grind::grind_subtree(),
             ),
         ),
         Seq!(ModeIs(BehaviorMode::Stay), world::stay::stay_subtree(),),
