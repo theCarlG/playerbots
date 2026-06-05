@@ -492,3 +492,18 @@ social/chat/guild/AH §8 · lifecycle §9 · commands/RTSC §10 · gear/item §1
 - 2026-06-05 · rogue stealth approach+Garrote opener (all specs) · classes/rogue/mod.rs · cargo+clippy
 - 2026-06-05 · plan completeness pass: added §0 start-here, §10 commands, §11 gear, guild/AH, domain
   checklist; corrected non-combat §5 (3 buckets); discarded unreliable survey audit. Ready for fresh session.
+- 2026-06-05 · ONYXIA — melee from the FLANK, not behind (user review: "behind = tail sweep, melee from
+  the side"). New `bot_is_at_flank` FFI (`BotBridge::CB_BotIsAtFlank`: outside front ±45° cleave/breath cone
+  AND outside rear ±45° tail-sweep arc, via `HasInArc`) across all 6 layers (botffi.h/BotBridge/world/real/
+  mock+`with_at_flank`). New reusable `Bt::MoveToFlank(f32)` — chases at `FRAC_PI_2`, yields Failure when
+  already flanked+in-range so the rotation runs. Onyxia phases 1 & 3 swap `MoveBehind(5.0)`→`MoveToFlank(5.0)`
+  (BWL drakes keep `MoveBehind` — their threat is frontal Shadowflame, no tail sweep). 2 new onyxia tests +
+  1 flank leaf path. cargo test workspace green + clippy (vanilla & wotlk) green; full mangosd build+install;
+  smoke clean (200 accts loaded, 343 world loops, 0 runtime crash). TODO: Nefarian also tail-sweeps — apply
+  `MoveToFlank` when its melee positioning is scripted.
+- 2026-06-05 · BARON GEDDON — Living Bomb & Inferno correctness (user review). Both had the class-immunity
+  branch *replacing* the actual mechanic: a bombed mage cast Ice Block (which ROOTS it → can't clear the raid,
+  explosion still lands) and an Inferno mage Fire Warded instead of leaving the radius. The move-out IS the
+  mechanic — dropped the immunity special-casing; every affected bot relocates (`self_has(LIVING_BOMB)`→
+  `MoveAwayFromRaid(40)`, `target_has(INFERNO)`→`FleeToSafe(30)`). Updated module + encounter_smoke tests
+  (mage now moves out, not Ice Block). cargo+clippy green.

@@ -23,7 +23,7 @@
 use std::cell::Cell;
 
 use cmangos::{
-    BotRole, BotWorldSnapshot, MockEvent, SpellId, UnitHandle, World,
+    BotRole, BotWorldSnapshot, MockEvent, UnitHandle, World,
 };
 use playerbot_rs::bot::settings::{BotSettings, StrategyFlags};
 use playerbot_rs::bot::state::PlayerClass;
@@ -43,11 +43,6 @@ use playerbot_rs::engine::{
     throttles::Throttles,
     timers::BotTimers,
 };
-
-/// Spell IDs referenced by the Baron Geddon BT. Kept private to this file
-/// — the encounter module re-exports `AURA_LIVING_BOMB` but keeps these
-/// internal.
-const ICE_BLOCK: SpellId = SpellId(11958);
 
 /// Owning scaffold for a `TickContext`. Mirrors `TestCtxOwned` from
 /// `engine::context::tests`, minus the fields this file's tests don't
@@ -138,32 +133,31 @@ fn lucifron_fsm_transitions() {
 }
 
 #[test]
-fn baron_geddon_living_bomb_mage_ice_blocks() {
-    // Mage with living bomb → BT fires Ice Block and reports Success.
-    // The MockWorld event log should contain the Ice Block cast.
+fn baron_geddon_living_bomb_mage_moves_out() {
+    // A bombed mage clears the raid like everyone else — it does NOT Ice Block
+    // (that roots it in place and the explosion still hits the raid). The BT
+    // reports Running with a MoveTo in the event log.
     let mut fsm = BaronGeddonFsm::default();
     fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
     let bt = fsm
         .phase_bt(ActiveFsm::Combat)
         .expect("active FSM returns a phase BT");
 
-    let world = cmangos::MockWorld::new().with_aura(AURA_LIVING_BOMB);
+    let world = cmangos::MockWorld::new()
+        .with_aura(AURA_LIVING_BOMB)
+        .with_safe_pos();
     let mut owned = SmokeCtx::new();
     let mut ctx = owned.make_ctx(&world, &fsm, PlayerClass::Mage, BotRole::DPS);
 
-    assert_eq!(
-        bt.tick(&mut ctx),
-        BtResult::Success,
-        "mage ice-block path returns Success"
+    assert!(
+        matches!(bt.tick(&mut ctx), BtResult::Running),
+        "bombed mage moves out (Running while relocating)"
     );
 
     let events = world.events();
     assert!(
-        events.iter().any(|e| matches!(
-            e,
-            MockEvent::CastSpell { spell, .. } if *spell == ICE_BLOCK
-        )),
-        "expected Ice Block cast in event log, got: {events:?}"
+        events.iter().any(|e| matches!(e, MockEvent::MoveTo { .. })),
+        "expected MoveTo in event log, got: {events:?}"
     );
 }
 
