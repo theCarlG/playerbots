@@ -348,6 +348,10 @@ pub struct MockState {
     pub quest_objective_entries: Vec<u32>,
     /// Result returned by `use_nearby_quest_object`.
     pub use_quest_object_result: bool,
+    /// Position returned by `nearest_taxi_node_pos` (None = no taxi network).
+    pub nearest_taxi_node: Option<BotPosition>,
+    /// Result returned by `take_taxi_toward`.
+    pub take_taxi_result: bool,
     /// Whether the pet is alive. Gates `factory_pet_force_dismiss`
     /// in the mock (mirrors the `if (pet->IsAlive())` check at the
     /// bottom of `InitPet`). Flipped to `false` when the dismiss is
@@ -461,6 +465,8 @@ impl Default for MockState {
             pet_autocast_candidates: Vec::new(),
             quest_objective_entries: Vec::new(),
             use_quest_object_result: false,
+            nearest_taxi_node: None,
+            take_taxi_result: false,
             pet_is_alive: false,
             tameable_creatures: Vec::new(),
             rng_seq: VecDeque::new(),
@@ -552,6 +558,18 @@ impl MockWorld {
             o: 0.0,
             map_id: 0,
         });
+        self
+    }
+
+    /// Configure the taxi mock: `node` is the nearest flight master position
+    /// (`None` = no taxi network), `can_fly` is the `take_taxi_toward` result.
+    #[must_use]
+    pub fn with_taxi(self, node: Option<BotPosition>, can_fly: bool) -> Self {
+        {
+            let mut s = self.0.borrow_mut();
+            s.nearest_taxi_node = node;
+            s.take_taxi_result = can_fly;
+        }
         self
     }
 
@@ -1319,6 +1337,14 @@ impl World for MockWorld {
 
     fn use_nearby_quest_object(&self, _range: f32) -> bool {
         self.0.borrow().use_quest_object_result
+    }
+
+    fn nearest_taxi_node_pos(&self) -> Option<BotPosition> {
+        self.0.borrow().nearest_taxi_node
+    }
+
+    fn take_taxi_toward(&self, _dest_map: u32, _x: f32, _y: f32, _z: f32) -> bool {
+        self.0.borrow().take_taxi_result
     }
 
     fn auto_attack(&self, enable: bool) -> bool {

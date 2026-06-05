@@ -12,7 +12,10 @@ pub fn build() -> Bt {
         Bt::StrategyEnabled(StrategyFlags::TRAVEL),
         Bt::Not(Box::new(Bt::InCombat)),
         Sel!(
-            // If we already have a travel destination, keep moving.
+            // If we have a far destination, fly there: walk to the nearest
+            // flight master, then take a taxi. Falls through for near dests.
+            Seq!(Bt::HasTravelDest, Bt::TakeTaxi),
+            // If we already have a travel destination, keep walking.
             Seq!(Bt::HasTravelDest, Bt::TravelToBlackboard,),
             // Otherwise pick a new destination.
             Bt::throttle(5_000, Bt::ChooseTravelTarget),

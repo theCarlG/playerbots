@@ -694,6 +694,10 @@ pub enum Bt {
     AttackQuestMob,
     /// Use a nearby gameobject that satisfies a "use object" quest objective.
     UseQuestObject,
+    /// For a far blackboard travel destination, walk to the nearest flight
+    /// master and take a taxi toward it (faster + safer than walking). Falls
+    /// through (Failure) for near destinations so walking handles them.
+    TakeTaxi,
     /// Move toward blackboard travel destination, clear on arrival.
     TravelToBlackboard,
     /// Select a travel destination based on the bot's current goals and
@@ -1941,6 +1945,7 @@ impl BtNode for Bt {
             }
             Bt::LearnTrainerSpells => tick_learn_trainer_spells(ctx),
             Bt::ApplyTalentBuild => tick_apply_talent_build(ctx),
+            Bt::TakeTaxi => tick_take_taxi(ctx),
             Bt::TravelToBlackboard => tick_travel(ctx),
             Bt::ChooseTravelTarget => tick_choose_travel_target(ctx),
             Bt::RevivePet => {
@@ -3393,6 +3398,59 @@ fn tick_attack_quest_mob(ctx: &mut TickContext<'_>) -> BtResult {
     if let Some(target) = target
         && ctx.attack(target)
     {
+        return BtResult::Success;
+    }
+    BtResult::Failure
+}
+
+/// `Bt::TakeTaxi`. For a *far* blackboard travel destination, route the bot to
+/// the nearest flight master and take a multi-hop taxi toward it. Returns
+/// `Running` while walking to the flight master, `Success` once the flight
+/// starts, and `Failure` (so walking takes over) when the destination is near,
+/// the bot is already flying, or no usable flight route exists.
+fn tick_take_taxi(ctx: &mut TickContext<'_>) -> BtResult {
+    use crate::engine::blackboard::Key;
+
+    // Already on a flight — let the server fly the bot; don't interfere.
+    if ctx.snap.self_.on_taxi {
+        return BtResult::Failure;
+    }
+
+    let Some(dx) = ctx.blackboard.get_f32(Key::TravelDestX) else {
+        return BtResult::Failure;
+    };
+    let dy = ctx.blackboard.get_f32(Key::TravelDestY).unwrap_or(0.0);
+    let dz = ctx.blackboard.get_f32(Key::TravelDestZ).unwrap_or(0.0);
+
+    // Only fly for genuinely long journeys — the detour to a flight master and
+    // the fare aren't worth it for short hops, which walking handles.
+    const TAXI_MIN_DIST: f32 = 600.0;
+    let pos = ctx.snap.self_.pos;
+    let dest_dist_sq = (pos.x - dx).powi(2) + (pos.y - dy).powi(2);
+    if dest_dist_sq < TAXI_MIN_DIST * TAXI_MIN_DIST {
+        return BtResult::Failure;
+    }
+
+    // Locate the nearest flight master (taxi node). No taxi network → walk.
+    let Some(fm) = ctx.interface.nearest_taxi_node_pos() else {
+        return BtResult::Failure;
+    };
+
+    // Walk to the flight master first if not already standing at it.
+    let fm_dist_sq = (pos.x - fm.x).powi(2) + (pos.y - fm.y).powi(2);
+    const AT_MASTER: f32 = 8.0;
+    if fm_dist_sq > AT_MASTER * AT_MASTER {
+        if ctx.interface.move_to(fm.x, fm.y, fm.z) {
+            ctx.monitor(format_args!("TAXI: walking to flight master"));
+            return BtResult::Running;
+        }
+        return BtResult::Failure;
+    }
+
+    // At the flight master — take off toward the destination (same map for v1;
+    // cross-continent needs a boat, handled elsewhere).
+    if ctx.interface.take_taxi_toward(pos.map_id, dx, dy, dz) {
+        ctx.monitor(format_args!("TAXI: flight started toward dest"));
         return BtResult::Success;
     }
     BtResult::Failure
@@ -6397,6 +6455,57 @@ mod tests {
         assert_eq!(Bt::PetAttack.tick(&mut ctx), BtResult::Failure);
     }
 
+    // Helper: set a travel destination on the test blackboard.
+    fn set_taxi_dest(owned: &mut TestCtxOwned, x: f32, y: f32) {
+        use crate::engine::blackboard::{Key, Value};
+        owned.blackboard.set(Key::TravelDestX, Value::F32(x));
+        owned.blackboard.set(Key::TravelDestY, Value::F32(y));
+        owned.blackboard.set(Key::TravelDestZ, Value::F32(0.0));
+    }
+
+    #[test]
+    fn take_taxi_skips_near_destination() {
+        let fm = cmangos::BotPosition { x: 3.0, y: 0.0, z: 0.0, o: 0.0, map_id: 0 };
+        let iface = MockWorld::new().with_taxi(Some(fm), true);
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.pos = cmangos::BotPosition { x: 0.0, y: 0.0, z: 0.0, o: 0.0, map_id: 0 };
+        set_taxi_dest(&mut owned, 100.0, 0.0); // < 600y → walking handles it
+        let mut ctx = ctx_with_iface(&mut owned, &iface);
+        assert_eq!(Bt::TakeTaxi.tick(&mut ctx), BtResult::Failure);
+    }
+
+    #[test]
+    fn take_taxi_walks_to_flight_master_when_far() {
+        let fm = cmangos::BotPosition { x: 50.0, y: 0.0, z: 0.0, o: 0.0, map_id: 0 };
+        let iface = MockWorld::new().with_taxi(Some(fm), true);
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.pos = cmangos::BotPosition { x: 0.0, y: 0.0, z: 0.0, o: 0.0, map_id: 0 };
+        set_taxi_dest(&mut owned, 2000.0, 0.0); // far → fly; not at master yet
+        let mut ctx = ctx_with_iface(&mut owned, &iface);
+        assert_eq!(Bt::TakeTaxi.tick(&mut ctx), BtResult::Running);
+    }
+
+    #[test]
+    fn take_taxi_takes_off_at_flight_master() {
+        let fm = cmangos::BotPosition { x: 3.0, y: 0.0, z: 0.0, o: 0.0, map_id: 0 };
+        let iface = MockWorld::new().with_taxi(Some(fm), true);
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.pos = cmangos::BotPosition { x: 0.0, y: 0.0, z: 0.0, o: 0.0, map_id: 0 };
+        set_taxi_dest(&mut owned, 2000.0, 0.0); // far + standing at master → fly
+        let mut ctx = ctx_with_iface(&mut owned, &iface);
+        assert_eq!(Bt::TakeTaxi.tick(&mut ctx), BtResult::Success);
+    }
+
+    #[test]
+    fn take_taxi_falls_through_without_network() {
+        let iface = MockWorld::new().with_taxi(None, false);
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.pos = cmangos::BotPosition { x: 0.0, y: 0.0, z: 0.0, o: 0.0, map_id: 0 };
+        set_taxi_dest(&mut owned, 2000.0, 0.0); // far but no taxi network → walk
+        let mut ctx = ctx_with_iface(&mut owned, &iface);
+        assert_eq!(Bt::TakeTaxi.tick(&mut ctx), BtResult::Failure);
+    }
+
     // ── 11h: consumables / racials / trinkets ─────────────────────────
 
     #[test]
@@ -6506,6 +6615,8 @@ mod tests {
         assert_eq!(Bt::UnequipSlot(0).tick(&mut ctx), BtResult::Failure);
         // UseQuestObject: mock use_nearby_quest_object returns false (default).
         assert_eq!(Bt::UseQuestObject.tick(&mut ctx), BtResult::Failure);
+        // TakeTaxi: no travel destination set → falls through to walking.
+        assert_eq!(Bt::TakeTaxi.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::Fish.tick(&mut ctx), BtResult::Failure);
         // RandomEmote: mock do_text_emote returns false (default)
         assert_eq!(Bt::RandomEmote.tick(&mut ctx), BtResult::Failure);

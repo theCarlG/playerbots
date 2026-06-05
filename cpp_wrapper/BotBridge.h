@@ -352,6 +352,8 @@ namespace BotBridge
     BotTaxiNode* CB_GetOverworldTaxiNodes(BotHandle bot, uint8_t team, uint32_t* out_count);
     void         CB_FreeTaxiNodes(BotTaxiNode* list);
     void         CB_BotSetTaxiNode(BotHandle bot, uint32_t node_index);
+    bool         CB_NearestTaxiNodePos(BotHandle bot, BotPosition* out);
+    bool         CB_TakeTaxiToward(BotHandle bot, uint32_t dest_map, float x, float y, float z);
 
     // ── Factory: talents ───────────────────────────────────────────────────
     BotTalentEntry* CB_GetClassTalents(BotHandle bot, uint8_t spec_no, uint32_t* out_count);

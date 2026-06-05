@@ -1010,6 +1010,16 @@ typedef struct BotCallbacks {
     void         (*free_taxi_nodes)(BotTaxiNode* list);
     /* Mark a taxi node as discovered (Player::m_taxi.SetTaximaskNode). */
     void         (*bot_set_taxi_node)(BotHandle bot, uint32_t node_index);
+    /* Position of the nearest taxi node (flight master) to the bot, written to
+     * `out`. Returns false if the bot has no taxi network on its map. The bot
+     * walks here, then calls `take_taxi_toward`. */
+    bool         (*nearest_taxi_node_pos)(BotHandle bot, BotPosition* out);
+    /* Take a flight from the flight master the bot is standing at toward the
+     * given destination (nearest node to it). Computes the multi-hop route and
+     * starts the flight. Returns false if not at a flight master, no flight
+     * route exists, or not enough money. */
+    bool         (*take_taxi_toward)(BotHandle bot, uint32_t dest_map,
+                                     float x, float y, float z);
 
     /* ── Factory: talents ────────────────────────────────────────────── */
     /* All `TalentEntry` rows belonging to `spec_no` (0..2 = the three talent

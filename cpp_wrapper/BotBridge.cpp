@@ -18,6 +18,8 @@
 #include <cstdlib>
 #include <unordered_map>
 #include <unordered_set>
+#include <queue>
+#include <algorithm>
 
 #include "Entities/Player.h"
 #include "Entities/Unit.h"
@@ -465,6 +467,8 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.get_overworld_taxi_nodes            = CB_GetOverworldTaxiNodes;
     cbs.free_taxi_nodes                     = CB_FreeTaxiNodes;
     cbs.bot_set_taxi_node                   = CB_BotSetTaxiNode;
+    cbs.nearest_taxi_node_pos               = CB_NearestTaxiNodePos;
+    cbs.take_taxi_toward                    = CB_TakeTaxiToward;
     cbs.get_class_talents                   = CB_GetClassTalents;
     cbs.free_class_talents                  = CB_FreeClassTalents;
     cbs.bot_free_talent_points              = CB_BotFreeTalentPoints;
@@ -5879,6 +5883,135 @@ void BotBridge::CB_BotSetTaxiNode(BotHandle bot, uint32_t node_index)
     if (!b)
         return;
     b->m_taxi.SetTaximaskNode(node_index);
+}
+
+namespace
+{
+    // BFS over the taxi node graph (edges = direct flight paths from
+    // `sTaxiPathSetBySource`) to find the node sequence src..dest inclusive.
+    // Empty when unreachable. ActivateTaxiPathTo's AddRoutes needs the full
+    // per-hop node list — a single {src,dest} pair only works for directly
+    // connected nodes, so multi-hop journeys must be expanded here.
+    std::vector<uint32> ComputeTaxiRoute(uint32 src, uint32 dest)
+    {
+        if (src == 0 || dest == 0 || src == dest)
+            return {};
+
+        std::unordered_map<uint32, uint32> parent;
+        std::queue<uint32> q;
+        q.push(src);
+        parent[src] = src;
+        bool reached = false;
+        while (!q.empty() && !reached)
+        {
+            const uint32 cur = q.front();
+            q.pop();
+            auto it = sTaxiPathSetBySource.find(cur);
+            if (it == sTaxiPathSetBySource.end())
+                continue;
+            for (auto const& kv : it->second) // kv.first = neighbour node
+            {
+                const uint32 nxt = kv.first;
+                if (parent.count(nxt))
+                    continue;
+                parent[nxt] = cur;
+                if (nxt == dest)
+                {
+                    reached = true;
+                    break;
+                }
+                q.push(nxt);
+            }
+        }
+
+        if (!parent.count(dest))
+            return {};
+
+        std::vector<uint32> route;
+        for (uint32 n = dest;; n = parent[n])
+        {
+            route.push_back(n);
+            if (n == src)
+                break;
+        }
+        std::reverse(route.begin(), route.end());
+        return route;
+    }
+}
+
+bool BotBridge::CB_NearestTaxiNodePos(BotHandle bot, BotPosition* out)
+{
+    Player* b = FindBot(bot);
+    if (!b || !out)
+        return false;
+    const uint32 node = sObjectMgr.GetNearestTaxiNode(
+        b->GetPositionX(), b->GetPositionY(), b->GetPositionZ(), b->GetMapId(), b->GetTeam());
+    if (!node)
+        return false;
+    TaxiNodesEntry const* entry = sTaxiNodesStore.LookupEntry(node);
+    if (!entry)
+        return false;
+    out->x = entry->x;
+    out->y = entry->y;
+    out->z = entry->z;
+    out->o = 0.0f;
+    out->map_id = entry->map_id;
+    return true;
+}
+
+bool BotBridge::CB_TakeTaxiToward(BotHandle bot, uint32_t dest_map, float x, float y, float z)
+{
+    Player* b = FindBot(bot);
+    if (!b || b->IsInCombat() || b->IsTaxiFlying() || b->IsMounted())
+        return false;
+
+    const Team team = b->GetTeam();
+    const uint32 srcNode = sObjectMgr.GetNearestTaxiNode(
+        b->GetPositionX(), b->GetPositionY(), b->GetPositionZ(), b->GetMapId(), team);
+    const uint32 destNode = sObjectMgr.GetNearestTaxiNode(x, y, z, dest_map, team);
+    if (!srcNode || !destNode || srcNode == destNode)
+        return false;
+
+    // The bot must be standing at the source flight master to take off.
+    TaxiNodesEntry const* srcEntry = sTaxiNodesStore.LookupEntry(srcNode);
+    if (!srcEntry || srcEntry->map_id != b->GetMapId())
+        return false;
+    const float ddx = srcEntry->x - b->GetPositionX();
+    const float ddy = srcEntry->y - b->GetPositionY();
+    const float ddz = srcEntry->z - b->GetPositionZ();
+    const float reach = 2.0f * INTERACTION_DISTANCE;
+    if (ddx * ddx + ddy * ddy + ddz * ddz > reach * reach)
+        return false;
+
+    // Find the actual flight master NPC near the bot (required by ActivateTaxi).
+    Creature* flightMaster = nullptr;
+    {
+        UnitList units;
+        MaNGOS::AnyUnitInObjectRangeCheck check(b, reach);
+        MaNGOS::UnitListSearcher<MaNGOS::AnyUnitInObjectRangeCheck> searcher(units, check);
+        Cell::VisitAllObjects(b, searcher, reach);
+        for (Unit* u : units)
+        {
+            Creature* c = dynamic_cast<Creature*>(u);
+            if (c && c->IsAlive() && (c->GetCreatureInfo()->NpcFlags & UNIT_NPC_FLAG_FLIGHTMASTER))
+            {
+                flightMaster = c;
+                break;
+            }
+        }
+    }
+    if (!flightMaster)
+        return false;
+
+    std::vector<uint32> route = ComputeTaxiRoute(srcNode, destNode);
+    if (route.size() < 2)
+        return false; // unreachable by flight (e.g. needs a boat between continents)
+
+    // Discover every node on the route so ActivateTaxiPathTo accepts them.
+    for (uint32 n : route)
+        b->m_taxi.SetTaximaskNode(n);
+
+    return b->ActivateTaxiPathTo(route, flightMaster);
 }
 
 // ── Factory: talents ──────────────────────────────────────────────────────

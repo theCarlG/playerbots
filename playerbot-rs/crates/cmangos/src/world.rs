@@ -1233,6 +1233,21 @@ pub trait World: Send {
     /// Mark `node_index` as discovered on this bot's taxi mask.
     fn bot_set_taxi_node(&self, _node_index: u32) {}
 
+    /// Position of the nearest taxi node (flight master) to the bot. `None`
+    /// when the bot's map has no taxi network. The bot walks here, then calls
+    /// [`Self::take_taxi_toward`].
+    fn nearest_taxi_node_pos(&self) -> Option<BotPosition> {
+        None
+    }
+
+    /// Take a flight from the flight master the bot is standing at toward the
+    /// destination (nearest node to it), computing the multi-hop route.
+    /// Returns false if not at a flight master, unreachable by flight, or the
+    /// bot can't afford the fare.
+    fn take_taxi_toward(&self, _dest_map: u32, _x: f32, _y: f32, _z: f32) -> bool {
+        false
+    }
+
     /* ── Talents ─────────────────────────────────────────────────────── */
 
     /// All `TalentEntry` rows belonging to `spec_no` (0..2) that match the

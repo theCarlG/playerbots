@@ -1148,6 +1148,16 @@ impl World for VtableWorld {
         unsafe { (self.cbs.bot_set_taxi_node.unwrap())(self.handle, node_index) };
     }
 
+    fn nearest_taxi_node_pos(&self) -> Option<BotPosition> {
+        let mut out: BotPosition = unsafe { std::mem::zeroed() };
+        let ok = unsafe { (self.cbs.nearest_taxi_node_pos.unwrap())(self.handle, &mut out) };
+        if ok { Some(out) } else { None }
+    }
+
+    fn take_taxi_toward(&self, dest_map: u32, x: f32, y: f32, z: f32) -> bool {
+        unsafe { (self.cbs.take_taxi_toward.unwrap())(self.handle, dest_map, x, y, z) }
+    }
+
     fn get_class_talents(&self, spec_no: u8) -> TalentList<'_> {
         let mut count: u32 = 0;
         let ptr =
