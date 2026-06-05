@@ -544,9 +544,6 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.ah_post                             = CB_AhPost;
     cbs.ah_bid                              = CB_AhBid;
 
-    // Outfit
-    cbs.apply_outfit                        = CB_ApplyOutfit;
-
     // Fishing
     cbs.start_fishing                       = CB_StartFishing;
 
@@ -4544,11 +4541,10 @@ void BotBridge::CB_BotSetMoney(BotHandle bot, uint32_t amount)
 //
 // `PlayerbotFactory::EnchantEquipment` builds its per-call state from the
 // `ai_playerbot_enchants` world-DB table, then iterates equipped slots and
-// calls `ai->EnchantItemT()` which — in THIS fork — is a no-op stub
-// (`PlayerbotRust::EnchantItemT`, PlayerbotRust.h:261). To preserve full PB2
-// parity we still load the container, still walk the slots, and still invoke
-// the (no-op) EnchantItemT path: if that stub is ever filled in on the
-// PlayerbotRust side, enchanting will "light up" here with no further changes.
+// calls `ai->EnchantItemT()`, which resolves the enchant spell to its enchant
+// id and applies it (`PlayerbotRust::EnchantItemT`, PlayerbotRust.cpp). We
+// load the container, walk the slots, and invoke EnchantItemT to apply the
+// per-slot enchant.
 //
 // InitGems is fully gated off on Classic (`#ifndef MANGOSBOT_ZERO`) in PB2,
 // so `CB_FactoryInitAllGems` is a no-op on vanilla and the full TBC/WotLK
@@ -4634,7 +4630,7 @@ namespace
 
     // Mirrors `PlayerbotFactory::ApplyEnchantTemplate(uint8 spec, Item*)` —
     // iterates the container looking for entries that match the bot's class
-    // and the passed spec key, then forwards to the (stub) EnchantItemT.
+    // and the passed spec key, then forwards each to EnchantItemT to apply.
     void ApplyEnchantTemplateForSpec(Player* bot, uint8 spec, Item* item)
     {
         PlayerbotAI* ai = bot->GetPlayerbotAI();
@@ -5221,12 +5217,11 @@ void BotBridge::CB_FactoryLearnTradeskillRecipes(BotHandle bot)
                 }
             }
 
-            // Original code calls `ai->CastSpell(tSpell->spell, bot)` as
-            // the `else` branch when `learnedSpell` is not set. The
-            // PlayerbotAI→PlayerbotRust shim turns `CastSpell` into a
-            // no-op today (cpp_wrapper/PlayerbotRust.h:229), so the
-            // fallback is dead in the fork; omitted here rather than
-            // replicated for compile-time clarity.
+            // PB2's original code had an `else` branch that cast the trainer
+            // spell on the bot (`ai->CastSpell(tSpell->spell, bot)`) when
+            // `learnedSpell` was not set. That path was a no-op in this fork
+            // and is intentionally not replicated — bots learn via the
+            // `learnedSpell`/SPELL_EFFECT_LEARN_SPELL path below.
 #ifdef MANGOSBOT_ZERO
             if (tSpell->learnedSpell)
             {
@@ -5319,9 +5314,10 @@ bool BotBridge::CB_FactoryEquipNewItemInSlot(BotHandle bot,
 
     // Mirrors the equip-and-enchant tail of PlayerbotFactory::InitEquipment's
     // per-slot loop (PlayerbotFactory.cpp:2301-2322).  The `apply_enchants`
-    // flag is accepted for parity with the FFI contract but is a no-op in
-    // this fork: `PlayerbotRust::EnchantItemT` is a stub (PlayerbotRust.h:242),
-    // so the per-slot enchant call would just forward to nothing.
+    // flag is accepted for parity with the FFI contract but intentionally
+    // unused here: enchanting is applied in a single dedicated pass after
+    // equipment is built (FactoryEnchantEquipmentViaRust →
+    // CB_FactoryEnchantAllEquipment → EnchantItemT), not per equip call.
     uint16 eDest = 0;
     if (RandomPlayerbotMgr::CanEquipUnseenItem(b, slot, eDest, item_id) != EQUIP_ERR_OK)
         return false;
@@ -7026,15 +7022,6 @@ bool BotBridge::CB_AhBid(BotHandle bot)
     return false;
 }
 
-// ── Outfit ───────────────────────────────────────────────────────────────────
-
-bool BotBridge::CB_ApplyOutfit(BotHandle bot)
-{
-    // Outfits are stored as config/blackboard data in the Rust side.
-    // This callback is a placeholder — outfit logic is handled in Rust
-    // by calling equip_item() for each item in the outfit.
-    return false;
-}
 
 // ── Fishing ──────────────────────────────────────────────────────────────────
 

@@ -1237,12 +1237,6 @@ typedef struct BotCallbacks {
     /* Bid on auction house listings. Returns true if a bid was placed. */
     bool (*ah_bid)(BotHandle bot);
 
-    /* ── Outfit ──────────────────────────────────────────────────────── */
-
-    /* Apply the current saved outfit. Returns true if items were
-     * equipped. */
-    bool (*apply_outfit)(BotHandle bot);
-
     /* ── Fishing ─────────────────────────────────────────────────────── */
 
     /* Start fishing (equip pole + cast). Returns true if cast started. */

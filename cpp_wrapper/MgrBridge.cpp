@@ -4,7 +4,10 @@
 #include "PlayerbotRust.h"
 #include "botffi.h"
 #include "Chat/ChannelMgr.h"
+#include "Chat/Channel.h"
 #include "Social/SocialMgr.h"
+#include "Server/DBCStores.h"
+#include "Server/Opcodes.h"
 
 class LoginQueryHolder;
 class CharacterHandler;
@@ -283,11 +286,100 @@ Player* PlayerbotHolder::GetPlayerBot(uint32 playerGuid) const
     return (it == playerBots.end()) ? nullptr : it->second ? it->second : nullptr;
 }
 
-void PlayerbotHolder::JoinChatChannels(Player* /*bot*/)
+// ChatChannels.dbc built-in channel ids (stable across 1.x). PB2 carried a
+// `ChatChannelId` enum that was dropped with the old engine; we use the raw
+// ids the DBC exposes.
+namespace
 {
-    // Stub: the ChatChannelId enum and related helpers were removed with the
-    // old strategy engine. Chat-channel joining for bots will be
-    // reimplemented on the Rust side.
+    constexpr uint32 CHAT_CHANNEL_GENERAL           = 1;
+    constexpr uint32 CHAT_CHANNEL_TRADE             = 2;
+    constexpr uint32 CHAT_CHANNEL_LOCAL_DEFENSE     = 22;
+    constexpr uint32 CHAT_CHANNEL_WORLD_DEFENSE     = 23;
+    constexpr uint32 CHAT_CHANNEL_GUILD_RECRUITMENT = 25;
+    constexpr uint32 CHAT_CHANNEL_LOOKING_FOR_GROUP = 26;
+    constexpr uint32 IMPORTANT_AREA_CITY            = 3459; // dummy "City" area
+}
+
+void PlayerbotHolder::JoinChatChannels(Player* bot)
+{
+    // Port of PB2 `PlayerbotHolder::JoinChatChannels`: put bots into the same
+    // built-in chat channels a real player auto-joins, so /general, /trade,
+    // /localdefense etc. are populated and bots feel "alive".
+    if (!bot || !bot->GetSession())
+        return;
+
+    PlayerbotAI* ai = bot->GetPlayerbotAI();
+
+    // World channel: only non-solo free bots past level 10, matching PB2 —
+    // keeps solo/hardcore bots out of the global channel.
+    if (ai && bot->GetLevel() >= 10 && sRandomPlayerbotMgr.IsFreeBot(bot)
+        && ai->GetGrouperType() != PlayerbotRust::GrouperType::SOLO)
+    {
+        WorldPacket pkt(CMSG_JOIN_CHANNEL);
+#ifndef MANGOSBOT_ZERO
+        pkt << uint32(0) << uint8(0) << uint8(0);
+#endif
+        pkt << std::string("World");
+        pkt << "";  // password
+        bot->GetSession()->HandleJoinChannelOpcode(pkt);
+    }
+
+    ChannelMgr* cMgr = channelMgr(bot->GetTeam());
+    AreaTableEntry const* zone = GetAreaEntryByAreaID(bot->GetZoneId());
+    if (!cMgr || !zone)
+        return;
+
+    const int loc = static_cast<int>(bot->GetSession()->GetSessionDbcLocale());
+    const std::string zoneName = zone->area_name[loc] ? zone->area_name[loc] : "";
+    AreaTableEntry const* cityArea = GetAreaEntryByAreaID(IMPORTANT_AREA_CITY);
+    const std::string cityName =
+        (cityArea && cityArea->area_name[loc]) ? cityArea->area_name[loc] : "";
+
+    for (uint32 i = 0; i < sChatChannelsStore.GetNumRows(); ++i)
+    {
+        ChatChannelsEntry const* channel = sChatChannelsStore.LookupEntry(i);
+        if (!channel)
+            continue;
+
+        char nameBuf[100];
+        Channel* ch = nullptr;
+        switch (channel->ChannelID)
+        {
+            case CHAT_CHANNEL_GENERAL:
+            case CHAT_CHANNEL_LOCAL_DEFENSE:
+                // Zone-qualified: "General - <zone>", "LocalDefense - <zone>".
+                snprintf(nameBuf, sizeof(nameBuf), channel->pattern[loc], zoneName.c_str());
+#ifdef MANGOSBOT_ZERO
+                ch = cMgr->GetJoinChannel(nameBuf);
+#else
+                ch = cMgr->GetJoinChannel(nameBuf, channel->ChannelID);
+#endif
+                break;
+            case CHAT_CHANNEL_TRADE:
+            case CHAT_CHANNEL_GUILD_RECRUITMENT:
+                // City-qualified (a core convention — the "City" dummy area).
+                snprintf(nameBuf, sizeof(nameBuf), channel->pattern[loc], cityName.c_str());
+#ifdef MANGOSBOT_ZERO
+                ch = cMgr->GetJoinChannel(nameBuf);
+#else
+                ch = cMgr->GetJoinChannel(nameBuf, channel->ChannelID);
+#endif
+                break;
+            case CHAT_CHANNEL_WORLD_DEFENSE:
+            case CHAT_CHANNEL_LOOKING_FOR_GROUP:
+                // Global, no zone qualifier.
+#ifdef MANGOSBOT_ZERO
+                ch = cMgr->GetJoinChannel(channel->pattern[loc]);
+#else
+                ch = cMgr->GetJoinChannel(channel->pattern[loc], channel->ChannelID);
+#endif
+                break;
+            default:
+                break;
+        }
+        if (ch)
+            ch->Join(bot, "");
+    }
 }
 
 void PlayerbotHolder::OnBotLogin(Player * const bot)

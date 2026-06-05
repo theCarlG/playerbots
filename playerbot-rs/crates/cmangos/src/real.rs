@@ -1428,10 +1428,6 @@ impl World for VtableWorld {
         unsafe { (self.cbs.ah_bid.unwrap())(self.handle) }
     }
 
-    fn apply_outfit(&self) -> bool {
-        unsafe { (self.cbs.apply_outfit.unwrap())(self.handle) }
-    }
-
     fn start_fishing(&self) -> bool {
         unsafe { (self.cbs.start_fishing.unwrap())(self.handle) }
     }

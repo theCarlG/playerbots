@@ -950,8 +950,6 @@ pub enum Bt {
     EquipItem(ItemId),
     /// Unequip an item slot.
     UnequipSlot(u8),
-    /// Apply a saved outfit preset.
-    ApplyOutfit,
     /// Cast fishing and wait for catch.
     Fish,
     /// Play a random emote (non-RPG context — e.g. idle chatter).
@@ -2086,7 +2084,6 @@ impl BtNode for Bt {
             Bt::BankWithdraw => tick_bank_withdraw(ctx),
             Bt::AhPost => tick_ah_post(ctx),
             Bt::AhBid => tick_ah_bid(ctx),
-            Bt::ApplyOutfit => tick_apply_outfit(ctx),
             Bt::Fish => tick_fish(ctx),
             Bt::LfgJoin => tick_lfg_join(ctx),
             Bt::LfgAccept => tick_lfg_accept(ctx),
@@ -3572,14 +3569,6 @@ fn tick_ah_post(ctx: &mut TickContext<'_>) -> BtResult {
 
 fn tick_ah_bid(ctx: &mut TickContext<'_>) -> BtResult {
     if ctx.interface.ah_bid() {
-        BtResult::Success
-    } else {
-        BtResult::Failure
-    }
-}
-
-fn tick_apply_outfit(ctx: &mut TickContext<'_>) -> BtResult {
-    if ctx.interface.apply_outfit() {
         BtResult::Success
     } else {
         BtResult::Failure
@@ -6423,7 +6412,6 @@ mod tests {
         assert_eq!(Bt::ShareQuest.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::EquipItem(ItemId(100)).tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::UnequipSlot(0).tick(&mut ctx), BtResult::Failure);
-        assert_eq!(Bt::ApplyOutfit.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::Fish.tick(&mut ctx), BtResult::Failure);
         // RandomEmote: mock do_text_emote returns false (default)
         assert_eq!(Bt::RandomEmote.tick(&mut ctx), BtResult::Failure);

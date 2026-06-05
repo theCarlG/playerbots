@@ -512,11 +512,6 @@ public:
     }
     void log(std::string fileName, const char* str, ...);
 
-    void logEvent(PlayerbotAI* ai, std::string eventName,
-                  std::string info1 = "", std::string info2 = "");
-    void logEvent(PlayerbotAI* ai, std::string eventName,
-                  ObjectGuid guid, std::string info2);
-
     bool CanLogAction(PlayerbotAI* ai, std::string actionName,
                       bool isExecute, std::string lastActionName);
 };

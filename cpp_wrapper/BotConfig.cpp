@@ -798,18 +798,6 @@ void PlayerbotAIConfig::log(std::string fileName, const char* str, ...)
     fflush(stdout);
 }
 
-void PlayerbotAIConfig::logEvent(PlayerbotAI* /*ai*/, std::string /*eventName*/,
-                                  std::string /*info1*/, std::string /*info2*/)
-{
-    // Stubbed — event logging will be re-implemented in Rust.
-}
-
-void PlayerbotAIConfig::logEvent(PlayerbotAI* ai, std::string eventName,
-                                  ObjectGuid /*guid*/, std::string info2)
-{
-    logEvent(ai, eventName, std::string(""), info2);
-}
-
 bool PlayerbotAIConfig::CanLogAction(PlayerbotAI* /*ai*/, std::string actionName,
                                       bool /*isExecute*/, std::string /*lastActionName*/)
 {

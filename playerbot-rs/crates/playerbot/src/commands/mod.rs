@@ -2,6 +2,7 @@
 ///
 /// Commands arrive as whispers from the master player, parsed by `parser::parse()`,
 /// queued on `BotState::pending_commands`, and applied here before each tick.
+pub mod outfit;
 pub mod parser;
 pub mod preprocess;
 pub mod protocol;
@@ -2723,9 +2724,10 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             // PB2 "craft <item>" — craft items. The BT handles crafting
             // when the bot has the recipe and materials. Silently accept.
         }
-        BotCommand::Outfit(_args) => {
-            // PB2 "outfit <name> equip|save|list" — gear set management.
-            // Requires persistent gear set storage. Silently accept.
+        BotCommand::Outfit(args) => {
+            // PB2 "outfit <name> equip|replace|reset|update|+/-items" — named
+            // gear-set management, persisted per-bot in the event KV store.
+            outfit::apply(bot, pc, args);
         }
         BotCommand::LogLevel(args) => {
             // PB2 "log <level>" — adjust bot verbosity.

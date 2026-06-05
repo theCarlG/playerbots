@@ -6,6 +6,8 @@
 #include "PlayerbotRust.h"
 
 #include "Entities/Player.h"
+#include "Entities/Item.h"
+#include "Server/SQLStorages.h"
 #include "Globals/ObjectAccessor.h"
 #include "Groups/Group.h"
 #include "Log/Log.h"
@@ -456,6 +458,61 @@ void PlayerbotRust::TellPlayerNoFacing(Player* target, const std::string& msg)
     // toward the target, so there is nothing extra to skip. Distinct entry
     // point kept for PB2 call-site parity (PB2's TellPlayer faced first).
     TellPlayer(target, msg);
+}
+
+void PlayerbotRust::EnchantItemT(uint32_t spellId, uint8_t slot, Item* item)
+{
+    // Faithful port of PB2 `PlayerbotAI::EnchantItemT`. The factory enchant
+    // pass (CB_FactoryEnchantAllEquipment → DoEnchantItem →
+    // ApplyEnchantTemplateForSpec) has already picked the right enchanting
+    // *spell* per class/spec/slot from `ai_playerbot_enchants`; this resolves
+    // that spell to its enchant id and applies it to the equipped item.
+    Item* pItem = item ? item : m_bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+    if (!pItem)
+        return;
+
+    // The container is keyed by equip slot; only enchant the item that
+    // actually sits in that slot (and is owned — a sanity guard against
+    // detached items).
+    if (pItem->GetSlot() != slot)
+        return;
+    if (pItem->GetOwner() == nullptr)
+        return;
+
+    SpellEntry const* spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(spellId);
+    if (!spellInfo)
+        return;
+
+    uint32 enchantid = spellInfo->EffectMiscValue[0];
+    if (!enchantid)
+    {
+        sLog.outError("EnchantItemT: spell %u has no enchant id (bot %s)",
+                      spellId, m_bot->GetName());
+        return;
+    }
+
+    // The enchant spell must be applicable to this item's subclass or
+    // inventory type, or ApplyEnchantment would mis-apply.
+    if (!((1 << pItem->GetProto()->SubClass) & spellInfo->EquippedItemSubClassMask) &&
+        !((1 << pItem->GetProto()->InventoryType) & spellInfo->EquippedItemInventoryTypeMask))
+    {
+        sLog.outError("EnchantItemT: spell %u not valid for item type (bot %s)",
+                      spellId, m_bot->GetName());
+        return;
+    }
+
+#ifdef MANGOSBOT_TWO
+    EnchantmentSlot enchantSlot =
+        spellInfo->Effect[0] == SPELL_EFFECT_ENCHANT_ITEM_PRISMATIC
+            ? PRISMATIC_ENCHANTMENT_SLOT
+            : PERM_ENCHANTMENT_SLOT;
+#else
+    EnchantmentSlot enchantSlot = PERM_ENCHANTMENT_SLOT;
+#endif
+
+    m_bot->ApplyEnchantment(pItem, enchantSlot, false);
+    pItem->SetEnchantment(enchantSlot, enchantid, 0, 0);
+    m_bot->ApplyEnchantment(pItem, enchantSlot, true);
 }
 
 void PlayerbotRust::HandleTeleportAck()

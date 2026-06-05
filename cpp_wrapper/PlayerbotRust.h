@@ -159,10 +159,7 @@ public:
     /// Drop cached strategy/encounter state so the next tick rebuilds
     /// behaviour from scratch. Forwarded into Rust.
     void ResetStrategies(bool /*incremental*/ = false);
-    void AllowActivity(uint32_t /*activity*/, bool /*allow*/) {}
     void SetMaster(Player* master);
-    float GetLevelFloat() const { return 0.0f; }
-    Unit* GetUnit(ObjectGuid /*guid*/) const { return nullptr; }
 
     // Stubs for legacy PlayerbotFactory. Inventory iteration, gearscore
     // calculation, direct spell casting and item enchanting are all owned
@@ -196,8 +193,11 @@ public:
     void FactoryInitGemsViaRust()                          { if (m_rustState) playerbot_factory_init_gems(m_rustState.get()); }
 
     void TellPlayerNoFacing(Player* target, const std::string& msg);
-    void CastSpell(uint32_t /*spellId*/, Unit* /*target*/) {}
-    void EnchantItemT(uint32_t /*spellId*/, uint8_t /*slot*/, Item* /*item*/) {}
+    // Apply a permanent enchant (identified by its enchanting spell) to a
+    // specific equipped slot. Ported from PB2 `PlayerbotAI::EnchantItemT`;
+    // drives the factory enchant pass (CB_FactoryEnchantAllEquipment →
+    // DoEnchantItem → here).
+    void EnchantItemT(uint32_t spellId, uint8_t slot, Item* item);
 
     // ── Core callback stubs (ex-PlayerbotAI shim) ───────────────────────
     // The fork's Player.cpp calls back into PlayerbotAI from a handful of

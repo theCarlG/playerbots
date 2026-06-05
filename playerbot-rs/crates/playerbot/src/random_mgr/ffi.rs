@@ -79,6 +79,29 @@ where
     }
 }
 
+/// Read a per-bot string value (the `data` column) from the event KV
+/// store. Returns an empty string when the key is absent or the random
+/// manager has not been initialised. Lets per-bot subsystems (e.g. the
+/// `outfit` command) persist small string state the way PB2's
+/// `RandomPlayerbotMgr::GetData` did, without a C++ round-trip.
+pub(crate) fn kv_get_str(guid: u32, key: &str) -> String {
+    with_state(String::new(), |st| {
+        let mut cache = lock_cache(st);
+        cache.get_data(guid, key, now_epoch_s(), st.world.as_ref())
+    })
+}
+
+/// Write a never-expiring per-bot string value (the `data` column) to the
+/// event KV store. The stored `value` is fixed at 1 so the row is kept
+/// alive (a value of 0 would delete it); a `Some(0)` TTL means it never
+/// expires. Mirrors PB2's `RandomPlayerbotMgr::SetValue(bot, key, 1, data)`.
+pub(crate) fn kv_set_str(guid: u32, key: &str, data: &str) {
+    with_state((), |st| {
+        let mut cache = lock_cache(st);
+        cache.set_value_default_ttl(guid, key, 1, data, Some(0), now_epoch_s(), st.world.as_ref());
+    });
+}
+
 /// Grab the wall clock in seconds. Matches the worker's expectation
 /// that callers supply `now_epoch_s` per request so we don't depend on
 /// clock monotonicity across threads.

@@ -411,9 +411,6 @@ namespace BotBridge
     bool CB_AhPost(BotHandle bot);
     bool CB_AhBid(BotHandle bot);
 
-    // ── Outfit ────────────────────────────────────────────────────────────
-    bool CB_ApplyOutfit(BotHandle bot);
-
     // ── Fishing ───────────────────────────────────────────────────────────
     bool CB_StartFishing(BotHandle bot);
 

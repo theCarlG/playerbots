@@ -1492,13 +1492,6 @@ pub trait World: Send {
         false
     }
 
-    /* ── Outfit ──────────────────────────────────────────────────────── */
-
-    /// Apply the current saved outfit.
-    fn apply_outfit(&self) -> bool {
-        false
-    }
-
     /* ── Fishing ─────────────────────────────────────────────────────── */
 
     /// Start fishing (equip pole + cast).
