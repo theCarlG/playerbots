@@ -4218,6 +4218,16 @@ wander, walking-RPG, teleports, distances, timings. Rust config in playerbot-rs 
 - [ ] => Real parity = verify each unit's LOGIC vs PB2 + test in-game. The list prevents FORGETTING; it does not prove BEHAVIOUR.
 
 ## DISCOVERED GAPS (added on sight during migration)
+- [x] **Nearby-creature scan returned nothing (entry-0 wildcard bug)** — FOUND + FIXED 2026-06-05 via a 25-min
+  live DB observation (gold never moved across 1800 bots). `BotBridge` used the core
+  `AllCreaturesOfEntryInRangeCheck` (an exact `GetEntry()==entry` compare) with entry **0** as an "any creature"
+  sentinel in 10 places — but no creature has entry 0, so every such scan matched NOTHING. This silently broke
+  **looting (no gold), vendor-sell, repair, quest-giver / gossip / trainer interaction** in live play (unit tests
+  use MockWorld and bypass it; smoke tests only checked populate+no-crash). Fixed with a drop-in
+  `CreaturesByEntryOrAnyInRangeCheck` (same ctor signature, treats entry 0 as a real wildcard) + a global rename.
+  VERIFIED LIVE: gold went from 0/1800 over 25 min → bots gaining gold within 6 min; full mangosd build+install,
+  no runtime crash. This is the single highest-impact runtime fix of the session — it unblocks the whole
+  loot/vendor/repair/quest-NPC interaction layer, not just gold.
 - [x] Warlock pet **Spell Lock** (Felhunter, 19647/19244) reactive interrupt — DONE 2026-06-05. New
   `cast_pet_spell` FFI (`BotBridge::CB_CastPetSpell`: pet `HasSpell` + cooldown + `CheckCast`, then `SpellStart`).
   `tick_interrupt` now tries both Spell Lock ranks via the pet for warlocks (no bot GCD) before the empty

@@ -111,6 +111,34 @@ Unit* BotBridge::FindUnit(BotHandle bot, UnitHandle handle)
     return b->GetMap()->GetUnit(MakeGuid(handle));
 }
 
+namespace
+{
+    // Grid check used for all of the bot's "nearby creature" scans (loot,
+    // vendors, quest givers, gossip, trainers, …). It mirrors the core's
+    // AllCreaturesOfEntryInRangeCheck but treats entry 0 as a WILDCARD that
+    // matches any creature. The core check is an exact `GetEntry() == entry`
+    // compare, so passing entry 0 (the intended "any creature" sentinel) matched
+    // NOTHING — every real creature has a non-zero entry — which silently broke
+    // looting (no gold), vending, repairing and quest-giver interaction. Each
+    // caller's own loop does the alive/dead/flag filtering, so the wildcard just
+    // yields the full candidate set. Same constructor signature as the core
+    // check, so it is a drop-in replacement.
+    struct CreaturesByEntryOrAnyInRangeCheck
+    {
+        CreaturesByEntryOrAnyInRangeCheck(WorldObject const* obj, uint32 entry, float range)
+            : m_obj(obj), m_entry(entry), m_range(range) {}
+        WorldObject const& GetFocusObject() const { return *m_obj; }
+        bool operator()(Unit* u) const
+        {
+            return (m_entry == 0 || u->GetEntry() == m_entry)
+                && m_obj->IsWithinDist(u, m_range, false);
+        }
+        WorldObject const* m_obj;
+        uint32 m_entry;
+        float m_range;
+    };
+}
+
 BotUnitSnapshot BotBridge::FillUnitSnapshot(Unit* unit)
 {
     BotUnitSnapshot s{};
@@ -2284,8 +2312,8 @@ UnitHandle* BotBridge::CB_GetNearbyLootable(BotHandle bot, float range, uint32_t
 
     // Find dead creatures that have loot
     CreatureList creatures;
-    MaNGOS::AllCreaturesOfEntryInRangeCheck anyCreatureCheck(b, 0, range);
-    MaNGOS::CreatureListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(creatures, anyCreatureCheck);
+    CreaturesByEntryOrAnyInRangeCheck anyCreatureCheck(b, 0, range);
+    MaNGOS::CreatureListSearcher<CreaturesByEntryOrAnyInRangeCheck> searcher(creatures, anyCreatureCheck);
     Cell::VisitAllObjects(b, searcher, range);
 
     for (Creature* c : creatures)
@@ -2407,8 +2435,8 @@ UnitHandle* BotBridge::CB_GetNearbyNpcs(BotHandle bot, float range, uint32_t npc
     std::vector<UnitHandle> handles;
 
     CreatureList creatures;
-    MaNGOS::AllCreaturesOfEntryInRangeCheck check(b, 0, range);
-    MaNGOS::CreatureListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(creatures, check);
+    CreaturesByEntryOrAnyInRangeCheck check(b, 0, range);
+    MaNGOS::CreatureListSearcher<CreaturesByEntryOrAnyInRangeCheck> searcher(creatures, check);
     Cell::VisitAllObjects(b, searcher, range);
 
     for (Creature* c : creatures)
@@ -3580,8 +3608,8 @@ UnitHandle* BotBridge::CB_GetNearbyGossipNpcs(BotHandle bot, float range, uint32
     std::vector<UnitHandle> handles;
 
     CreatureList creatures;
-    MaNGOS::AllCreaturesOfEntryInRangeCheck check(b, 0, range);
-    MaNGOS::CreatureListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(creatures, check);
+    CreaturesByEntryOrAnyInRangeCheck check(b, 0, range);
+    MaNGOS::CreatureListSearcher<CreaturesByEntryOrAnyInRangeCheck> searcher(creatures, check);
     Cell::VisitAllObjects(b, searcher, range);
 
     for (Creature* c : creatures)
@@ -3671,8 +3699,8 @@ uint64_t* BotBridge::CB_GetNearbyGatherables(BotHandle bot, float range, uint32_
     if (b->HasSkill(SKILL_SKINNING))
     {
         CreatureList creatures;
-        MaNGOS::AllCreaturesOfEntryInRangeCheck creatureCheck(b, 0, range);
-        MaNGOS::CreatureListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> cSearcher(creatures, creatureCheck);
+        CreaturesByEntryOrAnyInRangeCheck creatureCheck(b, 0, range);
+        MaNGOS::CreatureListSearcher<CreaturesByEntryOrAnyInRangeCheck> cSearcher(creatures, creatureCheck);
         Cell::VisitAllObjects(b, cSearcher, range);
 
         for (Creature* c : creatures)
@@ -7556,8 +7584,8 @@ bool BotBridge::CB_GossipHello(BotHandle bot, uint32_t npc_entry)
     // Find a nearby creature with this entry
     Creature* target = nullptr;
     CreatureList creatures;
-    MaNGOS::AllCreaturesOfEntryInRangeCheck check(b, npc_entry, INTERACTION_DISTANCE * 2);
-    MaNGOS::CreatureListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(creatures, check);
+    CreaturesByEntryOrAnyInRangeCheck check(b, npc_entry, INTERACTION_DISTANCE * 2);
+    MaNGOS::CreatureListSearcher<CreaturesByEntryOrAnyInRangeCheck> searcher(creatures, check);
     Cell::VisitAllObjects(b, searcher, INTERACTION_DISTANCE * 2);
 
     for (Creature* c : creatures)
@@ -7586,8 +7614,8 @@ bool BotBridge::CB_BuyFromVendor(BotHandle bot, uint32_t item_id, uint32_t qty)
     // Find a nearby vendor
     Creature* vendor = nullptr;
     CreatureList creatures;
-    MaNGOS::AllCreaturesOfEntryInRangeCheck check(b, 0, INTERACTION_DISTANCE * 2);
-    MaNGOS::CreatureListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(creatures, check);
+    CreaturesByEntryOrAnyInRangeCheck check(b, 0, INTERACTION_DISTANCE * 2);
+    MaNGOS::CreatureListSearcher<CreaturesByEntryOrAnyInRangeCheck> searcher(creatures, check);
     Cell::VisitAllObjects(b, searcher, INTERACTION_DISTANCE * 2);
 
     for (Creature* c : creatures)
@@ -7679,8 +7707,8 @@ bool BotBridge::CB_BankDeposit(BotHandle bot)
     // Check if near a banker
     bool nearBanker = false;
     CreatureList creatures;
-    MaNGOS::AllCreaturesOfEntryInRangeCheck check(b, 0, INTERACTION_DISTANCE * 2);
-    MaNGOS::CreatureListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(creatures, check);
+    CreaturesByEntryOrAnyInRangeCheck check(b, 0, INTERACTION_DISTANCE * 2);
+    MaNGOS::CreatureListSearcher<CreaturesByEntryOrAnyInRangeCheck> searcher(creatures, check);
     Cell::VisitAllObjects(b, searcher, INTERACTION_DISTANCE * 2);
 
     for (Creature* c : creatures)
@@ -7732,8 +7760,8 @@ bool BotBridge::CB_BankWithdraw(BotHandle bot)
     // Check if near a banker
     bool nearBanker = false;
     CreatureList creatures;
-    MaNGOS::AllCreaturesOfEntryInRangeCheck check(b, 0, INTERACTION_DISTANCE * 2);
-    MaNGOS::CreatureListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(creatures, check);
+    CreaturesByEntryOrAnyInRangeCheck check(b, 0, INTERACTION_DISTANCE * 2);
+    MaNGOS::CreatureListSearcher<CreaturesByEntryOrAnyInRangeCheck> searcher(creatures, check);
     Cell::VisitAllObjects(b, searcher, INTERACTION_DISTANCE * 2);
 
     for (Creature* c : creatures)
@@ -7780,8 +7808,8 @@ bool BotBridge::CB_AhPost(BotHandle bot)
     // Find auctioneer
     Creature* auctioneer = nullptr;
     CreatureList creatures;
-    MaNGOS::AllCreaturesOfEntryInRangeCheck check(b, 0, INTERACTION_DISTANCE * 2);
-    MaNGOS::CreatureListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(creatures, check);
+    CreaturesByEntryOrAnyInRangeCheck check(b, 0, INTERACTION_DISTANCE * 2);
+    MaNGOS::CreatureListSearcher<CreaturesByEntryOrAnyInRangeCheck> searcher(creatures, check);
     Cell::VisitAllObjects(b, searcher, INTERACTION_DISTANCE * 2);
 
     for (Creature* c : creatures)
@@ -7849,8 +7877,8 @@ bool BotBridge::CB_AhBid(BotHandle bot)
     // Find auctioneer
     Creature* auctioneer = nullptr;
     CreatureList creatures;
-    MaNGOS::AllCreaturesOfEntryInRangeCheck check(b, 0, INTERACTION_DISTANCE * 2);
-    MaNGOS::CreatureListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(creatures, check);
+    CreaturesByEntryOrAnyInRangeCheck check(b, 0, INTERACTION_DISTANCE * 2);
+    MaNGOS::CreatureListSearcher<CreaturesByEntryOrAnyInRangeCheck> searcher(creatures, check);
     Cell::VisitAllObjects(b, searcher, INTERACTION_DISTANCE * 2);
 
     for (Creature* c : creatures)
@@ -8346,8 +8374,8 @@ bool BotBridge::CB_SellItem(BotHandle bot, uint32_t item_id)
 static bool FindNearbyBanker(Player* b)
 {
     CreatureList creatures;
-    MaNGOS::AllCreaturesOfEntryInRangeCheck check(b, 0, INTERACTION_DISTANCE * 2);
-    MaNGOS::CreatureListSearcher<MaNGOS::AllCreaturesOfEntryInRangeCheck> searcher(creatures, check);
+    CreaturesByEntryOrAnyInRangeCheck check(b, 0, INTERACTION_DISTANCE * 2);
+    MaNGOS::CreatureListSearcher<CreaturesByEntryOrAnyInRangeCheck> searcher(creatures, check);
     Cell::VisitAllObjects(b, searcher, INTERACTION_DISTANCE * 2);
     for (Creature* c : creatures)
     {
