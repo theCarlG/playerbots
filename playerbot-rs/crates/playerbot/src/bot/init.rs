@@ -456,6 +456,12 @@ fn mode_dispatch() -> Bt {
                 // master/group rather than falling through to travel/grind —
                 // otherwise after a fight it wanders off toward the entrance.
                 Seq!(Bt::InInstance, Follow),
+                // Orphaned (masterless) bot stuck in a dungeon/raid — hearth
+                // out instead of solo-grinding raid trash to death. Only
+                // reached when the InInstance+Follow above failed (no master),
+                // so grouped bots are unaffected. Throttled: hearthstone has a
+                // cast time + long cooldown, so it fires between trash fights.
+                Seq!(Bt::InInstance, Bt::throttle(60_000, Bt::UseHearthstone)),
                 // Fight first: a masterless bot grinds nearby level-appropriate
                 // mobs before wandering off. This was LAST, so travel and
                 // especially rpg's RpgWander always preempted it — bots roamed

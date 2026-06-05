@@ -1003,6 +1003,9 @@ pub enum Bt {
     /// through normal play. Reads the one-tick `just_leveled` snapshot flag;
     /// Failure on every other tick.
     AnnounceLevelUp,
+    /// Use a hearthstone (teleport to the home inn). Used to get an orphaned
+    /// masterless bot out of a dungeon/raid it has no business being in.
+    UseHearthstone,
     /// Apply all missing world buffs from config (`AddAura` for each).
     ApplyWorldBuffs,
     /// Travel to a world buff location for `buff_id`.
@@ -2226,6 +2229,7 @@ impl BtNode for Bt {
                     BtResult::Failure
                 }
             }
+            Bt::UseHearthstone => ok(ctx.interface.bot_use_hearthstone()),
             Bt::CaptureFlag => ok(ctx.interface.capture_bg_objective()),
             Bt::Gossip(entry) => tick_gossip(ctx, *entry),
             Bt::BuyFromVendor(item, qty) => tick_buy_from_vendor(ctx, *item, *qty),
