@@ -550,3 +550,14 @@ social/chat/guild/AH §8 · lifecycle §9 · commands/RTSC §10 · gear/item §1
   + `MockEvent::UseGameObject`, also makes BWL's disarm testable). 10 new tests. LEFT as SimpleFsm (documented):
   KURINNAXX (Sand Trap is a ground hazard with no per-bot signal; Mortal Wound = reactive tank swap). cargo test +
   clippy (vanilla & wotlk) green; full mangosd build+install; smoke clean (200 accts, 0 runtime crash).
+- 2026-06-05 · AQ40 (Temple of Ahn'Qiraj) lifted from SimpleFsm → real per-boss FSMs (was 9× SimpleFsm). 7 bosses
+  scripted with DB-verified entries/spell-ids: SARTURA focus Royal Guards (15984); FANKRISS focus Spawn (15630)
+  + Vekniss Hatchling (15962); OURO focus Ouro Scarab (15718); VISCIDUS focus shatter-Globs (15667); HUHURAN
+  hunter Tranq Shot the Frenzy (26051, confirmed from the core boss script); TWINS role-split — melee →
+  Vek'nilash (15275), ranged → Vek'lor (15276, his Arcane Burst knocks back meleers) — both entries map to one
+  `TwinsFsm` that keeps its creation entry; C'THUN focus tentacles in priority — Flesh (15802, stomach) → Eye
+  (15726) → Claw (15725) → Giant Eye (15334) → Giant Claw (15728), both Eye/body entries map to one `CthunFsm`.
+  LEFT as SimpleFsm (documented): SKERAM (Arcane Explosion / True Fulfillment MC + indistinguishable illusion
+  copies, no per-bot signal); BUG TRIO (Kri/Vem/Yauj need HP-balanced kills — raid-wide burst coordination a
+  per-bot focus would fight, not help). 14 tests. cargo test + clippy (vanilla & wotlk) green; full mangosd
+  build+install; smoke clean (200 accts, 0 runtime crash).
