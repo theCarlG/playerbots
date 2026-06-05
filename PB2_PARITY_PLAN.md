@@ -303,6 +303,15 @@ social/chat/guild/AH §8 · lifecycle §9 · commands/RTSC §10 · gear/item §1
   Trust only claims cross-checked against the real `CastOn*`/`CB_*` code. When in doubt, grep.
 
 ## Progress log
+- 2026-06-05 · BROADCAST / IDLE CHATTER — gave the §2 chat channels a voice. `CB_BotBroadcastRandom` says a
+  random suggestion from `ai_playerbot_texts` (cached at first use) in the bot's General channel (reconstructs
+  the zone-qualified name like §2's JoinChatChannels; `Channel::Say`, `/say` fallback). Placeholders filled
+  (`%my_level`/`%my_name`/`%my_role`/`%category`) and any text with an unfillable `%` is skipped, so no broken
+  output; a low per-call chance (~8%) + the caller's 180s throttle keep it a trickle across hundreds of bots.
+  `Bt::BroadcastChatter` wired into the world maintenance loop. 2 unit tests; cargo test 10/10 + clippy green;
+  full mangosd build+install; smoke test clean (737 bots, 0 crashes, no SQL errors). Chat isn't in Server.log
+  so live chatter verification is a client pass. Deferred: per-event broadcasts (loot/quest/levelup/kill),
+  per-category channels (Trade/LFG), and proximity GREETING (no greet-text category exists).
 - 2026-06-05 · ESCORT QUESTS — the last quest objective type; the quest system is now functionally COMPLETE.
   `CB_GetActiveEscortNpc` finds a nearby creature whose escort AI is in `STATE_ESCORT_ESCORTING` while the bot
   holds an incomplete `QUEST_TYPE_ESCORT` quest (the escorted-player is private, but quest + escorting-state is

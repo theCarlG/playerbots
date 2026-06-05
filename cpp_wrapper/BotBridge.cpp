@@ -60,6 +60,8 @@
 #include "Entities/Transports.h"
 #include "Maps/TransportMgr.h"
 #include "AI/ScriptDevAI/base/escort_ai.h"
+#include "Chat/ChannelMgr.h"
+#include "Chat/Channel.h"
 #include "BattleGround/BattleGround.h"
 #include "BattleGround/BattleGroundWS.h"
 #include "BattleGround/BattleGroundAB.h"
@@ -359,6 +361,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.use_nearby_quest_object    = CB_UseNearbyQuestObject;
     cbs.is_quest_objective_creature = CB_IsQuestObjectiveCreature;
     cbs.get_active_escort_npc      = CB_GetActiveEscortNpc;
+    cbs.bot_broadcast_random       = CB_BotBroadcastRandom;
 
     // Factory: inventory mutation
     cbs.inventory_destroy_equipped_and_bags = CB_InventoryDestroyEquippedAndBags;
@@ -3811,6 +3814,115 @@ bool BotBridge::CB_IsQuestObjectiveCreature(BotHandle bot, uint32_t entry)
             if (b->GetReqKillOrCastCurrentCount(qs.first, reqEntry) < reqCount)
                 return true;
         }
+    }
+    return false;
+}
+
+namespace
+{
+    // Cached idle-chatter texts from ai_playerbot_texts, keyed by category.
+    // Loaded once (the table is read-only after start) so the periodic
+    // broadcast never hits the DB.
+    std::vector<std::string> const& BotChatterTexts(std::string const& category)
+    {
+        static std::unordered_map<std::string, std::vector<std::string>> cache;
+        auto it = cache.find(category);
+        if (it != cache.end())
+            return it->second;
+
+        std::vector<std::string>& texts = cache[category];
+        if (auto r = WorldDatabase.PQuery(
+                "SELECT text FROM ai_playerbot_texts WHERE name = '%s'", category.c_str()))
+        {
+            do
+            {
+                texts.push_back(r->Fetch()[0].GetCppString());
+            } while (r->NextRow());
+        }
+        return texts;
+    }
+
+    void ReplaceAll(std::string& s, std::string const& from, std::string const& to)
+    {
+        for (size_t p = s.find(from); p != std::string::npos; p = s.find(from, p + to.size()))
+            s.replace(p, from.size(), to);
+    }
+
+    // Resolve the localized name of the bot's current General channel
+    // ("General - <zone>") so we can send to the channel it joined at login.
+    std::string GeneralChannelName(Player* b)
+    {
+        AreaTableEntry const* zone = GetAreaEntryByAreaID(b->GetZoneId());
+        if (!zone)
+            return "";
+        const int loc = static_cast<int>(b->GetSession()->GetSessionDbcLocale());
+        const std::string zoneName = zone->area_name[loc] ? zone->area_name[loc] : "";
+        for (uint32 i = 0; i < sChatChannelsStore.GetNumRows(); ++i)
+        {
+            ChatChannelsEntry const* ch = sChatChannelsStore.LookupEntry(i);
+            if (!ch || ch->ChannelID != 1) // 1 = General
+                continue;
+            char buf[100];
+            snprintf(buf, sizeof(buf), ch->pattern[loc], zoneName.c_str());
+            return buf;
+        }
+        return "";
+    }
+}
+
+bool BotBridge::CB_BotBroadcastRandom(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b || !b->GetSession())
+        return false;
+
+    // Low per-call chance so that, with the caller's ~3-minute throttle and
+    // hundreds of bots, the channel sees a steady trickle of chatter rather
+    // than a flood. Mirrors PB2's broadcast-chance gating.
+    if (urand(1, 100) > 8)
+        return false;
+
+    static const char* categories[] = {
+        "suggest_trade", "suggest_faction", "suggest_something",
+        "suggest_sell", "suggest_quest"
+    };
+    constexpr int catCount = sizeof(categories) / sizeof(categories[0]);
+
+    static const char* tradeGoods[] = {
+        "ore", "herbs", "cloth", "leather", "gems", "potions", "enchants"
+    };
+
+    const std::string role = b->GetPlayerbotAI() ? "DPS" : "DPS"; // role string
+
+    // Try a few random texts; broadcast the first one we can fully fill in.
+    for (int attempt = 0; attempt < 8; ++attempt)
+    {
+        std::vector<std::string> const& texts = BotChatterTexts(categories[urand(0, catCount - 1)]);
+        if (texts.empty())
+            continue;
+
+        std::string text = texts[urand(0, texts.size() - 1)];
+        ReplaceAll(text, "%my_level", std::to_string(b->GetLevel()));
+        ReplaceAll(text, "%my_name", b->GetName());
+        ReplaceAll(text, "%my_role", role);
+        ReplaceAll(text, "%category", tradeGoods[urand(0, 6)]);
+
+        // Any remaining placeholder means we can't render it cleanly — skip.
+        if (text.find('%') != std::string::npos)
+            continue;
+
+        // Send to the bot's General channel; if it isn't available, /say.
+        const std::string chanName = GeneralChannelName(b);
+        if (ChannelMgr* mgr = channelMgr(b->GetTeam()))
+        {
+            if (Channel* ch = mgr->GetChannel(chanName, b))
+            {
+                ch->Say(b, text.c_str(), LANG_UNIVERSAL);
+                return true;
+            }
+        }
+        b->Say(text, LANG_UNIVERSAL);
+        return true;
     }
     return false;
 }

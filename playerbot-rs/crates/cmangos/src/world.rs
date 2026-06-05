@@ -351,6 +351,13 @@ pub trait World: Send {
         0
     }
 
+    /// Say a random idle "suggestion" in the bot's General chat channel
+    /// (content from `ai_playerbot_texts`). The caller throttles this. Returns
+    /// true if something was broadcast.
+    fn bot_broadcast_random(&self) -> bool {
+        false
+    }
+
     /* ── Unit queries (extended) ────────────────────────────────────── */
 
     fn is_attackable(&self, _target: UnitHandle) -> bool {

@@ -465,6 +465,10 @@ typedef struct BotCallbacks {
      * incomplete escort quests, or 0. The bot follows it so the escort
      * progresses; combat handles ambushes. */
     uint64_t      (*get_active_escort_npc)(BotHandle bot);
+    /* Say a random idle "suggestion" from ai_playerbot_texts in the bot's
+     * General chat channel (placeholders filled; broken texts skipped). The
+     * caller throttles this. Returns true if something was broadcast. */
+    bool          (*bot_broadcast_random)(BotHandle bot);
 
     /* ── Unit queries (extended) ─────────────────────────────────────── */
     bool    (*is_attackable)(BotHandle bot, UnitHandle target);

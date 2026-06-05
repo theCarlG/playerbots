@@ -436,6 +436,10 @@ impl World for VtableWorld {
         unsafe { (self.cbs.get_active_escort_npc.unwrap())(self.handle) }
     }
 
+    fn bot_broadcast_random(&self) -> bool {
+        unsafe { (self.cbs.bot_broadcast_random.unwrap())(self.handle) }
+    }
+
     /* ── Unit queries (extended) ────────────────────────────────────── */
 
     fn is_attackable(&self, target: UnitHandle) -> bool {

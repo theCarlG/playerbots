@@ -520,6 +520,10 @@ fn maintenance_subtree(buffs: &'static [GroupBuff]) -> Bt {
         world::mount::mount_subtree(),
         world::vendor::vendor_subtree(),
         world::repair::repair_subtree(),
+        // Idle chatter: occasionally broadcast a suggestion in the bot's
+        // General channel so the channels it joined at login have a voice.
+        // The C++ side applies a low per-call chance, so this is a trickle.
+        Seq!(Bt::InCombat.not(), Bt::throttle(180_000, Bt::BroadcastChatter)),
         // Follow as absolute fallback — but not during combat FSM (would
         // fight with combat positioning, causing the bot to ping-pong
         // between following master and closing to target). Uses
