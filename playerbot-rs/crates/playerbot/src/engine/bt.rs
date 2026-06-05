@@ -2808,6 +2808,10 @@ const SHIELD_BASH_INTERRUPT: SpellId = SpellId(11972);
 const COUNTERSPELL: SpellId = SpellId(2139);
 const EARTH_SHOCK: SpellId = SpellId(8042);
 const FERAL_CHARGE: SpellId = SpellId(16979);
+const BASH: SpellId = SpellId(5211); // druid bear-form interrupt (in melee)
+const HAMMER_OF_JUSTICE: SpellId = SpellId(853); // paladin stun-interrupt
+const MIND_FREEZE: SpellId = SpellId(47528); // wotlk DK interrupt
+const WIND_SHEAR: SpellId = SpellId(57994); // wotlk shaman interrupt
 
 // Dispel spells per class
 const DISPEL_MAGIC: SpellId = SpellId(988);
@@ -2843,8 +2847,16 @@ fn tick_interrupt(ctx: &mut TickContext<'_>) -> BtResult {
         PlayerClass::Rogue => &[KICK],
         PlayerClass::Warrior => &[SHIELD_BASH_INTERRUPT, PUMMEL],
         PlayerClass::Mage => &[COUNTERSPELL],
-        PlayerClass::Shaman => &[EARTH_SHOCK],
-        PlayerClass::Druid => &[FERAL_CHARGE],
+        // Wind Shear (wotlk) preferred over Earth Shock — instant, short CD,
+        // no fire/frost/nature school lockout. Vanilla shamans don't know it,
+        // so can_cast falls through to Earth Shock.
+        PlayerClass::Shaman => &[WIND_SHEAR, EARTH_SHOCK],
+        // Bash works in melee (bear form); Feral Charge is a ranged gap-closer
+        // interrupt — try the in-melee one first.
+        PlayerClass::Druid => &[BASH, FERAL_CHARGE],
+        // PB2 HammerOfJusticeInterruptSpellTrigger — HoJ stuns through casts.
+        PlayerClass::Paladin => &[HAMMER_OF_JUSTICE],
+        PlayerClass::DeathKnight => &[MIND_FREEZE],
         _ => return BtResult::Failure,
     };
     for &spell in spells {
@@ -4150,24 +4162,42 @@ fn tick_auto_cc(ctx: &mut TickContext<'_>) -> BtResult {
     if !ctx.settings.strategies.has_any(StrategyFlags::CC) {
         return BtResult::Failure;
     }
-    let spell = match ctx.class {
-        PlayerClass::Mage => SpellId(118),       // Polymorph
-        PlayerClass::Warlock => SpellId(710),     // Banish
-        PlayerClass::Priest => SpellId(10955),    // Shackle Undead
-        PlayerClass::Druid => SpellId(2637),      // Hibernate
+    // Per-class CC spell list, tried in order. The server's CheckCast rejects
+    // a spell whose target is the wrong creature type — Banish only affects
+    // demons/elementals, Hibernate only beasts/dragonkin — so the list falls
+    // through to a general-purpose CC (Fear, Entangling Roots) for any other
+    // target. No creature-type lookup needed: cast_spell returns false on a
+    // BAD_TARGETS CheckCast, and we move to the next spell.
+    let spells: &[SpellId] = match ctx.class {
+        PlayerClass::Mage => &[SpellId(118)], // Polymorph
+        // Banish (demon/elemental) then Fear (everything else).
+        PlayerClass::Warlock => &[SpellId(710), SpellId(5782)],
+        PlayerClass::Priest => &[SpellId(10955)], // Shackle Undead (undead only)
+        // Hibernate (beast/dragonkin) then Entangling Roots — PB2
+        // CastEntanglingRootsCcAction (caster-form druids).
+        PlayerClass::Druid => &[SpellId(2637), SpellId(339)],
         // Hunter Freezing Trap is ground-targeted (placed at feet), not
         // usable as ranged CC like Polymorph. Skip hunters in AutoCc.
         // PlayerClass::Hunter => SpellId(1499),
-        PlayerClass::Paladin => SpellId(20066),   // Repentance
-        PlayerClass::Rogue => SpellId(6770),      // Sap
+        PlayerClass::Paladin => &[SpellId(20066)], // Repentance
+        PlayerClass::Rogue => &[SpellId(6770)],    // Sap
         _ => return BtResult::Failure,
     };
-    // Try RTI-marked CC target first, then nearest add.
-    let result = tick_cc_cast_on_rti(ctx, spell);
-    if result != BtResult::Failure {
-        return result;
+    // Prefer the RTI-marked CC target (try each spell on it), then fall back
+    // to the nearest add.
+    for &spell in spells {
+        let result = tick_cc_cast_on_rti(ctx, spell);
+        if result != BtResult::Failure {
+            return result;
+        }
     }
-    tick_cc_cast_on_nearest(ctx, spell)
+    for &spell in spells {
+        let result = tick_cc_cast_on_nearest(ctx, spell);
+        if result != BtResult::Failure {
+            return result;
+        }
+    }
+    BtResult::Failure
 }
 
 /// Switch the bot's focus to the unit wearing `icon_0to7` and start
