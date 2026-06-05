@@ -4222,8 +4222,11 @@ wander, walking-RPG, teleports, distances, timings. Rust config in playerbot-rs 
   `cast_pet_spell` FFI (`BotBridge::CB_CastPetSpell`: pet `HasSpell` + cooldown + `CheckCast`, then `SpellStart`).
   `tick_interrupt` now tries both Spell Lock ranks via the pet for warlocks (no bot GCD) before the empty
   personal-interrupt list — gives warlocks their ONLY interrupt. Mock: `with_living_pet` /
-  `with_interruptible_target` + `MockEvent::CastPetSpell`. 2 tests. STILL deferred: Hunter **Silencing Shot**
-  (wotlk) — a hunter *shot*, not a pet spell, so a different dispatch path (aimed-shot-style cast).
+  `with_interruptible_target` + `MockEvent::CastPetSpell`. 2 tests.
+- [x] Hunter **Silencing Shot** (wotlk, 34490) interrupt — DONE 2026-06-05. Added as the Hunter arm of
+  `class_interrupt_spells`; it's a normal ranged `cast_spell`, so no new dispatch needed — `can_cast`/`HasSpell`
+  gates it to talented wotlk hunters and makes it a harmless no-op on vanilla/TBC (same pattern as the DK/shaman
+  wotlk entries). The reactive interrupt drives it. 1 test. The interrupt framework now covers every class.
 - [x] Warlock pet demon **selection** — `CB_SummonPet` now prefers Voidwalker→Felhunter→Succubus→Imp
   (HasSpell falls back to Imp for low-level locks). `cpp_wrapper/BotBridge.cpp` CB_SummonPet. (Done 2026-06-05.)
   Situational per-fight swapping (Felhunter vs casters etc.) still deferred.
@@ -4274,9 +4277,11 @@ wander, walking-RPG, teleports, distances, timings. Rust config in playerbot-rs 
   `InitAmmo` policy (class gate, weapon→ammo-subclass, `factory_pick_ammo_for_level`, top-up to `5+level/10`
   stacks when ≤2 stacks left), then approaches a nearby vendor and `buy_from_vendor` + `bot_set_ammo`. Reuses
   the factory `ammo_for_weapon`/`AMMO_STACK`/`LOW_STACKS` (made `pub(crate)`). Local-approach only (like
-  sell/repair), not full-map routing. 3 tests. STILL deferred: **food/water** runtime restock — buying needs a
-  vendor-stock-by-category query (vendors sell level-specific food/water items we'd have to discover) that
-  doesn't exist yet; food is currently refilled by the factory/`randomize` cycle.
+  sell/repair), not full-map routing. 3 tests. **Food/water restock is MOOT, not deferred**: the runtime
+  eat/drink (`noncombat/consumables.rs`) is a *rest/regen* model that does NOT consume food/water bag items
+  (verified — no `use_item` for food at runtime), so bots never deplete it. The factory stocks food for flavor;
+  nothing to top up. (If runtime food *consumption* is ever added, restock would need a vendor-stock-by-category
+  query that doesn't exist yet.)
 - [x] In-combat hunter pet **revive** — DONE 2026-06-05. `world/pet.rs` revive branch is now gated to Hunter
   with NO `InCombat.not()` (Revive Pet is castable in combat), so a hunter re-summons its pet mid-fight instead
   of waiting for combat end. Maintenance subtree ticks in Combat (`tick.rs:329`), the `RevivePet` leaf already

@@ -2946,6 +2946,9 @@ const WIND_SHEAR: SpellId = SpellId(57994); // wotlk shaman interrupt
 // pet. Two ranks; the pet knows whichever its level grants, so try max first.
 const SPELL_LOCK_R2: SpellId = SpellId(19647);
 const SPELL_LOCK_R1: SpellId = SpellId(19244);
+// Hunter Silencing Shot (wotlk Marksmanship talent) — a ranged interrupt.
+// `can_cast`/`HasSpell` gates it to talented wotlk hunters; harmless elsewhere.
+const SILENCING_SHOT: SpellId = SpellId(34490);
 
 // Dispel spells per class
 const DISPEL_MAGIC: SpellId = SpellId(988);
@@ -2985,6 +2988,9 @@ pub(crate) fn class_interrupt_spells(class: PlayerClass) -> &'static [SpellId] {
         // PB2 HammerOfJusticeInterruptSpellTrigger — HoJ stuns through casts.
         PlayerClass::Paladin => &[HAMMER_OF_JUSTICE],
         PlayerClass::DeathKnight => &[MIND_FREEZE],
+        // Silencing Shot is a wotlk MM-talent ranged interrupt; the only
+        // interrupt a hunter has. Gated to those who know it by `can_cast`.
+        PlayerClass::Hunter => &[SILENCING_SHOT],
         _ => &[],
     }
 }
@@ -4996,6 +5002,15 @@ mod tests {
         let mut ctx =
             make_encounter_ctx(&mut owned, &iface, &enc, PlayerClass::Warrior, BotRole::DPS);
         assert_eq!(tree.tick(&mut ctx), BtResult::Failure);
+    }
+
+    #[test]
+    fn hunter_interrupt_is_silencing_shot() {
+        // Hunters' only interrupt (wotlk MM talent). can_cast gates it to those
+        // who actually know it, so listing it unconditionally is safe.
+        assert_eq!(class_interrupt_spells(PlayerClass::Hunter), &[SILENCING_SHOT]);
+        // Warlock still has no *personal* interrupt (pet Spell Lock handles it).
+        assert!(class_interrupt_spells(PlayerClass::Warlock).is_empty());
     }
 
     #[test]
