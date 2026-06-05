@@ -344,6 +344,13 @@ pub trait World: Send {
         false
     }
 
+    /// Handle of a nearby creature actively escorting the bot for an
+    /// incomplete escort quest, or `0`. The bot follows it so the escort
+    /// keeps progressing; combat handles ambushes.
+    fn active_escort_npc(&self) -> UnitHandle {
+        0
+    }
+
     /* ── Unit queries (extended) ────────────────────────────────────── */
 
     fn is_attackable(&self, _target: UnitHandle) -> bool {

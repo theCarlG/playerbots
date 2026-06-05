@@ -432,6 +432,10 @@ impl World for VtableWorld {
         unsafe { (self.cbs.is_quest_objective_creature.unwrap())(self.handle, entry) }
     }
 
+    fn active_escort_npc(&self) -> UnitHandle {
+        unsafe { (self.cbs.get_active_escort_npc.unwrap())(self.handle) }
+    }
+
     /* ── Unit queries (extended) ────────────────────────────────────── */
 
     fn is_attackable(&self, target: UnitHandle) -> bool {

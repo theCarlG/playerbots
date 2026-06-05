@@ -1,6 +1,7 @@
 /// Quest behavior — accept, work on, and turn in quests.
 use crate::engine::bt::Bt::{
-    self, AcceptQuests, AttackQuestMob, InCombat, SettingEnabled, TurnInQuest, UseQuestObject,
+    self, AcceptQuests, AttackQuestMob, EscortQuestNpc, InCombat, SettingEnabled, TurnInQuest,
+    UseQuestObject,
 };
 use crate::engine::bt::Setting;
 use crate::{Sel, Seq};
@@ -9,6 +10,9 @@ pub fn quest_subtree() -> Bt {
     Seq!(
         InCombat.not(),
         Sel!(
+            // Active escort — keep pace with the escort NPC (this is
+            // time-sensitive, so it comes first; combat handles ambushes).
+            EscortQuestNpc,
             // Turn in completed quests.
             Bt::throttle(5_000, TurnInQuest),
             // Accept new quests from nearby quest givers.

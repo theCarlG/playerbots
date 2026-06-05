@@ -354,6 +354,8 @@ pub struct MockState {
     pub take_taxi_result: bool,
     /// `(state, dock)` returned by `cross_continent_travel`.
     pub cross_continent: (u8, Option<BotPosition>),
+    /// Handle returned by `active_escort_npc` (0 = no active escort).
+    pub active_escort_npc: UnitHandle,
     /// Whether the pet is alive. Gates `factory_pet_force_dismiss`
     /// in the mock (mirrors the `if (pet->IsAlive())` check at the
     /// bottom of `InitPet`). Flipped to `false` when the dismiss is
@@ -470,6 +472,7 @@ impl Default for MockState {
             nearest_taxi_node: None,
             take_taxi_result: false,
             cross_continent: (0, None),
+            active_escort_npc: 0,
             pet_is_alive: false,
             tameable_creatures: Vec::new(),
             rng_seq: VecDeque::new(),
@@ -580,6 +583,13 @@ impl MockWorld {
     #[must_use]
     pub fn with_cross_continent(self, state: u8, dock: Option<BotPosition>) -> Self {
         self.0.borrow_mut().cross_continent = (state, dock);
+        self
+    }
+
+    /// Configure the handle returned by `active_escort_npc` (0 = no escort).
+    #[must_use]
+    pub fn with_escort_npc(self, handle: UnitHandle) -> Self {
+        self.0.borrow_mut().active_escort_npc = handle;
         self
     }
 
@@ -1359,6 +1369,10 @@ impl World for MockWorld {
 
     fn cross_continent_travel(&self, _dest_map: u32) -> (u8, Option<BotPosition>) {
         self.0.borrow().cross_continent
+    }
+
+    fn active_escort_npc(&self) -> UnitHandle {
+        self.0.borrow().active_escort_npc
     }
 
     fn auto_attack(&self, enable: bool) -> bool {

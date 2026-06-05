@@ -4234,10 +4234,15 @@ wander, walking-RPG, teleports, distances, timings. Rust config in playerbot-rs 
   ITEM-COLLECT now done too: `CB_BotFindTravelDests` routes to a creature that drops the required item via a
   cached `creature_loot_template`/`creature_template` reverse lookup (`ItemDropSources`); the existing
   kill/loot finishes it once positioned. So all three objective TYPES (kill / use-GO / collect) route.
-  STILL deferred (genuinely separate subsystems): cross-CONTINENT objectives (boats/zeppelins, not taxi);
-  escort objectives (follow-and-protect FSM); item-collect where the item comes from a GAMEOBJECT or
-  reference-loot (only direct creature loot is reversed). Perf: precompute objective locations (PB2
-  travelnode graph) instead of a per-query `DoCreatureData`/`DoGOData` full-scan, for very large bot counts.
+  ESCORT objectives now done too: `get_active_escort_npc` (a nearby creature whose escort AI is in
+  `STATE_ESCORT_ESCORTING` while the bot holds an incomplete `QUEST_TYPE_ESCORT` quest) → `Bt::EscortQuestNpc`
+  follows it (combat handles ambushes; the escort script completes the quest on arrival). So ALL four quest
+  objective types (kill / use-GO / collect / escort) are handled, AND cross-continent objectives are reachable
+  (taxi + boats). The quest system is functionally complete.
+  STILL deferred (minor / separate): escorts that need a GOSSIP to start (only accept-started escorts
+  auto-detect); item-collect from a GAMEOBJECT or reference-loot (only direct creature loot is reversed).
+  Perf: precompute objective locations (PB2 travelnode graph) instead of a per-query
+  `DoCreatureData`/`DoGOData` full-scan, for very large bot counts.
 - [ ] **Broadcast/greeting** social system (PB2 `BroadcastHelper`, `EnableGreet`/`EnableBroadcasts`) — bots
   join chat channels (§2) but never speak/greet. Needs the broadcast text content + chance logic. (Found #5.)
 - [x] **Taxi/flight-master** routing — bots fly to far (>600y) same-continent travel destinations: walk to the

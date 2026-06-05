@@ -461,6 +461,10 @@ typedef struct BotCallbacks {
     /* True if `entry` is a creature the bot still needs to kill for an
      * incomplete quest objective — lets the attacker prefer the right mob. */
     bool          (*is_quest_objective_creature)(BotHandle bot, uint32_t entry);
+    /* Handle of a nearby creature actively escorting the bot for one of its
+     * incomplete escort quests, or 0. The bot follows it so the escort
+     * progresses; combat handles ambushes. */
+    uint64_t      (*get_active_escort_npc)(BotHandle bot);
 
     /* ── Unit queries (extended) ─────────────────────────────────────── */
     bool    (*is_attackable)(BotHandle bot, UnitHandle target);

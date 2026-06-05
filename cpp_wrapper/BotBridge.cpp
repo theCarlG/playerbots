@@ -59,6 +59,7 @@
 #include "Server/WorldPacket.h"
 #include "Entities/Transports.h"
 #include "Maps/TransportMgr.h"
+#include "AI/ScriptDevAI/base/escort_ai.h"
 #include "BattleGround/BattleGround.h"
 #include "BattleGround/BattleGroundWS.h"
 #include "BattleGround/BattleGroundAB.h"
@@ -357,6 +358,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.use_gameobject             = CB_UseGameObject;
     cbs.use_nearby_quest_object    = CB_UseNearbyQuestObject;
     cbs.is_quest_objective_creature = CB_IsQuestObjectiveCreature;
+    cbs.get_active_escort_npc      = CB_GetActiveEscortNpc;
 
     // Factory: inventory mutation
     cbs.inventory_destroy_equipped_and_bags = CB_InventoryDestroyEquippedAndBags;
@@ -3811,6 +3813,48 @@ bool BotBridge::CB_IsQuestObjectiveCreature(BotHandle bot, uint32_t entry)
         }
     }
     return false;
+}
+
+uint64_t BotBridge::CB_GetActiveEscortNpc(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+
+    // Only relevant when the bot has an incomplete escort-type quest.
+    bool hasEscortQuest = false;
+    for (auto const& qs : b->getQuestStatusMap())
+    {
+        if (qs.second.m_status != QUEST_STATUS_INCOMPLETE)
+            continue;
+        Quest const* q = sObjectMgr.GetQuestTemplate(qs.first);
+        if (q && q->GetType() == QUEST_TYPE_ESCORT)
+        {
+            hasEscortQuest = true;
+            break;
+        }
+    }
+    if (!hasEscortQuest)
+        return 0;
+
+    // Find a nearby creature actively running an escort. The escort AI's
+    // escorted-player is private, but combined with the bot holding the escort
+    // quest this is a reliable identification of the bot's escort target.
+    constexpr float range = 80.0f;
+    UnitList units;
+    MaNGOS::AnyUnitInObjectRangeCheck check(b, range);
+    MaNGOS::UnitListSearcher<MaNGOS::AnyUnitInObjectRangeCheck> searcher(units, check);
+    Cell::VisitAllObjects(b, searcher, range);
+    for (Unit* u : units)
+    {
+        Creature* c = dynamic_cast<Creature*>(u);
+        if (!c || !c->IsAlive())
+            continue;
+        npc_escortAI* eai = dynamic_cast<npc_escortAI*>(c->AI());
+        if (eai && eai->HasEscortState(STATE_ESCORT_ESCORTING))
+            return c->GetObjectGuid().GetRawValue();
+    }
+    return 0;
 }
 
 // ── Factory: inventory mutation ───────────────────────────────────────────

@@ -694,6 +694,9 @@ pub enum Bt {
     AttackQuestMob,
     /// Use a nearby gameobject that satisfies a "use object" quest objective.
     UseQuestObject,
+    /// Follow the NPC currently escorting the bot (escort quests), so the
+    /// escort keeps progressing. Failure when no escort is active.
+    EscortQuestNpc,
     /// For a far blackboard travel destination, walk to the nearest flight
     /// master and take a taxi toward it (faster + safer than walking). Falls
     /// through (Failure) for near destinations so walking handles them.
@@ -1945,6 +1948,19 @@ impl BtNode for Bt {
                     BtResult::Success
                 } else {
                     BtResult::Failure
+                }
+            }
+            Bt::EscortQuestNpc => {
+                let npc = ctx.interface.active_escort_npc();
+                if npc == 0 {
+                    BtResult::Failure
+                } else {
+                    // Stay close to the moving escort NPC; the core's MoveFollow
+                    // keeps pace, and the reactive combat subtree (higher
+                    // priority) handles ambushes along the route.
+                    ctx.interface.follow(npc, 5.0, 0.0);
+                    ctx.monitor(format_args!("ESCORT: following NPC 0x{npc:X}"));
+                    BtResult::Running
                 }
             }
             Bt::LearnTrainerSpells => tick_learn_trainer_spells(ctx),
@@ -6597,6 +6613,22 @@ mod tests {
     }
 
     #[test]
+    fn escort_follows_active_escort_npc() {
+        let iface = MockWorld::new().with_escort_npc(0xE5C0);
+        let mut owned = TestCtxOwned::new();
+        let mut ctx = ctx_with_iface(&mut owned, &iface);
+        assert_eq!(Bt::EscortQuestNpc.tick(&mut ctx), BtResult::Running);
+    }
+
+    #[test]
+    fn escort_fails_without_active_escort() {
+        let iface = MockWorld::new().with_escort_npc(0);
+        let mut owned = TestCtxOwned::new();
+        let mut ctx = ctx_with_iface(&mut owned, &iface);
+        assert_eq!(Bt::EscortQuestNpc.tick(&mut ctx), BtResult::Failure);
+    }
+
+    #[test]
     fn cross_continent_no_route_fails() {
         let iface = MockWorld::new().with_cross_continent(0, None); // no transport route
         let mut owned = TestCtxOwned::new();
@@ -6715,6 +6747,8 @@ mod tests {
         assert_eq!(Bt::UnequipSlot(0).tick(&mut ctx), BtResult::Failure);
         // UseQuestObject: mock use_nearby_quest_object returns false (default).
         assert_eq!(Bt::UseQuestObject.tick(&mut ctx), BtResult::Failure);
+        // EscortQuestNpc: no active escort (default 0) → falls through.
+        assert_eq!(Bt::EscortQuestNpc.tick(&mut ctx), BtResult::Failure);
         // TakeTaxi: no travel destination set → falls through to walking.
         assert_eq!(Bt::TakeTaxi.tick(&mut ctx), BtResult::Failure);
         // CrossContinentTravel: no destination map → falls through.

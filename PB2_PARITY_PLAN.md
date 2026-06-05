@@ -303,6 +303,15 @@ social/chat/guild/AH §8 · lifecycle §9 · commands/RTSC §10 · gear/item §1
   Trust only claims cross-checked against the real `CastOn*`/`CB_*` code. When in doubt, grep.
 
 ## Progress log
+- 2026-06-05 · ESCORT QUESTS — the last quest objective type; the quest system is now functionally COMPLETE.
+  `CB_GetActiveEscortNpc` finds a nearby creature whose escort AI is in `STATE_ESCORT_ESCORTING` while the bot
+  holds an incomplete `QUEST_TYPE_ESCORT` quest (the escorted-player is private, but quest + escorting-state is
+  a reliable id), via `dynamic_cast<npc_escortAI*>` (links cleanly — `-I src/game` covers ScriptDevAI).
+  `Bt::EscortQuestNpc` (first in the quest subtree, time-sensitive) follows the NPC with `follow(npc,5,0)`;
+  the reactive combat subtree handles ambushes; the escort script completes the quest on arrival. All four
+  objective types now handled (kill/use-GO/collect/escort). 2 unit tests; cargo test 10/10 + clippy green;
+  full mangosd build+install; smoke test clean (652 bots, 0 crashes). Deferred: gossip-started escorts (only
+  accept-started ones auto-detect). Live escort verification pending a client pass.
 - 2026-06-05 · BOAT / ZEPPELIN CROSS-CONTINENT TRAVEL — bots can now reach ANY continent (completes the travel
   story with taxi). `Bt::CrossContinentTravel` (wired ahead of taxi in `strategies/travel.rs`): for a travel
   dest on a different map, `CB_CrossContinentTravel` finds a transport on the bot's map whose keyframes reach
