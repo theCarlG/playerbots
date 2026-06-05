@@ -21,7 +21,7 @@
 ///   - Ground: check for class call auras, react accordingly.
 ///   - Air/Final: normal rotation (no class calls during transition).
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, HoldPosition, MoveAwayFromRaid};
+use crate::encounters::bt::Bt::{self, HoldPosition, IsMeleeDps, MoveAwayFromRaid, MoveToFlank};
 use cmangos::SpellId;
 use crate::{Sel, Seq};
 
@@ -71,6 +71,10 @@ impl NefarianFsm {
                 // Warlock Call: shadow bolts heal boss — stop casting
                 Seq!(Bt::self_has(WARLOCK_CALL), HoldPosition),
                 // Other class calls: handled by server/aura system, not bot logic.
+                // Melee attack from the flank: Nefarian's Tail Lash stuns
+                // anyone directly behind him, and his Cleave / Shadow Flame
+                // hit the front, so the side is the only safe melee spot.
+                Seq!(IsMeleeDps, MoveToFlank(5.0)),
             ),
         }
     }
@@ -177,6 +181,7 @@ mod tests {
 
     #[test]
     fn no_call_returns_failure() {
+        // Caster with no class-call and no target → nothing to do.
         let mut fsm = NefarianFsm::new();
         fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
 
@@ -186,8 +191,26 @@ mod tests {
         let iface = MockWorld::new();
         let mut owned = TestCtxOwned::new();
         let mut ctx =
-            make_encounter_ctx(&mut owned, &iface, &fsm, PlayerClass::Warrior, BotRole::DPS);
+            make_encounter_ctx(&mut owned, &iface, &fsm, PlayerClass::Priest, BotRole::HEAL);
         assert_eq!(bt.tick(&mut ctx), BtResult::Failure);
+    }
+
+    #[test]
+    fn melee_with_no_call_moves_to_flank() {
+        // No class-call on a melee DPS → it positions on Nefarian's flank
+        // (out of the rear Tail Lash and the front cleave/breath).
+        let mut fsm = NefarianFsm::new();
+        fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
+
+        let bt = fsm
+            .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+            .expect("ground phase should have BT");
+        let iface = MockWorld::new();
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.current_target = 100; // Nefarian
+        let mut ctx =
+            make_encounter_ctx(&mut owned, &iface, &fsm, PlayerClass::Warrior, BotRole::DPS);
+        assert_eq!(bt.tick(&mut ctx), BtResult::Running);
     }
 
     #[test]

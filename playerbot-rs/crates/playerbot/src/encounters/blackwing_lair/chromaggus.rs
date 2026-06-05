@@ -12,7 +12,8 @@
 /// Strategy: everyone stays behind the boss; ranged maintain max range to
 /// stay out of breath cones entirely in case of tank position slips.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, IsRanged, MaintainRange};
+use crate::bot::state::PlayerClass;
+use crate::encounters::bt::Bt::{self, CastOnTarget, IsClass, IsRanged, MaintainRange};
 use cmangos::SpellId;
 use crate::{Sel, Seq};
 
@@ -22,6 +23,8 @@ pub const AURA_BROOD_AFFLICTION_RED: SpellId = SpellId(23172);
 pub const AURA_BROOD_AFFLICTION_BRONZE: SpellId = SpellId(23173);
 pub const AURA_BROOD_AFFLICTION_GREEN: SpellId = SpellId(23174);
 pub const AURA_FRENZY: SpellId = SpellId(28371);
+
+const TRANQUILIZING_SHOT: SpellId = SpellId(19801);
 
 #[derive(Clone, Debug)]
 pub struct ChromaggusFsm {
@@ -44,9 +47,18 @@ impl ChromaggusFsm {
     }
 
     fn build_bt() -> Bt {
-        // Ranged stay at 30y to stay out of all breath cones. Melee hug
-        // the boss from behind — reactive facing handled by targeting.
-        Sel!(Seq!(IsRanged, MaintainRange(30.0)))
+        Sel!(
+            // Hunters Tranquilizing Shot the Frenzy haste-enrage off the boss
+            // (otherwise its melee output spikes and the tank can't hold).
+            Seq!(
+                IsClass(PlayerClass::Hunter),
+                Bt::target_has(AURA_FRENZY),
+                CastOnTarget(TRANQUILIZING_SHOT),
+            ),
+            // Ranged stay at 30y to stay out of all breath cones. Melee hug
+            // the boss from behind — reactive facing handled by targeting.
+            Seq!(IsRanged, MaintainRange(30.0)),
+        )
     }
 }
 
@@ -83,5 +95,47 @@ impl EncounterFsm for ChromaggusFsm {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::encounters::EncounterEvent;
+    use crate::engine::bt_nodes::{BtNode, BtResult};
+    use crate::engine::context::tests::{TestCtxOwned, make_encounter_ctx};
+    use cmangos::BotRole;
+    use cmangos::MockEvent;
+    use cmangos::MockWorld;
+
+    #[test]
+    fn hunter_tranq_shots_frenzy() {
+        let mut fsm = ChromaggusFsm::new();
+        fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
+        let bt = fsm
+            .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+            .unwrap();
+        let iface = MockWorld::new().with_aura(AURA_FRENZY);
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.current_target = 100; // Chromaggus
+        let mut ctx =
+            make_encounter_ctx(&mut owned, &iface, &fsm, PlayerClass::Hunter, BotRole::DPS);
+        assert_eq!(bt.tick(&mut ctx), BtResult::Success);
+        assert!(
+            iface.events().iter().any(|e| matches!(
+                e,
+                MockEvent::CastSpell { spell, .. } if *spell == TRANQUILIZING_SHOT
+            )),
+            "hunter Tranquilizing Shots the boss's Frenzy"
+        );
+    }
+
+    #[test]
+    fn no_bt_when_idle() {
+        assert!(
+            ChromaggusFsm::default()
+                .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+                .is_none()
+        );
     }
 }

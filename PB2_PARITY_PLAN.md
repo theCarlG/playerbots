@@ -518,3 +518,13 @@ social/chat/guild/AH §8 · lifecycle §9 · commands/RTSC §10 · gear/item §1
   clear-mage-iceblock / clear-warrior-hold). cargo test + clippy (vanilla & wotlk) green; full mangosd
   build+install; smoke clean (200 accts, 0 runtime crash). GENERAL RULE for future defensives: move out of the
   hazard first, pop the cooldown only once safe.
+- 2026-06-05 · BLACKWING LAIR depth pass. Surveyed all 8 FSMs (real, not Simple). Two real gaps fixed:
+  (1) NEFARIAN had NO melee positioning despite his rear Tail Lash stun — added `Seq!(IsMeleeDps, MoveToFlank(5.0))`
+  to the ground/final-ground BT (reuses the Onyxia flank primitive). (2) CHROMAGGUS Frenzy (28371) was unhandled —
+  added `Seq!(IsClass(Hunter), target_has(FRENZY), CastOnTarget(TRANQUILIZING_SHOT 19801))`, mirroring Magmadar.
+  Verified the rest are correct as-is: Firemaw/Ebonroc/Flamegor keep `MoveBehind` (frontal Shadowflame, no tail
+  sweep); Broodlord/Razorgore/Vaelastrasz functional (range/flee mechanics already modelled). 3 new tests
+  (nefarian flank, chromaggus tranq, chromaggus idle). cargo test + clippy (vanilla & wotlk) green; full mangosd
+  build+install; smoke clean (200 accts, 0 runtime crash). DEFERRED (noted, not half-scripted): Vael Burning
+  Adrenaline tank-case nuance (tank should hold through the swap before fleeing); Razorgore P1 explicit add focus
+  (currently rides the reactive TankPickupAdds layer).
