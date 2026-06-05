@@ -215,6 +215,8 @@ pub struct MockState {
     pub has_los_default: bool,
     /// `bot_is_at_flank` result — drives `MoveToFlank` "already in position".
     pub at_flank: bool,
+    /// Per-player-guid world positions returned by `get_player_position`.
+    pub player_positions: HashMap<u64, BotPosition>,
 
     /* inventory / items */
     pub bag_items: HashMap<u32, u32>, // item_id -> count
@@ -430,6 +432,7 @@ impl Default for MockState {
             default_unit_distance: 0.0,
             has_los_default: true,
             at_flank: false,
+            player_positions: HashMap::new(),
             bag_items: HashMap::new(),
             item_max_stack: HashMap::new(),
             item_quality: HashMap::new(),
@@ -546,6 +549,22 @@ impl MockWorld {
     #[must_use]
     pub fn with_at_flank(self) -> Self {
         self.0.borrow_mut().at_flank = true;
+        self
+    }
+
+    /// Set the world position `get_player_position(guid)` returns for a player.
+    #[must_use]
+    pub fn with_player_position(self, guid: u64, x: f32, y: f32, z: f32) -> Self {
+        self.0.borrow_mut().player_positions.insert(
+            guid,
+            BotPosition {
+                x,
+                y,
+                z,
+                o: 0.0,
+                map_id: 0,
+            },
+        );
         self
     }
 
@@ -1294,6 +1313,10 @@ impl World for MockWorld {
 
     fn bot_is_at_flank(&self, _target: UnitHandle) -> bool {
         self.0.borrow().at_flank
+    }
+
+    fn get_player_position(&self, player_guid: u64) -> Option<BotPosition> {
+        self.0.borrow().player_positions.get(&player_guid).copied()
     }
 
     fn get_attackers(&self) -> UnitList<'_> {

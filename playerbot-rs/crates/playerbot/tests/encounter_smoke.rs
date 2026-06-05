@@ -133,10 +133,10 @@ fn lucifron_fsm_transitions() {
 }
 
 #[test]
-fn baron_geddon_living_bomb_mage_moves_out() {
-    // A bombed mage clears the raid like everyone else — it does NOT Ice Block
-    // (that roots it in place and the explosion still hits the raid). The BT
-    // reports Running with a MoveTo in the event log.
+fn baron_geddon_living_bomb_carrier_clears_raid() {
+    // A groupmate is on top of the bombed mage → it relocates out of the raid
+    // first (Running + MoveTo), before any defensive.
+    const MATE: u64 = 777;
     let mut fsm = BaronGeddonFsm::default();
     fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
     let bt = fsm
@@ -145,13 +145,15 @@ fn baron_geddon_living_bomb_mage_moves_out() {
 
     let world = cmangos::MockWorld::new()
         .with_aura(AURA_LIVING_BOMB)
-        .with_safe_pos();
+        .with_player_position(MATE, 5.0, 0.0, 0.0); // 5y away — too close
     let mut owned = SmokeCtx::new();
+    owned.snap.group_members[0] = MATE;
+    owned.snap.group_size = 1;
     let mut ctx = owned.make_ctx(&world, &fsm, PlayerClass::Mage, BotRole::DPS);
 
     assert!(
         matches!(bt.tick(&mut ctx), BtResult::Running),
-        "bombed mage moves out (Running while relocating)"
+        "bombed bot relocates (Running while clearing the raid)"
     );
 
     let events = world.events();
@@ -162,30 +164,29 @@ fn baron_geddon_living_bomb_mage_moves_out() {
 }
 
 #[test]
-fn baron_geddon_living_bomb_warrior_flees() {
-    // Warrior with living bomb → BT flees to the safe position and
-    // reports Running. A MoveTo must land in the event log.
+fn baron_geddon_living_bomb_clear_warrior_holds() {
+    // No groupmate nearby → the bot is already clear. A warrior (no personal
+    // immunity) holds position out of the raid until detonation.
     let mut fsm = BaronGeddonFsm::default();
     fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
     let bt = fsm
         .phase_bt(ActiveFsm::Combat)
         .expect("active FSM returns a phase BT");
 
-    let world = cmangos::MockWorld::new()
-        .with_aura(AURA_LIVING_BOMB)
-        .with_safe_pos();
+    let world = cmangos::MockWorld::new().with_aura(AURA_LIVING_BOMB);
     let mut owned = SmokeCtx::new();
     let mut ctx = owned.make_ctx(&world, &fsm, PlayerClass::Warrior, BotRole::DPS);
 
-    assert!(
-        matches!(bt.tick(&mut ctx), BtResult::Running),
-        "warrior flee path returns Running while movement is in progress"
+    assert_eq!(
+        bt.tick(&mut ctx),
+        BtResult::Success,
+        "clear warrior holds position"
     );
 
     let events = world.events();
     assert!(
-        events.iter().any(|e| matches!(e, MockEvent::MoveTo { .. })),
-        "expected MoveTo in event log, got: {events:?}"
+        events.iter().any(|e| matches!(e, MockEvent::StopMoving)),
+        "expected StopMoving (hold) in event log, got: {events:?}"
     );
 }
 

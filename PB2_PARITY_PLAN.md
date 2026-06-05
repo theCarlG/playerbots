@@ -507,3 +507,14 @@ social/chat/guild/AH §8 · lifecycle §9 · commands/RTSC §10 · gear/item §1
   mechanic — dropped the immunity special-casing; every affected bot relocates (`self_has(LIVING_BOMB)`→
   `MoveAwayFromRaid(40)`, `target_has(INFERNO)`→`FleeToSafe(30)`). Updated module + encounter_smoke tests
   (mage now moves out, not Ice Block). cargo+clippy green.
+- 2026-06-05 · BARON GEDDON correction (user: "a mage should go out of raid and THEN iceblock — that's how all
+  bots should do defensives"). Restored Ice Block / Divine Shield but sequenced AFTER the move: new
+  `MOVE_CLEAR_OF_RAID` leaf walks the bomb-carrier off the group centroid (Running) until no groupmate is within
+  `LIVING_BOMB_SAFE_DIST` (12y), then yields Failure so the `Sel` drops through — mage `CastOnSelf(ICE_BLOCK)`,
+  paladin `CastOnSelf(DIVINE_SHIELD)`, others `HoldPosition` out of range. Discovered `get_safe_position` is a
+  *continuous flee* (recomputes from current pos each tick, only Fails when cornered) so `MoveAwayFromRaid` can't
+  be sequenced before a cast — the custom leaf with an explicit clear-of-raid check was required. Added mock
+  `get_player_position` override + `with_player_position` builder (cmangos). 4 unit + 2 smoke tests (clears-raid /
+  clear-mage-iceblock / clear-warrior-hold). cargo test + clippy (vanilla & wotlk) green; full mangosd
+  build+install; smoke clean (200 accts, 0 runtime crash). GENERAL RULE for future defensives: move out of the
+  hazard first, pop the cooldown only once safe.
