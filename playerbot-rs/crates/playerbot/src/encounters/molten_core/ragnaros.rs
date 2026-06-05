@@ -1,13 +1,22 @@
 /// Ragnaros encounter — Molten Core final boss.
 ///
 /// States:
-///   Ground (100%→75%): ranged maintain 30yd+ distance.
-///   Submerged (75%/50%/25%): kill 8 Sons of Flame.
+///   Ground (100%→75%): melee stack *behind* the boss (Wrath of Ragnaros is a
+///     frontal knockback); ranged stay at range AND spread out (Elemental Fire
+///     chains between stacked players).
+///   Submerged (75%/50%/25%): nuke down the 8 Sons of Flame.
 ///   Phase 2 (< 25%): same as Ground, adds spawn continuously.
+///
+/// NOTE: the tank's exact "get knocked up the pillar" spot is a precise world
+/// position + knockback-timing problem that isn't scripted — the tank holds
+/// the boss normally instead.
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::Seq;
-use crate::encounters::bt::Bt::{self, AttackNearest, IsRanged, MaintainRange};
-use cmangos::SpellId;
+use crate::encounters::bt::Bt::{self, AttackNearest, IsMeleeDps, IsRanged, MoveBehind};
+use crate::engine::bt::BehaviorLeaf;
+use crate::engine::bt_nodes::BtResult;
+use crate::engine::context::TickContext;
+use crate::{Sel, Seq};
+use cmangos::{SpellId, UnitHandle};
 
 pub const ENTRY_SON_OF_FLAME: u32 = 12143;
 
@@ -109,13 +118,77 @@ impl EncounterFsm for RagnarosFsm {
     fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         match self.phase {
             RagnarosPhase::Idle => None,
-            RagnarosPhase::Submerged => Some(AttackNearest),
-            RagnarosPhase::Ground | RagnarosPhase::Phase2 => {
-                Some(Seq!(IsRanged, MaintainRange(30.0)))
+            // Submerged: nuke the Sons of Flame before Ragnaros re-emerges.
+            RagnarosPhase::Submerged => {
+                Some(Sel!(Bt::Custom(FOCUS_SON_OF_FLAME), AttackNearest))
             }
+            RagnarosPhase::Ground | RagnarosPhase::Phase2 => Some(Sel!(
+                // Melee stack behind the boss — Wrath of Ragnaros knocks back
+                // everyone in front of him.
+                Seq!(IsMeleeDps, MoveBehind(3.0)),
+                // Ranged: stay at range AND spread to distinct points around
+                // the boss so Elemental Fire can't chain between them.
+                Seq!(IsRanged, Bt::Custom(RANGED_SPREAD)),
+            )),
         }
     }
 }
+
+// ── Behavior leaves ───────────────────────────────────────────────────────
+
+/// Attack the nearest Son of Flame — the submerge-phase adds that must be
+/// burned down before Ragnaros re-emerges.
+const FOCUS_SON_OF_FLAME: BehaviorLeaf = BehaviorLeaf {
+    label: "rag_focus_son_of_flame",
+    handler: |ctx: &mut TickContext<'_>| -> BtResult {
+        let units = ctx.interface.get_nearby_units(40.0, true);
+        let mut best: Option<UnitHandle> = None;
+        let mut best_dist = f32::MAX;
+        for &u in units.iter() {
+            if ctx.interface.get_unit_snapshot(u).npc_entry != ENTRY_SON_OF_FLAME {
+                continue;
+            }
+            let d = ctx.interface.unit_distance(u);
+            if d < best_dist {
+                best_dist = d;
+                best = Some(u);
+            }
+        }
+        match best {
+            Some(u) if ctx.attack(u) => BtResult::Success,
+            _ => BtResult::Failure,
+        }
+    },
+    display_text: Some("Nuking Son of Flame"),
+};
+
+/// Move this ranged bot to its own spread point around the boss (Elemental
+/// Fire chains between stacked players). The bot's slot is its index in the
+/// group roster, so each ranged member lands at a distinct angle.
+const RANGED_SPREAD: BehaviorLeaf = BehaviorLeaf {
+    label: "rag_ranged_spread",
+    handler: |ctx: &mut TickContext<'_>| -> BtResult {
+        let Some(boss) = ctx.current_target() else {
+            return BtResult::Failure;
+        };
+        let total = ctx.snap.group_size.max(1);
+        let idx = ctx.snap.group_members[..ctx.snap.group_size as usize]
+            .iter()
+            .position(|&h| h == ctx.bot_handle)
+            .unwrap_or(0) as u8;
+        let pos = ctx.interface.get_spread_position(boss, 30.0, idx, total);
+        let me = ctx.snap.self_.pos;
+        if (me.x - pos.x).powi(2) + (me.y - pos.y).powi(2) <= 4.0 * 4.0 {
+            return BtResult::Success; // already spread out
+        }
+        if ctx.interface.move_to(pos.x, pos.y, pos.z) {
+            BtResult::Running
+        } else {
+            BtResult::Failure
+        }
+    },
+    display_text: Some("Spreading"),
+};
 
 #[cfg(test)]
 mod tests {

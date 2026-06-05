@@ -196,9 +196,12 @@ autonomous maintenance/RPG loop (auto-restock food/reagents/ammo, auto-bank when
 ## 6. Encounters — structure done, mechanics thin (per-boss)
 - **DONE (real FSMs):** Molten Core (all 10 + rune-dousing + Magmadar tranq-shot + trash: Flamewaker-heal
   interrupt, Core-Hound tank-away, Lava-Surger stack), BWL (all 8 + suppression device), Onyxia (3-phase).
-  MC remaining (complex boss-signature mechanics, deferred — risk of half-scripting): Shazzrah Gate teleport
-  handling (run-to-tank + spread for Arcane Explosion), Ragnaros Wrath knockback positioning + Sons of Flame
-  focus, Garr Firesworn / Golemagg Core Rager add control. Base positioning + reactive
+  Ragnaros: submerge phase NUKES the Sons of Flame (focus nearest entry 12143); Ground/P2 melee stack
+  *behind* the boss (`MoveBehind`, Wrath of Ragnaros is a frontal knockback) and ranged spread to distinct
+  points around him (`get_spread_position` by group index, so Elemental Fire can't chain). MC remaining
+  (complex boss-signature, deferred — risk of half-scripting): Shazzrah Gate teleport handling (run-to-tank +
+  spread for Arcane Explosion), Ragnaros tank "knocked up the pillar" spot (precise world pos + knockback
+  timing), Garr Firesworn / Golemagg Core Rager add control. Base positioning + reactive
   dispel/interrupt/flee cover the rest.
 - **Naxxramas:** real = Heigan, Grobbulus, Thaddius, Kel'Thuzad. **SimpleFsm (need mechanics):**
   Anub'Rekhan, Faerlina, Maexxna, Noth, Loatheb, Razuvious, Gothik, Four Horsemen (tank-swap), Patchwerk, Gluth, Sapphiron.
