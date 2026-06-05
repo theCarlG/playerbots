@@ -561,3 +561,14 @@ social/chat/guild/AH §8 · lifecycle §9 · commands/RTSC §10 · gear/item §1
   copies, no per-bot signal); BUG TRIO (Kri/Vem/Yauj need HP-balanced kills — raid-wide burst coordination a
   per-bot focus would fight, not help). 14 tests. cargo test + clippy (vanilla & wotlk) green; full mangosd
   build+install; smoke clean (200 accts, 0 runtime crash).
+- 2026-06-05 · NAXXRAMAS — finished the lift (was 4 real FSMs: Heigan/Grobbulus/Thaddius/Kel'Thuzad + 11
+  SimpleFsm). Added 6 more real per-boss FSMs with DB-verified entries/spell-ids: ANUB'REKHAN — Locust Swarm
+  (28785) melee back-off + focus Corpse Scarab (16698); MAEXXNA — hunter Tranq the Frenzy (28747, from the core
+  boss_maexxna script) + focus Spiderling (17055); NOTH — focus Plagued Champion/Guardian/Warrior
+  (16983/16981/16984); LOATHEB — focus Spore (16286, crit-buff add); GLUTH — focus Zombie Chow (16360);
+  GOTHIK — focus the side adds, Death Knights → Riders → Trainees (Unrelenting 16124/16125/16126 + Spectral
+  16127/16148/16150). Now 10 of 15 real. LEFT as SimpleFsm (documented): FAERLINA (enrage-dispel via MC'd
+  Worshippers), RAZUVIOUS (MC'd Understudies tank him), FOUR HORSEMEN (mark-stack + tank-rotation movement),
+  PATCHWERK (pure tank-and-spank, nothing to script), SAPPHIRON (Blizzard / ice-block LoS — no per-bot signal).
+  13 tests. cargo test + clippy (vanilla & wotlk) green; full mangosd build+install; smoke clean (200 accts, 0
+  runtime crash). ALL raids now lifted from SimpleFsm.

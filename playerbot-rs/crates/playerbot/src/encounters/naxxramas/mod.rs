@@ -8,14 +8,26 @@
 ///   Military Wing:  Instructor Razuvious, Gothik the Harvester, Four Horsemen
 ///   Construct Wing: Patchwerk, Grobbulus, Gluth, Thaddius
 ///   Frostwyrm Lair: Sapphiron, Kel'Thuzad
+pub mod anub_rekhan;
+pub mod gluth;
+pub mod gothik;
 pub mod grobbulus;
 pub mod heigan;
 pub mod kel_thuzad;
+pub mod loatheb;
+pub mod maexxna;
+pub mod noth;
 pub mod thaddius;
 
+pub use anub_rekhan::AnubRekhanFsm;
+pub use gluth::GluthFsm;
+pub use gothik::GothikFsm;
 pub use grobbulus::GrobbolusFsm;
 pub use heigan::HeiganFsm;
 pub use kel_thuzad::KelThuzadFsm;
+pub use loatheb::LoathebFsm;
+pub use maexxna::MaexxnaFsm;
+pub use noth::NothFsm;
 pub use thaddius::ThaddiusFsm;
 
 use super::macros::encounter_dispatch;
@@ -40,21 +52,42 @@ pub const ENTRY_THADDIUS: u32 = 15928;
 pub const ENTRY_SAPPHIRON: u32 = 15989;
 pub const ENTRY_KEL_THUZAD: u32 = 15990;
 
+// ── Add entry IDs (verified against the world DB) ─────────────────────────
+/// Anub'Rekhan's scarab swarm.
+pub const ENTRY_CORPSE_SCARAB: u32 = 16698;
+/// Maexxna's spiderlings.
+pub const ENTRY_MAEXXNA_SPIDERLING: u32 = 17055;
+/// Noth's summoned skeletons.
+pub const ENTRY_PLAGUED_WARRIOR: u32 = 16984;
+pub const ENTRY_PLAGUED_CHAMPION: u32 = 16983;
+pub const ENTRY_PLAGUED_GUARDIAN: u32 = 16981;
+/// Loatheb's spores — killing one grants the raid a crit buff.
+pub const ENTRY_SPORE: u32 = 16286;
+/// Gluth's zombies — kill before they reach him (he eats them to heal).
+pub const ENTRY_ZOMBIE_CHOW: u32 = 16360;
+/// Gothik's adds — Unrelenting (live side) and Spectral (dead side).
+pub const ENTRY_UNRELENTING_TRAINEE: u32 = 16124;
+pub const ENTRY_UNRELENTING_DEATHKNIGHT: u32 = 16125;
+pub const ENTRY_UNRELENTING_RIDER: u32 = 16126;
+pub const ENTRY_SPECTRAL_TRAINEE: u32 = 16127;
+pub const ENTRY_SPECTRAL_DEATHKNIGHT: u32 = 16148;
+pub const ENTRY_SPECTRAL_RIDER: u32 = 16150;
+
 encounter_dispatch! {
     #[derive(Clone, PartialEq)]
     pub enum NaxxramasBoss {
-        AnubRekhan(SimpleFsm),
+        AnubRekhan(AnubRekhanFsm),
         Faerlina(SimpleFsm),
-        Maexxna(SimpleFsm),
-        Noth(SimpleFsm),
+        Maexxna(MaexxnaFsm),
+        Noth(NothFsm),
         Heigan(HeiganFsm),
-        Loatheb(SimpleFsm),
+        Loatheb(LoathebFsm),
         Razuvious(SimpleFsm),
-        Gothik(SimpleFsm),
+        Gothik(GothikFsm),
         FourHorsemen(SimpleFsm),
         Patchwerk(SimpleFsm),
         Grobbulus(GrobbolusFsm),
-        Gluth(SimpleFsm),
+        Gluth(GluthFsm),
         Thaddius(ThaddiusFsm),
         Sapphiron(SimpleFsm),
         KelThuzad(KelThuzadFsm),
@@ -65,18 +98,18 @@ impl TryFrom<u32> for NaxxramasBoss {
     type Error = ();
     fn try_from(entry: u32) -> Result<Self, Self::Error> {
         match entry {
-            ENTRY_ANUB_REKHAN => Ok(Self::AnubRekhan(SimpleFsm::new(entry))),
+            ENTRY_ANUB_REKHAN => Ok(Self::AnubRekhan(AnubRekhanFsm::default())),
             ENTRY_FAERLINA => Ok(Self::Faerlina(SimpleFsm::new(entry))),
-            ENTRY_MAEXXNA => Ok(Self::Maexxna(SimpleFsm::new(entry))),
-            ENTRY_NOTH => Ok(Self::Noth(SimpleFsm::new(entry))),
+            ENTRY_MAEXXNA => Ok(Self::Maexxna(MaexxnaFsm::default())),
+            ENTRY_NOTH => Ok(Self::Noth(NothFsm::default())),
             ENTRY_HEIGAN => Ok(Self::Heigan(HeiganFsm::default())),
-            ENTRY_LOATHEB => Ok(Self::Loatheb(SimpleFsm::new(entry))),
+            ENTRY_LOATHEB => Ok(Self::Loatheb(LoathebFsm::default())),
             ENTRY_RAZUVIOUS => Ok(Self::Razuvious(SimpleFsm::new(entry))),
-            ENTRY_GOTHIK => Ok(Self::Gothik(SimpleFsm::new(entry))),
+            ENTRY_GOTHIK => Ok(Self::Gothik(GothikFsm::default())),
             ENTRY_THANE => Ok(Self::FourHorsemen(SimpleFsm::new(entry))),
             ENTRY_PATCHWERK => Ok(Self::Patchwerk(SimpleFsm::new(entry))),
             ENTRY_GROBBULUS => Ok(Self::Grobbulus(GrobbolusFsm::default())),
-            ENTRY_GLUTH => Ok(Self::Gluth(SimpleFsm::new(entry))),
+            ENTRY_GLUTH => Ok(Self::Gluth(GluthFsm::default())),
             ENTRY_THADDIUS => Ok(Self::Thaddius(ThaddiusFsm::default())),
             ENTRY_SAPPHIRON => Ok(Self::Sapphiron(SimpleFsm::new(entry))),
             ENTRY_KEL_THUZAD => Ok(Self::KelThuzad(KelThuzadFsm::default())),
