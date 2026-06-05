@@ -195,7 +195,7 @@ public:
     void FactoryEnchantEquipmentViaRust()                  { if (m_rustState) playerbot_factory_enchant_equipment(m_rustState.get()); }
     void FactoryInitGemsViaRust()                          { if (m_rustState) playerbot_factory_init_gems(m_rustState.get()); }
 
-    void TellPlayerNoFacing(Player* /*target*/, const std::string& /*msg*/) {}
+    void TellPlayerNoFacing(Player* target, const std::string& msg);
     void CastSpell(uint32_t /*spellId*/, Unit* /*target*/) {}
     void EnchantItemT(uint32_t /*spellId*/, uint8_t /*slot*/, Item* /*item*/) {}
 
@@ -204,7 +204,11 @@ public:
     // places (durability loss, area-trigger gating). The old strategy engine
     // implemented these; the Rust AI does not yet, so they're no-ops here.
     void DurabilityLoss(Item* /*item*/, double /*percent*/) {}
-    bool CanEnterArea(AreaTrigger const* /*at*/) { return false; }
+    // Bots follow their master into instances/areas regardless of
+    // attunement/key/level area-trigger requirements — the core gates this
+    // bypass on `CanEnterArea` (Player.cpp). Returning false here left bots
+    // unable to skip raid requirements; PB2 bots always could.
+    bool CanEnterArea(AreaTrigger const* /*at*/) { return true; }
 
     // Outgoing packet hook: core WorldSession::SendPacket forwards every
     // packet destined for this bot through here.

@@ -367,7 +367,7 @@ const COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         names: &["leave"],
-        parse: |_, _| Some(BotCommand::GuildLeave),
+        parse: |_, _| Some(BotCommand::LeaveGroup),
     },
     // -- Class preferences --
     CommandSpec {
@@ -2159,7 +2159,7 @@ mod tests {
         assert_eq!(parse("mail take"), Some(BotCommand::MailTakeAll));
         assert_eq!(parse("mail takeall"), Some(BotCommand::MailTakeAll));
         assert_eq!(parse("mail all"), Some(BotCommand::MailTakeAll));
-        assert_eq!(parse("leave"), Some(BotCommand::GuildLeave));
+        assert_eq!(parse("leave"), Some(BotCommand::LeaveGroup));
     }
 
     #[test]

@@ -1322,6 +1322,24 @@ static bool sameDest(const MoveState& s, float x, float y, float z)
     return (dx * dx + dy * dy + dz * dz) < MOVE_EPSILON_SQ;
 }
 
+// Follow/chase params (dist, angle) are re-derived on the Rust side via
+// atan2/hypot from the leader's *moving* position every cycle, so the
+// float values jitter by ~1e-7 each tick even when the formation slot is
+// unchanged. Comparing them with exact `==` therefore fails on every tick
+// while the leader walks, re-issuing MoveFollow/MoveChase and restarting
+// the chase spline — the visible "stagger". Compare within a tolerance
+// instead (angle delta normalised into (-PI, PI] to ignore 2*PI wraps).
+static bool sameFollowParams(float d0, float d1, float a0, float a1)
+{
+    constexpr float PI_F = 3.14159265f;
+    constexpr float TWO_PI_F = 6.2831853f;
+    float dd = d0 - d1;
+    float da = a0 - a1;
+    while (da > PI_F) da -= TWO_PI_F;
+    while (da < -PI_F) da += TWO_PI_F;
+    return dd * dd < 0.05f * 0.05f && da * da < 0.02f * 0.02f;
+}
+
 bool BotBridge::CB_MoveTo(BotHandle bot, float x, float y, float z)
 {
     Player* b = FindBot(bot);
@@ -1382,7 +1400,7 @@ bool BotBridge::CB_Follow(BotHandle bot, UnitHandle target, float dist, float an
     // Skip if already following the same target with the same params AND
     // not transitioning from walk to run.
     if (st.kind == MoveState::FOLLOW && st.followTarget == target
-        && st.followDist == dist && st.followAngle == angle && !wasWalking)
+        && sameFollowParams(st.followDist, dist, st.followAngle, angle) && !wasWalking)
         return true; // already following at run speed
 
     b->GetMotionMaster()->MoveFollow(t, dist, angle);
@@ -1406,7 +1424,7 @@ bool BotBridge::CB_Chase(BotHandle bot, UnitHandle target, float dist, float ang
     auto& st = s_moveState[bot];
     // Skip if already chasing the same target with the same params.
     if (st.kind == MoveState::CHASE && st.followTarget == target
-        && st.followDist == dist && st.followAngle == angle)
+        && sameFollowParams(st.followDist, dist, st.followAngle, angle))
         return true;
 
     b->GetMotionMaster()->MoveChase(t, dist, angle);
@@ -3017,15 +3035,24 @@ bool BotBridge::CB_AcceptTrade(BotHandle bot)
 bool BotBridge::CB_AcceptDuel(BotHandle bot)
 {
     Player* b = FindBot(bot);
-    if (!b || !b->duel || b->duel->startTime)
+    if (!b || !b->duel)
         return false;
-    // Accept: the arbiter GO starts the countdown and the client plays
-    // the duel animation.
-    b->DuelComplete(DUEL_INTERRUPTED);  // This clears the pending request
-    // NOTE: a proper accept would mirror CMSG_DUEL_ACCEPTED handling.
-    // Since the C++ API doesn't expose a clean "accept" helper, we
-    // stub this — it will be fleshed out when duel strategies land.
-    return false; // stub — returns false until full impl
+    // Mirror WorldSession::HandleDuelAcceptedOpcode: validate the pending
+    // duel, then start the 3s countdown for both duellists.
+    Player* initiator = b->duel->initiator;
+    Player* opponent  = b->duel->opponent;
+    if (!initiator || b == initiator || !opponent || b == opponent)
+        return false;
+    if (b->duel->startTimer != 0 || opponent->duel->startTimer != 0)
+        return false;   // already counting down
+    if (b->duel->startTime != 0 || opponent->duel->startTime != 0)
+        return false;   // duel already in progress
+    time_t now = time(nullptr);
+    b->duel->startTimer = now;
+    opponent->duel->startTimer = now;
+    b->SendDuelCountdown(3000);
+    opponent->SendDuelCountdown(3000);
+    return true;
 }
 
 bool BotBridge::CB_DeclineDuel(BotHandle bot)

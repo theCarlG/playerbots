@@ -3840,13 +3840,24 @@ fn tick_engage_target(ctx: &mut TickContext<'_>) -> BtResult {
     if ctx.snap.self_.is_casting {
         return BtResult::Success;
     }
-    // Try ranged auto-shoot first (idempotent if already firing).
-    if ctx.interface.auto_shoot(target) {
+    // Only ranged attackers (hunters, casters with a wand) auto-shoot.
+    // Melee bots — rogues, warriors, enhancement/feral/ret/DK — keep a
+    // bow/gun/crossbow in the ranged slot for the stats (and for ranged
+    // *pulls*, handled separately in `tick_pull_target`), but in a normal
+    // engage they must close and melee. Without this gate a rogue with a
+    // crossbow auto-shoots forever and never reaches its energy rotation.
+    if ctx.is_ranged_or_healer() && ctx.interface.auto_shoot(target) {
         ctx.monitor(format_args!("ENGAGE: auto_shoot on 0x{target:X}"));
     } else {
-        // No ranged weapon or shoot failed — ensure melee auto-attack.
-        ctx.interface.auto_attack(true);
-        ctx.monitor(format_args!("ENGAGE: auto_attack on 0x{target:X}"));
+        // Melee bot, or no ranged weapon / shoot refused — start (or keep)
+        // the melee swing on the target. Go through `attack` (→ Unit::Attack,
+        // which is idempotent: a no-op when already swinging the same victim,
+        // so it never resets the swing timer) rather than the `auto_attack`
+        // enable path, whose C++ side never actually begins the swing — that
+        // left melee bots "starting and stopping" forever without landing a
+        // hit.
+        ctx.interface.attack(target);
+        ctx.monitor(format_args!("ENGAGE: melee attack on 0x{target:X}"));
     }
     BtResult::Success
 }

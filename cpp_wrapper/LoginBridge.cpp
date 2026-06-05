@@ -253,7 +253,16 @@ uint32_t LoginBridge::CB_QueryCandidates(const char* account_prefix,
         info.race             = fields[2].GetUInt8();
         info.cls              = fields[3].GetUInt8();
         info.level            = fields[4].GetUInt32();
-        info.is_online        = fields[5].GetBool();
+        // Online state must reflect ACTUAL world presence, not the stale
+        // `characters.online` column (fields[5]). A bot that was online
+        // before an unclean shutdown keeps `online = 1` in the DB; trusting
+        // that column makes the login manager count it against the
+        // population cap forever — `total_space` starves toward 0 and no
+        // bots ever log in. PB2 reconciled this each tick in
+        // `UpdateOnlineBots`; the Rust login pool dropped that pass, so we
+        // resolve presence here at candidate-query time instead.
+        info.is_online        = sObjectMgr.GetPlayer(
+            ObjectGuid(HIGHGUID_PLAYER, fields[1].GetUInt32()), false) != nullptr;
         info.total_played_time = fields[6].GetUInt32();
         info.map_id           = fields[7].GetUInt32();
         info.x                = fields[8].GetFloat();

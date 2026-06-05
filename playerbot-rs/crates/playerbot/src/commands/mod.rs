@@ -283,8 +283,10 @@ pub enum BotCommand {
     MailTakeAll,
     /// `mail take <N>` — take items from a specific mail by index.
     MailTakeIndex(u32),
-    /// `leave` — leave the bot's current guild.
+    /// `guild leave` — leave the bot's current guild.
     GuildLeave,
+    /// `leave` — leave the bot's current group/raid (PB2 `LeaveGroupAction`).
+    LeaveGroup,
 
     // -- Class preferences --
     /// `poison mh <kind>` / `poison oh <kind>` — set rogue weapon poison.
@@ -542,6 +544,7 @@ impl BotCommand {
             CcRti, CheckLos, ComeToMe, Craft, CustomStrategy, Debug, DebugBt, DebugClaims,
             DebugCoord, DebugFsm, DestroyItem, DoQuest, Emote, EquipItemByName, Flag, Flee, Focus,
             FocusHeal, FollowTarget, Free, GiveLeader, GoTo, Guard, GuildCommand, GuildLeave, Help,
+            LeaveGroup,
             InvitePlayer, Jump, KeepItem, Lfg, ListBankItems, ListEquipment, ListInventory, ListMailItems, ListQuests,
             ListReputation, ListSettings, ListSkills, ListSpells, ListTalents, LogLevel,
             Loot, LootRoll, MailSummary,
@@ -580,7 +583,9 @@ impl BotCommand {
             | QueryReactivity | QueryRti | QueryCcRti | QuerySaveMana | QueryLootPolicy
             | DebugFsm | DebugClaims | DebugCoord | DebugBt
             | TankQuery | CcQuery
-            | Subscribe(_) | Unsubscribe(_) => SecurityLevel::Talk,
+            | Subscribe(_) | Unsubscribe(_)
+            // `leave` (leave group/raid) — PB2 registered this as an unsecured command.
+            | LeaveGroup => SecurityLevel::Talk,
 
             // Destructive / account-level — master only.
             Reset | ResetStrategies | BlacklistSpell(_) | UnblacklistSpell(_)
@@ -2350,6 +2355,12 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
                     "guild: cannot leave (not in guild or guild master)"
                 };
                 reply(bot, pc, msg);
+            }
+        }
+        BotCommand::LeaveGroup => {
+            let ok = bot.interface.leave_group();
+            if bot.settings.verbose {
+                reply(bot, pc, if ok { "leaving group" } else { "not in a group" });
             }
         }
 

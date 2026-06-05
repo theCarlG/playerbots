@@ -157,6 +157,35 @@ RandomPlayerbotMgr::RandomPlayerbotMgr()
     // Initialize the Rust AI module once at server startup.
     PlayerbotRust::InitRustModule();
 
+    // Repopulate the random-bot account allow-list. The core's bot-login
+    // gate (CharacterHandler::HandlePlayerBotLogin) calls
+    // sPlayerbotAIConfig.IsInRandomAccountList() to decide whether an
+    // autonomous (master-less) random-bot login is permitted. PB2 filled
+    // this list in RandomPlayerbotMgr::Init from the account table; the
+    // Rust migration moved the authoritative copy into the Rust factory
+    // singleton but left the C++ mirror un-loaded, so every random bot was
+    // rejected at login with "Attempt to add not allowed bot ...". Reload
+    // it here, by the configured account prefix, before any bot login runs.
+    if (playerbot_config_enabled())
+    {
+        sPlayerbotAIConfig.randomBotAccounts.clear();
+        std::string prefix = sPlayerbotAIConfig.randomBotAccountPrefix;
+        if (!prefix.empty())
+        {
+            if (auto results = LoginDatabase.PQuery(
+                    "SELECT id FROM account WHERE username LIKE '%s%%'", prefix.c_str()))
+            {
+                do
+                {
+                    Field* fields = results->Fetch();
+                    sPlayerbotAIConfig.randomBotAccounts.push_back(fields[0].GetUInt32());
+                } while (results->NextRow());
+            }
+        }
+        sLog.outString("Playerbots: loaded %u random-bot account(s) (prefix '%s')",
+                       (uint32)sPlayerbotAIConfig.randomBotAccounts.size(), prefix.c_str());
+    }
+
     if (playerbot_config_enabled() && playerbot_config_random_bot_autologin())
     {
         PrepareTeleportCache();

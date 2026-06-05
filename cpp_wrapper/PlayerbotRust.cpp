@@ -450,6 +450,14 @@ void PlayerbotRust::TellPlayer(Player* target, const std::string& msg)
     m_bot->Whisper(msg, LANG_UNIVERSAL, target->GetObjectGuid());
 }
 
+void PlayerbotRust::TellPlayerNoFacing(Player* target, const std::string& msg)
+{
+    // "No facing" == TellPlayer in this fork: a whisper never turns the bot
+    // toward the target, so there is nothing extra to skip. Distinct entry
+    // point kept for PB2 call-site parity (PB2's TellPlayer faced first).
+    TellPlayer(target, msg);
+}
+
 void PlayerbotRust::HandleTeleportAck()
 {
     // Mirrors PB2's PlayerbotAI::HandleTeleportAck: near-teleport needs an

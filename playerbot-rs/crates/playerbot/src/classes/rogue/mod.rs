@@ -7,9 +7,9 @@ use crate::{
     Sel, Seq,
     bot::settings::StrategyFlags,
     bot::state::PlayerSpec,
-    data::spells::vanilla::rogue::{ADRENALINE_RUSH, BLADE_FLURRY, COLD_BLOOD},
+    data::spells::vanilla::rogue::{ADRENALINE_RUSH, BLADE_FLURRY, COLD_BLOOD, GARROTE, STEALTH},
     engine::{
-        bt::Bt::{self, CastOnSelf, InCombat, StrategyEnabled},
+        bt::Bt::{self, CastOnSelf, CastOnTarget, InCombat, StrategyEnabled},
         macro_fsm::ActiveFsm,
     },
     noncombat::GroupBuff,
@@ -30,13 +30,42 @@ pub fn boost() -> Bt {
     )
 }
 
+/// Pre-combat stealth approach + opener, shared by every rogue spec.
+///
+/// While the `STEALTH` strategy is enabled and the bot is not yet in
+/// combat, slip into Stealth and — once the close/behind positioning has
+/// brought the bot in range behind the target — open with Garrote. The
+/// instant opener fires before the first auto-swing (which only starts its
+/// ~weapon-speed timer on engage), breaks stealth, and hands off to the
+/// spec rotation on the following (now in-combat) tick.
+fn stealth_approach() -> Bt {
+    Seq!(
+        InCombat.not(),
+        StrategyEnabled(StrategyFlags::STEALTH),
+        Sel!(
+            // Not stealthed yet — slip into Stealth (can_cast gates OOC).
+            Seq!(Bt::self_missing(STEALTH), CastOnSelf(STEALTH)),
+            // Stealthed, behind the target and in melee range — open with
+            // Garrote (can_cast gates on the stealth aura + facing + range).
+            CastOnTarget(GARROTE),
+        ),
+    )
+}
+
 pub fn build_tree(fsm: ActiveFsm, spec: PlayerSpec) -> Bt {
     use PlayerSpec::{RogueAssassination, RogueCombat, RogueSubtlety};
-    match spec {
+    let spec_tree = match spec {
         RogueAssassination => assassination::build_tree(fsm),
         RogueCombat => combat::build_tree(fsm),
         RogueSubtlety => subtlety::build_tree(fsm),
         _ => unreachable!("non-rogue spec passed to rogue::build_tree"),
+    };
+    // The Combat FSM also covers the stealthed approach before the first
+    // hit, so prepend the shared stealth opener ahead of the spec rotation;
+    // it falls through (Failure) the moment the bot is in combat.
+    match fsm {
+        ActiveFsm::Combat => Sel!(stealth_approach(), spec_tree),
+        _ => spec_tree,
     }
 }
 
