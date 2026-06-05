@@ -454,6 +454,13 @@ typedef struct BotCallbacks {
     void          (*free_quest_log)(BotQuestInfo* list);
     bool          (*accept_all_quests)(BotHandle bot, UnitHandle npc);
     bool          (*turn_in_quest)(BotHandle bot, UnitHandle npc, uint32_t quest_id);
+    /* Use a nearby gameobject that satisfies a "use object" objective of one
+     * of the bot's incomplete quests (go->Use grants the credit). Returns
+     * true if one was used. */
+    bool          (*use_nearby_quest_object)(BotHandle bot, float range);
+    /* True if `entry` is a creature the bot still needs to kill for an
+     * incomplete quest objective — lets the attacker prefer the right mob. */
+    bool          (*is_quest_objective_creature)(BotHandle bot, uint32_t entry);
 
     /* ── Unit queries (extended) ─────────────────────────────────────── */
     bool    (*is_attackable)(BotHandle bot, UnitHandle target);

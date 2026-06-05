@@ -343,6 +343,11 @@ pub struct MockState {
     /// toggles autocast on. Kept as a plain `Vec<u32>` so tests can
     /// preserve creation order.
     pub pet_autocast_candidates: Vec<u32>,
+    /// Creature entries that count as incomplete quest-kill objectives —
+    /// `is_quest_objective_creature` returns true for these.
+    pub quest_objective_entries: Vec<u32>,
+    /// Result returned by `use_nearby_quest_object`.
+    pub use_quest_object_result: bool,
     /// Whether the pet is alive. Gates `factory_pet_force_dismiss`
     /// in the mock (mirrors the `if (pet->IsAlive())` check at the
     /// bottom of `InitPet`). Flipped to `false` when the dismiss is
@@ -454,6 +459,8 @@ impl Default for MockState {
             pet_spells: HashSet::new(),
             pet_autocast: HashMap::new(),
             pet_autocast_candidates: Vec::new(),
+            quest_objective_entries: Vec::new(),
+            use_quest_object_result: false,
             pet_is_alive: false,
             tameable_creatures: Vec::new(),
             rng_seq: VecDeque::new(),
@@ -1304,6 +1311,14 @@ impl World for MockWorld {
     fn pet_attack(&self, target: UnitHandle) -> bool {
         record(&self.0, MockEvent::PetAttack(target));
         true
+    }
+
+    fn is_quest_objective_creature(&self, entry: u32) -> bool {
+        self.0.borrow().quest_objective_entries.contains(&entry)
+    }
+
+    fn use_nearby_quest_object(&self, _range: f32) -> bool {
+        self.0.borrow().use_quest_object_result
     }
 
     fn auto_attack(&self, enable: bool) -> bool {

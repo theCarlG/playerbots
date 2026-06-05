@@ -424,6 +424,14 @@ impl World for VtableWorld {
         unsafe { (self.cbs.turn_in_quest.unwrap())(self.handle, npc, quest_id) }
     }
 
+    fn use_nearby_quest_object(&self, range: f32) -> bool {
+        unsafe { (self.cbs.use_nearby_quest_object.unwrap())(self.handle, range) }
+    }
+
+    fn is_quest_objective_creature(&self, entry: u32) -> bool {
+        unsafe { (self.cbs.is_quest_objective_creature.unwrap())(self.handle, entry) }
+    }
+
     /* ── Unit queries (extended) ────────────────────────────────────── */
 
     fn is_attackable(&self, target: UnitHandle) -> bool {

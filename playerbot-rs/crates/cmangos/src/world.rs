@@ -333,6 +333,16 @@ pub trait World: Send {
     fn turn_in_quest(&self, _npc: UnitHandle, _quest_id: u32) -> bool {
         false
     }
+    /// Use a nearby gameobject that satisfies a "use object" objective of one
+    /// of the bot's incomplete quests. Returns true if one was used.
+    fn use_nearby_quest_object(&self, _range: f32) -> bool {
+        false
+    }
+    /// True if `entry` is a creature the bot still needs to kill for an
+    /// incomplete quest objective.
+    fn is_quest_objective_creature(&self, _entry: u32) -> bool {
+        false
+    }
 
     /* ── Unit queries (extended) ────────────────────────────────────── */
 

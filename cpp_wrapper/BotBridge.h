@@ -194,6 +194,8 @@ namespace BotBridge
     BotPosition CB_GameobjectPosition(BotHandle bot, uint64_t handle);
     uint64_t    CB_NearbyGameObjectByEntry(BotHandle bot, uint32_t entry, float range);
     bool        CB_UseGameObject(BotHandle bot, uint64_t handle);
+    bool        CB_UseNearbyQuestObject(BotHandle bot, float range);
+    bool        CB_IsQuestObjectiveCreature(BotHandle bot, uint32_t entry);
 
     // ── Factory: inventory mutation ────────────────────────────────────────
     void     CB_InventoryDestroyEquippedAndBags(BotHandle bot);

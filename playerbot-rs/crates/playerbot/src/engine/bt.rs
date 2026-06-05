@@ -692,6 +692,8 @@ pub enum Bt {
     AcceptQuests,
     /// Attack a quest-relevant mob.
     AttackQuestMob,
+    /// Use a nearby gameobject that satisfies a "use object" quest objective.
+    UseQuestObject,
     /// Move toward blackboard travel destination, clear on arrival.
     TravelToBlackboard,
     /// Select a travel destination based on the bot's current goals and
@@ -1930,6 +1932,13 @@ impl BtNode for Bt {
             Bt::TurnInQuest => tick_turn_in_quest(ctx),
             Bt::AcceptQuests => tick_accept_quests(ctx),
             Bt::AttackQuestMob => tick_attack_quest_mob(ctx),
+            Bt::UseQuestObject => {
+                if ctx.interface.use_nearby_quest_object(crate::config::get().nearby_scan_range) {
+                    BtResult::Success
+                } else {
+                    BtResult::Failure
+                }
+            }
             Bt::LearnTrainerSpells => tick_learn_trainer_spells(ctx),
             Bt::ApplyTalentBuild => tick_apply_talent_build(ctx),
             Bt::TravelToBlackboard => tick_travel(ctx),
@@ -3358,8 +3367,30 @@ fn tick_accept_quests(ctx: &mut TickContext<'_>) -> BtResult {
 fn tick_attack_quest_mob(ctx: &mut TickContext<'_>) -> BtResult {
     let quests = ctx.interface.get_quest_log();
     let has_active = quests.iter().any(|q| !q.complete);
-    if has_active
-        && let Some(&target) = ctx.nearby.iter().find(|&&u| ctx.interface.is_attackable(u))
+    if !has_active {
+        return BtResult::Failure;
+    }
+    // Prefer a nearby unit that is actually a kill objective for an incomplete
+    // quest (the *right* mob), and only fall back to any attackable unit once
+    // the bot is in the objective area. Without the preference the bot would
+    // grind whatever is nearest, ignoring which mobs give quest credit.
+    let target = ctx
+        .nearby
+        .iter()
+        .copied()
+        .find(|&u| {
+            ctx.interface.is_attackable(u)
+                && ctx
+                    .interface
+                    .is_quest_objective_creature(ctx.interface.get_unit_snapshot(u).npc_entry)
+        })
+        .or_else(|| {
+            ctx.nearby
+                .iter()
+                .copied()
+                .find(|&u| ctx.interface.is_attackable(u))
+        });
+    if let Some(target) = target
         && ctx.attack(target)
     {
         return BtResult::Success;
@@ -6473,6 +6504,8 @@ mod tests {
         assert_eq!(Bt::ShareQuest.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::EquipItem(ItemId(100)).tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::UnequipSlot(0).tick(&mut ctx), BtResult::Failure);
+        // UseQuestObject: mock use_nearby_quest_object returns false (default).
+        assert_eq!(Bt::UseQuestObject.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::Fish.tick(&mut ctx), BtResult::Failure);
         // RandomEmote: mock do_text_emote returns false (default)
         assert_eq!(Bt::RandomEmote.tick(&mut ctx), BtResult::Failure);

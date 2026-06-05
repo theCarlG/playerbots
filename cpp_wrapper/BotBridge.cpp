@@ -352,6 +352,8 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.gameobject_position     = CB_GameobjectPosition;
     cbs.nearby_gameobject_by_entry = CB_NearbyGameObjectByEntry;
     cbs.use_gameobject             = CB_UseGameObject;
+    cbs.use_nearby_quest_object    = CB_UseNearbyQuestObject;
+    cbs.is_quest_objective_creature = CB_IsQuestObjectiveCreature;
 
     // Factory: inventory mutation
     cbs.inventory_destroy_equipped_and_bags = CB_InventoryDestroyEquippedAndBags;
@@ -2568,6 +2570,40 @@ bool BotBridge::CB_AcceptAllQuests(BotHandle bot, UnitHandle npc)
     return accepted;
 }
 
+// Pick the best reward-choice index for a quest with a choice of rewards.
+// Prefer an item the bot can actually use (equippable by class/level), ranked
+// by item level; fall back to sell value so a non-usable choice still grabs
+// the most valuable option. Index 0 when there is no real choice. Mirrors the
+// intent of PB2's quest-reward usefulness selection.
+static uint32 PickBestRewardChoice(Player* b, Quest const* quest)
+{
+    const uint32 count = quest->GetRewChoiceItemsCount();
+    if (count <= 1)
+        return 0;
+
+    uint32 bestIdx = 0;
+    uint64 bestScore = 0;
+    for (uint32 i = 0; i < count; ++i)
+    {
+        const uint32 itemId = quest->RewChoiceItemId[i];
+        if (!itemId)
+            continue;
+        ItemPrototype const* proto = sObjectMgr.GetItemPrototype(itemId);
+        if (!proto)
+            continue;
+
+        const bool usable = (b->CanUseItem(proto) == EQUIP_ERR_OK);
+        const uint64 score = (usable ? static_cast<uint64>(proto->ItemLevel) * 1000000ull : 0ull)
+                           + static_cast<uint64>(proto->SellPrice);
+        if (score > bestScore)
+        {
+            bestScore = score;
+            bestIdx = i;
+        }
+    }
+    return bestIdx;
+}
+
 bool BotBridge::CB_TurnInQuest(BotHandle bot, UnitHandle npc, uint32_t quest_id)
 {
     Player* b = FindBot(bot);
@@ -2586,7 +2622,7 @@ bool BotBridge::CB_TurnInQuest(BotHandle bot, UnitHandle npc, uint32_t quest_id)
     if (b->GetQuestStatus(quest_id) != QUEST_STATUS_COMPLETE)
         return false;
 
-    b->RewardQuest(quest, 0, creature, true);
+    b->RewardQuest(quest, PickBestRewardChoice(b, quest), creature, true);
     return true;
 }
 
@@ -3689,6 +3725,86 @@ bool BotBridge::CB_UseGameObject(BotHandle bot, uint64_t handle)
         return false;
     go->Use(b);
     return true;
+}
+
+bool BotBridge::CB_UseNearbyQuestObject(BotHandle bot, float range)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    if (range <= 0.0f)
+        range = INTERACTION_DISTANCE;
+
+    // Collect the gameobject entries the bot still needs to use for its
+    // incomplete quests (GO objectives are stored as negative ReqCreatureOrGOId).
+    std::unordered_set<uint32> wanted;
+    for (auto const& qs : b->getQuestStatusMap())
+    {
+        if (qs.second.m_status != QUEST_STATUS_INCOMPLETE)
+            continue;
+        Quest const* quest = sObjectMgr.GetQuestTemplate(qs.first);
+        if (!quest)
+            continue;
+        for (int j = 0; j < QUEST_OBJECTIVES_COUNT; ++j)
+        {
+            const int32 reqEntry = quest->ReqCreatureOrGOId[j];
+            const uint32 reqCount = quest->ReqCreatureOrGOCount[j];
+            if (reqEntry >= 0 || reqCount == 0)
+                continue;
+            if (b->GetReqKillOrCastCurrentCount(qs.first, reqEntry) >= reqCount)
+                continue;
+            wanted.insert(static_cast<uint32>(-reqEntry));
+        }
+    }
+    if (wanted.empty())
+        return false;
+
+    GameObjectList gameObjects;
+    MaNGOS::GameObjectInPosRangeCheck check(*b,
+        b->GetPositionX(), b->GetPositionY(), b->GetPositionZ(), range);
+    MaNGOS::GameObjectListSearcher<MaNGOS::GameObjectInPosRangeCheck> searcher(gameObjects, check);
+    Cell::VisitAllObjects(b, searcher, range);
+
+    for (GameObject* go : gameObjects)
+    {
+        if (!go || !go->IsSpawned())
+            continue;
+        if (!wanted.count(go->GetEntry()))
+            continue;
+        // Use() triggers the quest credit for "use object" objectives.
+        go->Use(b);
+        return true;
+    }
+    return false;
+}
+
+bool BotBridge::CB_IsQuestObjectiveCreature(BotHandle bot, uint32_t entry)
+{
+    Player* b = FindBot(bot);
+    if (!b || entry == 0)
+        return false;
+
+    for (auto const& qs : b->getQuestStatusMap())
+    {
+        if (qs.second.m_status != QUEST_STATUS_INCOMPLETE)
+            continue;
+        Quest const* quest = sObjectMgr.GetQuestTemplate(qs.first);
+        if (!quest)
+            continue;
+        for (int j = 0; j < QUEST_OBJECTIVES_COUNT; ++j)
+        {
+            const int32 reqEntry = quest->ReqCreatureOrGOId[j];
+            const uint32 reqCount = quest->ReqCreatureOrGOCount[j];
+            if (reqEntry <= 0 || reqCount == 0)
+                continue;
+            if (static_cast<uint32>(reqEntry) != entry)
+                continue;
+            // A still-needed kill objective for this creature entry.
+            if (b->GetReqKillOrCastCurrentCount(qs.first, reqEntry) < reqCount)
+                return true;
+        }
+    }
+    return false;
 }
 
 // ── Factory: inventory mutation ───────────────────────────────────────────
@@ -6516,11 +6632,14 @@ BotTravelDest* BotBridge::CB_BotFindTravelDests(
     }
 
     // Quest objectives (TravelPurpose QUEST_OBJECTIVE1..4 = bits 1..4). The
-    // NPC-flag grid search above can't find these — a quest mob carries no
-    // questgiver flag. For each of the bot's *incomplete* quests, resolve the
-    // required-creature kill objectives that still need kills to a spawn
-    // location via FindCreatureData (map-aware, not range-limited), so the bot
+    // NPC-flag grid search above can't find these — a quest mob/object carries
+    // no questgiver flag. For each of the bot's *incomplete* quests, resolve
+    // the required creature-kill (entry>0) AND gameobject-use (entry<0)
+    // objectives that still need progress to a spawn location via
+    // FindCreatureData / FindGOData (map-aware, not range-limited), so the bot
     // travels to the objective area instead of grinding wherever it stands.
+    // (Pure item-collect objectives whose item only drops from mobs need a
+    // loot-source reverse index — a separate precomputed-relations subsystem.)
     constexpr uint32_t QUEST_ALL_OBJ = (1u << 1) | (1u << 2) | (1u << 3) | (1u << 4);
     if (purpose_flags & QUEST_ALL_OBJ)
     {
@@ -6537,29 +6656,53 @@ BotTravelDest* BotBridge::CB_BotFindTravelDests(
             {
                 const int32 reqEntry = quest->ReqCreatureOrGOId[j];
                 const uint32 reqCount = quest->ReqCreatureOrGOCount[j];
-                // Creature kill objective (>0) that still needs kills. GO
-                // objectives (<0) and item-collect (ReqItemId) are handled by
-                // a future pass — they need GO-spawn / loot-source lookups.
-                if (reqEntry <= 0 || reqCount == 0)
+                if (reqEntry == 0 || reqCount == 0)
                     continue;
                 if (b->GetReqKillOrCastCurrentCount(questId, reqEntry) >= reqCount)
                     continue;
 
-                FindCreatureData worker(static_cast<uint32>(reqEntry), b);
-                sObjectMgr.DoCreatureData(worker);
-                CreatureDataPair const* dataPair = worker.GetResult();
-                if (!dataPair)
+                uint32 destMap = 0;
+                float destX = 0.0f, destY = 0.0f, destZ = 0.0f;
+                bool found = false;
+                if (reqEntry > 0)
+                {
+                    // Creature kill objective.
+                    FindCreatureData worker(static_cast<uint32>(reqEntry), b);
+                    sObjectMgr.DoCreatureData(worker);
+                    if (CreatureDataPair const* dp = worker.GetResult())
+                    {
+                        destMap = dp->second.mapid;
+                        destX = dp->second.posX;
+                        destY = dp->second.posY;
+                        destZ = dp->second.posZ;
+                        found = true;
+                    }
+                }
+                else
+                {
+                    // Gameobject-use objective (negative entry).
+                    FindGOData worker(static_cast<uint32>(-reqEntry), b);
+                    sObjectMgr.DoGOData(worker);
+                    if (GameObjectDataPair const* dp = worker.GetResult())
+                    {
+                        destMap = dp->second.mapid;
+                        destX = dp->second.posX;
+                        destY = dp->second.posY;
+                        destZ = dp->second.posZ;
+                        found = true;
+                    }
+                }
+                if (!found)
                     continue;
-                CreatureData const* data = &dataPair->second;
 
-                const float dx = b->GetPositionX() - data->posX;
-                const float dy = b->GetPositionY() - data->posY;
+                const float dx = b->GetPositionX() - destX;
+                const float dy = b->GetPositionY() - destY;
                 candidates.push_back({
                     reqEntry,
                     questId,
                     static_cast<uint32_t>(1u << (1 + j)), // QUEST_OBJECTIVE(j+1)
-                    data->mapid,
-                    data->posX, data->posY, data->posZ,
+                    destMap,
+                    destX, destY, destZ,
                     dx * dx + dy * dy
                 });
             }
