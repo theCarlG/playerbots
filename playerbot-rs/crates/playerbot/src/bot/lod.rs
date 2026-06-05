@@ -5,6 +5,17 @@
 /// keeps 1,800+ bots affordable while ensuring grouped bots feel alive.
 use crate::bdi::desires::DesireKind;
 use crate::bot::state::BotState;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Diagnostic: how many bots land in each LOD tier (flushed by the `GrindStat`
+/// telemetry). Confirms whether "no combat" is because bots are Dormant
+/// (no scan) vs Background (should scan but world looks empty).
+pub static LOD_COUNTS: [AtomicU64; 4] = [
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+];
 
 /// AI processing depth tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -62,8 +73,16 @@ impl AiLod {
     }
 
     /// Whether the nearby-unit scan should run.
+    ///
+    /// `Background` is included: it's the tier for "solo, no humans nearby, but
+    /// the bot has active goals (grinding, traveling)" — so it MUST see the
+    /// units around it or it can never find a mob to grind. Without this, bots
+    /// far from any human (i.e. all of them when no one is online) had an empty
+    /// `nearby` list, so grind found nothing and they only ever wandered. Only
+    /// `Dormant` (truly idle, no active desire) skips the scan, for CPU savings.
+    /// The scan still runs at the tier's reduced tick rate (~5s for Background).
     pub fn should_scan_nearby(self) -> bool {
-        matches!(self, Self::Full | Self::Active)
+        matches!(self, Self::Full | Self::Active | Self::Background)
     }
 }
 
@@ -71,11 +90,24 @@ impl AiLod {
 ///
 /// Called at the start of each tick, before any processing.
 pub fn determine_lod(bot: &BotState) -> AiLod {
+    let lod = determine_lod_inner(bot);
+    LOD_COUNTS[lod as usize].fetch_add(1, Ordering::Relaxed);
+    lod
+}
+
+fn determine_lod_inner(bot: &BotState) -> AiLod {
     let has_human_master = bot.master_guid.is_some();
     let in_instance = !bot.snap.is_overworld;
 
     // Full LOD: grouped with a human or in an instance
     if has_human_master || in_instance {
+        return AiLod::Full;
+    }
+
+    // A bot that's actually in combat needs fast ticks to fight (and survive)
+    // effectively — even solo with no human nearby. Without this a grinding
+    // bot would tick once every ~5s mid-fight and lose to a same-level mob.
+    if bot.snap.self_.in_combat {
         return AiLod::Full;
     }
 
@@ -99,5 +131,15 @@ pub fn determine_lod(bot: &BotState) -> AiLod {
         return AiLod::Background;
     }
 
-    AiLod::Dormant
+    // Deadlock breaker: even with no committed desire, a solo overworld bot
+    // must keep scanning so it can SEE a mob and start grinding. Without this it
+    // goes Dormant → never scans → never perceives a target → never forms a
+    // grind desire → stays Dormant forever, wandering but never fighting (the
+    // root cause of "~99% Dormant, 0 in combat"). Only deliberately-idle modes
+    // drop to the near-zero-CPU Dormant tier.
+    use crate::bot::settings::BehaviorMode;
+    if matches!(bot.settings.mode, BehaviorMode::Passive | BehaviorMode::Stay) {
+        return AiLod::Dormant;
+    }
+    AiLod::Background
 }

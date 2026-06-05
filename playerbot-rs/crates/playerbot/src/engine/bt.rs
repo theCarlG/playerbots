@@ -4116,13 +4116,64 @@ fn tick_debug_dump_state(ctx: &mut TickContext<'_>, kind: u8) -> BtResult {
     }
 }
 
+// ── Grind diagnostics ─────────────────────────────────────────────────────
+// Process-wide counters, flushed every 60s, to localize "bots wander but never
+// fight". Safe (no grid search): all read from `ctx.nearby`, computed on each
+// bot's own correct-thread tick. The [GrindStat] line distinguishes:
+//   calls≈0           → bots don't even reach grind (mode/dispatch).
+//   hadNearby≈0       → bots see nothing nearby (grid/creature loading).
+//   hadTarget≈0       → see units but no grindable mob (placement / level).
+//   attacked<<hadTgt  → found a target but the attack fails (combat bug).
+use std::sync::atomic::{AtomicU64, Ordering};
+static GRIND_CALLS: AtomicU64 = AtomicU64::new(0);
+static GRIND_HAD_NEARBY: AtomicU64 = AtomicU64::new(0);
+static GRIND_HAD_TARGET: AtomicU64 = AtomicU64::new(0);
+static GRIND_ATTACKED: AtomicU64 = AtomicU64::new(0);
+static GRIND_LAST_FLUSH_MS: AtomicU64 = AtomicU64::new(0);
+
+fn maybe_flush_grind_stats(now_ms: u64) {
+    let last = GRIND_LAST_FLUSH_MS.load(Ordering::Relaxed);
+    if now_ms.saturating_sub(last) < 60_000 {
+        return;
+    }
+    // First bot past the window claims the flush; the rest skip.
+    if GRIND_LAST_FLUSH_MS
+        .compare_exchange(last, now_ms, Ordering::Relaxed, Ordering::Relaxed)
+        .is_err()
+    {
+        return;
+    }
+    let calls = GRIND_CALLS.swap(0, Ordering::Relaxed);
+    let nearby = GRIND_HAD_NEARBY.swap(0, Ordering::Relaxed);
+    let target = GRIND_HAD_TARGET.swap(0, Ordering::Relaxed);
+    let attacked = GRIND_ATTACKED.swap(0, Ordering::Relaxed);
+    let lod = &crate::bot::lod::LOD_COUNTS;
+    let full = lod[0].swap(0, Ordering::Relaxed);
+    let active = lod[1].swap(0, Ordering::Relaxed);
+    let bg = lod[2].swap(0, Ordering::Relaxed);
+    let dormant = lod[3].swap(0, Ordering::Relaxed);
+    crate::log_warn!(
+        "[GrindStat] calls={calls} hadNearby={nearby} hadTarget={target} attacked={attacked} \
+         lod[full={full} active={active} bg={bg} dormant={dormant}] (last 60s)"
+    );
+}
+
 fn tick_grind(ctx: &mut TickContext<'_>) -> BtResult {
+    GRIND_CALLS.fetch_add(1, Ordering::Relaxed);
+    if !ctx.nearby.is_empty() {
+        GRIND_HAD_NEARBY.fetch_add(1, Ordering::Relaxed);
+    }
+    maybe_flush_grind_stats(ctx.snap.server_time_ms);
+
     // Re-engage existing target.
     if let Some(t) = ctx.current_target()
         && ctx.interface.is_attackable(t)
-        && ctx.attack(t)
     {
-        return BtResult::Success;
+        GRIND_HAD_TARGET.fetch_add(1, Ordering::Relaxed);
+        if ctx.attack(t) {
+            GRIND_ATTACKED.fetch_add(1, Ordering::Relaxed);
+            return BtResult::Success;
+        }
     }
     // Pick the NEAREST attackable mob in a realistic grind band anywhere in
     // sight (not just inside the 40y combat range) — attacking enters the
@@ -4148,10 +4199,12 @@ fn tick_grind(ctx: &mut TickContext<'_>) -> BtResult {
             best = Some(unit);
         }
     }
-    if let Some(t) = best
-        && ctx.attack(t)
-    {
-        return BtResult::Success;
+    if let Some(t) = best {
+        GRIND_HAD_TARGET.fetch_add(1, Ordering::Relaxed);
+        if ctx.attack(t) {
+            GRIND_ATTACKED.fetch_add(1, Ordering::Relaxed);
+            return BtResult::Success;
+        }
     }
     BtResult::Failure
 }
