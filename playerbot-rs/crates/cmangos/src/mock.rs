@@ -358,6 +358,8 @@ pub struct MockState {
     pub active_escort_npc: UnitHandle,
     /// Result returned by `bot_broadcast_random`.
     pub bot_broadcast_result: bool,
+    /// Result returned by `bot_greet_nearby_player`.
+    pub bot_greet_result: bool,
     /// Whether the pet is alive. Gates `factory_pet_force_dismiss`
     /// in the mock (mirrors the `if (pet->IsAlive())` check at the
     /// bottom of `InitPet`). Flipped to `false` when the dismiss is
@@ -476,6 +478,7 @@ impl Default for MockState {
             cross_continent: (0, None),
             active_escort_npc: 0,
             bot_broadcast_result: false,
+            bot_greet_result: false,
             pet_is_alive: false,
             tameable_creatures: Vec::new(),
             rng_seq: VecDeque::new(),
@@ -600,6 +603,13 @@ impl MockWorld {
     #[must_use]
     pub fn with_broadcast(self, broadcast: bool) -> Self {
         self.0.borrow_mut().bot_broadcast_result = broadcast;
+        self
+    }
+
+    /// Configure the `bot_greet_nearby_player` result.
+    #[must_use]
+    pub fn with_greet(self, greet: bool) -> Self {
+        self.0.borrow_mut().bot_greet_result = greet;
         self
     }
 
@@ -1387,6 +1397,10 @@ impl World for MockWorld {
 
     fn bot_broadcast_random(&self) -> bool {
         self.0.borrow().bot_broadcast_result
+    }
+
+    fn bot_greet_nearby_player(&self) -> bool {
+        self.0.borrow().bot_greet_result
     }
 
     fn auto_attack(&self, enable: bool) -> bool {

@@ -469,6 +469,9 @@ typedef struct BotCallbacks {
      * General chat channel (placeholders filled; broken texts skipped). The
      * caller throttles this. Returns true if something was broadcast. */
     bool          (*bot_broadcast_random)(BotHandle bot);
+    /* Greet a nearby real (non-bot) player the bot hasn't greeted recently
+     * with a /say hello. Returns true if a greeting was said. */
+    bool          (*bot_greet_nearby_player)(BotHandle bot);
 
     /* ── Unit queries (extended) ─────────────────────────────────────── */
     bool    (*is_attackable)(BotHandle bot, UnitHandle target);

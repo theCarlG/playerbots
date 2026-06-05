@@ -524,6 +524,9 @@ fn maintenance_subtree(buffs: &'static [GroupBuff]) -> Bt {
         // General channel so the channels it joined at login have a voice.
         // The C++ side applies a low per-call chance, so this is a trickle.
         Seq!(Bt::InCombat.not(), Bt::throttle(180_000, Bt::BroadcastChatter)),
+        // Greet a nearby real player — the C++ side gates on proximity and a
+        // per-target cooldown, so this only fires when there's someone new.
+        Seq!(Bt::InCombat.not(), Bt::throttle(20_000, Bt::GreetNearbyPlayer)),
         // Follow as absolute fallback — but not during combat FSM (would
         // fight with combat positioning, causing the bot to ping-pong
         // between following master and closing to target). Uses

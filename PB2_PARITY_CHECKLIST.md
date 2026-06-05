@@ -4248,9 +4248,12 @@ wander, walking-RPG, teleports, distances, timings. Rust config in playerbot-rs 
   `%my_role`/`%category` — skip-if-unfilled, low per-call chance; `Bt::BroadcastChatter` throttled 180s in the
   maintenance loop). Gives the channels joined in §2 a voice. `cpp_wrapper/BotBridge.cpp`, `engine/bt.rs`,
   `bot/init.rs`. (Done 2026-06-05.)
-  STILL deferred: per-event broadcasts (loot/quest/levelup/kill — PB2 BroadcastHelper has ~20), routing to
-  category-specific channels (Trade/LFG vs General), and proximity GREETING of non-bot players (no greet-text
-  category exists in `ai_playerbot_texts`; would need hardcoded greetings + a nearby-player trigger).
+- [x] **Greeting** — bots now `/say` a hello to a nearby real (non-bot, non-group) player they haven't greeted
+  in the last 10 min (`CB_BotGreetNearbyPlayer`: `PlayerListSearcher` within 25y, skip bots via
+  `GetPlayerbotAI()`, per-bot per-target cooldown, name-filled greeting; `Bt::GreetNearbyPlayer` throttled 20s
+  in the maintenance loop). `cpp_wrapper/BotBridge.cpp`, `engine/bt.rs`, `bot/init.rs`. (Done 2026-06-05.)
+  STILL deferred: per-event broadcasts (loot/quest/levelup/kill — PB2 BroadcastHelper has ~20) and routing to
+  category-specific channels (Trade/LFG vs General).
 - [x] **Taxi/flight-master** routing — bots fly to far (>600y) same-continent travel destinations: walk to the
   nearest flight master, then take a multi-hop taxi (BFS over `sTaxiPathSetBySource` → `ActivateTaxiPathTo`).
   New FFI `nearest_taxi_node_pos` + `take_taxi_toward`; `Bt::TakeTaxi` wired into the travel strategy ahead of

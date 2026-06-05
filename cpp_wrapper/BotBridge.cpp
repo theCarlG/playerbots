@@ -362,6 +362,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.is_quest_objective_creature = CB_IsQuestObjectiveCreature;
     cbs.get_active_escort_npc      = CB_GetActiveEscortNpc;
     cbs.bot_broadcast_random       = CB_BotBroadcastRandom;
+    cbs.bot_greet_nearby_player    = CB_BotGreetNearbyPlayer;
 
     // Factory: inventory mutation
     cbs.inventory_destroy_equipped_and_bags = CB_InventoryDestroyEquippedAndBags;
@@ -3925,6 +3926,54 @@ bool BotBridge::CB_BotBroadcastRandom(BotHandle bot)
         return true;
     }
     return false;
+}
+
+bool BotBridge::CB_BotGreetNearbyPlayer(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b || !b->IsAlive() || b->IsInCombat())
+        return false;
+
+    // Per-bot cooldown so a given real player isn't greeted repeatedly.
+    static std::unordered_map<uint64_t, std::unordered_map<uint64_t, time_t>> greetedByBot;
+    const time_t now = time(nullptr);
+    constexpr time_t COOLDOWN = 600; // 10 minutes per target
+    auto& greeted = greetedByBot[bot];
+    for (auto it = greeted.begin(); it != greeted.end();)
+        it = (now - it->second >= COOLDOWN) ? greeted.erase(it) : std::next(it);
+
+    constexpr float range = 25.0f;
+    std::list<Player*> players;
+    MaNGOS::AnyPlayerInObjectRangeCheck check(b, range);
+    MaNGOS::PlayerListSearcher<MaNGOS::AnyPlayerInObjectRangeCheck> searcher(players, check);
+    Cell::VisitWorldObjects(b, searcher, range);
+
+    Player* target = nullptr;
+    for (Player* p : players)
+    {
+        if (!p || p == b || !p->IsAlive())
+            continue;
+        if (p->GetPlayerbotAI()) // skip other bots — greet only real players
+            continue;
+        if (b->IsInGroup(p)) // already grouped, no need to greet
+            continue;
+        if (greeted.count(p->GetObjectGuid().GetRawValue()))
+            continue;
+        target = p;
+        break;
+    }
+    if (!target)
+        return false;
+
+    static const char* greetings[] = {
+        "Hello, %s!",       "Hi there, %s!",    "Well met, %s.",
+        "Greetings, %s!",   "Hey %s, how goes?", "Good to see you, %s."
+    };
+    std::string msg = greetings[urand(0, 5)];
+    ReplaceAll(msg, "%s", target->GetName());
+    b->Say(msg, LANG_UNIVERSAL);
+    greeted[target->GetObjectGuid().GetRawValue()] = now;
+    return true;
 }
 
 uint64_t BotBridge::CB_GetActiveEscortNpc(BotHandle bot)

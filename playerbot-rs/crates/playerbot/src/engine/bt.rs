@@ -975,6 +975,9 @@ pub enum Bt {
     /// Broadcast a random idle suggestion in the bot's General chat channel
     /// (PB2 `BroadcastHelper`). Gives the joined chat channels a voice.
     BroadcastChatter,
+    /// Greet a nearby real (non-bot) player with a `/say` hello (PB2
+    /// `EnableGreet`). Failure when no ungreeted player is nearby.
+    GreetNearbyPlayer,
     /// Apply all missing world buffs from config (`AddAura` for each).
     ApplyWorldBuffs,
     /// Travel to a world buff location for `buff_id`.
@@ -2123,6 +2126,13 @@ impl BtNode for Bt {
             Bt::RandomSay => tick_random_say(ctx),
             Bt::BroadcastChatter => {
                 if ctx.interface.bot_broadcast_random() {
+                    BtResult::Success
+                } else {
+                    BtResult::Failure
+                }
+            }
+            Bt::GreetNearbyPlayer => {
+                if ctx.interface.bot_greet_nearby_player() {
                     BtResult::Success
                 } else {
                     BtResult::Failure
@@ -6647,6 +6657,14 @@ mod tests {
     }
 
     #[test]
+    fn greet_succeeds_when_a_player_is_greeted() {
+        let iface = MockWorld::new().with_greet(true);
+        let mut owned = TestCtxOwned::new();
+        let mut ctx = ctx_with_iface(&mut owned, &iface);
+        assert_eq!(Bt::GreetNearbyPlayer.tick(&mut ctx), BtResult::Success);
+    }
+
+    #[test]
     fn cross_continent_no_route_fails() {
         let iface = MockWorld::new().with_cross_continent(0, None); // no transport route
         let mut owned = TestCtxOwned::new();
@@ -6769,6 +6787,8 @@ mod tests {
         assert_eq!(Bt::EscortQuestNpc.tick(&mut ctx), BtResult::Failure);
         // BroadcastChatter: mock bot_broadcast_random false (default).
         assert_eq!(Bt::BroadcastChatter.tick(&mut ctx), BtResult::Failure);
+        // GreetNearbyPlayer: mock bot_greet_nearby_player false (default).
+        assert_eq!(Bt::GreetNearbyPlayer.tick(&mut ctx), BtResult::Failure);
         // TakeTaxi: no travel destination set → falls through to walking.
         assert_eq!(Bt::TakeTaxi.tick(&mut ctx), BtResult::Failure);
         // CrossContinentTravel: no destination map → falls through.

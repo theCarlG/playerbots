@@ -358,6 +358,13 @@ pub trait World: Send {
         false
     }
 
+    /// Greet a nearby real (non-bot) player the bot hasn't greeted recently
+    /// with a `/say` hello. The caller throttles this. Returns true if a
+    /// greeting was said.
+    fn bot_greet_nearby_player(&self) -> bool {
+        false
+    }
+
     /* ── Unit queries (extended) ────────────────────────────────────── */
 
     fn is_attackable(&self, _target: UnitHandle) -> bool {

@@ -198,6 +198,7 @@ namespace BotBridge
     bool        CB_IsQuestObjectiveCreature(BotHandle bot, uint32_t entry);
     uint64_t    CB_GetActiveEscortNpc(BotHandle bot);
     bool        CB_BotBroadcastRandom(BotHandle bot);
+    bool        CB_BotGreetNearbyPlayer(BotHandle bot);
 
     // ── Factory: inventory mutation ────────────────────────────────────────
     void     CB_InventoryDestroyEquippedAndBags(BotHandle bot);

@@ -303,6 +303,12 @@ social/chat/guild/AH §8 · lifecycle §9 · commands/RTSC §10 · gear/item §1
   Trust only claims cross-checked against the real `CastOn*`/`CB_*` code. When in doubt, grep.
 
 ## Progress log
+- 2026-06-05 · GREETING — bots `/say` a hello to nearby real players, completing the social pair with broadcast.
+  `CB_BotGreetNearbyPlayer`: `PlayerListSearcher` within 25y, skip bots (`GetPlayerbotAI()`) and group members
+  (`IsInGroup`), per-bot per-target 10-min cooldown so nobody is greeted twice, name-filled hardcoded greeting
+  via `/say`. `Bt::GreetNearbyPlayer` throttled 20s in the maintenance loop. 1 unit test; cargo test 10/10 +
+  clippy green; full mangosd build+install; smoke test clean (506 bots, 0 crashes). Greeting only fires for a
+  real player nearby (none in a headless run), so live verification is a client pass.
 - 2026-06-05 · BROADCAST / IDLE CHATTER — gave the §2 chat channels a voice. `CB_BotBroadcastRandom` says a
   random suggestion from `ai_playerbot_texts` (cached at first use) in the bot's General channel (reconstructs
   the zone-qualified name like §2's JoinChatChannels; `Channel::Say`, `/say` fallback). Placeholders filled

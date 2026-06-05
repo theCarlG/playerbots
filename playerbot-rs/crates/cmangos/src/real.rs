@@ -440,6 +440,10 @@ impl World for VtableWorld {
         unsafe { (self.cbs.bot_broadcast_random.unwrap())(self.handle) }
     }
 
+    fn bot_greet_nearby_player(&self) -> bool {
+        unsafe { (self.cbs.bot_greet_nearby_player.unwrap())(self.handle) }
+    }
+
     /* ── Unit queries (extended) ────────────────────────────────────── */
 
     fn is_attackable(&self, target: UnitHandle) -> bool {
