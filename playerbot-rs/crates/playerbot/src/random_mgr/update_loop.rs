@@ -107,6 +107,7 @@ impl TickConfig {
         };
         let process_context = ProcessContext {
             enable_random_teleports: cfg.enable_random_teleports,
+            rpg_chance: cfg.random_bot_rpg_chance,
             disable_random_levels: cfg.disable_random_levels,
             // `has_real_players` and `bots_allowed_in_world` are
             // recomputed in `tick()` against the world snapshot. The

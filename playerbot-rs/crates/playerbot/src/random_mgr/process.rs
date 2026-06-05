@@ -50,11 +50,15 @@ pub enum ProcessOutcome {
 /// Flags the worker tick passes down so we don't have to drag the
 /// full config through a long call chain. All fields map 1:1 to
 /// `sPlayerbotAIConfig` bool / numeric fields.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ProcessContext {
     /// `sPlayerbotAIConfig.enableRandomTeleports` — when false, the
     /// `change_strategy`/teleport branches log but don't dispatch.
     pub enable_random_teleports: bool,
+    /// `sPlayerbotAIConfig.RandomBotRpgChance` — fraction of random teleports
+    /// that go to an RPG/inn location (towns and capitals) rather than a grind
+    /// spot. Keeps cities populated; the rest go to level-appropriate mobs.
+    pub rpg_chance: f32,
     /// `sPlayerbotAIConfig.disableRandomLevels` — when true, the
     /// randomize branch short-circuits.
     pub disable_random_levels: bool,
@@ -86,6 +90,7 @@ impl Default for ProcessContext {
     fn default() -> Self {
         Self {
             enable_random_teleports: true,
+            rpg_chance: 0.35,
             disable_random_levels: false,
             has_real_players: true,
             bots_allowed_in_world: true,
@@ -182,7 +187,17 @@ pub fn step_bot_actions(
 
     if ctx.has_real_players && events.get_value(bot, "teleport", now_epoch_s, world) == 0 {
         if ctx.enable_random_teleports {
-            world.dispatch_random_teleport_for_level(bot, true);
+            // Mirror PB2 `Refresh`: `rpg_chance` of teleports go to an RPG/inn
+            // location (towns and capitals), the rest to a level-appropriate
+            // grind spot. The RPG branch is what keeps cities populated — it
+            // was dropped in the Phase H port (only ForLevel was kept), which
+            // left bots forever sent to grind spots and capitals empty.
+            let threshold = (100.0 * ctx.rpg_chance) as u32;
+            if world.urand_range(0, 100) <= threshold {
+                world.dispatch_random_teleport_for_rpg(bot, true);
+            } else {
+                world.dispatch_random_teleport_for_level(bot, true);
+            }
             scheduler::schedule_teleport(events, world, bot, ctx.bounds, None, now_epoch_s);
         }
         return ProcessOutcome::Teleported;
@@ -216,6 +231,7 @@ mod tests {
     fn ctx() -> ProcessContext {
         ProcessContext {
             enable_random_teleports: true,
+            rpg_chance: 0.35,
             disable_random_levels: false,
             has_real_players: true,
             bots_allowed_in_world: true,
@@ -308,6 +324,30 @@ mod tests {
 
         let outcome = process_bot(&mut events, &world, 3, ctx(), 100);
         assert_eq!(outcome, ProcessOutcome::Teleported);
+    }
+
+    #[test]
+    fn teleport_routes_to_rpg_when_rpg_chance_high() {
+        // The regression: the RPG/city teleport branch was dropped in the port,
+        // so bots only ever went to grind spots and capitals emptied out.
+        let world = MockRandomMgrWorld::new();
+        world.set_owned_guids(vec![3]);
+        let mut events = EventCache::new();
+        events.set_value(3, "add", 1, 10_000, "", 0, &world);
+        events.set_value(3, "randomize", 1, 10_000, "", 0, &world);
+        events.set_value(3, "change_strategy", 1, 10_000, "", 0, &world);
+
+        let mut c = ctx();
+        c.rpg_chance = 1.0; // always pick the RPG/inn location
+        let outcome = process_bot(&mut events, &world, 3, c, 100);
+        assert_eq!(outcome, ProcessOutcome::Teleported);
+        assert!(
+            world
+                .events()
+                .iter()
+                .any(|e| matches!(e, MockRandomMgrEvent::RandomTeleportForRpg(3, _))),
+            "rpg_chance=1.0 must route the teleport to an RPG/city location"
+        );
     }
 
     #[test]
