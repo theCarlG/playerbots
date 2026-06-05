@@ -194,7 +194,12 @@ autonomous maintenance/RPG loop (auto-restock food/reagents/ammo, auto-bank when
 - **Profession/craft mode**: `Craft` command exists; autonomous craft/disenchant/enchant loop thin.
 
 ## 6. Encounters — structure done, mechanics thin (per-boss)
-- **DONE (real FSMs):** Molten Core (all 10 + rune-dousing), BWL (all 8 + suppression device), Onyxia (3-phase).
+- **DONE (real FSMs):** Molten Core (all 10 + rune-dousing + Magmadar tranq-shot + trash: Flamewaker-heal
+  interrupt, Core-Hound tank-away, Lava-Surger stack), BWL (all 8 + suppression device), Onyxia (3-phase).
+  MC remaining (complex boss-signature mechanics, deferred — risk of half-scripting): Shazzrah Gate teleport
+  handling (run-to-tank + spread for Arcane Explosion), Ragnaros Wrath knockback positioning + Sons of Flame
+  focus, Garr Firesworn / Golemagg Core Rager add control. Base positioning + reactive
+  dispel/interrupt/flee cover the rest.
 - **Naxxramas:** real = Heigan, Grobbulus, Thaddius, Kel'Thuzad. **SimpleFsm (need mechanics):**
   Anub'Rekhan, Faerlina, Maexxna, Noth, Loatheb, Razuvious, Gothik, Four Horsemen (tank-swap), Patchwerk, Gluth, Sapphiron.
 - **Zul'Gurub:** all 9 SimpleFsm (Jeklik bat phase, Venoxis snake, Mar'li spiders, Mandokir charge/gaze, Thekal trio, Arlokk vanish, Jin'do, Hakkar blood-siphon, Gahz'ranka).
