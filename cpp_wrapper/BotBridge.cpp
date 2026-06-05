@@ -6682,6 +6682,36 @@ void BotBridge::CB_BotFreeString(char* s)
 
 // ── Travel destination queries ──────────────────────────────────────────
 
+namespace
+{
+    // Creature entries that drop `itemId` (its loot-source), for routing
+    // item-collect quest objectives. Built lazily per item from
+    // `creature_loot_template`/`creature_template` and cached process-wide —
+    // the loot store's in-memory map isn't publicly iterable, so a one-off
+    // query per distinct quest item is the cheapest reverse lookup.
+    std::vector<uint32> const& ItemDropSources(uint32 itemId)
+    {
+        static std::unordered_map<uint32, std::vector<uint32>> cache;
+        auto it = cache.find(itemId);
+        if (it != cache.end())
+            return it->second;
+
+        std::vector<uint32>& sources = cache[itemId];
+        if (auto result = WorldDatabase.PQuery(
+                "SELECT ct.entry FROM creature_template ct "
+                "JOIN creature_loot_template clt ON ct.LootId = clt.entry "
+                "WHERE clt.item = %u LIMIT 20",
+                itemId))
+        {
+            do
+            {
+                sources.push_back(result->Fetch()[0].GetUInt32());
+            } while (result->NextRow());
+        }
+        return sources;
+    }
+}
+
 BotTravelDest* BotBridge::CB_BotFindTravelDests(
     BotHandle bot,
     uint32_t purpose_flags,
@@ -6838,6 +6868,41 @@ BotTravelDest* BotBridge::CB_BotFindTravelDests(
                     destX, destY, destZ,
                     dx * dx + dy * dy
                 });
+            }
+
+            // Item-collect objectives: route to a creature that drops the
+            // required item (its loot source), so the bot farms + loots it.
+            // The existing kill/loot behaviour finishes the objective once the
+            // bot is positioned at the spawn.
+            for (int j = 0; j < QUEST_ITEM_OBJECTIVES_COUNT; ++j)
+            {
+                const uint32 itemId = quest->ReqItemId[j];
+                const uint32 itemCount = quest->ReqItemCount[j];
+                if (!itemId || !itemCount)
+                    continue;
+                if (b->GetItemCount(itemId, true) >= itemCount)
+                    continue; // already have enough
+
+                for (uint32 creatureEntry : ItemDropSources(itemId))
+                {
+                    FindCreatureData worker(creatureEntry, b);
+                    sObjectMgr.DoCreatureData(worker);
+                    CreatureDataPair const* dp = worker.GetResult();
+                    if (!dp)
+                        continue;
+                    CreatureData const* data = &dp->second;
+                    const float dx = b->GetPositionX() - data->posX;
+                    const float dy = b->GetPositionY() - data->posY;
+                    candidates.push_back({
+                        static_cast<int32_t>(creatureEntry),
+                        questId,
+                        static_cast<uint32_t>(1u << (1 + j)), // QUEST_OBJECTIVE(j+1)
+                        data->mapid,
+                        data->posX, data->posY, data->posZ,
+                        dx * dx + dy * dy
+                    });
+                    break; // one routable loot source is enough for this item
+                }
             }
         }
     }
