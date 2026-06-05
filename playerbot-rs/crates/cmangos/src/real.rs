@@ -129,6 +129,10 @@ impl World for VtableWorld {
         unsafe { (self.cbs.bot_is_behind.unwrap())(self.handle, target) }
     }
 
+    fn bot_is_at_flank(&self, target: UnitHandle) -> bool {
+        unsafe { (self.cbs.bot_is_at_flank.unwrap())(self.handle, target) }
+    }
+
     fn bot_equipped_weapon_subclass(&self, slot: u8) -> u32 {
         unsafe { (self.cbs.bot_equipped_weapon_subclass.unwrap())(self.handle, slot) }
     }

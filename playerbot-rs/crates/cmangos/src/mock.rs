@@ -213,6 +213,8 @@ pub struct MockState {
     pub unit_distance: HashMap<UnitHandle, f32>,
     pub default_unit_distance: f32,
     pub has_los_default: bool,
+    /// `bot_is_at_flank` result — drives `MoveToFlank` "already in position".
+    pub at_flank: bool,
 
     /* inventory / items */
     pub bag_items: HashMap<u32, u32>, // item_id -> count
@@ -427,6 +429,7 @@ impl Default for MockState {
             unit_distance: HashMap::new(),
             default_unit_distance: 0.0,
             has_los_default: true,
+            at_flank: false,
             bag_items: HashMap::new(),
             item_max_stack: HashMap::new(),
             item_quality: HashMap::new(),
@@ -535,6 +538,14 @@ impl MockWorld {
     #[must_use]
     pub fn with_aura(self, spell_id: SpellId) -> Self {
         self.0.borrow_mut().global_auras.insert(spell_id.0);
+        self
+    }
+
+    /// Mark the bot as positioned on its target's flank, so `bot_is_at_flank`
+    /// returns `true` (drives the `MoveToFlank` "already in position" path).
+    #[must_use]
+    pub fn with_at_flank(self) -> Self {
+        self.0.borrow_mut().at_flank = true;
         self
     }
 
@@ -1279,6 +1290,10 @@ impl World for MockWorld {
             s.nearby_friendly.clone()
         };
         boxed(v)
+    }
+
+    fn bot_is_at_flank(&self, _target: UnitHandle) -> bool {
+        self.0.borrow().at_flank
     }
 
     fn get_attackers(&self) -> UnitList<'_> {

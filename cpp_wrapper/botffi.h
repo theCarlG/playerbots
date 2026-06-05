@@ -290,6 +290,10 @@ typedef struct BotCallbacks {
     /* True if the bot is currently positioned in the rear arc of `target`
      * (gates abilities like Backstab that require being behind). */
     bool        (*bot_is_behind)(BotHandle bot, UnitHandle target);
+    /* True if the bot is on `target`'s flank — outside both the front cleave
+     * cone and the rear arc. Used to position melee at the side of dragons
+     * whose tail-sweep makes "behind" unsafe (Onyxia, Nefarian, …). */
+    bool        (*bot_is_at_flank)(BotHandle bot, UnitHandle target);
     /* ItemPrototype.SubClass of the weapon in the given equipment slot
      * (0 = main hand, 1 = off hand, 2 = ranged), or UINT32_MAX when empty
      * or holding a non-weapon (e.g. shield). See ItemPrototype.h

@@ -87,6 +87,13 @@ pub trait World: Send {
     fn bot_is_behind(&self, _target: UnitHandle) -> bool {
         false
     }
+    /// True when the bot is on `target`'s flank — outside both the front
+    /// cleave/breath cone and the rear arc. Used to position melee at the
+    /// side of tail-sweeping dragons (Onyxia, Nefarian, …) where "behind"
+    /// is the tail-sweep zone.
+    fn bot_is_at_flank(&self, _target: UnitHandle) -> bool {
+        false
+    }
     /// ItemPrototype.SubClass of the weapon in `slot` (0=mainhand, 1=offhand,
     /// 2=ranged), or `u32::MAX` when empty / non-weapon. Values match
     /// `ITEM_SUBCLASS_WEAPON_*` (dagger=15, sword=7, etc.).

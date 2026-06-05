@@ -1,13 +1,15 @@
 /// Onyxia's Lair — 3-phase fight.
 ///
 /// States:
-///   Phase 1 (100%→65%): Ground. Melee position behind the boss.
+///   Phase 1 (100%→65%): Ground. Melee attack from the *flank* — Onyxia
+///     cleaves/breathes to the front and tail-sweeps to the rear, so "behind"
+///     is a danger zone; the side is the only safe melee spot.
 ///   Phase 2 (65%→40%): Air. Everyone dodges Deep Breath; melee can't reach
 ///     the airborne boss, so they kill the Onyxian Whelps instead.
 ///   Phase 3 (<40%): Ground again + whelp waves — melee clear whelps, then
-///     fight the boss from behind.
+///     fight the boss from the flank.
 use super::{EncounterEvent, EncounterFsm};
-use crate::engine::bt::Bt::{self, FleeToSafe, HoldPosition, IsMeleeDps, MoveBehind};
+use crate::engine::bt::Bt::{self, FleeToSafe, HoldPosition, IsMeleeDps, MoveToFlank};
 use crate::engine::bt::BehaviorLeaf;
 use crate::engine::bt_nodes::BtResult;
 use crate::engine::context::TickContext;
@@ -93,11 +95,11 @@ impl EncounterFsm for OnyxiaFsm {
                 Seq!(IsMeleeDps, HoldPosition),
             )),
             OnyxiaPhase::Phase3 => Some(Sel!(
-                // Whelp waves — melee clear them, then fight from behind.
+                // Whelp waves — melee clear them, then fight from the flank.
                 Seq!(IsMeleeDps, Bt::Custom(FOCUS_ONYXIAN_WHELP)),
-                Seq!(IsMeleeDps, MoveBehind(5.0)),
+                Seq!(IsMeleeDps, MoveToFlank(5.0)),
             )),
-            OnyxiaPhase::Phase1 => Some(Seq!(IsMeleeDps, MoveBehind(5.0))),
+            OnyxiaPhase::Phase1 => Some(Seq!(IsMeleeDps, MoveToFlank(5.0))),
         }
     }
 }
@@ -162,6 +164,41 @@ mod tests {
         let mut ctx =
             make_encounter_ctx(&mut owned, &iface, &fsm, PlayerClass::Rogue, BotRole::DPS);
         assert_eq!(bt.tick(&mut ctx), BtResult::Success);
+    }
+
+    #[test]
+    fn phase1_melee_moves_to_flank() {
+        let mut fsm = OnyxiaFsm::default();
+        fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
+        assert_eq!(fsm.phase, OnyxiaPhase::Phase1);
+        let bt = fsm
+            .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+            .unwrap();
+        // Not yet on the flank → bot repositions to the side (chase issued),
+        // rather than standing behind in the tail-sweep zone.
+        let iface = MockWorld::new();
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.current_target = 100; // Onyxia
+        let mut ctx =
+            make_encounter_ctx(&mut owned, &iface, &fsm, PlayerClass::Warrior, BotRole::DPS);
+        assert_eq!(bt.tick(&mut ctx), BtResult::Running);
+    }
+
+    #[test]
+    fn phase1_melee_at_flank_lets_rotation_run() {
+        let mut fsm = OnyxiaFsm::default();
+        fsm.update(&EncounterEvent::CombatStarted, 1.0, 0);
+        let bt = fsm
+            .phase_bt(crate::engine::macro_fsm::ActiveFsm::Combat)
+            .unwrap();
+        // Already on the flank and in melee range → MoveToFlank yields so the
+        // class rotation runs instead of re-issuing movement.
+        let iface = MockWorld::new().with_at_flank();
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.current_target = 100;
+        let mut ctx =
+            make_encounter_ctx(&mut owned, &iface, &fsm, PlayerClass::Warrior, BotRole::DPS);
+        assert_eq!(bt.tick(&mut ctx), BtResult::Failure);
     }
 
     #[test]

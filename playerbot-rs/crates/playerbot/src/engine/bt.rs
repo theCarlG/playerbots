@@ -611,6 +611,11 @@ pub enum Bt {
     MaintainRangeBand(f32, f32),
     /// Move behind current target (avoid cleave/tail).
     MoveBehind(f32),
+    /// Move to current target's flank — outside both the front cleave/breath
+    /// cone and the rear arc. For tail-sweeping dragons (Onyxia, Nefarian, …)
+    /// where "behind" is the tail-sweep zone, so melee must attack from the
+    /// side. Returns Failure when already at the flank (lets the rotation run).
+    MoveToFlank(f32),
     /// Stop all movement.
     HoldPosition,
     /// Move to encounter safe zone (Heigan dance).
@@ -1721,6 +1726,28 @@ impl BtNode for Bt {
                 // Behind unreachable — fall back to front approach so the bot
                 // still closes to melee range instead of walking through walls.
                 if ctx.interface.chase(target, *distance, 0.0) {
+                    BtResult::Running
+                } else {
+                    BtResult::Failure
+                }
+            }
+            Bt::MoveToFlank(distance) => {
+                let target = match ctx.current_target() {
+                    Some(t) => t,
+                    None => return BtResult::Failure,
+                };
+                // Already on the flank and within melee range — out of both the
+                // front cleave/breath cone and the rear tail-sweep arc; let the
+                // rotation run.
+                if ctx.interface.bot_is_at_flank(target)
+                    && ctx.interface.unit_distance(target) <= 5.0
+                {
+                    return BtResult::Failure;
+                }
+                // Chase to the boss's side (PI/2 from its facing). All melee
+                // stack on one consistent flank rather than splitting front/
+                // back, keeping them clear of both danger arcs and the tank.
+                if ctx.interface.chase(target, *distance, std::f32::consts::FRAC_PI_2) {
                     BtResult::Running
                 } else {
                     BtResult::Failure

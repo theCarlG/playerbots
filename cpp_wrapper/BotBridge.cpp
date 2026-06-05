@@ -229,6 +229,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.get_attackers       = CB_GetAttackers;
     cbs.free_unit_list      = CB_FreeUnitList;
     cbs.bot_is_behind               = CB_BotIsBehind;
+    cbs.bot_is_at_flank             = CB_BotIsAtFlank;
     cbs.bot_equipped_weapon_subclass = CB_BotEquippedWeaponSubclass;
     cbs.bot_item_count              = CB_BotItemCount;
     cbs.bot_active_totem_mask       = CB_BotActiveTotemMask;
@@ -6761,6 +6762,24 @@ bool BotBridge::CB_BotIsBehind(BotHandle bot, UnitHandle target)
     // HasInArc(other, M_PI) tests the 180° front hemisphere. "bot is behind
     // target" is equivalent to the bot not being in the target's front arc.
     return !t->HasInArc(b, M_PI_F);
+}
+
+bool BotBridge::CB_BotIsAtFlank(BotHandle bot, UnitHandle target)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    Unit* t = FindUnit(bot, target);
+    if (!t || t == b)
+        return false;
+    // The flank is the side band: outside the front 90° cone (cleave / breath)
+    // AND outside the rear 90° cone (tail sweep). HasInArc(b, M_PI_F / 2) tests
+    // the ±45° front cone; !HasInArc(b, 3 * M_PI_F / 2) tests the ±45° rear
+    // cone. A bot in neither is at the side — safe to melee a tail-sweeping
+    // dragon there.
+    const bool in_front = t->HasInArc(b, M_PI_F / 2.0f);
+    const bool in_rear  = !t->HasInArc(b, 3.0f * M_PI_F / 2.0f);
+    return !in_front && !in_rear;
 }
 
 uint32_t BotBridge::CB_BotEquippedWeaponSubclass(BotHandle bot, uint8_t slot)

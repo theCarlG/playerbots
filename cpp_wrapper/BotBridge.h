@@ -51,6 +51,7 @@ namespace BotBridge
     UnitHandle* CB_GetAttackers(BotHandle bot, uint32_t* out_count);
     void        CB_FreeUnitList(UnitHandle* list);
     bool        CB_BotIsBehind(BotHandle bot, UnitHandle target);
+    bool        CB_BotIsAtFlank(BotHandle bot, UnitHandle target);
     uint32_t    CB_BotEquippedWeaponSubclass(BotHandle bot, uint8_t slot);
     uint32_t    CB_BotItemCount(BotHandle bot, uint32_t item_id);
     uint8_t     CB_BotActiveTotemMask(BotHandle bot);
