@@ -303,6 +303,16 @@ social/chat/guild/AH §8 · lifecycle §9 · commands/RTSC §10 · gear/item §1
   Trust only claims cross-checked against the real `CastOn*`/`CB_*` code. When in doubt, grep.
 
 ## Progress log
+- 2026-06-05 · MOLTEN CORE mechanics — kept all existing boss FSMs (which are real), added the gaps.
+  Magmadar: hunters now **Tranquilizing Shot** (19801) the boss's Frenzy enrage (aura 19451) — top-priority
+  branch in `magmadar.rs::phase_bt`; the signature mechanic that was missing. MC TRASH: new
+  `INTERRUPT_FLAMEWAKER` zone-wide leaf — scans nearby hostiles for a casting Flamewaker Priest (11662) or
+  Healer (11663) and fires the bot's class interrupt at it (an OFF-target interrupt the reactive
+  current-target interrupt can't do), so the trash packs don't heal through the raid. Extracted
+  `class_interrupt_spells(class)` from `tick_interrupt` so the reactive interrupt and the trash interrupt
+  share one per-class table. Runs zone-wide via the MC FSM's `zone_wide_bt` (same hook as rune dousing).
+  cargo test 10/10 + clippy green; full mangosd build+install; smoke test clean (458 bots, 0 crashes). MC
+  mechanics only fire inside the instance, so live verification is a client raid.
 - 2026-06-05 · GREETING — bots `/say` a hello to nearby real players, completing the social pair with broadcast.
   `CB_BotGreetNearbyPlayer`: `PlayerListSearcher` within 25y, skip bots (`GetPlayerbotAI()`) and group members
   (`IsInGroup`), per-bot per-target 10-min cooldown so nobody is greeted twice, name-filled hardcoded greeting

@@ -52,6 +52,11 @@ pub const ENTRY_GOLEMAGG: u32 = 11988;
 pub const ENTRY_MAJORDOMO: u32 = 12018;
 pub const ENTRY_RAGNAROS: u32 = 11502;
 
+// Trash: Flamewaker Priest/Healer packs heal each other and the giants —
+// their casts must be interrupted or pulls drag on forever.
+pub const ENTRY_FLAMEWAKER_PRIEST: u32 = 11662;
+pub const ENTRY_FLAMEWAKER_HEALER: u32 = 11663;
+
 // Spell IDs for in-zone mechanics (shared across bosses)
 pub const SPELL_FIRE_PROTECTION_POTION: cmangos::SpellId = cmangos::SpellId(17543);
 
@@ -127,14 +132,58 @@ impl MoltenCoreFsm {
     /// branches can be added as more cross-boss mechanics are
     /// identified (e.g. Lava Run trash positioning).
     fn zone_wide_bt() -> Bt {
-        Sel!(Seq!(
-            Bt::InAnyArea(MC_RUNE_AREAS),
-            Bt::Custom(DOUSE_ELIGIBLE),
-            Bt::InCombat.not(),
-            Bt::throttle(5_000, Bt::Custom(DOUSE_RUNE)),
-        ))
+        Sel!(
+            // Trash: interrupt a nearby Flamewaker Priest/Healer's cast so the
+            // packs don't heal through the raid's damage.
+            Bt::throttle(1_000, Bt::Custom(INTERRUPT_FLAMEWAKER)),
+            // Rune dousing before Majordomo.
+            Seq!(
+                Bt::InAnyArea(MC_RUNE_AREAS),
+                Bt::Custom(DOUSE_ELIGIBLE),
+                Bt::InCombat.not(),
+                Bt::throttle(5_000, Bt::Custom(DOUSE_RUNE)),
+            ),
+        )
     }
 }
+
+// ── Behavior leaves (trash) ───────────────────────────────────────────────
+
+/// Interrupt a nearby casting Flamewaker Priest/Healer (the Molten Core trash
+/// healers). Scans nearby hostiles for one mid-cast and fires the bot's
+/// class interrupt at it — an off-target interrupt the reactive
+/// (current-target) interrupt can't do.
+const INTERRUPT_FLAMEWAKER: BehaviorLeaf = BehaviorLeaf {
+    label: "mc_interrupt_flamewaker",
+    handler: |ctx: &mut TickContext<'_>| -> BtResult {
+        if ctx.timers.gcd_active(ctx.server_time_ms) {
+            return BtResult::Failure;
+        }
+        let spells = crate::engine::bt::class_interrupt_spells(ctx.class);
+        if spells.is_empty() {
+            return BtResult::Failure;
+        }
+        let units = ctx.interface.get_nearby_units(30.0, true);
+        for &u in units.iter() {
+            let snap = ctx.interface.get_unit_snapshot(u);
+            if !snap.is_casting
+                || (snap.npc_entry != ENTRY_FLAMEWAKER_PRIEST
+                    && snap.npc_entry != ENTRY_FLAMEWAKER_HEALER)
+                || !ctx.interface.is_casting_interruptible(u)
+            {
+                continue;
+            }
+            for &spell in spells {
+                if ctx.interface.can_cast(spell, u) && ctx.interface.cast_spell(spell, u) {
+                    ctx.timers.on_spell_cast(spell, ctx.server_time_ms);
+                    return BtResult::Success;
+                }
+            }
+        }
+        BtResult::Failure
+    },
+    display_text: Some("Interrupting Flamewaker"),
+};
 
 // ── Behavior leaves (zone-wide) ───────────────────────────────────────────
 

@@ -2894,6 +2894,29 @@ const FEIGN_DEATH: SpellId = SpellId(5384);
 const VANISH: SpellId = SpellId(1856);
 const SOULSHATTER: SpellId = SpellId(29858);
 
+/// Per-class interrupt spells, in try order. Shared by the reactive interrupt
+/// (`tick_interrupt`) and encounter trash mechanics (e.g. interrupting a
+/// Molten Core Flamewaker Priest's heal). `can_cast` gates by known-spell,
+/// cooldown, and range, so wotlk-only entries are harmless on vanilla.
+pub(crate) fn class_interrupt_spells(class: PlayerClass) -> &'static [SpellId] {
+    match class {
+        PlayerClass::Rogue => &[KICK],
+        // Warriors have two interrupts: Shield Bash (Battle/Defensive Stance)
+        // and Pummel (Berserker Stance). Try both.
+        PlayerClass::Warrior => &[SHIELD_BASH_INTERRUPT, PUMMEL],
+        PlayerClass::Mage => &[COUNTERSPELL],
+        // Wind Shear (wotlk) preferred over Earth Shock — instant, short CD,
+        // no school lockout. Vanilla shamans fall through to Earth Shock.
+        PlayerClass::Shaman => &[WIND_SHEAR, EARTH_SHOCK],
+        // Bash works in melee (bear form); Feral Charge is a ranged gap-closer.
+        PlayerClass::Druid => &[BASH, FERAL_CHARGE],
+        // PB2 HammerOfJusticeInterruptSpellTrigger — HoJ stuns through casts.
+        PlayerClass::Paladin => &[HAMMER_OF_JUSTICE],
+        PlayerClass::DeathKnight => &[MIND_FREEZE],
+        _ => &[],
+    }
+}
+
 fn tick_interrupt(ctx: &mut TickContext<'_>) -> BtResult {
     let target = match ctx.current_target() {
         Some(t) => t,
@@ -2902,25 +2925,10 @@ fn tick_interrupt(ctx: &mut TickContext<'_>) -> BtResult {
     if !ctx.interface.is_casting_interruptible(target) {
         return BtResult::Failure;
     }
-    // Warriors have two interrupts: Shield Bash (Battle/Defensive Stance)
-    // and Pummel (Berserker Stance). Try both so the prot warrior in
-    // Defensive Stance can interrupt without switching stances.
-    let spells: &[SpellId] = match ctx.class {
-        PlayerClass::Rogue => &[KICK],
-        PlayerClass::Warrior => &[SHIELD_BASH_INTERRUPT, PUMMEL],
-        PlayerClass::Mage => &[COUNTERSPELL],
-        // Wind Shear (wotlk) preferred over Earth Shock — instant, short CD,
-        // no fire/frost/nature school lockout. Vanilla shamans don't know it,
-        // so can_cast falls through to Earth Shock.
-        PlayerClass::Shaman => &[WIND_SHEAR, EARTH_SHOCK],
-        // Bash works in melee (bear form); Feral Charge is a ranged gap-closer
-        // interrupt — try the in-melee one first.
-        PlayerClass::Druid => &[BASH, FERAL_CHARGE],
-        // PB2 HammerOfJusticeInterruptSpellTrigger — HoJ stuns through casts.
-        PlayerClass::Paladin => &[HAMMER_OF_JUSTICE],
-        PlayerClass::DeathKnight => &[MIND_FREEZE],
-        _ => return BtResult::Failure,
-    };
+    let spells = class_interrupt_spells(ctx.class);
+    if spells.is_empty() {
+        return BtResult::Failure;
+    }
     for &spell in spells {
         if ctx.interface.can_cast(spell, target) && ctx.interface.cast_spell(spell, target) {
             ctx.timers.on_spell_cast(spell, ctx.server_time_ms);
