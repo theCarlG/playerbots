@@ -301,6 +301,39 @@ void RandomPlayerbotMgr::UpdateAIInternal(uint32 elapsed, bool minimal)
     // worker dispatches per-bot actions back to C++ through the bridge.
     PlayerbotRust::WorldUpdate(static_cast<uint32_t>(elapsed));
 
+    // Activity telemetry: every ~60s, count what the bots are actually doing.
+    // Lets a headless run be judged on real engagement (combat / movement)
+    // rather than coarse DB position diffs (which undercount bots grinding in
+    // place). Greppable prefix "[BotActivity]".
+    static uint32 s_activityAccum = 0;
+    s_activityAccum += elapsed;
+    if (s_activityAccum >= 60000)
+    {
+        s_activityAccum = 0;
+        uint32 bots = 0, inCombat = 0, moving = 0, dead = 0;
+        {
+            HashMapHolder<Player>::ReadGuard g(HashMapHolder<Player>::GetLock());
+            for (auto const& it : sObjectAccessor.GetPlayers())
+            {
+                Player* p = it.second;
+                if (!p || !p->GetPlayerbotAI())
+                    continue;
+                ++bots;
+                if (!p->IsAlive())
+                    ++dead;
+                else
+                {
+                    if (p->IsInCombat())
+                        ++inCombat;
+                    if (p->IsMoving())
+                        ++moving;
+                }
+            }
+        }
+        sLog.outString("[BotActivity] online=%u inCombat=%u moving=%u dead=%u",
+                       bots, inCombat, moving, dead);
+    }
+
     SetAIInternalUpdateDelay(playerbot_config_random_bot_update_interval());
 }
 
