@@ -647,6 +647,14 @@ pub enum Bt {
     CastCrowdControl(SpellId),
     /// Attack nearest hostile unit (add phases).
     AttackNearest,
+    /// Focus-fire the nearest hostile with this NPC entry id (add phases:
+    /// Sons of Flame, Onyxian Whelps, Spawn of Mar'li, Jin'do's totems, …).
+    /// Success when one is found and attacked, Failure when none are nearby.
+    FocusNearestEntry(u32),
+    /// Freeze completely: stop moving AND stop auto-attacking, and (by
+    /// returning Success) suppress the rotation so no new casts go out. For
+    /// "do nothing or die" mechanics like Mandokir's Threatening Gaze.
+    FreezeActions,
     /// Taunt current target.
     Taunt,
 
@@ -1885,6 +1893,34 @@ impl BtNode for Bt {
                     Some(&unit) if ctx.attack(unit) => BtResult::Success,
                     _ => BtResult::Failure,
                 }
+            }
+            Bt::FocusNearestEntry(entry) => {
+                let units = ctx.interface.get_nearby_units(40.0, true);
+                let mut best: Option<UnitHandle> = None;
+                let mut best_dist = f32::MAX;
+                for &u in units.iter() {
+                    if ctx.interface.get_unit_snapshot(u).npc_entry != *entry {
+                        continue;
+                    }
+                    let d = ctx.interface.unit_distance(u);
+                    if d < best_dist {
+                        best_dist = d;
+                        best = Some(u);
+                    }
+                }
+                match best {
+                    Some(u) if ctx.current_target() == Some(u) => {
+                        ctx.pending_target.set(Some(u));
+                        BtResult::Success
+                    }
+                    Some(u) if ctx.attack(u) => BtResult::Success,
+                    _ => BtResult::Failure,
+                }
+            }
+            Bt::FreezeActions => {
+                ctx.interface.stop_moving();
+                ctx.interface.auto_attack(false);
+                BtResult::Success
             }
             Bt::Taunt => match ctx.current_target() {
                 Some(t) if ctx.interface.taunt(t) => BtResult::Success,

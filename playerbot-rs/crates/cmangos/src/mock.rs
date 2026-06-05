@@ -552,6 +552,22 @@ impl MockWorld {
         self
     }
 
+    /// Add a hostile unit with the given NPC entry so `get_nearby_units(_, true)`
+    /// returns it and `get_unit_snapshot` reports its entry. For add-focus tests.
+    #[must_use]
+    pub fn with_nearby_entry(self, handle: UnitHandle, entry: u32) -> Self {
+        {
+            let mut s = self.0.borrow_mut();
+            s.nearby_hostile.push(handle);
+            let snap = BotUnitSnapshot {
+                npc_entry: entry,
+                ..Default::default()
+            };
+            s.units.insert(handle, snap);
+        }
+        self
+    }
+
     /// Set the world position `get_player_position(guid)` returns for a player.
     #[must_use]
     pub fn with_player_position(self, guid: u64, x: f32, y: f32, z: f32) -> Self {

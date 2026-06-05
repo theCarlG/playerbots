@@ -528,3 +528,15 @@ social/chat/guild/AH §8 · lifecycle §9 · commands/RTSC §10 · gear/item §1
   build+install; smoke clean (200 accts, 0 runtime crash). DEFERRED (noted, not half-scripted): Vael Burning
   Adrenaline tank-case nuance (tank should hold through the swap before fleeing); Razorgore P1 explicit add focus
   (currently rides the reactive TankPickupAdds layer).
+- 2026-06-05 · ZUL'GURUB lifted from SimpleFsm → real per-boss FSMs (was 10× SimpleFsm, zero mechanics). Added
+  two reusable Bt primitives: `FocusNearestEntry(u32)` (generic add focus by NPC entry — supersedes the hand-rolled
+  FOCUS_* leaves) and `FreezeActions` (stop_moving + auto_attack(false) + Success-suppresses-rotation, for "do
+  nothing or die" gazes). 5 bosses scripted with DB-verified entries/spell-ids: MANDOKIR Threatening Gaze (24314)
+  → FreezeActions; JIN'DO focus Powerful Healing Ward (14987) → Brain Wash Totem (15112) → Shade (14986);
+  MAR'LI focus Spawn (15041); ARLOKK focus Zulian Prowler (15101); JEKLIK melee-focus Bloodseeker Bat (14965)
+  while she's airborne. Added MockWorld `with_nearby_entry` builder. 11 new tests. Honestly LEFT as SimpleFsm
+  (documented why, not half-scripted): VENOXIS (poison-cloud ground hazard has no per-bot signal), THEKAL
+  (zealot trio needs raid-wide coordinated burst a per-bot BT can't express — naive focus rezzes them), HAKKAR
+  (Corrupted Blood is contagious so a per-bot scatter would make the whole raid run — net-negative), GAHZRANKA
+  (optional fishing boss). cargo test + clippy (vanilla & wotlk) green; full mangosd build+install; smoke clean
+  (200 accts, 0 runtime crash).

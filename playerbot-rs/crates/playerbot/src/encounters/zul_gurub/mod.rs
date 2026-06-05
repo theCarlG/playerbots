@@ -13,10 +13,22 @@
 ///   8. High Priestess Arlokk    (entry 14515) — vanish + panther adds
 ///   9. Jin'do the Hexxer        (entry 11380) — totems + hex
 ///  10. Hakkar the Soulflayer    (entry 14834) — blood siphon mechanic
+pub mod arlokk;
+pub mod jeklik;
+pub mod jindo;
+pub mod mandokir;
+pub mod marli;
+
 use super::macros::encounter_dispatch;
 use super::{EncounterEvent, EncounterFsm, SimpleFsm};
 use crate::engine::bt::Bt;
+pub use arlokk::ArlokkFsm;
+pub use jeklik::JeklikFsm;
+pub use jindo::JindoFsm;
+pub use mandokir::MandokirFsm;
+pub use marli::MarliFsm;
 
+// ── Boss entry IDs ────────────────────────────────────────────────────────
 pub const ENTRY_JEKLIK: u32 = 14517;
 pub const ENTRY_VENOXIS: u32 = 14507;
 pub const ENTRY_MARLI: u32 = 14510;
@@ -27,17 +39,31 @@ pub const ENTRY_ARLOKK: u32 = 14515;
 pub const ENTRY_JINDO: u32 = 11380;
 pub const ENTRY_HAKKAR: u32 = 14834;
 
+// ── Add / totem entry IDs (verified against the world DB) ─────────────────
+/// Jin'do's totem that heals him — top kill priority.
+pub const ENTRY_POWERFUL_HEALING_WARD: u32 = 14987;
+/// Jin'do's totem that fears/confuses the raid.
+pub const ENTRY_BRAIN_WASH_TOTEM: u32 = 15112;
+/// Jin'do's spirit adds that chain-grip a raid member.
+pub const ENTRY_SHADE_OF_JINDO: u32 = 14986;
+/// Mar'li's hatchling adds.
+pub const ENTRY_SPAWN_OF_MARLI: u32 = 15041;
+/// Arlokk's panther adds.
+pub const ENTRY_ZULIAN_PROWLER: u32 = 15101;
+/// Jeklik's bat-phase adds.
+pub const ENTRY_BLOODSEEKER_BAT: u32 = 14965;
+
 encounter_dispatch! {
     #[derive(Clone, PartialEq)]
     pub enum ZulGurubBoss {
-        Jeklik(SimpleFsm),
+        Jeklik(JeklikFsm),
         Venoxis(SimpleFsm),
-        Marli(SimpleFsm),
-        Mandokir(SimpleFsm),
+        Marli(MarliFsm),
+        Mandokir(MandokirFsm),
         Thekal(SimpleFsm),
         Gahzranka(SimpleFsm),
-        Arlokk(SimpleFsm),
-        Jindo(SimpleFsm),
+        Arlokk(ArlokkFsm),
+        Jindo(JindoFsm),
         Hakkar(SimpleFsm),
     }
 }
@@ -46,14 +72,14 @@ impl TryFrom<u32> for ZulGurubBoss {
     type Error = ();
     fn try_from(entry: u32) -> Result<Self, Self::Error> {
         match entry {
-            ENTRY_JEKLIK => Ok(Self::Jeklik(SimpleFsm::new(entry))),
+            ENTRY_JEKLIK => Ok(Self::Jeklik(JeklikFsm::default())),
             ENTRY_VENOXIS => Ok(Self::Venoxis(SimpleFsm::new(entry))),
-            ENTRY_MARLI => Ok(Self::Marli(SimpleFsm::new(entry))),
-            ENTRY_MANDOKIR => Ok(Self::Mandokir(SimpleFsm::new(entry))),
+            ENTRY_MARLI => Ok(Self::Marli(MarliFsm::default())),
+            ENTRY_MANDOKIR => Ok(Self::Mandokir(MandokirFsm::default())),
             ENTRY_THEKAL => Ok(Self::Thekal(SimpleFsm::new(entry))),
             ENTRY_GAHZRANKA => Ok(Self::Gahzranka(SimpleFsm::new(entry))),
-            ENTRY_ARLOKK => Ok(Self::Arlokk(SimpleFsm::new(entry))),
-            ENTRY_JINDO => Ok(Self::Jindo(SimpleFsm::new(entry))),
+            ENTRY_ARLOKK => Ok(Self::Arlokk(ArlokkFsm::default())),
+            ENTRY_JINDO => Ok(Self::Jindo(JindoFsm::default())),
             ENTRY_HAKKAR => Ok(Self::Hakkar(SimpleFsm::new(entry))),
             _ => Err(()),
         }
