@@ -500,6 +500,10 @@ impl World for VtableWorld {
         unsafe { (self.cbs.pet_attack.unwrap())(self.handle, target) }
     }
 
+    fn cast_pet_spell(&self, spell_id: SpellId, target: UnitHandle) -> bool {
+        unsafe { (self.cbs.cast_pet_spell.unwrap())(self.handle, spell_id.0, target) }
+    }
+
     /* ── Dispel / party queries ─────────────────────────────────────── */
 
     fn find_dispellable_target(&self, dispel_mask: u8) -> Option<(UnitHandle, SpellId)> {

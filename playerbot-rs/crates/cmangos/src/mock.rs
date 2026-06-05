@@ -52,6 +52,7 @@ pub enum MockEvent {
     StopMoving,
     Attack(UnitHandle),
     PetAttack(UnitHandle),
+    CastPetSpell { spell: SpellId, target: UnitHandle },
     AutoAttack(bool),
     UseGameObject(u64),
     Say { msg: String, lang: u32 },
@@ -372,6 +373,12 @@ pub struct MockState {
     /// bottom of `InitPet`). Flipped to `false` when the dismiss is
     /// recorded.
     pub pet_is_alive: bool,
+    /// Runtime `has_pet()` result (distinct from the factory pet fields).
+    pub has_pet: bool,
+    /// `is_casting_interruptible()` result for any target.
+    pub casting_interruptible: bool,
+    /// `cast_pet_spell()` result.
+    pub pet_cast_result: bool,
     /// Tameable creature ids returned by
     /// `factory_tameable_creatures_for_bot_level` — already filtered
     /// by the mock's notion of "≤ bot level + tameable". Each
@@ -490,6 +497,9 @@ impl Default for MockState {
             bot_broadcast_result: false,
             bot_greet_result: false,
             pet_is_alive: false,
+            has_pet: false,
+            casting_interruptible: false,
+            pet_cast_result: true,
             tameable_creatures: Vec::new(),
             rng_seq: VecDeque::new(),
             rng_default: 0,
@@ -569,6 +579,24 @@ impl MockWorld {
             };
             s.units.insert(handle, snap);
         }
+        self
+    }
+
+    /// Give the bot a living pet (`has_pet` + `pet_is_alive` both true).
+    #[must_use]
+    pub fn with_living_pet(self) -> Self {
+        {
+            let mut s = self.0.borrow_mut();
+            s.has_pet = true;
+            s.pet_is_alive = true;
+        }
+        self
+    }
+
+    /// Make every target report as casting an interruptible spell.
+    #[must_use]
+    pub fn with_interruptible_target(self) -> Self {
+        self.0.borrow_mut().casting_interruptible = true;
         self
     }
 
@@ -1345,6 +1373,29 @@ impl World for MockWorld {
 
     fn get_player_position(&self, player_guid: u64) -> Option<BotPosition> {
         self.0.borrow().player_positions.get(&player_guid).copied()
+    }
+
+    fn has_pet(&self) -> bool {
+        self.0.borrow().has_pet
+    }
+
+    fn pet_is_alive(&self) -> bool {
+        self.0.borrow().pet_is_alive
+    }
+
+    fn is_casting_interruptible(&self, _target: UnitHandle) -> bool {
+        self.0.borrow().casting_interruptible
+    }
+
+    fn cast_pet_spell(&self, spell_id: SpellId, target: UnitHandle) -> bool {
+        record(
+            &self.0,
+            MockEvent::CastPetSpell {
+                spell: spell_id,
+                target,
+            },
+        );
+        self.0.borrow().pet_cast_result
     }
 
     fn nearby_gameobject_by_entry(&self, entry: u32, _range: f32) -> Option<u64> {

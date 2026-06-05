@@ -507,6 +507,11 @@ typedef struct BotCallbacks {
      * absent. Defensive pets otherwise only react when the owner is hit,
      * so without this a freshly-pulled mob is ignored by the pet. */
     bool    (*pet_attack)(BotHandle bot, UnitHandle target);
+    /* Command the bot's pet to cast `spell_id` on `target` (e.g. Felhunter
+     * Spell Lock — the only interrupt a warlock has). Returns false if the
+     * pet is absent/dead, doesn't know the spell, it's on cooldown, or
+     * CheckCast rejects it. */
+    bool    (*cast_pet_spell)(BotHandle bot, uint32_t spell_id, UnitHandle target);
 
     /* ── Dispel / party queries ──────────────────────────────────────── */
     /* Find a nearby group member (or self when solo) with a dispellable

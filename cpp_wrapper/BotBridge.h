@@ -149,6 +149,7 @@ namespace BotBridge
     bool    CB_RevivePet(BotHandle bot);
     bool    CB_FeedPet(BotHandle bot);
     bool    CB_PetAttack(BotHandle bot, UnitHandle target);
+    bool    CB_CastPetSpell(BotHandle bot, uint32_t spell_id, UnitHandle target);
 
     // ── Dispel / party queries ─────────────────────────────────────────────
     BotDispelTarget CB_FindDispellableTarget(BotHandle bot, uint8_t dispel_mask);

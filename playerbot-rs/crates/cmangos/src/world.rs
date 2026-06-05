@@ -417,6 +417,12 @@ pub trait World: Send {
     fn pet_attack(&self, _target: UnitHandle) -> bool {
         false
     }
+    /// Command the bot's pet to cast `spell_id` on `target` (e.g. Felhunter
+    /// Spell Lock). Returns false if the pet is absent/dead, doesn't know the
+    /// spell, it's on cooldown, or `CheckCast` rejects it.
+    fn cast_pet_spell(&self, _spell_id: SpellId, _target: UnitHandle) -> bool {
+        false
+    }
 
     /* ── Dispel / party aura queries ────────────────────────────────── */
 

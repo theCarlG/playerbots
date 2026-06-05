@@ -319,6 +319,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.revive_pet          = CB_RevivePet;
     cbs.feed_pet            = CB_FeedPet;
     cbs.pet_attack          = CB_PetAttack;
+    cbs.cast_pet_spell      = CB_CastPetSpell;
 
     // Dispel / party queries
     cbs.find_dispellable_target = CB_FindDispellableTarget;
@@ -2855,6 +2856,54 @@ bool BotBridge::CB_PetAttack(BotHandle bot, UnitHandle target)
         return true;
 
     petAI->AttackStart(t);
+    return true;
+}
+
+bool BotBridge::CB_CastPetSpell(BotHandle bot, uint32_t spell_id, UnitHandle target)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    Pet* pet = b->GetPet();
+    if (!pet || !pet->IsAlive())
+        return false;
+
+    Unit* t = FindUnit(bot, target);
+    if (!t)
+        return false;
+
+    // The pet must actually know this rank and have it off cooldown. The Rust
+    // side tries each Spell Lock rank, so a "not known" here is expected, not
+    // an error.
+    if (!pet->HasSpell(spell_id) || pet->HasSpellCooldown(spell_id))
+        return false;
+
+    SpellEntry const* spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(spell_id);
+    if (!spellInfo)
+        return false;
+
+    // Face the target — pets are subject to the same in-front requirement as
+    // players for most targeted spells.
+    if (!pet->HasInArc(t, M_PI_F))
+    {
+        pet->SetFacingTo(pet->GetAngle(t));
+        pet->SetInFront(t);
+    }
+
+    // Pre-validate with CheckCast (range, LoS, immunities) so we report an
+    // honest success/failure to the AI rather than firing into the void.
+    Spell* spell = new Spell(pet, spellInfo, false);
+    SpellCastTargets targets;
+    targets.setUnitTarget(t);
+    spell->m_targets = targets;
+    if (spell->CheckCast(true) != SPELL_CAST_OK)
+    {
+        delete spell;
+        return false;
+    }
+
+    spell->SpellStart(&targets);
     return true;
 }
 

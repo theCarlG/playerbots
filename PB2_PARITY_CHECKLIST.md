@@ -4218,9 +4218,12 @@ wander, walking-RPG, teleports, distances, timings. Rust config in playerbot-rs 
 - [ ] => Real parity = verify each unit's LOGIC vs PB2 + test in-game. The list prevents FORGETTING; it does not prove BEHAVIOUR.
 
 ## DISCOVERED GAPS (added on sight during migration)
-- [ ] Warlock pet **Spell Lock** (Felhunter, 19647) reactive interrupt — PB2 has it; needs pet-ability
-  dispatch over FFI (cast a pet spell on a target). Deferred from §3 (2026-06-05). Hunter Silencing
-  Shot (wotlk) similarly pet/shot-based. (Found while extending the interrupt framework.)
+- [x] Warlock pet **Spell Lock** (Felhunter, 19647/19244) reactive interrupt — DONE 2026-06-05. New
+  `cast_pet_spell` FFI (`BotBridge::CB_CastPetSpell`: pet `HasSpell` + cooldown + `CheckCast`, then `SpellStart`).
+  `tick_interrupt` now tries both Spell Lock ranks via the pet for warlocks (no bot GCD) before the empty
+  personal-interrupt list — gives warlocks their ONLY interrupt. Mock: `with_living_pet` /
+  `with_interruptible_target` + `MockEvent::CastPetSpell`. 2 tests. STILL deferred: Hunter **Silencing Shot**
+  (wotlk) — a hunter *shot*, not a pet spell, so a different dispatch path (aimed-shot-style cast).
 - [x] Warlock pet demon **selection** — `CB_SummonPet` now prefers Voidwalker→Felhunter→Succubus→Imp
   (HasSpell falls back to Imp for low-level locks). `cpp_wrapper/BotBridge.cpp` CB_SummonPet. (Done 2026-06-05.)
   Situational per-fight swapping (Felhunter vs casters etc.) still deferred.

@@ -2937,6 +2937,10 @@ const BASH: SpellId = SpellId(5211); // druid bear-form interrupt (in melee)
 const HAMMER_OF_JUSTICE: SpellId = SpellId(853); // paladin stun-interrupt
 const MIND_FREEZE: SpellId = SpellId(47528); // wotlk DK interrupt
 const WIND_SHEAR: SpellId = SpellId(57994); // wotlk shaman interrupt
+// Warlock Felhunter Spell Lock — the only interrupt a warlock has, cast BY the
+// pet. Two ranks; the pet knows whichever its level grants, so try max first.
+const SPELL_LOCK_R2: SpellId = SpellId(19647);
+const SPELL_LOCK_R1: SpellId = SpellId(19244);
 
 // Dispel spells per class
 const DISPEL_MAGIC: SpellId = SpellId(988);
@@ -2987,6 +2991,23 @@ fn tick_interrupt(ctx: &mut TickContext<'_>) -> BtResult {
     };
     if !ctx.interface.is_casting_interruptible(target) {
         return BtResult::Failure;
+    }
+    // Warlock Felhunter Spell Lock: a warlock has NO personal interrupt, so the
+    // pet's Spell Lock IS the interrupt. Try each rank; the FFI rejects a rank
+    // the pet doesn't know or that's on cooldown. It's a pet cast, so it costs
+    // the bot no GCD — don't touch `ctx.timers`.
+    if ctx.class == PlayerClass::Warlock
+        && ctx.interface.has_pet()
+        && ctx.interface.pet_is_alive()
+    {
+        for &sl in &[SPELL_LOCK_R2, SPELL_LOCK_R1] {
+            if ctx.interface.cast_pet_spell(sl, target) {
+                ctx.monitor(format_args!(
+                    "REACTIVE: Pet Spell Lock interrupt on 0x{target:X}"
+                ));
+                return BtResult::Success;
+            }
+        }
     }
     let spells = class_interrupt_spells(ctx.class);
     if spells.is_empty() {
@@ -4808,7 +4829,7 @@ mod tests {
     use crate::engine::context::tests::{TestCtxOwned, make_encounter_ctx, make_test_ctx_with};
     use crate::engine::throttles::Throttles;
     use crate::engine::timers::BotTimers;
-    use cmangos::{BotRole, BotUnitSnapshot, MockWorld};
+    use cmangos::{BotRole, BotUnitSnapshot, MockEvent, MockWorld};
 
     struct MockEncounter {
         active: bool,
@@ -4911,6 +4932,42 @@ mod tests {
         let mut owned = TestCtxOwned::new();
         let mut ctx =
             make_encounter_ctx(&mut owned, &iface, &enc, PlayerClass::Warrior, BotRole::DPS);
+        assert_eq!(tree.tick(&mut ctx), BtResult::Failure);
+    }
+
+    #[test]
+    fn warlock_pet_spell_locks_interruptible_target() {
+        // A warlock has no personal interrupt; its Felhunter Spell Locks the
+        // enemy caster instead.
+        let tree = Bt::Interrupt;
+        let enc = MockEncounter { active: true };
+        let iface = MockWorld::new()
+            .with_interruptible_target()
+            .with_living_pet();
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.current_target = 100;
+        let mut ctx =
+            make_encounter_ctx(&mut owned, &iface, &enc, PlayerClass::Warlock, BotRole::DPS);
+        assert_eq!(tree.tick(&mut ctx), BtResult::Success);
+        assert!(
+            iface.events().iter().any(|e| matches!(
+                e,
+                MockEvent::CastPetSpell { spell, .. } if *spell == SPELL_LOCK_R2
+            )),
+            "Felhunter casts Spell Lock on the enemy caster"
+        );
+    }
+
+    #[test]
+    fn warlock_without_pet_cannot_interrupt() {
+        // No pet → no interrupt available (warlocks have no personal one).
+        let tree = Bt::Interrupt;
+        let enc = MockEncounter { active: true };
+        let iface = MockWorld::new().with_interruptible_target();
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.current_target = 100;
+        let mut ctx =
+            make_encounter_ctx(&mut owned, &iface, &enc, PlayerClass::Warlock, BotRole::DPS);
         assert_eq!(tree.tick(&mut ctx), BtResult::Failure);
     }
 
