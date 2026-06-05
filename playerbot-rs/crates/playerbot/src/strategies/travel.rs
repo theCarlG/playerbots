@@ -11,6 +11,10 @@ pub fn build() -> Bt {
     Seq!(
         Bt::StrategyEnabled(StrategyFlags::TRAVEL),
         Bt::Not(Box::new(Bt::InCombat)),
+        // Never world-travel from inside a dungeon/raid instance — every travel
+        // destination is on the world map, so the bot would just path to the
+        // instance entrance and back (the "stagger to the exit" bug).
+        Bt::Not(Box::new(Bt::InInstance)),
         Sel!(
             // Cross-continent destination → board a boat/zeppelin. Falls
             // through for same-continent destinations.

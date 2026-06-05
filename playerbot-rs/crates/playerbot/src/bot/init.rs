@@ -452,6 +452,10 @@ fn mode_dispatch() -> Bt {
                 // (FollowLeader → follow_leader → FOLLOW flag → BT).
                 // Other plans (eat_and_drink, buff_group) suppress it.
                 Seq!(Bt::GoapPermits(StrategyFlags::FOLLOW), Follow),
+                // Inside a dungeon/raid instance, a grouped bot sticks with its
+                // master/group rather than falling through to travel/grind —
+                // otherwise after a fight it wanders off toward the entrance.
+                Seq!(Bt::InInstance, Follow),
                 crate::strategies::travel::build(),
                 world::rpg::rpg_subtree(),
                 world::grind::grind_subtree(),

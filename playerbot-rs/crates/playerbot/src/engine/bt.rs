@@ -316,6 +316,10 @@ pub enum Bt {
     /// (which only checks the server combat flag), this also covers cases
     /// where the bot has attackers but the server hasn't set the flag yet.
     InCombatFsm,
+    /// True when the bot is inside a dungeon/raid instance (`instance_id != 0`).
+    /// Used to suppress world-map travel — a bot in an instance can't path to a
+    /// world destination, so it would just walk to the entrance and back.
+    InInstance,
     /// Bot is alive (not dead/ghost).
     IsAlive,
     /// Bot is a ghost (released spirit, corpse running).
@@ -1421,6 +1425,7 @@ impl BtNode for Bt {
             // ── Conditions — general ─────────────────────────────────────
             Bt::Noop => BtResult::Success,
             Bt::InCombat => ok(ctx.in_combat()),
+            Bt::InInstance => ok(ctx.in_instance()),
             Bt::InCombatFsm => ok(ctx.active_fsm == crate::engine::macro_fsm::ActiveFsm::Combat),
             Bt::IsAlive => ok(ctx.snap.self_.is_alive),
             Bt::IsGhost => ok(ctx.snap.self_.is_ghost),
@@ -5133,6 +5138,22 @@ mod tests {
                 .any(|e| matches!(e, MockEvent::Say { msg, .. } if !msg.is_empty())),
             "bot reacts in /say when it hands in a quest"
         );
+    }
+
+    #[test]
+    fn in_instance_reads_snapshot() {
+        let iface = MockWorld::new();
+        let enc = MockEncounter { active: true };
+        let mut owned = TestCtxOwned::new();
+        let mut ctx =
+            make_encounter_ctx(&mut owned, &iface, &enc, PlayerClass::Rogue, BotRole::DPS);
+        assert_eq!(Bt::InInstance.tick(&mut ctx), BtResult::Failure);
+
+        let mut owned2 = TestCtxOwned::new();
+        owned2.snap.instance_id = 1; // inside a dungeon/raid
+        let mut ctx2 =
+            make_encounter_ctx(&mut owned2, &iface, &enc, PlayerClass::Rogue, BotRole::DPS);
+        assert_eq!(Bt::InInstance.tick(&mut ctx2), BtResult::Success);
     }
 
     #[test]
