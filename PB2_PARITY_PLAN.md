@@ -195,7 +195,9 @@ autonomous maintenance/RPG loop (auto-restock food/reagents/ammo, auto-bank when
 
 ## 6. Encounters — structure done, mechanics thin (per-boss)
 - **DONE (real FSMs):** Molten Core (all 10 + rune-dousing + Magmadar tranq-shot + trash: Flamewaker-heal
-  interrupt, Core-Hound tank-away, Lava-Surger stack), BWL (all 8 + suppression device), Onyxia (3-phase).
+  interrupt, Core-Hound tank-away, Lava-Surger stack), BWL (all 8 + suppression device), Onyxia (3-phase + whelp clears: phase 2 melee kill Onyxian Whelps since
+  the boss is airborne/unreachable, phase 3 melee clear whelp waves before fighting from behind; everyone
+  dodges Deep Breath).
   Ragnaros: submerge phase NUKES the Sons of Flame (focus nearest entry 12143); Ground/P2 melee stack
   *behind* the boss (`MoveBehind`, Wrath of Ragnaros is a frontal knockback) and ranged spread to distinct
   points around him (`get_spread_position` by group index, so Elemental Fire can't chain). Shazzrah: Gate of Shazzrah wipes

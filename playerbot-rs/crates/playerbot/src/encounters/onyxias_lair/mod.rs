@@ -1,15 +1,22 @@
 /// Onyxia's Lair — 3-phase fight.
 ///
 /// States:
-///   Phase 1 (100%→65%): Ground. Melee position behind boss.
-///   Phase 2 (65%→40%): Air. Melee hold, dodge Deep Breath, ranged normal.
-///   Phase 3 (<40%): Ground again + whelp spawns.
+///   Phase 1 (100%→65%): Ground. Melee position behind the boss.
+///   Phase 2 (65%→40%): Air. Everyone dodges Deep Breath; melee can't reach
+///     the airborne boss, so they kill the Onyxian Whelps instead.
+///   Phase 3 (<40%): Ground again + whelp waves — melee clear whelps, then
+///     fight the boss from behind.
 use super::{EncounterEvent, EncounterFsm};
-use crate::engine::bt::Bt::{self, FleeToSafe, IsMeleeDps, HoldPosition, MoveBehind};
-use cmangos::SpellId;
+use crate::engine::bt::Bt::{self, FleeToSafe, HoldPosition, IsMeleeDps, MoveBehind};
+use crate::engine::bt::BehaviorLeaf;
+use crate::engine::bt_nodes::BtResult;
+use crate::engine::context::TickContext;
 use crate::{Sel, Seq};
+use cmangos::{SpellId, UnitHandle};
 
 pub const ENTRY_ONYXIA: u32 = 10184;
+/// Onyxian Whelps — adds dropped in phases 2 and 3; must be cleared.
+pub const ENTRY_ONYXIAN_WHELP: u32 = 11262;
 
 pub const SPELL_DEEP_BREATH: SpellId = SpellId(22267);
 pub const SPELL_FLAME_BREATH: SpellId = SpellId(18435);
@@ -79,13 +86,48 @@ impl EncounterFsm for OnyxiaFsm {
         match self.phase {
             OnyxiaPhase::Idle => None,
             OnyxiaPhase::Phase2 => Some(Sel!(
+                // Everyone moves out of the Deep Breath fire path.
                 Seq!(Bt::target_has(SPELL_DEEP_BREATH), FleeToSafe(40.0)),
+                // Melee can't reach the airborne boss — kill the whelps.
+                Seq!(IsMeleeDps, Bt::Custom(FOCUS_ONYXIAN_WHELP)),
                 Seq!(IsMeleeDps, HoldPosition),
             )),
-            _ => Some(Seq!(IsMeleeDps, MoveBehind(5.0))),
+            OnyxiaPhase::Phase3 => Some(Sel!(
+                // Whelp waves — melee clear them, then fight from behind.
+                Seq!(IsMeleeDps, Bt::Custom(FOCUS_ONYXIAN_WHELP)),
+                Seq!(IsMeleeDps, MoveBehind(5.0)),
+            )),
+            OnyxiaPhase::Phase1 => Some(Seq!(IsMeleeDps, MoveBehind(5.0))),
         }
     }
 }
+
+/// Attack the nearest Onyxian Whelp — the adds dropped in phases 2 and 3.
+/// In phase 2 the boss is airborne and out of melee reach, so clearing whelps
+/// is the only thing melee can do; in phase 3 the whelp waves swarm healers.
+const FOCUS_ONYXIAN_WHELP: BehaviorLeaf = BehaviorLeaf {
+    label: "ony_focus_whelp",
+    handler: |ctx: &mut TickContext<'_>| -> BtResult {
+        let units = ctx.interface.get_nearby_units(40.0, true);
+        let mut best: Option<UnitHandle> = None;
+        let mut best_dist = f32::MAX;
+        for &u in units.iter() {
+            if ctx.interface.get_unit_snapshot(u).npc_entry != ENTRY_ONYXIAN_WHELP {
+                continue;
+            }
+            let d = ctx.interface.unit_distance(u);
+            if d < best_dist {
+                best_dist = d;
+                best = Some(u);
+            }
+        }
+        match best {
+            Some(u) if ctx.attack(u) => BtResult::Success,
+            _ => BtResult::Failure,
+        }
+    },
+    display_text: Some("Killing whelps"),
+};
 
 #[cfg(test)]
 mod tests {
