@@ -1020,6 +1020,12 @@ typedef struct BotCallbacks {
      * route exists, or not enough money. */
     bool         (*take_taxi_toward)(BotHandle bot, uint32_t dest_map,
                                      float x, float y, float z);
+    /* Cross-continent travel via boats/zeppelins toward `dest_map`. Returns a
+     * state code: 0 = no transport route, 1 = disembarked (arrived on the
+     * destination continent), 2 = riding, 3 = just boarded, 4 = walk to the
+     * dock written to `out_dock` and wait for the transport. */
+    uint8_t      (*cross_continent_travel)(BotHandle bot, uint32_t dest_map,
+                                           BotPosition* out_dock);
 
     /* ── Factory: talents ────────────────────────────────────────────── */
     /* All `TalentEntry` rows belonging to `spec_no` (0..2 = the three talent

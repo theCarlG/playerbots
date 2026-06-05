@@ -4244,8 +4244,14 @@ wander, walking-RPG, teleports, distances, timings. Rust config in playerbot-rs 
   nearest flight master, then take a multi-hop taxi (BFS over `sTaxiPathSetBySource` → `ActivateTaxiPathTo`).
   New FFI `nearest_taxi_node_pos` + `take_taxi_toward`; `Bt::TakeTaxi` wired into the travel strategy ahead of
   walking. `cpp_wrapper/BotBridge.cpp`, `engine/bt.rs`, `strategies/travel.rs`. (Done 2026-06-05.)
-  Deferred: cross-CONTINENT travel (needs boats/zeppelins, not taxi), and routing TO a flight master that's
-  out of walk range (relies on the nearest node being reachable on foot).
+- [x] **Boat/zeppelin** cross-continent travel — for a travel destination on a different map, bots walk to the
+  transport's dock (a stop keyframe on their continent), board when the boat pulls in (`Transport::AddPassenger`),
+  ride (the core auto-teleports passengers across the map boundary), and disembark on arrival. New FFI
+  `cross_continent_travel`; `Bt::CrossContinentTravel` wired ahead of taxi; `tick_choose_travel_target` now
+  allows cross-map destinations (`TravelDestMap` blackboard key) so cross-continent objectives are reachable.
+  `cpp_wrapper/BotBridge.cpp`, `engine/bt.rs`, `strategies/travel.rs`. (Done 2026-06-05.)
+  This + taxi means bots can now reach destinations on any continent. Deferred: routing to a flight
+  master/dock that's out of walk range (relies on the nearest one being reachable on foot).
 - [ ] Autonomous **ammo/food restock** at vendors — `buy_from_vendor` FFI exists (command-only); needs
   low-stock detection + routing to a stocking vendor. Mitigated by periodic `randomize` refill. (Found #5.)
 - [ ] In-combat hunter pet **revive** — `world/pet.rs` only revives/summons out of combat; a hunter whose

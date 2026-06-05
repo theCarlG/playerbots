@@ -1158,6 +1158,14 @@ impl World for VtableWorld {
         unsafe { (self.cbs.take_taxi_toward.unwrap())(self.handle, dest_map, x, y, z) }
     }
 
+    fn cross_continent_travel(&self, dest_map: u32) -> (u8, Option<BotPosition>) {
+        let mut dock: BotPosition = unsafe { std::mem::zeroed() };
+        let code =
+            unsafe { (self.cbs.cross_continent_travel.unwrap())(self.handle, dest_map, &mut dock) };
+        let pos = if code == 4 { Some(dock) } else { None };
+        (code, pos)
+    }
+
     fn get_class_talents(&self, spec_no: u8) -> TalentList<'_> {
         let mut count: u32 = 0;
         let ptr =

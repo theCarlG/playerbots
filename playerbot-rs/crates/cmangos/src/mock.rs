@@ -352,6 +352,8 @@ pub struct MockState {
     pub nearest_taxi_node: Option<BotPosition>,
     /// Result returned by `take_taxi_toward`.
     pub take_taxi_result: bool,
+    /// `(state, dock)` returned by `cross_continent_travel`.
+    pub cross_continent: (u8, Option<BotPosition>),
     /// Whether the pet is alive. Gates `factory_pet_force_dismiss`
     /// in the mock (mirrors the `if (pet->IsAlive())` check at the
     /// bottom of `InitPet`). Flipped to `false` when the dismiss is
@@ -467,6 +469,7 @@ impl Default for MockState {
             use_quest_object_result: false,
             nearest_taxi_node: None,
             take_taxi_result: false,
+            cross_continent: (0, None),
             pet_is_alive: false,
             tameable_creatures: Vec::new(),
             rng_seq: VecDeque::new(),
@@ -570,6 +573,13 @@ impl MockWorld {
             s.nearest_taxi_node = node;
             s.take_taxi_result = can_fly;
         }
+        self
+    }
+
+    /// Configure the `cross_continent_travel` mock result `(state, dock)`.
+    #[must_use]
+    pub fn with_cross_continent(self, state: u8, dock: Option<BotPosition>) -> Self {
+        self.0.borrow_mut().cross_continent = (state, dock);
         self
     }
 
@@ -1345,6 +1355,10 @@ impl World for MockWorld {
 
     fn take_taxi_toward(&self, _dest_map: u32, _x: f32, _y: f32, _z: f32) -> bool {
         self.0.borrow().take_taxi_result
+    }
+
+    fn cross_continent_travel(&self, _dest_map: u32) -> (u8, Option<BotPosition>) {
+        self.0.borrow().cross_continent
     }
 
     fn auto_attack(&self, enable: bool) -> bool {

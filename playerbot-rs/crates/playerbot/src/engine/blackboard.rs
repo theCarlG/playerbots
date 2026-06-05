@@ -29,6 +29,7 @@ pub enum Key {
     TravelDestX, // f32: travel destination
     TravelDestY,
     TravelDestZ,
+    TravelDestMap, // u32: destination map (for cross-continent routing)
     GrindTargetHandle, // handle: current grind target
     LastVendorVisitMs, // u64: when we last vendored
     LastRepairMs,      // u64: when we last repaired

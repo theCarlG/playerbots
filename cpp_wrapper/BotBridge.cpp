@@ -58,6 +58,7 @@
 #include "Server/Opcodes.h"
 #include "Server/WorldPacket.h"
 #include "Entities/Transports.h"
+#include "Maps/TransportMgr.h"
 #include "BattleGround/BattleGround.h"
 #include "BattleGround/BattleGroundWS.h"
 #include "BattleGround/BattleGroundAB.h"
@@ -469,6 +470,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.bot_set_taxi_node                   = CB_BotSetTaxiNode;
     cbs.nearest_taxi_node_pos               = CB_NearestTaxiNodePos;
     cbs.take_taxi_toward                    = CB_TakeTaxiToward;
+    cbs.cross_continent_travel              = CB_CrossContinentTravel;
     cbs.get_class_talents                   = CB_GetClassTalents;
     cbs.free_class_talents                  = CB_FreeClassTalents;
     cbs.bot_free_talent_points              = CB_BotFreeTalentPoints;
@@ -6012,6 +6014,97 @@ bool BotBridge::CB_TakeTaxiToward(BotHandle bot, uint32_t dest_map, float x, flo
         b->m_taxi.SetTaximaskNode(n);
 
     return b->ActivateTaxiPathTo(route, flightMaster);
+}
+
+// Cross-continent travel via boats/zeppelins. The core carries player
+// passengers across map boundaries automatically (Transport::TeleportTransport
+// re-teleports them to the new map), so the bot just has to board the right
+// transport at its dock and disembark on the destination continent.
+//   0 = no transport route to dest_map
+//   1 = disembarked (now on the destination continent)
+//   2 = riding (on a transport, not there yet)
+//   3 = just boarded
+//   4 = walk to the dock at *out_dock and wait for the transport
+uint8_t BotBridge::CB_CrossContinentTravel(BotHandle bot, uint32_t dest_map, BotPosition* out_dock)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+
+    // Already aboard a transport.
+    if (GenericTransport* t = b->GetTransport())
+    {
+        if (b->GetMapId() == dest_map)
+        {
+            t->RemovePassenger(b); // arrived on the destination continent
+            return 1;
+        }
+        return 2; // keep riding
+    }
+
+    if (b->IsInCombat())
+        return 0;
+
+    Map* map = b->GetMap();
+    if (!map)
+        return 0;
+
+    Transport* chosen = nullptr;
+    BotPosition dock{};
+    float bestDockDistSq = 0.0f;
+    for (Transport* tr : map->GetTransports())
+    {
+        // Does this transport's route reach the destination continent?
+        bool reachesDest = false;
+        for (auto const& kf : tr->GetKeyFrames())
+            if (kf.Node && kf.Node->mapid == dest_map)
+            {
+                reachesDest = true;
+                break;
+            }
+        if (!reachesDest)
+            continue;
+
+        // Nearest boarding dock = a stop keyframe (delay > 0) on the bot's map.
+        for (auto const& kf : tr->GetKeyFrames())
+        {
+            if (!kf.Node || kf.Node->mapid != b->GetMapId() || kf.Node->delay == 0)
+                continue;
+            const float dx = kf.Node->x - b->GetPositionX();
+            const float dy = kf.Node->y - b->GetPositionY();
+            const float dsq = dx * dx + dy * dy;
+            if (!chosen || dsq < bestDockDistSq)
+            {
+                chosen = tr;
+                bestDockDistSq = dsq;
+                dock.x = kf.Node->x;
+                dock.y = kf.Node->y;
+                dock.z = kf.Node->z;
+                dock.o = 0.0f;
+                dock.map_id = kf.Node->mapid;
+            }
+        }
+    }
+
+    if (!chosen)
+        return 0; // no boardable transport reaches the destination continent
+
+    // Board once the transport itself is within range of the bot (i.e. the
+    // bot is at the dock and the boat has pulled in); otherwise walk to the
+    // dock and wait for the next arrival.
+    const float bdx = chosen->GetPositionX() - b->GetPositionX();
+    const float bdy = chosen->GetPositionY() - b->GetPositionY();
+    const float bdz = chosen->GetPositionZ() - b->GetPositionZ();
+    constexpr float BOARD_RANGE = 60.0f;
+    if (bdx * bdx + bdy * bdy + bdz * bdz <= BOARD_RANGE * BOARD_RANGE)
+    {
+        chosen->AddPassenger(b);
+        return 3;
+    }
+
+    if (out_dock)
+        *out_dock = dock;
+    return 4;
 }
 
 // ── Factory: talents ──────────────────────────────────────────────────────

@@ -12,8 +12,11 @@ pub fn build() -> Bt {
         Bt::StrategyEnabled(StrategyFlags::TRAVEL),
         Bt::Not(Box::new(Bt::InCombat)),
         Sel!(
-            // If we have a far destination, fly there: walk to the nearest
-            // flight master, then take a taxi. Falls through for near dests.
+            // Cross-continent destination → board a boat/zeppelin. Falls
+            // through for same-continent destinations.
+            Seq!(Bt::HasTravelDest, Bt::CrossContinentTravel),
+            // Far same-continent destination → fly: walk to the nearest flight
+            // master, then take a taxi. Falls through for near dests.
             Seq!(Bt::HasTravelDest, Bt::TakeTaxi),
             // If we already have a travel destination, keep walking.
             Seq!(Bt::HasTravelDest, Bt::TravelToBlackboard,),

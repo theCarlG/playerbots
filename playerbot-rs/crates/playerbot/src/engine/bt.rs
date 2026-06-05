@@ -698,6 +698,10 @@ pub enum Bt {
     /// master and take a taxi toward it (faster + safer than walking). Falls
     /// through (Failure) for near destinations so walking handles them.
     TakeTaxi,
+    /// For a travel destination on a different continent (map), board a
+    /// boat/zeppelin toward it. Falls through (Failure) when the destination
+    /// is on the bot's current map.
+    CrossContinentTravel,
     /// Move toward blackboard travel destination, clear on arrival.
     TravelToBlackboard,
     /// Select a travel destination based on the bot's current goals and
@@ -1946,6 +1950,7 @@ impl BtNode for Bt {
             Bt::LearnTrainerSpells => tick_learn_trainer_spells(ctx),
             Bt::ApplyTalentBuild => tick_apply_talent_build(ctx),
             Bt::TakeTaxi => tick_take_taxi(ctx),
+            Bt::CrossContinentTravel => tick_cross_continent(ctx),
             Bt::TravelToBlackboard => tick_travel(ctx),
             Bt::ChooseTravelTarget => tick_choose_travel_target(ctx),
             Bt::RevivePet => {
@@ -3456,6 +3461,52 @@ fn tick_take_taxi(ctx: &mut TickContext<'_>) -> BtResult {
     BtResult::Failure
 }
 
+/// `Bt::CrossContinentTravel`. When the blackboard travel destination is on a
+/// different continent (map), board a boat/zeppelin toward it. The C++ side
+/// returns a state code: 0 no-route, 1 disembarked, 2 riding, 3 boarded,
+/// 4 walk-to-dock. Returns `Running` while boarding/riding/walking-to-dock,
+/// and `Failure` (so taxi/walk takes over) when the destination is on the
+/// current map or no transport route exists.
+fn tick_cross_continent(ctx: &mut TickContext<'_>) -> BtResult {
+    use crate::engine::blackboard::Key;
+
+    let Some(dest_map) = ctx.blackboard.get_u32(Key::TravelDestMap) else {
+        return BtResult::Failure;
+    };
+    // Same continent — taxi/walk handles it.
+    if dest_map == ctx.snap.self_.pos.map_id {
+        return BtResult::Failure;
+    }
+
+    let (state, dock) = ctx.interface.cross_continent_travel(dest_map);
+    match state {
+        // No boardable transport reaches the destination continent.
+        0 => BtResult::Failure,
+        // Disembarked on the destination continent — next tick the dest is
+        // same-map and taxi/walk takes over.
+        1 => {
+            ctx.monitor(format_args!("BOAT: disembarked on dest continent"));
+            BtResult::Running
+        }
+        // Riding / just boarded — the core carries the bot across.
+        2 | 3 => {
+            ctx.monitor(format_args!("BOAT: aboard transport (state={state})"));
+            BtResult::Running
+        }
+        // Walk to the dock and wait for the transport.
+        4 => {
+            if let Some(d) = dock {
+                ctx.interface.move_to(d.x, d.y, d.z);
+                ctx.monitor(format_args!("BOAT: walking to dock"));
+                BtResult::Running
+            } else {
+                BtResult::Failure
+            }
+        }
+        _ => BtResult::Failure,
+    }
+}
+
 fn tick_travel(ctx: &mut TickContext<'_>) -> BtResult {
     use crate::engine::blackboard::Key;
 
@@ -3526,10 +3577,11 @@ fn tick_choose_travel_target(ctx: &mut TickContext<'_>) -> BtResult {
             continue;
         }
 
-        // Pick the nearest one on the same map.
+        // Prefer the nearest same-map destination; fall back to a cross-map
+        // one (reached via boat/zeppelin) when nothing is on the current map.
         let current_map = ctx.snap.self_.pos.map_id;
         let pos = &ctx.snap.self_.pos;
-        if let Some(best) = dests
+        let best = dests
             .iter()
             .filter(|d| d.map_id == current_map)
             .min_by(|a, b| {
@@ -3537,7 +3589,8 @@ fn tick_choose_travel_target(ctx: &mut TickContext<'_>) -> BtResult {
                 let db = (b.x - pos.x).powi(2) + (b.y - pos.y).powi(2);
                 da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
             })
-        {
+            .or_else(|| dests.iter().find(|d| d.map_id != current_map));
+        if let Some(best) = best {
             let kind = match *purpose {
                 TravelPurpose::VENDOR => TravelKind::Vendor,
                 TravelPurpose::REPAIR => TravelKind::Vendor,
@@ -6506,6 +6559,53 @@ mod tests {
         assert_eq!(Bt::TakeTaxi.tick(&mut ctx), BtResult::Failure);
     }
 
+    // Helper: set a cross-continent destination map on the test blackboard.
+    fn set_dest_map(owned: &mut TestCtxOwned, map: u32) {
+        use crate::engine::blackboard::{Key, Value};
+        owned.blackboard.set(Key::TravelDestMap, Value::U32(map));
+    }
+
+    #[test]
+    fn cross_continent_skips_same_map() {
+        let iface = MockWorld::new().with_cross_continent(4, None);
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.pos = cmangos::BotPosition { x: 0.0, y: 0.0, z: 0.0, o: 0.0, map_id: 1 };
+        set_dest_map(&mut owned, 1); // dest on the current continent → taxi/walk
+        let mut ctx = ctx_with_iface(&mut owned, &iface);
+        assert_eq!(Bt::CrossContinentTravel.tick(&mut ctx), BtResult::Failure);
+    }
+
+    #[test]
+    fn cross_continent_walks_to_dock() {
+        let dock = cmangos::BotPosition { x: 100.0, y: 0.0, z: 0.0, o: 0.0, map_id: 0 };
+        let iface = MockWorld::new().with_cross_continent(4, Some(dock)); // walk-to-dock
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.pos = cmangos::BotPosition { x: 0.0, y: 0.0, z: 0.0, o: 0.0, map_id: 0 };
+        set_dest_map(&mut owned, 1); // dest on a different continent
+        let mut ctx = ctx_with_iface(&mut owned, &iface);
+        assert_eq!(Bt::CrossContinentTravel.tick(&mut ctx), BtResult::Running);
+    }
+
+    #[test]
+    fn cross_continent_riding_is_running() {
+        let iface = MockWorld::new().with_cross_continent(2, None); // riding
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.pos = cmangos::BotPosition { x: 0.0, y: 0.0, z: 0.0, o: 0.0, map_id: 0 };
+        set_dest_map(&mut owned, 1);
+        let mut ctx = ctx_with_iface(&mut owned, &iface);
+        assert_eq!(Bt::CrossContinentTravel.tick(&mut ctx), BtResult::Running);
+    }
+
+    #[test]
+    fn cross_continent_no_route_fails() {
+        let iface = MockWorld::new().with_cross_continent(0, None); // no transport route
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.pos = cmangos::BotPosition { x: 0.0, y: 0.0, z: 0.0, o: 0.0, map_id: 0 };
+        set_dest_map(&mut owned, 1);
+        let mut ctx = ctx_with_iface(&mut owned, &iface);
+        assert_eq!(Bt::CrossContinentTravel.tick(&mut ctx), BtResult::Failure);
+    }
+
     // ── 11h: consumables / racials / trinkets ─────────────────────────
 
     #[test]
@@ -6617,6 +6717,8 @@ mod tests {
         assert_eq!(Bt::UseQuestObject.tick(&mut ctx), BtResult::Failure);
         // TakeTaxi: no travel destination set → falls through to walking.
         assert_eq!(Bt::TakeTaxi.tick(&mut ctx), BtResult::Failure);
+        // CrossContinentTravel: no destination map → falls through.
+        assert_eq!(Bt::CrossContinentTravel.tick(&mut ctx), BtResult::Failure);
         assert_eq!(Bt::Fish.tick(&mut ctx), BtResult::Failure);
         // RandomEmote: mock do_text_emote returns false (default)
         assert_eq!(Bt::RandomEmote.tick(&mut ctx), BtResult::Failure);

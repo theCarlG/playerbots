@@ -303,6 +303,16 @@ social/chat/guild/AH §8 · lifecycle §9 · commands/RTSC §10 · gear/item §1
   Trust only claims cross-checked against the real `CastOn*`/`CB_*` code. When in doubt, grep.
 
 ## Progress log
+- 2026-06-05 · BOAT / ZEPPELIN CROSS-CONTINENT TRAVEL — bots can now reach ANY continent (completes the travel
+  story with taxi). `Bt::CrossContinentTravel` (wired ahead of taxi in `strategies/travel.rs`): for a travel
+  dest on a different map, `CB_CrossContinentTravel` finds a transport on the bot's map whose keyframes reach
+  the dest map, sends the bot to the nearest dock (a stop keyframe, `delay>0`), boards when the boat is in
+  range (`Transport::AddPassenger`), and disembarks on arrival — the core auto-teleports player passengers
+  across the map boundary (`Transport::TeleportTransport`), so no fragile timing/stranding. Made
+  `tick_choose_travel_target` allow cross-map destinations (new `TravelDestMap` blackboard key) so
+  cross-continent objectives are no longer filtered out. 4 unit tests; cargo test 10/10 + clippy green; full
+  mangosd build+install; smoke test clean (534 bots, 0 crashes). Live boarding verification pending a client
+  pass. Deferred: reaching a dock/flight-master that's out of walk range.
 - 2026-06-05 · QUEST ITEM-COLLECT ROUTING — the last quest objective type. `CB_BotFindTravelDests` now also
   routes `ReqItemId` objectives: a cached `creature_loot_template`/`creature_template` reverse lookup
   (`ItemDropSources`) maps the required item → creatures that drop it → route to a spawn; existing kill+loot

@@ -14,6 +14,7 @@ pub fn set_travel_dest(bb: &mut Blackboard, dest: &TravelDestination) {
     bb.set(Key::TravelDestX, Value::F32(dest.x));
     bb.set(Key::TravelDestY, Value::F32(dest.y));
     bb.set(Key::TravelDestZ, Value::F32(dest.z));
+    bb.set(Key::TravelDestMap, Value::U32(dest.map));
 }
 
 /// Clear the current travel destination from the blackboard.
@@ -21,6 +22,7 @@ pub fn clear_travel_dest(bb: &mut Blackboard) {
     bb.clear(Key::TravelDestX);
     bb.clear(Key::TravelDestY);
     bb.clear(Key::TravelDestZ);
+    bb.clear(Key::TravelDestMap);
 }
 
 /// Check if a travel destination is currently set.

@@ -1248,6 +1248,14 @@ pub trait World: Send {
         false
     }
 
+    /// Cross-continent travel via boats/zeppelins toward `dest_map`. Returns a
+    /// `(state, dock)` pair: state `0` = no transport route, `1` = disembarked
+    /// (arrived), `2` = riding, `3` = just boarded, `4` = walk to `dock` and
+    /// wait for the transport. `dock` is `Some` only for state `4`.
+    fn cross_continent_travel(&self, _dest_map: u32) -> (u8, Option<BotPosition>) {
+        (0, None)
+    }
+
     /* ── Talents ─────────────────────────────────────────────────────── */
 
     /// All `TalentEntry` rows belonging to `spec_no` (0..2) that match the
