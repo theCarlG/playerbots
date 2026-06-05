@@ -53,6 +53,7 @@ pub enum MockEvent {
     Attack(UnitHandle),
     PetAttack(UnitHandle),
     AutoAttack(bool),
+    UseGameObject(u64),
     Say { msg: String, lang: u32 },
     Whisper { target: u64, msg: String },
     TellPlayer { target: u64, msg: String },
@@ -217,6 +218,8 @@ pub struct MockState {
     pub at_flank: bool,
     /// Per-player-guid world positions returned by `get_player_position`.
     pub player_positions: HashMap<u64, BotPosition>,
+    /// Nearby gameobjects by entry → handle, for `nearby_gameobject_by_entry`.
+    pub nearby_gos: HashMap<u32, u64>,
 
     /* inventory / items */
     pub bag_items: HashMap<u32, u32>, // item_id -> count
@@ -433,6 +436,7 @@ impl Default for MockState {
             has_los_default: true,
             at_flank: false,
             player_positions: HashMap::new(),
+            nearby_gos: HashMap::new(),
             bag_items: HashMap::new(),
             item_max_stack: HashMap::new(),
             item_quality: HashMap::new(),
@@ -565,6 +569,14 @@ impl MockWorld {
             };
             s.units.insert(handle, snap);
         }
+        self
+    }
+
+    /// Register a nearby gameobject so `nearby_gameobject_by_entry(entry, _)`
+    /// returns `handle` (and `use_gameobject` then records a `UseGameObject`).
+    #[must_use]
+    pub fn with_nearby_gameobject(self, entry: u32, handle: u64) -> Self {
+        self.0.borrow_mut().nearby_gos.insert(entry, handle);
         self
     }
 
@@ -1333,6 +1345,15 @@ impl World for MockWorld {
 
     fn get_player_position(&self, player_guid: u64) -> Option<BotPosition> {
         self.0.borrow().player_positions.get(&player_guid).copied()
+    }
+
+    fn nearby_gameobject_by_entry(&self, entry: u32, _range: f32) -> Option<u64> {
+        self.0.borrow().nearby_gos.get(&entry).copied()
+    }
+
+    fn use_gameobject(&self, handle: u64) -> bool {
+        record(&self.0, MockEvent::UseGameObject(handle));
+        true
     }
 
     fn get_attackers(&self) -> UnitList<'_> {

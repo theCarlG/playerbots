@@ -540,3 +540,13 @@ social/chat/guild/AH §8 · lifecycle §9 · commands/RTSC §10 · gear/item §1
   (Corrupted Blood is contagious so a per-bot scatter would make the whole raid run — net-negative), GAHZRANKA
   (optional fishing boss). cargo test + clippy (vanilla & wotlk) green; full mangosd build+install; smoke clean
   (200 accts, 0 runtime crash).
+- 2026-06-05 · AQ20 (Ruins of Ahn'Qiraj) lifted from SimpleFsm → real per-boss FSMs (was 6× SimpleFsm). 5 bosses
+  scripted with DB-verified entries/GO ids: RAJAXX focus wave adds — Swarmguard Needler (15344, casters first) →
+  Qiraji Warrior (15387) → Lasher (15249); MOAM focus Mana Fiend (15527); BURU focus Buru Egg (15514) — pop eggs
+  to damage Buru, auto-falls-through to the boss once gone; AYAMISS focus Hive'Zara Larva (15555, saves the
+  sacrificed player) for all + Swarmer (15546) for melee while she's airborne; OSSIRIAN click the nearest
+  weakness crystal (GO 180619, 10y so the raid doesn't abandon the boss) to drop his immunity — mirrors BWL
+  suppression-disarm. Reused the `FocusNearestEntry` primitive; added MockWorld GO support (`with_nearby_gameobject`
+  + `MockEvent::UseGameObject`, also makes BWL's disarm testable). 10 new tests. LEFT as SimpleFsm (documented):
+  KURINNAXX (Sand Trap is a ground hazard with no per-bot signal; Mortal Wound = reactive tank swap). cargo test +
+  clippy (vanilla & wotlk) green; full mangosd build+install; smoke clean (200 accts, 0 runtime crash).

@@ -9,10 +9,22 @@
 ///   4. Buru the Gorger   (entry 15370) — egg mechanic (explode eggs)
 ///   5. Ayamiss the Hunter (entry 15369) — air phase + adds
 ///   6. Ossirian the Unscarred (entry 15339) — weakness crystals required
+pub mod ayamiss;
+pub mod buru;
+pub mod moam;
+pub mod ossirian;
+pub mod rajaxx;
+
 use super::macros::encounter_dispatch;
 use super::{EncounterEvent, EncounterFsm, SimpleFsm};
 use crate::engine::bt::Bt;
+pub use ayamiss::AyamissFsm;
+pub use buru::BuruFsm;
+pub use moam::MoamFsm;
+pub use ossirian::OssirianFsm;
+pub use rajaxx::RajaxxFsm;
 
+// ── Boss entry IDs ────────────────────────────────────────────────────────
 pub const ENTRY_KURINNAXX: u32 = 15348;
 pub const ENTRY_RAJAXX: u32 = 15341;
 pub const ENTRY_MOAM: u32 = 15340;
@@ -20,15 +32,30 @@ pub const ENTRY_BURU: u32 = 15370;
 pub const ENTRY_AYAMISS: u32 = 15369;
 pub const ENTRY_OSSIRIAN: u32 = 15339;
 
+// ── Add / object IDs (verified against the world DB) ──────────────────────
+/// Rajaxx wave adds: caster Needlers (priority), then the melee swarm.
+pub const ENTRY_SWARMGUARD_NEEDLER: u32 = 15344;
+pub const ENTRY_QIRAJI_WARRIOR: u32 = 15387;
+pub const ENTRY_QIRAJI_LASHER: u32 = 15249;
+/// Moam's mana-draining elemental adds.
+pub const ENTRY_MANA_FIEND: u32 = 15527;
+/// Buru's eggs — pop them to damage Buru.
+pub const ENTRY_BURU_EGG: u32 = 15514;
+/// Ayamiss adds: Larva (sacrifices a captured player) and the Swarmers.
+pub const ENTRY_HIVE_ZARA_LARVA: u32 = 15555;
+pub const ENTRY_HIVE_ZARA_SWARMER: u32 = 15546;
+/// Ossirian's weakness crystal (`GameObject`) — click to drop his immunity.
+pub const GO_OSSIRIAN_CRYSTAL: u32 = 180619;
+
 encounter_dispatch! {
     #[derive(Clone, PartialEq)]
     pub enum Aq20Boss {
         Kurinnaxx(SimpleFsm),
-        Rajaxx(SimpleFsm),
-        Moam(SimpleFsm),
-        Buru(SimpleFsm),
-        Ayamiss(SimpleFsm),
-        Ossirian(SimpleFsm),
+        Rajaxx(RajaxxFsm),
+        Moam(MoamFsm),
+        Buru(BuruFsm),
+        Ayamiss(AyamissFsm),
+        Ossirian(OssirianFsm),
     }
 }
 
@@ -37,11 +64,11 @@ impl TryFrom<u32> for Aq20Boss {
     fn try_from(entry: u32) -> Result<Self, Self::Error> {
         match entry {
             ENTRY_KURINNAXX => Ok(Self::Kurinnaxx(SimpleFsm::new(entry))),
-            ENTRY_RAJAXX => Ok(Self::Rajaxx(SimpleFsm::new(entry))),
-            ENTRY_MOAM => Ok(Self::Moam(SimpleFsm::new(entry))),
-            ENTRY_BURU => Ok(Self::Buru(SimpleFsm::new(entry))),
-            ENTRY_AYAMISS => Ok(Self::Ayamiss(SimpleFsm::new(entry))),
-            ENTRY_OSSIRIAN => Ok(Self::Ossirian(SimpleFsm::new(entry))),
+            ENTRY_RAJAXX => Ok(Self::Rajaxx(RajaxxFsm::default())),
+            ENTRY_MOAM => Ok(Self::Moam(MoamFsm::default())),
+            ENTRY_BURU => Ok(Self::Buru(BuruFsm::default())),
+            ENTRY_AYAMISS => Ok(Self::Ayamiss(AyamissFsm::default())),
+            ENTRY_OSSIRIAN => Ok(Self::Ossirian(OssirianFsm::default())),
             _ => Err(()),
         }
     }
