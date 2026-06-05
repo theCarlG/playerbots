@@ -187,6 +187,7 @@ BotUnitSnapshot BotBridge::FillUnitSnapshot(Unit* unit)
     if (Creature* c = unit->ToCreature())
     {
         s.npc_entry = c->GetEntry();
+        s.creature_type = static_cast<uint8_t>(c->GetCreatureType());
     }
 
     // Player-specific
@@ -610,6 +611,18 @@ BotWorldSnapshot BotBridge::CB_GetSnapshot(BotHandle bot)
         return snap;
 
     snap.self = FillUnitSnapshot(b);
+
+    // Level-up detection: flag a single natural level gain (XP), but not a
+    // multi-level `randomize` SetLevel jump. Per-bot last level is kept in a
+    // static map; the first snapshot for a bot just seeds it (no false ding).
+    {
+        static std::unordered_map<uint64_t, uint8_t> s_lastLevel;
+        uint8_t lvl = b->GetLevel();
+        auto it = s_lastLevel.find(bot);
+        snap.just_leveled = (it != s_lastLevel.end() && lvl == it->second + 1) ? 1 : 0;
+        s_lastLevel[bot] = lvl;
+    }
+
     snap.zone_id     = b->GetZoneId();
     snap.area_id     = b->GetAreaId();
     snap.instance_id = b->GetInstanceId();

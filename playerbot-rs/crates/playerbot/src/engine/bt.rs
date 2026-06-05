@@ -995,6 +995,10 @@ pub enum Bt {
     /// Greet a nearby real (non-bot) player with a `/say` hello (PB2
     /// `EnableGreet`). Failure when no ungreeted player is nearby.
     GreetNearbyPlayer,
+    /// Announce a level-up ("Ding!") in `/say` the tick the bot gains a level
+    /// through normal play. Reads the one-tick `just_leveled` snapshot flag;
+    /// Failure on every other tick.
+    AnnounceLevelUp,
     /// Apply all missing world buffs from config (`AddAura` for each).
     ApplyWorldBuffs,
     /// Travel to a world buff location for `buff_id`.
@@ -2201,6 +2205,17 @@ impl BtNode for Bt {
             }
             Bt::GreetNearbyPlayer => {
                 if ctx.interface.bot_greet_nearby_player() {
+                    BtResult::Success
+                } else {
+                    BtResult::Failure
+                }
+            }
+            Bt::AnnounceLevelUp => {
+                if ctx.snap.just_leveled == 0 {
+                    return BtResult::Failure;
+                }
+                let msg = format!("Ding! Level {}!", ctx.snap.self_.level);
+                if ctx.interface.say(&msg, 0) {
                     BtResult::Success
                 } else {
                     BtResult::Failure
@@ -4489,6 +4504,35 @@ fn tick_heal_interrupt(ctx: &mut TickContext<'_>) -> BtResult {
 /// on it. Used by `Bt::CcCastOnRti`. The `get_unit_with_raid_icon` FFI
 /// uses 1..=8 indexing while the settings use 0..=7, so the caller
 /// passes the 0..=7 form and we translate here.
+/// Whether `spell` can affect a target of the given `CMaNGOS` creature type.
+/// Used to pre-filter CC candidates so we don't probe `can_cast` (which
+/// allocates a `Spell` on the C++ side) against targets the spell can never
+/// hit — meaningful when hundreds of bots scan many adds. `ctype == 0`
+/// (players / unknown) is permissive; `can_cast` remains the final authority.
+fn cc_spell_targets_type(spell: SpellId, ctype: u8) -> bool {
+    // CMaNGOS CreatureType ids.
+    const BEAST: u8 = 1;
+    const DRAGONKIN: u8 = 2;
+    const DEMON: u8 = 3;
+    const ELEMENTAL: u8 = 4;
+    const UNDEAD: u8 = 6;
+    const HUMANOID: u8 = 7;
+    const CRITTER: u8 = 8;
+
+    if ctype == 0 {
+        return true; // player / unknown — let can_cast decide
+    }
+    match spell.0 {
+        118 => matches!(ctype, BEAST | HUMANOID | CRITTER), // Polymorph
+        710 => matches!(ctype, DEMON | ELEMENTAL),          // Banish
+        2637 => matches!(ctype, BEAST | DRAGONKIN),         // Hibernate
+        10955 => ctype == UNDEAD,                           // Shackle Undead
+        6770 | 20066 => ctype == HUMANOID,                  // Sap / Repentance
+        // Fear (5782), Entangling Roots (339), etc. have no type restriction.
+        _ => true,
+    }
+}
+
 fn tick_cc_cast_on_rti(ctx: &mut TickContext<'_>, spell: SpellId) -> BtResult {
     let icon = ctx.settings.preferred_cc_rti_icon.unwrap_or(5);
     if icon >= 8 {
@@ -4498,6 +4542,9 @@ fn tick_cc_cast_on_rti(ctx: &mut TickContext<'_>, spell: SpellId) -> BtResult {
         Some(u) => u,
         None => return BtResult::Failure,
     };
+    if !cc_spell_targets_type(spell, ctx.interface.get_unit_snapshot(unit).creature_type) {
+        return BtResult::Failure;
+    }
     if !ctx.interface.can_cast(spell, unit) {
         return BtResult::Failure;
     }
@@ -4514,6 +4561,7 @@ fn tick_cc_cast_on_nearest(ctx: &mut TickContext<'_>, spell: SpellId) -> BtResul
     let victim = ctx.nearby.iter().copied().find(|&u| {
         u != current
             && ctx.interface.is_attackable(u)
+            && cc_spell_targets_type(spell, ctx.interface.get_unit_snapshot(u).creature_type)
             && !ctx.interface.has_aura(u, spell)
             && ctx.interface.can_cast(spell, u)
     });
@@ -4529,12 +4577,11 @@ fn tick_auto_cc(ctx: &mut TickContext<'_>) -> BtResult {
     if !ctx.settings.strategies.has_any(StrategyFlags::CC) {
         return BtResult::Failure;
     }
-    // Per-class CC spell list, tried in order. The server's CheckCast rejects
-    // a spell whose target is the wrong creature type — Banish only affects
-    // demons/elementals, Hibernate only beasts/dragonkin — so the list falls
-    // through to a general-purpose CC (Fear, Entangling Roots) for any other
-    // target. No creature-type lookup needed: cast_spell returns false on a
-    // BAD_TARGETS CheckCast, and we move to the next spell.
+    // Per-class CC spell list, tried in order, falling through to a general-
+    // purpose CC (Fear, Entangling Roots) for targets the typed spells can't
+    // hit. `cc_spell_targets_type` pre-filters candidates by the snapshot's
+    // creature_type so wrong-type mobs are skipped without a `can_cast` probe;
+    // `can_cast`/CheckCast still has the final say (range, immunities, etc.).
     let spells: &[SpellId] = match ctx.class {
         PlayerClass::Mage => &[SpellId(118)], // Polymorph
         // Banish (demon/elemental) then Fear (everything else).
@@ -5020,6 +5067,55 @@ mod tests {
         let mut ctx =
             make_encounter_ctx(&mut owned, &iface, &enc, PlayerClass::Warrior, BotRole::DPS);
         assert_eq!(tree.tick(&mut ctx), BtResult::Failure);
+    }
+
+    #[test]
+    fn cc_type_filter_matches_spell_to_creature() {
+        // Polymorph: beasts/humanoids/critters, not undead/demon.
+        assert!(cc_spell_targets_type(SpellId(118), 1)); // beast
+        assert!(cc_spell_targets_type(SpellId(118), 7)); // humanoid
+        assert!(!cc_spell_targets_type(SpellId(118), 6)); // undead
+        // Banish: demon/elemental only.
+        assert!(cc_spell_targets_type(SpellId(710), 3)); // demon
+        assert!(cc_spell_targets_type(SpellId(710), 4)); // elemental
+        assert!(!cc_spell_targets_type(SpellId(710), 7)); // humanoid
+        // Shackle Undead: undead only.
+        assert!(cc_spell_targets_type(SpellId(10955), 6));
+        assert!(!cc_spell_targets_type(SpellId(10955), 1));
+        // Fear has no creature-type restriction.
+        assert!(cc_spell_targets_type(SpellId(5782), 6));
+        // Player / unknown type → permissive (can_cast decides).
+        assert!(cc_spell_targets_type(SpellId(118), 0));
+    }
+
+    #[test]
+    fn announce_level_up_dings_only_on_the_flag() {
+        let iface = MockWorld::new();
+        let enc = MockEncounter { active: true };
+
+        // Flag set → Ding in /say.
+        let mut owned = TestCtxOwned::new();
+        owned.snap.just_leveled = 1;
+        owned.snap.self_.level = 20;
+        let mut ctx =
+            make_encounter_ctx(&mut owned, &iface, &enc, PlayerClass::Warrior, BotRole::DPS);
+        assert_eq!(Bt::AnnounceLevelUp.tick(&mut ctx), BtResult::Success);
+        assert!(
+            iface
+                .events()
+                .iter()
+                .any(|e| matches!(e, MockEvent::Say { msg, .. } if msg.contains("Ding"))),
+            "bot announces the level-up"
+        );
+
+        // Flag clear → nothing.
+        let iface2 = MockWorld::new();
+        let mut owned2 = TestCtxOwned::new();
+        owned2.snap.just_leveled = 0;
+        let mut ctx2 =
+            make_encounter_ctx(&mut owned2, &iface2, &enc, PlayerClass::Warrior, BotRole::DPS);
+        assert_eq!(Bt::AnnounceLevelUp.tick(&mut ctx2), BtResult::Failure);
+        assert!(iface2.events().is_empty());
     }
 
     #[test]

@@ -56,6 +56,10 @@ typedef struct {
     uint32_t  aura_state_mask;  /* CMaNGOS AuraState bitmask for quick checks */
     uint32_t  npc_entry;        /* Creature::GetEntry() for NPCs, 0 for players */
     bool      is_mounted;       /* Unit::IsMounted() */
+    uint8_t   creature_type;    /* Creature::GetCreatureType() (CREATURE_TYPE_*:
+                                 * 1=Beast 2=Dragonkin 3=Demon 4=Elemental
+                                 * 6=Undead 7=Humanoid …), 0 for players. Lets
+                                 * CC pick the right spell without probing. */
 } BotUnitSnapshot;
 
 typedef struct {
@@ -120,6 +124,12 @@ typedef struct {
      * `PlayerbotAI::GetAllCurrentQuestIds`. */
     uint32_t current_quest_ids[25];
     uint8_t  current_quest_count;
+
+    /* True for exactly one tick after the bot gains a single level through
+     * normal play (XP). Set by comparing against the previous tick's level;
+     * a multi-level jump (a `randomize` SetLevel) is deliberately NOT flagged.
+     * Drives the level-up "Ding!" broadcast. */
+    uint8_t  just_leveled;
 } BotWorldSnapshot;
 
 typedef struct {

@@ -487,6 +487,9 @@ fn maintenance_subtree(buffs: &'static [GroupBuff]) -> Bt {
         MaintainHunterAspect, MaintainPaladinAura,
     };
     Sel!(
+        // Level-up "Ding!" — one-tick flag, fires the instant the bot levels
+        // (even mid-combat). Self-gates to Failure on every other tick.
+        Bt::AnnounceLevelUp,
         // Buffing: fires when GOAP permits it — either no plan (fallback
         // upkeep) or GOAP's plan has the BUFF flag (BuffGroup desire →
         // buff_group action → BUFF flag → BT executes). Suppressed only

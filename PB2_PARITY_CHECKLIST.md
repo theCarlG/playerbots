@@ -4261,10 +4261,12 @@ wander, walking-RPG, teleports, distances, timings. Rust config in playerbot-rs 
   PARTIAL on per-event broadcasts: **quest turn-in reaction** DONE 2026-06-05 — `tick_turn_in_quest` `/say`s a
   short varied reaction (`say_quest_done`, indexed by quest id) on a successful hand-in; fires only on the real
   event (which is throttled + gated on standing at the giver), no false positives, pure Rust (existing `say`
-  FFI). STILL deferred: **level-up "Ding!"** — no clean trigger; `BotEvent` has no level-up event and there's no
-  C++ level-up hook in the wrapper, and a snapshot-delta would mis-fire on `randomize` level jumps (would need a
-  core OnLevelChanged hook). **Loot/kill** broadcasts (UnitDied carries a killer but not victim rank, so a kill
-  broadcast would be spammy without a rank/notable filter). Channel routing (Trade/LFG vs General) still open.
+  FFI). **Level-up "Ding!"** DONE 2026-06-05 — instead of a core hook, `CB_GetSnapshot` keeps a per-bot last
+  level and sets a one-tick `just_leveled` snapshot flag ONLY on a natural +1 gain (a multi-level `randomize`
+  SetLevel jump is deliberately not flagged). `Bt::AnnounceLevelUp` (first maintenance child) reads the flag and
+  `/say`s "Ding! Level N" — fires even mid-combat. STILL deferred: **loot/kill** broadcasts (UnitDied carries a
+  killer but not victim rank, so a kill broadcast would be spammy without a rank/notable filter) and channel
+  routing (Trade/LFG vs General).
 - [x] **Taxi/flight-master** routing — bots fly to far (>600y) same-continent travel destinations: walk to the
   nearest flight master, then take a multi-hop taxi (BFS over `sTaxiPathSetBySource` → `ActivateTaxiPathTo`).
   New FFI `nearest_taxi_node_pos` + `take_taxi_toward`; `Bt::TakeTaxi` wired into the travel strategy ahead of
@@ -4293,7 +4295,9 @@ wander, walking-RPG, teleports, distances, timings. Rust config in playerbot-rs 
   guards re-cast via `is_casting`, and `CB_RevivePet` is hunter-only (HasSpell 982). Warlock keeps its
   out-of-combat re-summon (loses pet on death → HasPet false → summon branch). Mock `with_dead_pet` +
   `revive_pet` override + `MockEvent::RevivePet`. 2 tests.
-- [ ] Type-aware CC currently relies on `CB_CastSpell`'s `CheckCast` to reject wrong-type targets
-  (Banish→Fear, Hibernate→Roots fall-through). Works, but means a wasted cast attempt per wrong-type
-  target each throttle window. A `creature_type` snapshot field would let CC pick the right spell
-  up-front. Low priority (cast attempts are pre-GCD and cheap). (Found in §3, 2026-06-05.)
+- [x] Type-aware CC — DONE 2026-06-05. Added a `creature_type` field to `BotUnitSnapshot`
+  (`Creature::GetCreatureType()`, 0 for players). `cc_spell_targets_type` pre-filters CC candidates in both
+  `tick_cc_cast_on_nearest`/`_on_rti` so a wrong-type mob is skipped WITHOUT a `can_cast` probe (each probe
+  allocates a `Spell` on the C++ side — meaningful at hundreds-of-bots scale). `can_cast`/`CheckCast` is still
+  the final authority, so behavior is identical — only the probe count drops. Mapping covers Polymorph/Banish/
+  Hibernate/Shackle/Sap/Repentance; unrestricted CC (Fear/Roots) and unknown/player type stay permissive. 1 test.
