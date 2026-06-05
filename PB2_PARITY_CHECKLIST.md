@@ -4264,9 +4264,19 @@ wander, walking-RPG, teleports, distances, timings. Rust config in playerbot-rs 
   FFI). **Level-up "Ding!"** DONE 2026-06-05 — instead of a core hook, `CB_GetSnapshot` keeps a per-bot last
   level and sets a one-tick `just_leveled` snapshot flag ONLY on a natural +1 gain (a multi-level `randomize`
   SetLevel jump is deliberately not flagged). `Bt::AnnounceLevelUp` (first maintenance child) reads the flag and
-  `/say`s "Ding! Level N" — fires even mid-combat. STILL deferred: **loot/kill** broadcasts (UnitDied carries a
-  killer but not victim rank, so a kill broadcast would be spammy without a rank/notable filter) and channel
-  routing (Trade/LFG vs General).
+  `/say`s "Ding! Level N" — fires even mid-combat.
+  **Loot reaction** DONE 2026-06-05 — `CB_OpenLoot` scans the loot for the best rare-or-better item (blue gated,
+  bigger shout for epics) before AutoStore and `/say`s a reaction ("Nice, looted [X]." / "Whoa! [X]!"). Local
+  flavor, self-gated by rarity (greens/greys ignored). C++-side because the item name lives there.
+  **Channel routing** DONE 2026-06-05 — new `ChannelNameForId(b, channelId)` (generalizes `GeneralChannelName`:
+  zone-qualified General/LocalDefense, city-qualified Trade/GuildRecruitment, global LFG/WorldDefense); the idle
+  broadcast routes trade/sell categories to **Trade** and the rest to **General**, /say fallback when the bot
+  hasn't joined that channel (e.g. Trade out of a city).
+  **Kill broadcast** is BLOCKED, not deferred: `PlayerbotRust::OnUnitDied` (the only path that would push a kill
+  event with a killer) is dead code — never invoked by the core or module — so a kill broadcast needs a core
+  kill-hook (out of clean module scope). A notable-kill filter would also need the victim's rank, which the
+  (unwired) event doesn't carry. Looting a notable drop off the corpse already covers the "I killed something
+  good" moment.
 - [x] **Taxi/flight-master** routing — bots fly to far (>600y) same-continent travel destinations: walk to the
   nearest flight master, then take a multi-hop taxi (BFS over `sTaxiPathSetBySource` → `ActivateTaxiPathTo`).
   New FFI `nearest_taxi_node_pos` + `take_taxi_toward`; `Bt::TakeTaxi` wired into the travel strategy ahead of

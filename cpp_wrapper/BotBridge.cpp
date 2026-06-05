@@ -2347,6 +2347,25 @@ bool BotBridge::CB_OpenLoot(BotHandle bot, UnitHandle target)
         b->GetSession()->HandleLootMoneyOpcode(moneyPacket);
     }
 
+    // Before AutoStore consumes the list, note the best rare-or-better item
+    // for a loot reaction (a bit of life in /say). Greens/greys are too common
+    // to bother announcing, so gate at ITEM_QUALITY_RARE (blue).
+    std::string notableName;
+    uint32 notableQuality = 0;
+    {
+        LootItemList items;
+        loot->GetLootItemsListFor(b, items);
+        for (LootItem* li : items)
+        {
+            if (li && li->itemProto && li->itemProto->Quality >= ITEM_QUALITY_RARE
+                && li->itemProto->Quality > notableQuality)
+            {
+                notableQuality = li->itemProto->Quality;
+                notableName = li->itemProto->Name1 ? li->itemProto->Name1 : "";
+            }
+        }
+    }
+
     // 3. AutoStore handles filtering (permission, inventory space,
     //    blocked-for-roll) and removes taken items from the loot list.
     loot->AutoStore(b);
@@ -2355,6 +2374,15 @@ bool BotBridge::CB_OpenLoot(BotHandle bot, UnitHandle target)
     WorldPacket releasePacket(CMSG_LOOT_RELEASE, 8);
     releasePacket << targetGuid;
     b->GetSession()->HandleLootReleaseOpcode(releasePacket);
+
+    // React to a good drop. Epics get a bigger shout than blues.
+    if (!notableName.empty())
+    {
+        const std::string msg = (notableQuality >= ITEM_QUALITY_EPIC)
+            ? ("Whoa! [" + notableName + "]!")
+            : ("Nice, looted [" + notableName + "].");
+        b->Say(msg, LANG_UNIVERSAL);
+    }
 
     return true;
 }
@@ -3912,6 +3940,42 @@ namespace
             s.replace(p, from.size(), to);
     }
 
+    // Resolve the localized, qualified name of a chat channel for this bot,
+    // matching how MgrBridge::JoinChatChannels names them: General /
+    // LocalDefense are zone-qualified, Trade / GuildRecruitment are
+    // city-qualified (the core's dummy "City" area 3459), global channels
+    // (WorldDefense, LookingForGroup) take no qualifier. Lets broadcasts route
+    // to the channel they belong in (trade chatter → Trade, not General).
+    std::string ChannelNameForId(Player* b, uint32 channelId)
+    {
+        const int loc = static_cast<int>(b->GetSession()->GetSessionDbcLocale());
+        for (uint32 i = 0; i < sChatChannelsStore.GetNumRows(); ++i)
+        {
+            ChatChannelsEntry const* ch = sChatChannelsStore.LookupEntry(i);
+            if (!ch || ch->ChannelID != channelId)
+                continue;
+
+            std::string qualifier; // empty for global channels (pattern has no %s)
+            if (channelId == 1 /*General*/ || channelId == 22 /*LocalDefense*/)
+            {
+                AreaTableEntry const* zone = GetAreaEntryByAreaID(b->GetZoneId());
+                if (zone && zone->area_name[loc])
+                    qualifier = zone->area_name[loc];
+            }
+            else if (channelId == 2 /*Trade*/ || channelId == 25 /*GuildRecruitment*/)
+            {
+                AreaTableEntry const* city = GetAreaEntryByAreaID(3459); // dummy "City"
+                if (city && city->area_name[loc])
+                    qualifier = city->area_name[loc];
+            }
+
+            char buf[100];
+            snprintf(buf, sizeof(buf), ch->pattern[loc], qualifier.c_str());
+            return buf;
+        }
+        return "";
+    }
+
     // Resolve the localized name of the bot's current General channel
     // ("General - <zone>") so we can send to the channel it joined at login.
     std::string GeneralChannelName(Player* b)
@@ -3961,7 +4025,8 @@ bool BotBridge::CB_BotBroadcastRandom(BotHandle bot)
     // Try a few random texts; broadcast the first one we can fully fill in.
     for (int attempt = 0; attempt < 8; ++attempt)
     {
-        std::vector<std::string> const& texts = BotChatterTexts(categories[urand(0, catCount - 1)]);
+        const char* category = categories[urand(0, catCount - 1)];
+        std::vector<std::string> const& texts = BotChatterTexts(category);
         if (texts.empty())
             continue;
 
@@ -3975,8 +4040,12 @@ bool BotBridge::CB_BotBroadcastRandom(BotHandle bot)
         if (text.find('%') != std::string::npos)
             continue;
 
-        // Send to the bot's General channel; if it isn't available, /say.
-        const std::string chanName = GeneralChannelName(b);
+        // Route by category: buying/selling chatter belongs in Trade, the
+        // rest in General. Falls back to /say if the bot hasn't joined that
+        // channel (e.g. Trade when out of a city).
+        const bool tradeChatter = (strcmp(category, "suggest_trade") == 0
+                                || strcmp(category, "suggest_sell") == 0);
+        const std::string chanName = ChannelNameForId(b, tradeChatter ? 2 /*Trade*/ : 1 /*General*/);
         if (ChannelMgr* mgr = channelMgr(b->GetTeam()))
         {
             if (Channel* ch = mgr->GetChannel(chanName, b))
