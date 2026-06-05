@@ -4271,8 +4271,12 @@ wander, walking-RPG, teleports, distances, timings. Rust config in playerbot-rs 
   master/dock that's out of walk range (relies on the nearest one being reachable on foot).
 - [ ] Autonomous **ammo/food restock** at vendors — `buy_from_vendor` FFI exists (command-only); needs
   low-stock detection + routing to a stocking vendor. Mitigated by periodic `randomize` refill. (Found #5.)
-- [ ] In-combat hunter pet **revive** — `world/pet.rs` only revives/summons out of combat; a hunter whose
-  pet dies mid-fight waits for combat end. Hunter Revive Pet is castable in combat. (Found §4, 2026-06-05.)
+- [x] In-combat hunter pet **revive** — DONE 2026-06-05. `world/pet.rs` revive branch is now gated to Hunter
+  with NO `InCombat.not()` (Revive Pet is castable in combat), so a hunter re-summons its pet mid-fight instead
+  of waiting for combat end. Maintenance subtree ticks in Combat (`tick.rs:329`), the `RevivePet` leaf already
+  guards re-cast via `is_casting`, and `CB_RevivePet` is hunter-only (HasSpell 982). Warlock keeps its
+  out-of-combat re-summon (loses pet on death → HasPet false → summon branch). Mock `with_dead_pet` +
+  `revive_pet` override + `MockEvent::RevivePet`. 2 tests.
 - [ ] Type-aware CC currently relies on `CB_CastSpell`'s `CheckCast` to reject wrong-type targets
   (Banish→Fear, Hibernate→Roots fall-through). Works, but means a wasted cast attempt per wrong-type
   target each throttle window. A `creature_type` snapshot field would let CC pick the right spell

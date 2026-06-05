@@ -53,6 +53,7 @@ pub enum MockEvent {
     Attack(UnitHandle),
     PetAttack(UnitHandle),
     CastPetSpell { spell: SpellId, target: UnitHandle },
+    RevivePet,
     AutoAttack(bool),
     UseGameObject(u64),
     Say { msg: String, lang: u32 },
@@ -589,6 +590,18 @@ impl MockWorld {
             let mut s = self.0.borrow_mut();
             s.has_pet = true;
             s.pet_is_alive = true;
+        }
+        self
+    }
+
+    /// Give the bot a dead pet (`has_pet` true, `pet_is_alive` false) — the
+    /// hunter "revive a dead pet" case.
+    #[must_use]
+    pub fn with_dead_pet(self) -> Self {
+        {
+            let mut s = self.0.borrow_mut();
+            s.has_pet = true;
+            s.pet_is_alive = false;
         }
         self
     }
@@ -1381,6 +1394,11 @@ impl World for MockWorld {
 
     fn pet_is_alive(&self) -> bool {
         self.0.borrow().pet_is_alive
+    }
+
+    fn revive_pet(&self) -> bool {
+        record(&self.0, MockEvent::RevivePet);
+        true
     }
 
     fn is_casting_interruptible(&self, _target: UnitHandle) -> bool {
