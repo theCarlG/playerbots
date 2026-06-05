@@ -3547,6 +3547,7 @@ fn tick_turn_in_quest(ctx: &mut TickContext<'_>) -> BtResult {
         if let Some(&npc) = npcs.first() {
             return approach_and_interact(ctx, npc, |ctx| {
                 if ctx.interface.turn_in_quest(npc, quest_id) {
+                    say_quest_done(ctx, quest_id);
                     BtResult::Success
                 } else {
                     BtResult::Failure
@@ -3555,6 +3556,23 @@ fn tick_turn_in_quest(ctx: &mut TickContext<'_>) -> BtResult {
         }
     }
     BtResult::Failure
+}
+
+/// A bit of life in chat: the bot reacts out loud when it hands in a quest.
+/// Fires only on an actual successful turn-in (which is itself throttled and
+/// gated on standing at the quest giver), so it's a natural trickle rather
+/// than spam. Varied by quest id so consecutive hand-ins don't repeat.
+fn say_quest_done(ctx: &mut TickContext<'_>, quest_id: u32) {
+    const PHRASES: [&str; 6] = [
+        "Another one done!",
+        "Quest complete!",
+        "That's that sorted.",
+        "Job's done.",
+        "Finally finished that one.",
+        "On to the next!",
+    ];
+    let idx = (quest_id as usize) % PHRASES.len();
+    let _ = ctx.interface.say(PHRASES[idx], 0);
 }
 
 fn tick_accept_quests(ctx: &mut TickContext<'_>) -> BtResult {
@@ -5002,6 +5020,23 @@ mod tests {
         let mut ctx =
             make_encounter_ctx(&mut owned, &iface, &enc, PlayerClass::Warrior, BotRole::DPS);
         assert_eq!(tree.tick(&mut ctx), BtResult::Failure);
+    }
+
+    #[test]
+    fn quest_turn_in_says_a_reaction() {
+        let iface = MockWorld::new();
+        let enc = MockEncounter { active: true };
+        let mut owned = TestCtxOwned::new();
+        let mut ctx =
+            make_encounter_ctx(&mut owned, &iface, &enc, PlayerClass::Warrior, BotRole::DPS);
+        say_quest_done(&mut ctx, 42);
+        assert!(
+            iface
+                .events()
+                .iter()
+                .any(|e| matches!(e, MockEvent::Say { msg, .. } if !msg.is_empty())),
+            "bot reacts in /say when it hands in a quest"
+        );
     }
 
     #[test]

@@ -4258,8 +4258,13 @@ wander, walking-RPG, teleports, distances, timings. Rust config in playerbot-rs 
   in the last 10 min (`CB_BotGreetNearbyPlayer`: `PlayerListSearcher` within 25y, skip bots via
   `GetPlayerbotAI()`, per-bot per-target cooldown, name-filled greeting; `Bt::GreetNearbyPlayer` throttled 20s
   in the maintenance loop). `cpp_wrapper/BotBridge.cpp`, `engine/bt.rs`, `bot/init.rs`. (Done 2026-06-05.)
-  STILL deferred: per-event broadcasts (loot/quest/levelup/kill — PB2 BroadcastHelper has ~20) and routing to
-  category-specific channels (Trade/LFG vs General).
+  PARTIAL on per-event broadcasts: **quest turn-in reaction** DONE 2026-06-05 — `tick_turn_in_quest` `/say`s a
+  short varied reaction (`say_quest_done`, indexed by quest id) on a successful hand-in; fires only on the real
+  event (which is throttled + gated on standing at the giver), no false positives, pure Rust (existing `say`
+  FFI). STILL deferred: **level-up "Ding!"** — no clean trigger; `BotEvent` has no level-up event and there's no
+  C++ level-up hook in the wrapper, and a snapshot-delta would mis-fire on `randomize` level jumps (would need a
+  core OnLevelChanged hook). **Loot/kill** broadcasts (UnitDied carries a killer but not victim rank, so a kill
+  broadcast would be spammy without a rank/notable filter). Channel routing (Trade/LFG vs General) still open.
 - [x] **Taxi/flight-master** routing — bots fly to far (>600y) same-continent travel destinations: walk to the
   nearest flight master, then take a multi-hop taxi (BFS over `sTaxiPathSetBySource` → `ActivateTaxiPathTo`).
   New FFI `nearest_taxi_node_pos` + `take_taxi_toward`; `Bt::TakeTaxi` wired into the travel strategy ahead of
