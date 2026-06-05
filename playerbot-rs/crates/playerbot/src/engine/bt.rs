@@ -699,6 +699,10 @@ pub enum Bt {
     VendorSellGrey,
     /// Find repair NPC, approach, repair equipment.
     RepairEquipment,
+    /// When low on ammo, find a vendor that stocks the right ammo, approach,
+    /// buy enough to top up, and equip it. No-op for non-ammo classes / when
+    /// already stocked / when no vendor is nearby.
+    RestockAmmo,
     /// Turn in a completed quest to nearby NPC.
     TurnInQuest,
     /// Accept available quests from nearby NPC.
@@ -2009,6 +2013,7 @@ impl BtNode for Bt {
             Bt::CheckMail => tick_check_mail(ctx),
             Bt::VendorSellGrey => tick_vendor(ctx),
             Bt::RepairEquipment => tick_repair(ctx),
+            Bt::RestockAmmo => tick_restock_ammo(ctx),
             Bt::TurnInQuest => tick_turn_in_quest(ctx),
             Bt::AcceptQuests => tick_accept_quests(ctx),
             Bt::AttackQuestMob => tick_attack_quest_mob(ctx),
@@ -3464,6 +3469,64 @@ fn tick_repair(ctx: &mut TickContext<'_>) -> BtResult {
         return approach_and_interact(ctx, vendor, |ctx| {
             ctx.interface.repair_all();
             BtResult::Success
+        });
+    }
+    BtResult::Failure
+}
+
+/// Work out which ammo to buy and how much, or `None` when restock isn't
+/// needed (non-ammo class, no ranged weapon, no suitable ammo, or still
+/// well-stocked). Mirrors the factory `InitAmmo` policy so runtime top-ups
+/// and character generation agree on counts.
+fn ammo_restock_plan(ctx: &TickContext<'_>) -> Option<(u32, u32)> {
+    use crate::factory::ammo::{AMMO_STACK, LOW_STACKS, ammo_for_weapon, is_ammo_class};
+
+    let class_id = ctx.snap.self_.class_id;
+    if !is_ammo_class(class_id) {
+        return None;
+    }
+    let weapon_sub = ctx.interface.bot_equipped_ranged_subclass();
+    if weapon_sub == u32::MAX {
+        return None; // no ranged weapon equipped
+    }
+    let ammo_sub = ammo_for_weapon(weapon_sub, class_id)?; // weapon that uses ammo
+
+    let level = u32::from(ctx.snap.self_.level);
+    let mut entry = ctx.interface.bot_current_ammo_id();
+    if entry == 0 {
+        entry = ctx.interface.factory_pick_ammo_for_level(level, ammo_sub);
+        if entry == 0 {
+            return None; // no suitable ammo exists for this level/type
+        }
+    }
+
+    let stacks = ctx.interface.item_count_in_bags(ItemId(entry)) / AMMO_STACK;
+    if stacks > LOW_STACKS {
+        return None; // still well-stocked
+    }
+    let max_stacks = 5 + level / 10;
+    let missing = max_stacks.saturating_sub(stacks);
+    if missing == 0 {
+        return None;
+    }
+    Some((entry, missing * AMMO_STACK))
+}
+
+fn tick_restock_ammo(ctx: &mut TickContext<'_>) -> BtResult {
+    let Some((ammo_id, qty)) = ammo_restock_plan(ctx) else {
+        return BtResult::Failure;
+    };
+    let npcs = ctx.interface.get_nearby_npcs(30.0, NPC_FLAG_VENDOR);
+    if let Some(&vendor) = npcs.first() {
+        return approach_and_interact(ctx, vendor, move |ctx| {
+            // The vendor may not stock this ammo — buy_from_vendor returns
+            // false then, and we report Failure so the bot keeps looking.
+            if ctx.interface.buy_from_vendor(ammo_id, qty) {
+                ctx.interface.bot_set_ammo(ammo_id);
+                BtResult::Success
+            } else {
+                BtResult::Failure
+            }
         });
     }
     BtResult::Failure
@@ -4956,6 +5019,53 @@ mod tests {
             )),
             "Felhunter casts Spell Lock on the enemy caster"
         );
+    }
+
+    #[test]
+    fn ammo_restock_plan_tops_up_low_hunter() {
+        // Level-40 bow hunter holding 1 stack (≤ low threshold) → buy up to
+        // max (5 + 40/10 = 9 stacks), i.e. 8 missing stacks × 200.
+        let iface = MockWorld::builder()
+            .equipped_ranged_subclass(2) // bow
+            .current_ammo_id(2512)
+            .item_in_bags(2512, 200)
+            .build();
+        let enc = MockEncounter { active: true };
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.class_id = 3; // hunter
+        owned.snap.self_.level = 40;
+        let ctx = make_encounter_ctx(&mut owned, &iface, &enc, PlayerClass::Hunter, BotRole::DPS);
+        assert_eq!(ammo_restock_plan(&ctx), Some((2512, 8 * 200)));
+    }
+
+    #[test]
+    fn ammo_restock_plan_skips_when_stocked() {
+        let iface = MockWorld::builder()
+            .equipped_ranged_subclass(2)
+            .current_ammo_id(2512)
+            .item_in_bags(2512, 1000) // 5 stacks > low threshold
+            .build();
+        let enc = MockEncounter { active: true };
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.class_id = 3;
+        owned.snap.self_.level = 40;
+        let ctx = make_encounter_ctx(&mut owned, &iface, &enc, PlayerClass::Hunter, BotRole::DPS);
+        assert_eq!(ammo_restock_plan(&ctx), None);
+    }
+
+    #[test]
+    fn ammo_restock_plan_skips_non_ammo_class() {
+        let iface = MockWorld::builder()
+            .equipped_ranged_subclass(2)
+            .current_ammo_id(2512)
+            .item_in_bags(2512, 200)
+            .build();
+        let enc = MockEncounter { active: true };
+        let mut owned = TestCtxOwned::new();
+        owned.snap.self_.class_id = 8; // mage — never uses ammo
+        owned.snap.self_.level = 40;
+        let ctx = make_encounter_ctx(&mut owned, &iface, &enc, PlayerClass::Mage, BotRole::DPS);
+        assert_eq!(ammo_restock_plan(&ctx), None);
     }
 
     #[test]

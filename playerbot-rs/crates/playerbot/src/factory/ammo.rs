@@ -20,6 +20,12 @@ const CLASS_WARRIOR: u8 = 1;
 const CLASS_HUNTER: u8 = 3;
 const CLASS_ROGUE: u8 = 4;
 
+/// The three classes that can equip an ammo-consuming ranged weapon. Shared
+/// with the runtime ammo-restock leaf.
+pub(crate) fn is_ammo_class(class_id: u8) -> bool {
+    matches!(class_id, CLASS_WARRIOR | CLASS_HUNTER | CLASS_ROGUE)
+}
+
 // ── Weapon subclasses we care about ──────────────────────────────────────
 const WEAPON_BOW: u32 = 2;
 const WEAPON_GUN: u32 = 3;
@@ -33,12 +39,12 @@ const AMMO_THROWN: u32 = 4;
 
 // Ammo is stored in stacks of 200 (hard-coded in the C++ source). Stack size
 // and the min-refill threshold are both in units of 200.
-const AMMO_STACK: u32 = 200;
-const LOW_STACKS: u32 = 2;
+pub(crate) const AMMO_STACK: u32 = 200;
+pub(crate) const LOW_STACKS: u32 = 2;
 
 /// Decide the ammo subclass for the given ranged weapon subclass, or
 /// `None` when no ammo is required.
-fn ammo_for_weapon(weapon_subclass: u32, class_id: u8) -> Option<u32> {
+pub(crate) fn ammo_for_weapon(weapon_subclass: u32, class_id: u8) -> Option<u32> {
     match weapon_subclass {
         WEAPON_GUN => Some(AMMO_BULLET),
         WEAPON_BOW | WEAPON_CROSSBOW => Some(AMMO_ARROW),

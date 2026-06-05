@@ -519,6 +519,7 @@ fn maintenance_subtree(buffs: &'static [GroupBuff]) -> Bt {
         world::gather::gather_subtree(),
         world::mount::mount_subtree(),
         world::vendor::vendor_subtree(),
+        world::vendor::ammo_restock_subtree(),
         world::repair::repair_subtree(),
         // Idle chatter: occasionally broadcast a suggestion in the bot's
         // General channel so the channels it joined at login have a voice.

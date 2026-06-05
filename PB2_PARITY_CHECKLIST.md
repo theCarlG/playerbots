@@ -4269,8 +4269,14 @@ wander, walking-RPG, teleports, distances, timings. Rust config in playerbot-rs 
   `cpp_wrapper/BotBridge.cpp`, `engine/bt.rs`, `strategies/travel.rs`. (Done 2026-06-05.)
   This + taxi means bots can now reach destinations on any continent. Deferred: routing to a flight
   master/dock that's out of walk range (relies on the nearest one being reachable on foot).
-- [ ] Autonomous **ammo/food restock** at vendors — `buy_from_vendor` FFI exists (command-only); needs
-  low-stock detection + routing to a stocking vendor. Mitigated by periodic `randomize` refill. (Found #5.)
+- [~] Autonomous **ammo restock** at vendors — DONE 2026-06-05 (ammo). New `Bt::RestockAmmo` +
+  `ammo_restock_subtree` (maintenance, gated on `AutoVendor`): `ammo_restock_plan` mirrors the factory
+  `InitAmmo` policy (class gate, weapon→ammo-subclass, `factory_pick_ammo_for_level`, top-up to `5+level/10`
+  stacks when ≤2 stacks left), then approaches a nearby vendor and `buy_from_vendor` + `bot_set_ammo`. Reuses
+  the factory `ammo_for_weapon`/`AMMO_STACK`/`LOW_STACKS` (made `pub(crate)`). Local-approach only (like
+  sell/repair), not full-map routing. 3 tests. STILL deferred: **food/water** runtime restock — buying needs a
+  vendor-stock-by-category query (vendors sell level-specific food/water items we'd have to discover) that
+  doesn't exist yet; food is currently refilled by the factory/`randomize` cycle.
 - [x] In-combat hunter pet **revive** — DONE 2026-06-05. `world/pet.rs` revive branch is now gated to Hunter
   with NO `InCombat.not()` (Revive Pet is castable in combat), so a hunter re-summons its pet mid-fight instead
   of waiting for combat end. Maintenance subtree ticks in Combat (`tick.rs:329`), the `RevivePet` leaf already
