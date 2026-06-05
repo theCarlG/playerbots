@@ -2698,9 +2698,13 @@ bool BotBridge::CB_SummonPet(BotHandle bot)
     if (!b)
         return false;
 
-    // For hunters: Call Pet (883)
-    // For warlocks: Summon Imp (688), Voidwalker (697), etc.
-    static const uint32_t callPetSpells[] = {883, 688, 697, 712, 691, 0};
+    // Hunter Call Pet (883) first. For warlocks, prefer the Voidwalker
+    // (697) — the standard survivable solo-leveling demon — then Felhunter
+    // (691), Succubus (712), and finally Imp (688). HasSpell gates each, so a
+    // low-level warlock that only knows Summon Imp still gets the Imp; an
+    // established warlock who has learned the Voidwalker tanks for itself
+    // instead of summoning the fragile Imp the old order picked first.
+    static const uint32_t callPetSpells[] = {883, 697, 691, 712, 688, 0};
     for (int i = 0; callPetSpells[i] != 0; ++i)
     {
         if (b->HasSpell(callPetSpells[i]) && b->IsSpellReady(callPetSpells[i]))
