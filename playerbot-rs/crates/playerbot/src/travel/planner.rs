@@ -55,7 +55,8 @@ pub fn evaluate_needs(
     durability_pct: f32,
     has_sellable: bool,
     free_quest_slots: u8,
-    has_active_quests: bool,
+    has_complete_quests: bool,
+    has_incomplete_quests: bool,
     _level: u8,
 ) -> Vec<(TravelPurpose, f32)> {
     let mut needs = Vec::with_capacity(8);
@@ -70,14 +71,21 @@ pub fn evaluate_needs(
         needs.push((TravelPurpose::VENDOR, 6.94));
     }
 
+    // Quest taker — turn in completed quests first (frees a slot + rewards).
+    if has_complete_quests {
+        needs.push((TravelPurpose::QUEST_TAKER, 6.85));
+    }
+
     // Quest giver — when quest log has free slots.
     if free_quest_slots > 0 {
         needs.push((TravelPurpose::QUEST_GIVER, 6.84));
     }
 
-    // Quest taker — when the bot has completed quests to turn in.
-    if has_active_quests {
-        needs.push((TravelPurpose::QUEST_TAKER, 6.84));
+    // Quest objective — route to where the incomplete quests' required mobs
+    // are (resolved via FindCreatureData on the C++ side), instead of
+    // grinding wherever the bot happens to be standing.
+    if has_incomplete_quests {
+        needs.push((TravelPurpose::QUEST_ALL_OBJ, 6.83));
     }
 
     // Grind — always available as fallback.
@@ -171,14 +179,23 @@ mod tests {
 
     #[test]
     fn evaluate_needs_prioritizes_repair() {
-        let needs = evaluate_needs(0.1, false, 3, false, 30);
+        let needs = evaluate_needs(0.1, false, 3, false, false, 30);
         // Repair should be first (highest relevance when durability is low).
         assert_eq!(needs[0].0, TravelPurpose::REPAIR);
     }
 
     #[test]
     fn evaluate_needs_always_includes_grind() {
-        let needs = evaluate_needs(1.0, false, 0, false, 60);
+        let needs = evaluate_needs(1.0, false, 0, false, false, 60);
         assert!(needs.iter().any(|(p, _)| *p == TravelPurpose::GRIND));
+    }
+
+    #[test]
+    fn evaluate_needs_routes_to_objectives_for_incomplete_quests() {
+        let needs = evaluate_needs(1.0, false, 0, false, true, 30);
+        assert!(
+            needs.iter().any(|(p, _)| *p == TravelPurpose::QUEST_ALL_OBJ),
+            "incomplete quests should emit a quest-objective travel need"
+        );
     }
 }

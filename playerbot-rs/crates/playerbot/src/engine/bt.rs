@@ -3417,14 +3417,16 @@ fn tick_choose_travel_target(ctx: &mut TickContext<'_>) -> BtResult {
     let has_sellable = ctx.interface.has_sellable_items();
     let quest_log = ctx.interface.get_quest_log();
     let free_quest_slots = 25u8.saturating_sub(quest_log.len() as u8);
-    let has_active_quests = !quest_log.is_empty();
+    let has_complete_quests = quest_log.iter().any(|q| q.complete);
+    let has_incomplete_quests = quest_log.iter().any(|q| !q.complete);
     let level = ctx.snap.self_.level;
 
     let needs = crate::travel::planner::evaluate_needs(
         durability,
         has_sellable,
         free_quest_slots,
-        has_active_quests,
+        has_complete_quests,
+        has_incomplete_quests,
         level,
     );
 
@@ -3453,6 +3455,7 @@ fn tick_choose_travel_target(ctx: &mut TickContext<'_>) -> BtResult {
                 TravelPurpose::TRAINER => TravelKind::Trainer,
                 TravelPurpose::QUEST_GIVER => TravelKind::QuestRelation,
                 TravelPurpose::QUEST_TAKER => TravelKind::QuestRelation,
+                p if p.intersects(TravelPurpose::QUEST_ALL_OBJ) => TravelKind::QuestObjective,
                 TravelPurpose::GRIND => TravelKind::GrindSpot,
                 TravelPurpose::EXPLORE => TravelKind::Explore,
                 TravelPurpose::GENERIC_RPG => TravelKind::Rpg,

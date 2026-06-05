@@ -6515,6 +6515,57 @@ BotTravelDest* BotBridge::CB_BotFindTravelDests(
         check_npc_flag(1 << 7, UNIT_NPC_FLAG_FLIGHTMASTER);
     }
 
+    // Quest objectives (TravelPurpose QUEST_OBJECTIVE1..4 = bits 1..4). The
+    // NPC-flag grid search above can't find these — a quest mob carries no
+    // questgiver flag. For each of the bot's *incomplete* quests, resolve the
+    // required-creature kill objectives that still need kills to a spawn
+    // location via FindCreatureData (map-aware, not range-limited), so the bot
+    // travels to the objective area instead of grinding wherever it stands.
+    constexpr uint32_t QUEST_ALL_OBJ = (1u << 1) | (1u << 2) | (1u << 3) | (1u << 4);
+    if (purpose_flags & QUEST_ALL_OBJ)
+    {
+        for (auto const& qs : b->getQuestStatusMap())
+        {
+            if (qs.second.m_status != QUEST_STATUS_INCOMPLETE)
+                continue;
+            const uint32 questId = qs.first;
+            Quest const* quest = sObjectMgr.GetQuestTemplate(questId);
+            if (!quest)
+                continue;
+
+            for (int j = 0; j < QUEST_OBJECTIVES_COUNT; ++j)
+            {
+                const int32 reqEntry = quest->ReqCreatureOrGOId[j];
+                const uint32 reqCount = quest->ReqCreatureOrGOCount[j];
+                // Creature kill objective (>0) that still needs kills. GO
+                // objectives (<0) and item-collect (ReqItemId) are handled by
+                // a future pass — they need GO-spawn / loot-source lookups.
+                if (reqEntry <= 0 || reqCount == 0)
+                    continue;
+                if (b->GetReqKillOrCastCurrentCount(questId, reqEntry) >= reqCount)
+                    continue;
+
+                FindCreatureData worker(static_cast<uint32>(reqEntry), b);
+                sObjectMgr.DoCreatureData(worker);
+                CreatureDataPair const* dataPair = worker.GetResult();
+                if (!dataPair)
+                    continue;
+                CreatureData const* data = &dataPair->second;
+
+                const float dx = b->GetPositionX() - data->posX;
+                const float dy = b->GetPositionY() - data->posY;
+                candidates.push_back({
+                    reqEntry,
+                    questId,
+                    static_cast<uint32_t>(1u << (1 + j)), // QUEST_OBJECTIVE(j+1)
+                    data->mapid,
+                    data->posX, data->posY, data->posZ,
+                    dx * dx + dy * dy
+                });
+            }
+        }
+    }
+
     // Sort by distance.
     std::sort(candidates.begin(), candidates.end(),
         [](const DestCandidate& a, const DestCandidate& b) {
