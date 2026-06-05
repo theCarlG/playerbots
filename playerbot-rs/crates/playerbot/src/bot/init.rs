@@ -447,21 +447,26 @@ fn mode_dispatch() -> Bt {
         Seq!(
             ModeIs(BehaviorMode::Follow),
             Sel!(
+                // Orphaned in an instance with NO human master → hearth out,
+                // ahead of everything. Catches an old-raid bot whose leader
+                // left the group: it would otherwise follow a bot leader around
+                // the instance (or solo-grind raid trash to death) and never
+                // leave. Gated on `HasMaster.not()`, so a bot still commanded
+                // by / grouped with a real player is NOT pulled out of the raid.
+                Seq!(
+                    Bt::InInstance,
+                    Bt::HasMaster.not(),
+                    Bt::throttle(60_000, Bt::UseHearthstone),
+                ),
                 // Follow fires when GOAP permits it — either no plan
                 // (fallback) or GOAP's plan has the FOLLOW flag
                 // (FollowLeader → follow_leader → FOLLOW flag → BT).
                 // Other plans (eat_and_drink, buff_group) suppress it.
                 Seq!(Bt::GoapPermits(StrategyFlags::FOLLOW), Follow),
-                // Inside a dungeon/raid instance, a grouped bot sticks with its
-                // master/group rather than falling through to travel/grind —
-                // otherwise after a fight it wanders off toward the entrance.
+                // Inside a dungeon/raid instance, a bot with a human master
+                // sticks with the raid rather than falling through to
+                // travel/grind — otherwise after a fight it wanders off.
                 Seq!(Bt::InInstance, Follow),
-                // Orphaned (masterless) bot stuck in a dungeon/raid — hearth
-                // out instead of solo-grinding raid trash to death. Only
-                // reached when the InInstance+Follow above failed (no master),
-                // so grouped bots are unaffected. Throttled: hearthstone has a
-                // cast time + long cooldown, so it fires between trash fights.
-                Seq!(Bt::InInstance, Bt::throttle(60_000, Bt::UseHearthstone)),
                 // Fight first: a masterless bot grinds nearby level-appropriate
                 // mobs before wandering off. This was LAST, so travel and
                 // especially rpg's RpgWander always preempted it — bots roamed

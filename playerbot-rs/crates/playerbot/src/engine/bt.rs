@@ -489,6 +489,10 @@ pub enum Bt {
     /// precondition to formation/positioning leaves that only make
     /// sense while actively following a player.
     IsFollowingMaster,
+    /// A human master guid is set (regardless of mode). `.not()` identifies a
+    /// bot with no human commanding it — e.g. an old-raid bot orphaned when its
+    /// leader left the group.
+    HasMaster,
     /// Bot's mode is `Follow` and the group has a tank that isn't this
     /// bot. Used by DPS/healer-specific follow-the-tank subtrees.
     IsFollowingTank,
@@ -1576,6 +1580,7 @@ impl BtNode for Bt {
             },
             Bt::IsFollowingMaster => ok(ctx.settings.mode == BehaviorMode::Follow
                 && ctx.master_guid.is_some_and(|m| m != 0)),
+            Bt::HasMaster => ok(ctx.master_guid.is_some_and(|m| m != 0)),
             Bt::IsFollowingTank => {
                 if ctx.settings.mode != BehaviorMode::Follow {
                     return BtResult::Failure;
