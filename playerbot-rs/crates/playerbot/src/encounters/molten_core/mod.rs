@@ -56,6 +56,12 @@ pub const ENTRY_RAGNAROS: u32 = 11502;
 // their casts must be interrupted or pulls drag on forever.
 pub const ENTRY_FLAMEWAKER_PRIEST: u32 = 11662;
 pub const ENTRY_FLAMEWAKER_HEALER: u32 = 11663;
+// Core Hounds cleave and revive each other — the tank drags them away from
+// the raid. Lava Surgers charge — the raid stacks so the charge/cleave is
+// shared instead of scattering people into other packs.
+pub const ENTRY_CORE_HOUND: u32 = 11671;
+pub const ENTRY_ANCIENT_CORE_HOUND: u32 = 11673;
+pub const ENTRY_LAVA_SURGER: u32 = 12101;
 
 // Spell IDs for in-zone mechanics (shared across bosses)
 pub const SPELL_FIRE_PROTECTION_POTION: cmangos::SpellId = cmangos::SpellId(17543);
@@ -136,6 +142,22 @@ impl MoltenCoreFsm {
             // Trash: interrupt a nearby Flamewaker Priest/Healer's cast so the
             // packs don't heal through the raid's damage.
             Bt::throttle(1_000, Bt::Custom(INTERRUPT_FLAMEWAKER)),
+            // Trash: the tank drags Core Hounds away from the raid (they
+            // cleave and revive each other if killed apart).
+            Seq!(
+                Bt::InCombat,
+                Bt::IsTank,
+                Bt::Custom(TARGET_IS_CORE_HOUND),
+                Bt::MoveAwayFromRaid(20.0),
+            ),
+            // Trash: non-tanks stack on the tank when a Lava Surger is
+            // charging, so the charge + cleave hit a grouped raid.
+            Seq!(
+                Bt::InCombat,
+                Bt::IsTank.not(),
+                Bt::Custom(LAVA_SURGER_NEARBY),
+                Bt::Custom(STACK_ON_TANK),
+            ),
             // Rune dousing before Majordomo.
             Seq!(
                 Bt::InAnyArea(MC_RUNE_AREAS),
@@ -146,6 +168,65 @@ impl MoltenCoreFsm {
         )
     }
 }
+
+/// True when the bot's current target is a Core Hound (the tank drags these
+/// away from the raid).
+const TARGET_IS_CORE_HOUND: BehaviorLeaf = BehaviorLeaf {
+    label: "mc_target_is_core_hound",
+    handler: |ctx: &mut TickContext<'_>| -> BtResult {
+        match ctx.current_target() {
+            Some(t) => {
+                let e = ctx.interface.get_unit_snapshot(t).npc_entry;
+                if e == ENTRY_CORE_HOUND || e == ENTRY_ANCIENT_CORE_HOUND {
+                    BtResult::Success
+                } else {
+                    BtResult::Failure
+                }
+            }
+            None => BtResult::Failure,
+        }
+    },
+    display_text: None,
+};
+
+/// True when a Lava Surger (the charging elemental) is nearby.
+const LAVA_SURGER_NEARBY: BehaviorLeaf = BehaviorLeaf {
+    label: "mc_lava_surger_nearby",
+    handler: |ctx: &mut TickContext<'_>| -> BtResult {
+        let units = ctx.interface.get_nearby_units(30.0, true);
+        for &u in units.iter() {
+            if ctx.interface.get_unit_snapshot(u).npc_entry == ENTRY_LAVA_SURGER {
+                return BtResult::Success;
+            }
+        }
+        BtResult::Failure
+    },
+    display_text: None,
+};
+
+/// Move to within ~5y of the main tank (stack up). `Running` while moving,
+/// `Success` once stacked, `Failure` if there's no known tank position.
+const STACK_ON_TANK: BehaviorLeaf = BehaviorLeaf {
+    label: "mc_stack_on_tank",
+    handler: |ctx: &mut TickContext<'_>| -> BtResult {
+        let Some(tank) = ctx.group_tank() else {
+            return BtResult::Failure;
+        };
+        let Some(pos) = ctx.interface.get_player_position(tank) else {
+            return BtResult::Failure;
+        };
+        let me = ctx.snap.self_.pos;
+        if (me.x - pos.x).powi(2) + (me.y - pos.y).powi(2) <= 5.0 * 5.0 {
+            return BtResult::Success; // already stacked
+        }
+        if ctx.interface.move_to(pos.x, pos.y, pos.z) {
+            BtResult::Running
+        } else {
+            BtResult::Failure
+        }
+    },
+    display_text: Some("Stacking on tank"),
+};
 
 // ── Behavior leaves (trash) ───────────────────────────────────────────────
 

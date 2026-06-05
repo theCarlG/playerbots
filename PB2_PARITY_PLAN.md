@@ -303,6 +303,13 @@ social/chat/guild/AH §8 · lifecycle §9 · commands/RTSC §10 · gear/item §1
   Trust only claims cross-checked against the real `CastOn*`/`CB_*` code. When in doubt, grep.
 
 ## Progress log
+- 2026-06-05 · MOLTEN CORE trash positioning — Core Hound tank-away + Lava Surger stack. `zone_wide_bt` now
+  also: (tank) when the current target is a Core Hound (11671/11673), `MoveAwayFromRaid(20)` to drag the
+  cleaving/reviving pack off the raid; (non-tank) when a Lava Surger (12101, the charging elemental) is within
+  30y, `STACK_ON_TANK` (move to within 5y of `group_tank`) so the charge + cleave hit a grouped raid instead
+  of scattering people into other packs. New leaves `TARGET_IS_CORE_HOUND` / `LAVA_SURGER_NEARBY` /
+  `STACK_ON_TANK`, gated on InCombat + role. cargo test 10/10 + clippy green; build+install; smoke clean
+  (531 bots, 0 crashes). Live verification = a client raid.
 - 2026-06-05 · MOLTEN CORE mechanics — kept all existing boss FSMs (which are real), added the gaps.
   Magmadar: hunters now **Tranquilizing Shot** (19801) the boss's Frenzy enrage (aura 19451) — top-priority
   branch in `magmadar.rs::phase_bt`; the signature mechanic that was missing. MC TRASH: new
