@@ -5,11 +5,16 @@
 ///   - **Arcane Explosion** (19712): ~10y PBAOE — melee stay away when channel.
 ///   - **Counterspell**: Shazzrah silences casters — rotate casts.
 ///   - **Gate of Shazzrah** (23138): teleports to random raid member.
-///     Everyone MUST spread out so a teleport doesn't chain-kill stacked bots.
+///     Everyone spreads so the post-teleport Arcane Explosion doesn't chain a
+///     stacked group, and the tank re-taunts the instant the boss is loose on
+///     someone else (Gate wipes his threat table).
 use super::super::{EncounterEvent, EncounterFsm};
-use crate::encounters::bt::Bt::{self, IsRanged, MaintainRange, IsMeleeDps};
-use cmangos::SpellId;
+use crate::encounters::bt::Bt::{self, IsMeleeDps, IsRanged, IsTank, MaintainRange, Taunt};
+use crate::engine::bt::BehaviorLeaf;
+use crate::engine::bt_nodes::BtResult;
+use crate::engine::context::TickContext;
 use crate::{Sel, Seq};
+use cmangos::SpellId;
 
 pub const AURA_SHAZZRAH_CURSE: SpellId = SpellId(19714);
 pub const SPELL_ARCANE_EXPLOSION: SpellId = SpellId(19712);
@@ -45,6 +50,11 @@ impl EncounterFsm for ShazzrahFsm {
     fn phase_bt(&self, _fsm: crate::engine::macro_fsm::ActiveFsm) -> Option<Bt> {
         if self.active {
             Some(Sel!(
+                // Gate wiped threat — the tank re-taunts to drag Shazzrah back
+                // off whichever raid member he teleported to. Falls through
+                // (taunt on cooldown / boss already on the tank) to the
+                // tank's normal threat-building rotation.
+                Seq!(IsTank, Bt::Custom(BOSS_OFF_TANK), Taunt),
                 Seq!(IsRanged, MaintainRange(30.0)),
                 Seq!(IsMeleeDps, MaintainRange(5.0)),
             ))
@@ -53,3 +63,22 @@ impl EncounterFsm for ShazzrahFsm {
         }
     }
 }
+
+/// True when the boss (the tank's current target) is attacking someone other
+/// than this tank — i.e. Gate of Shazzrah just wiped threat and teleported him
+/// onto another raid member, so the tank should taunt him back.
+const BOSS_OFF_TANK: BehaviorLeaf = BehaviorLeaf {
+    label: "shazzrah_boss_off_tank",
+    handler: |ctx: &mut TickContext<'_>| -> BtResult {
+        let Some(boss) = ctx.current_target() else {
+            return BtResult::Failure;
+        };
+        let victim = ctx.interface.get_unit_snapshot(boss).current_target;
+        if victim != 0 && victim != ctx.bot_handle {
+            BtResult::Success
+        } else {
+            BtResult::Failure
+        }
+    },
+    display_text: None,
+};
