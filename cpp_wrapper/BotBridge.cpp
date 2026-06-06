@@ -8029,7 +8029,12 @@ static void RestoreFishingWeapon(Player* b, BotHandle bot)
     {
         uint16 dest;
         if (b->CanEquipItem(EQUIPMENT_SLOT_MAINHAND, dest, weapon, true) == EQUIP_ERR_OK)
-            b->EquipItem(dest, weapon, true);
+            // Move it with SwapItem, not raw EquipItem: SwapItem relocates the
+            // displaced pole to the weapon's old bag slot and clears the source
+            // slot. Raw EquipItem leaves the bag slot dangling at a now-equipped
+            // item, which later crashes any bag iteration (CB_HasSellableItems).
+            b->SwapItem(weapon->GetPos(),
+                        uint16((INVENTORY_SLOT_BAG_0 << 8) | EQUIPMENT_SLOT_MAINHAND));
     }
 }
 
@@ -8089,7 +8094,12 @@ bool BotBridge::CB_StartFishing(BotHandle bot)
         if (b->CanEquipItem(EQUIPMENT_SLOT_MAINHAND, dest, pole, true) != EQUIP_ERR_OK)
             return false;
         s_fishSavedWeapon[bot] = mh ? mh->GetObjectGuid().GetRawValue() : 0;
-        b->EquipItem(dest, pole, true);
+        // SwapItem (not raw EquipItem): it relocates the displaced main-hand
+        // weapon into the pole's old bag slot and clears the source slot, so no
+        // bag slot is left dangling at a now-equipped item. A raw EquipItem here
+        // corrupted the inventory and crashed later bag scans.
+        b->SwapItem(pole->GetPos(),
+                    uint16((INVENTORY_SLOT_BAG_0 << 8) | EQUIPMENT_SLOT_MAINHAND));
     }
 
     // Face the water, hold still, and cast.
