@@ -1,5 +1,6 @@
 #include "Config/Config.h"
 
+#include <atomic>
 #include "playerbot.h"
 #include "BotConfig.h"
 #include "Accounts/AccountMgr.h"
@@ -332,8 +333,13 @@ void RandomPlayerbotMgr::UpdateAIInternal(uint32 elapsed, bool minimal)
                 }
             }
         }
-        sLog.outString("[BotActivity] online=%u inCombat=%u moving=%u mounted=%u dead=%u",
-                       bots, inCombat, moving, mounted, dead);
+        extern std::atomic<uint64_t> g_botFishCasts;
+        extern std::atomic<uint64_t> g_botFishCatches;
+        sLog.outString(
+            "[BotActivity] online=%u inCombat=%u moving=%u mounted=%u dead=%u fishCasts=%llu fishCatches=%llu",
+            bots, inCombat, moving, mounted, dead,
+            (unsigned long long)g_botFishCasts.load(std::memory_order_relaxed),
+            (unsigned long long)g_botFishCatches.load(std::memory_order_relaxed));
     }
 
     SetAIInternalUpdateDelay(playerbot_config_random_bot_update_interval());

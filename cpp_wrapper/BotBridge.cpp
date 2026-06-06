@@ -42,6 +42,7 @@
 #include "Spells/SpellAuras.h"
 #include "Maps/Map.h"
 #include "Maps/GridMap.h"
+#include <atomic>
 #include "MotionGenerators/MotionMaster.h"
 #include "MotionGenerators/PathFinder.h"
 #include "Globals/ObjectMgr.h"
@@ -7958,6 +7959,12 @@ bool BotBridge::CB_AhBid(BotHandle bot)
 // Restored before the bot fights so it never goes into combat holding a pole.
 static std::unordered_map<BotHandle, uint64_t> s_fishSavedWeapon;
 
+// Cumulative fishing telemetry, surfaced in the [BotActivity] log line so a
+// soak run shows whether fishing actually works end to end (casts started vs
+// bites reeled in). Read via extern from RandomPlayerbotMgr.
+std::atomic<uint64_t> g_botFishCasts{0};
+std::atomic<uint64_t> g_botFishCatches{0};
+
 static bool IsFishingPole(Item* it)
 {
     return it && it->GetProto()->Class == ITEM_CLASS_WEAPON &&
@@ -8110,7 +8117,10 @@ bool BotBridge::CB_StartFishing(BotHandle bot)
     Spell* spell = new Spell(b, spellInfo, false);
     SpellCastTargets targets;
     targets.setDestination(fx, fy, fz);
-    return spell->SpellStart(&targets) == SPELL_CAST_OK;
+    bool ok = spell->SpellStart(&targets) == SPELL_CAST_OK;
+    if (ok)
+        g_botFishCasts.fetch_add(1, std::memory_order_relaxed);
+    return ok;
 }
 
 uint32_t BotBridge::CB_UpdateFishing(BotHandle bot)
@@ -8136,6 +8146,7 @@ uint32_t BotBridge::CB_UpdateFishing(BotHandle bot)
     if (bobber->GetLootState() == GO_READY)
     {
         bobber->Use(b);
+        g_botFishCatches.fetch_add(1, std::memory_order_relaxed);
         return 2;
     }
     return 1; // bobber out, still waiting for a bite
