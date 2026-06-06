@@ -43,6 +43,8 @@ const SKILL_COOKING: u32 = 185;
 const SKILL_MINING: u32 = 186;
 const SKILL_ENGINEERING: u32 = 202;
 const SKILL_FISHING: u32 = 356;
+/// Basic "Fishing Pole" item — the cheapest pole, enough for any fisher.
+const FISHING_POLE_ITEM: u32 = 6256;
 const SKILL_SKINNING: u32 = 393;
 #[cfg(not(feature = "vanilla"))]
 const SKILL_JEWELCRAFTING: u32 = 755;
@@ -101,6 +103,14 @@ pub fn init_trade_skills(tx: &mut FactoryTransaction<'_>, class_id: u8, level: u
     skills::set_random_skill(tx, SKILL_COOKING, level);
     skills::set_random_skill(tx, first_skill, level);
     skills::set_random_skill(tx, second_skill, level);
+
+    // Fishing skill is useless without a pole to equip, so hand out a basic
+    // Fishing Pole (6256) — the bot stows it in its bags and swaps it in when
+    // it stops to fish (see `Bt::Fish` / `CB_StartFishing`). Without this no
+    // bot could ever fish, so none would ever level the skill.
+    if !tx.has_item(cmangos::ItemId(FISHING_POLE_ITEM)) {
+        tx.inventory_add_item(cmangos::ItemId(FISHING_POLE_ITEM), 1);
+    }
 
     // TBC+ armorsmith spell chain — taught unconditionally to plate
     // classes. Vanilla has no equivalent path (the specialisations were

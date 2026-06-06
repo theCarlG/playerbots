@@ -41,6 +41,7 @@
 #include "Spells/Spell.h"
 #include "Spells/SpellAuras.h"
 #include "Maps/Map.h"
+#include "Maps/GridMap.h"
 #include "MotionGenerators/MotionMaster.h"
 #include "MotionGenerators/PathFinder.h"
 #include "Globals/ObjectMgr.h"
@@ -592,6 +593,7 @@ BotCallbacks BotBridge::MakeCallbacks()
 
     // Fishing
     cbs.start_fishing                       = CB_StartFishing;
+    cbs.update_fishing                      = CB_UpdateFishing;
 
     // BG/Arena
     cbs.queue_bg                            = CB_QueueBg;
@@ -631,12 +633,21 @@ BotCallbacks BotBridge::MakeCallbacks()
 
 // ── Snapshot ──────────────────────────────────────────────────────────────
 
+// Defined further down with the fishing callbacks; called here every tick as a
+// safety net so a bot never keeps a fishing pole equipped into combat.
+static void RestoreFishingWeapon(Player* b, BotHandle bot);
+
 BotWorldSnapshot BotBridge::CB_GetSnapshot(BotHandle bot)
 {
     BotWorldSnapshot snap{};
     Player* b = FindBot(bot);
     if (!b)
         return snap;
+
+    // If the bot stowed its weapon to fish and is now fighting or on the move,
+    // swap the real weapon back before anything else this tick.
+    if (b->IsInCombat() || b->IsMoving())
+        RestoreFishingWeapon(b, bot);
 
     snap.self = FillUnitSnapshot(b);
 
@@ -7942,30 +7953,182 @@ bool BotBridge::CB_AhBid(BotHandle bot)
 
 // ── Fishing ──────────────────────────────────────────────────────────────────
 
+// While a bot fishes it must hold a fishing pole, so its real main-hand weapon
+// is stowed in the bags and remembered here (raw guid; 0 = main hand was empty).
+// Restored before the bot fights so it never goes into combat holding a pole.
+static std::unordered_map<BotHandle, uint64_t> s_fishSavedWeapon;
+
+static bool IsFishingPole(Item* it)
+{
+    return it && it->GetProto()->Class == ITEM_CLASS_WEAPON &&
+           it->GetProto()->SubClass == ITEM_SUBCLASS_WEAPON_FISHING_POLE;
+}
+
+// Find a fishing pole anywhere on the bot (equipped, backpack, or bags).
+static Item* FindFishingPole(Player* b)
+{
+    if (Item* mh = b->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND))
+        if (IsFishingPole(mh))
+            return mh;
+    for (int i = INVENTORY_SLOT_ITEM_START; i < INVENTORY_SLOT_ITEM_END; ++i)
+        if (Item* it = b->GetItemByPos(INVENTORY_SLOT_BAG_0, i))
+            if (IsFishingPole(it))
+                return it;
+    for (int bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
+    {
+        Bag* pBag = static_cast<Bag*>(b->GetItemByPos(INVENTORY_SLOT_BAG_0, bag));
+        if (!pBag)
+            continue;
+        for (uint32 slot = 0; slot < pBag->GetBagSize(); ++slot)
+            if (Item* it = b->GetItemByPos(bag, slot))
+                if (IsFishingPole(it))
+                    return it;
+    }
+    return nullptr;
+}
+
+static Item* FindBagItemByGuid(Player* b, ObjectGuid guid)
+{
+    if (guid.IsEmpty())
+        return nullptr;
+    for (int i = INVENTORY_SLOT_ITEM_START; i < INVENTORY_SLOT_ITEM_END; ++i)
+        if (Item* it = b->GetItemByPos(INVENTORY_SLOT_BAG_0, i))
+            if (it->GetObjectGuid() == guid)
+                return it;
+    for (int bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
+    {
+        Bag* pBag = static_cast<Bag*>(b->GetItemByPos(INVENTORY_SLOT_BAG_0, bag));
+        if (!pBag)
+            continue;
+        for (uint32 slot = 0; slot < pBag->GetBagSize(); ++slot)
+            if (Item* it = b->GetItemByPos(bag, slot))
+                if (it->GetObjectGuid() == guid)
+                    return it;
+    }
+    return nullptr;
+}
+
+// Swap the bot's real weapon back if we stowed it to fish. Safe to call any
+// time — no-op if the bot isn't mid-fishing. Called when the bot is about to
+// fight or has walked off (from CB_UpdateFishing and the per-tick snapshot).
+static void RestoreFishingWeapon(Player* b, BotHandle bot)
+{
+    auto it = s_fishSavedWeapon.find(bot);
+    if (it == s_fishSavedWeapon.end())
+        return;
+    ObjectGuid savedGuid(it->second);
+    s_fishSavedWeapon.erase(it);
+
+    // End the fishing channel.
+    b->InterruptSpell(CURRENT_CHANNELED_SPELL);
+
+    if (savedGuid.IsEmpty())
+        return; // main hand was empty; just leave the pole equipped/unequipped
+
+    if (Item* weapon = FindBagItemByGuid(b, savedGuid))
+    {
+        uint16 dest;
+        if (b->CanEquipItem(EQUIPMENT_SLOT_MAINHAND, dest, weapon, true) == EQUIP_ERR_OK)
+            b->EquipItem(dest, weapon, true);
+    }
+}
+
 bool BotBridge::CB_StartFishing(BotHandle bot)
 {
     Player* b = FindBot(bot);
-    if (!b)
+    if (!b || b->IsInCombat())
         return false;
 
-    // Check if the bot has a fishing pole equipped or in bags
-    // Fishing spell ID = 7731
     SpellEntry const* spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(7731);
     if (!spellInfo)
         return false;
 
-    // Stop movement first
+    // Already fishing (channelled cast running) — let the bobber play out.
+    if (b->GetGameObject(7731))
+        return true;
+
+    // Find open water to cast into. Scan a ring of directions at a few
+    // distances; fishing needs the bobber over a liquid surface.
+    const TerrainInfo* terrain = b->GetMap()->GetTerrain();
+    if (!terrain)
+        return false;
+
+    const float bx = b->GetPositionX();
+    const float by = b->GetPositionY();
+    const float bz = b->GetPositionZ();
+    bool found = false;
+    float fx = 0.0f, fy = 0.0f, fz = bz, faceO = b->GetOrientation();
+    for (int r = 0; r < 16 && !found; ++r)
+    {
+        const float ang = b->GetOrientation() + (6.2831853f / 16.0f) * r;
+        for (float d = 4.0f; d <= 15.0f && !found; d += 3.0f)
+        {
+            const float px = bx + d * cosf(ang);
+            const float py = by + d * sinf(ang);
+            if (terrain->IsInWater(px, py, bz))
+            {
+                fx = px;
+                fy = py;
+                faceO = ang;
+                found = true;
+            }
+        }
+    }
+    if (!found)
+        return false;
+
+    // Fishing requires a pole equipped — swap one in, stowing the real weapon
+    // (remembered so RestoreFishingWeapon can put it back before combat).
+    Item* mh = b->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND);
+    if (!IsFishingPole(mh))
+    {
+        Item* pole = FindFishingPole(b);
+        if (!pole)
+            return false; // no pole, can't fish
+        uint16 dest;
+        if (b->CanEquipItem(EQUIPMENT_SLOT_MAINHAND, dest, pole, true) != EQUIP_ERR_OK)
+            return false;
+        s_fishSavedWeapon[bot] = mh ? mh->GetObjectGuid().GetRawValue() : 0;
+        b->EquipItem(dest, pole, true);
+    }
+
+    // Face the water, hold still, and cast.
+    b->SetFacingTo(faceO);
     b->GetMotionMaster()->Clear();
     b->GetMotionMaster()->MoveIdle();
 
-    // Cast fishing spell
     Spell* spell = new Spell(b, spellInfo, false);
     SpellCastTargets targets;
-    targets.setDestination(b->GetPositionX() + 3.0f * cos(b->GetOrientation()),
-                           b->GetPositionY() + 3.0f * sin(b->GetOrientation()),
-                           b->GetPositionZ());
-    spell->SpellStart(&targets);
-    return true;
+    targets.setDestination(fx, fy, fz);
+    return spell->SpellStart(&targets) == SPELL_CAST_OK;
+}
+
+uint32_t BotBridge::CB_UpdateFishing(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+
+    // Done fishing (fighting or walked off) — put the real weapon back.
+    if (b->IsInCombat() || b->IsMoving())
+    {
+        RestoreFishingWeapon(b, bot);
+        return 0;
+    }
+
+    GameObject* bobber = b->GetGameObject(7731);
+    if (!bobber)
+        return 0; // cast ended (timed out or already caught) — caller recasts
+
+    // GO_READY on a fishing bobber == a fish is biting. Use it to reel in:
+    // this resolves the catch server-side, granting the fishing skill-up
+    // (and the loot), which is the whole point of fishing.
+    if (bobber->GetLootState() == GO_READY)
+    {
+        bobber->Use(b);
+        return 2;
+    }
+    return 1; // bobber out, still waiting for a bite
 }
 
 // ── Battleground ─────────────────────────────────────────────────────────────

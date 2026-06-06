@@ -991,8 +991,13 @@ pub enum Bt {
     EquipItem(ItemId),
     /// Unequip an item slot.
     UnequipSlot(u8),
-    /// Cast fishing and wait for catch.
+    /// Start a fresh fishing cast — gated on having the fishing skill, a pole,
+    /// and water in reach. Running once the line is out.
     Fish,
+    /// Keep an in-progress fishing cast going: reel in a bite (skill-up) and
+    /// recast. Running while a bobber is out, Failure when not fishing. Placed
+    /// ahead of other idle behaviour so a fishing bot isn't yanked off mid-cast.
+    ContinueFishing,
     /// Play a random emote (non-RPG context — e.g. idle chatter).
     RandomEmote,
     /// Say a random message (RP phrases, idle chatter).
@@ -2253,6 +2258,7 @@ impl BtNode for Bt {
             Bt::AhPost => tick_ah_post(ctx),
             Bt::AhBid => tick_ah_bid(ctx),
             Bt::Fish => tick_fish(ctx),
+            Bt::ContinueFishing => tick_fish_continue(ctx),
             Bt::LfgJoin => tick_lfg_join(ctx),
             Bt::LfgAccept => tick_lfg_accept(ctx),
             Bt::AcceptBgInvite => tick_accept_bg_invite(ctx),
@@ -3996,11 +4002,36 @@ fn tick_ah_bid(ctx: &mut TickContext<'_>) -> BtResult {
     }
 }
 
+/// Skill id for Fishing (matches `factory::init_trade_skills`).
+const SKILL_FISHING: u32 = 356;
+
 fn tick_fish(ctx: &mut TickContext<'_>) -> BtResult {
+    // Only actual fishers bother — and `start_fishing` itself fails out fast
+    // when there's no pole or no water within reach.
+    if ctx.interface.bot_get_skill_value(SKILL_FISHING) == 0 {
+        return BtResult::Failure;
+    }
     if ctx.interface.start_fishing() {
         BtResult::Running
     } else {
         BtResult::Failure
+    }
+}
+
+/// Keep a running fishing cast alive: reel in a bite (which grants the skill-up)
+/// and immediately recast. Returns Failure when no bobber is out, so it only
+/// "sticks" while the bot is actually fishing.
+fn tick_fish_continue(ctx: &mut TickContext<'_>) -> BtResult {
+    match ctx.interface.update_fishing() {
+        // 2 = caught a fish this tick — recast to keep the skill ticking up.
+        2 => {
+            ctx.interface.start_fishing();
+            BtResult::Running
+        }
+        // 1 = bobber out, waiting for a bite.
+        1 => BtResult::Running,
+        // 0 = not fishing (cast ended / never started).
+        _ => BtResult::Failure,
     }
 }
 

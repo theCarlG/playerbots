@@ -1482,6 +1482,10 @@ impl World for VtableWorld {
         unsafe { (self.cbs.start_fishing.unwrap())(self.handle) }
     }
 
+    fn update_fishing(&self) -> u32 {
+        unsafe { (self.cbs.update_fishing.unwrap())(self.handle) }
+    }
+
     fn queue_bg(&self) -> bool {
         unsafe { (self.cbs.queue_bg.unwrap())(self.handle) }
     }

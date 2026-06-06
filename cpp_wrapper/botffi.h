@@ -1297,8 +1297,15 @@ typedef struct BotCallbacks {
 
     /* ── Fishing ─────────────────────────────────────────────────────── */
 
-    /* Start fishing (equip pole + cast). Returns true if cast started. */
+    /* Start fishing: equip a pole if needed, find nearby water, face it and
+       cast. Returns false if the bot has no pole or no water is in reach. */
     bool (*start_fishing)(BotHandle bot);
+
+    /* Service an in-progress cast's fishing bobber. Returns:
+       0 = no bobber (cast finished / never started),
+       1 = bobber out, not yet biting (keep waiting),
+       2 = bite caught this call (skill/loot resolved — recast). */
+    uint32_t (*update_fishing)(BotHandle bot);
 
     /* ── BG/Arena ────────────────────────────────────────────────────── */
 

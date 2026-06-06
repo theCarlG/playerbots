@@ -1566,9 +1566,18 @@ pub trait World: Send {
 
     /* ── Fishing ─────────────────────────────────────────────────────── */
 
-    /// Start fishing (equip pole + cast).
+    /// Start fishing: equip a pole if needed, find nearby water, face it and
+    /// cast. Returns false if the bot has no pole or no water is in reach.
     fn start_fishing(&self) -> bool {
         false
+    }
+
+    /// Service an in-progress fishing cast's bobber. Returns the fishing
+    /// status: 0 = no bobber (cast finished / never started), 1 = bobber out
+    /// and still waiting for a bite, 2 = a bite was caught this call (the
+    /// skill-up + loot resolved — the caller should recast).
+    fn update_fishing(&self) -> u32 {
+        0
     }
 
     /* ── BG/Arena ────────────────────────────────────────────────────── */
