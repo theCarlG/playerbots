@@ -1056,6 +1056,15 @@ pub enum Bt {
     RpgInteractNpc,
     /// Play a random emote.
     RpgEmote,
+    /// Useful local town errands — walk to a nearby vendor/repairer/quest
+    /// giver and do business (sell junk, repair, hand in finished quests),
+    /// like a player passing through town. Returns Running while travelling,
+    /// Success after an errand, Failure when there's nothing useful nearby.
+    RpgErrands,
+    /// Stroll over to a random nearby town NPC and chat — pure "looks busy /
+    /// human" behaviour. Commits to one target until reached (held on the
+    /// blackboard) so the bot walks there smoothly instead of dithering.
+    RpgVisitNpc,
 
     // ── Gathering ────────────────────────────────────────────────────────
     /// True if the bot has a gathering profession.
@@ -2265,6 +2274,8 @@ impl BtNode for Bt {
             // ── RPG ──────────────────────────────────────────────────────
             Bt::RpgWander => tick_rpg_wander(ctx),
             Bt::RpgInteractNpc => tick_rpg_interact(ctx),
+            Bt::RpgErrands => tick_rpg_errands(ctx),
+            Bt::RpgVisitNpc => tick_rpg_visit(ctx),
             Bt::RpgEmote => tick_rpg_emote(ctx),
 
             // ── Gathering ────────────────────────────────────────────────
@@ -3385,12 +3396,14 @@ fn tick_protect(ctx: &mut TickContext<'_>) -> BtResult {
 
 // ── World action helpers ────────────────────────────────────────────────────
 
+// `UNIT_NPC_FLAG_*` values are expansion-specific (renumbered in TBC) — see
+// `crate::npc_flags`. Using the wrong layout silently scans the wrong NPCs.
 /// NPC flag bitmask for vendors.
-const NPC_FLAG_VENDOR: u32 = 0x80;
+const NPC_FLAG_VENDOR: u32 = crate::npc_flags::VENDOR;
 /// NPC flag bitmask for repair-capable NPCs.
-const NPC_FLAG_REPAIR: u32 = 0x1000;
+const NPC_FLAG_REPAIR: u32 = crate::npc_flags::REPAIR;
 /// NPC flag for quest givers.
-const NPC_FLAG_QUESTGIVER: u32 = 0x02;
+const NPC_FLAG_QUESTGIVER: u32 = crate::npc_flags::QUESTGIVER;
 
 fn tick_loot(ctx: &mut TickContext<'_>) -> BtResult {
     let lootable = ctx.interface.get_nearby_lootable(15.0);
@@ -5016,6 +5029,125 @@ fn tick_rpg_emote(ctx: &mut TickContext<'_>) -> BtResult {
     } else {
         BtResult::Failure
     }
+}
+
+/// Town-scale range for picking errand / visit NPCs — wide enough to walk
+/// across a city district to the right NPC, unlike the tight 15-30y the
+/// opportunistic maintenance-tree errands use.
+const ERRAND_RANGE: f32 = 60.0;
+
+/// `Bt::RpgErrands` — useful local town business. Mirrors the old `RpgVendor` /
+/// `RpgQuest` sub-actions: walk to a nearby NPC and do something productive. Each
+/// step is a self-clearing concrete need (durability recovers, junk leaves the
+/// bags, the completed quest turns in), so this never loops on a target with
+/// nothing to offer. Returns Running while walking, Success after the errand,
+/// Failure when there's nothing to do nearby (caller falls through to wander).
+fn tick_rpg_errands(ctx: &mut TickContext<'_>) -> BtResult {
+    // 1) Repair gear that's getting low when a repairer is in town.
+    if ctx.settings.auto_repair && ctx.interface.get_durability_pct() < 0.5 {
+        let npcs = ctx.interface.get_nearby_npcs(ERRAND_RANGE, NPC_FLAG_REPAIR);
+        if let Some(&npc) = npcs.first() {
+            return approach_and_interact(ctx, npc, |ctx| {
+                ctx.interface.repair_all();
+                BtResult::Success
+            });
+        }
+    }
+    // 2) Offload grey/junk at a vendor.
+    if ctx.settings.auto_vendor && ctx.interface.has_sellable_items() {
+        let npcs = ctx.interface.get_nearby_npcs(ERRAND_RANGE, NPC_FLAG_VENDOR);
+        if let Some(&npc) = npcs.first() {
+            return approach_and_interact(ctx, npc, |ctx| {
+                ctx.interface.sell_grey_items();
+                BtResult::Success
+            });
+        }
+    }
+    // 3) Hand in any completed quest at a quest giver.
+    let complete_quest = {
+        let quests = ctx.interface.get_quest_log();
+        quests.iter().find(|q| q.complete).map(|q| q.quest_id)
+    };
+    if let Some(quest_id) = complete_quest {
+        let npcs = ctx.interface.get_nearby_npcs(ERRAND_RANGE, NPC_FLAG_QUESTGIVER);
+        if let Some(&npc) = npcs.first() {
+            return approach_and_interact(ctx, npc, |ctx| {
+                if ctx.interface.turn_in_quest(npc, quest_id) {
+                    say_quest_done(ctx, quest_id);
+                    BtResult::Success
+                } else {
+                    BtResult::Failure
+                }
+            });
+        }
+    }
+    BtResult::Failure
+}
+
+/// `Bt::RpgVisitNpc` — stroll over to a nearby town NPC and open a chat, purely
+/// to look busy and human (the old base-`rpg` "visit a friendly NPC" behaviour).
+/// The destination is a position held on the blackboard until reached, so the
+/// bot walks there in one continuous line rather than re-picking every tick.
+fn tick_rpg_visit(ctx: &mut TickContext<'_>) -> BtResult {
+    use crate::engine::blackboard::{Key, Value};
+
+    const ARRIVAL_SQ: f32 = 6.0 * 6.0;
+
+    // Resume an in-progress visit.
+    if let (Some(dx), Some(dy), Some(dz)) = (
+        ctx.blackboard.get_f32(Key::RpgVisitDestX),
+        ctx.blackboard.get_f32(Key::RpgVisitDestY),
+        ctx.blackboard.get_f32(Key::RpgVisitDestZ),
+    ) {
+        let pos = &ctx.snap.self_.pos;
+        let dist_sq = (pos.x - dx).powi(2) + (pos.y - dy).powi(2);
+        if dist_sq <= ARRIVAL_SQ {
+            // Arrived — chat with whichever interesting NPC is right here.
+            let npcs = ctx
+                .interface
+                .get_nearby_npcs(8.0, crate::npc_flags::RPG_VISIT_MASK);
+            if let Some(&npc) = npcs.first() {
+                ctx.interface.interact_npc(npc);
+            }
+            ctx.blackboard.clear(Key::RpgVisitDestX);
+            ctx.blackboard.clear(Key::RpgVisitDestY);
+            ctx.blackboard.clear(Key::RpgVisitDestZ);
+            return BtResult::Success;
+        }
+        if ctx.interface.move_to(dx, dy, dz) {
+            return BtResult::Running;
+        }
+        ctx.blackboard.clear(Key::RpgVisitDestX);
+        ctx.blackboard.clear(Key::RpgVisitDestY);
+        ctx.blackboard.clear(Key::RpgVisitDestZ);
+        return BtResult::Failure;
+    }
+
+    // No target — pick a town NPC a little way off (so the bot actually walks).
+    let npcs = ctx
+        .interface
+        .get_nearby_npcs(ERRAND_RANGE, crate::npc_flags::RPG_VISIT_MASK);
+    if npcs.is_empty() {
+        return BtResult::Failure;
+    }
+    // Pseudo-random pick (varies by time) for variety, skipping any NPC we're
+    // already standing on.
+    let start = (ctx.server_time_ms / 1000) as usize % npcs.len();
+    for off in 0..npcs.len() {
+        let npc = npcs[(start + off) % npcs.len()];
+        if ctx.interface.unit_distance(npc) < 10.0 {
+            continue;
+        }
+        let snap = ctx.interface.get_unit_snapshot(npc);
+        ctx.blackboard
+            .set(Key::RpgVisitDestX, Value::F32(snap.pos.x));
+        ctx.blackboard
+            .set(Key::RpgVisitDestY, Value::F32(snap.pos.y));
+        ctx.blackboard
+            .set(Key::RpgVisitDestZ, Value::F32(snap.pos.z));
+        return BtResult::Running;
+    }
+    BtResult::Failure
 }
 
 // ── Gathering helpers ───────────────────────────────────────────────────────

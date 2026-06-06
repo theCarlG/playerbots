@@ -27,6 +27,7 @@ pub mod logging;
 pub mod login;
 pub mod manager;
 pub mod noncombat;
+pub mod npc_flags;
 pub mod random;
 pub mod random_mgr;
 pub mod rtsc;

@@ -2700,10 +2700,11 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
             }
         }
         BotCommand::Trainer => {
-            // PB2 "trainer" — visit nearby trainer. NPC flag 0x10 = TRAINER.
-            let npcs = bot
-                .interface
-                .get_nearby_npcs(crate::config::get().nearby_scan_range, 0x10);
+            // PB2 "trainer" — visit nearby trainer.
+            let npcs = bot.interface.get_nearby_npcs(
+                crate::config::get().nearby_scan_range,
+                crate::npc_flags::TRAINER,
+            );
             if let Some(&npc) = npcs.first() {
                 bot.interface.interact_npc(npc);
                 // After interaction, the C++ side handles the trainer
@@ -2712,10 +2713,10 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         }
         BotCommand::Taxi => {
             // PB2 "taxi" — interact with nearest flightmaster.
-            // NPC flag 0x200 = FLIGHTMASTER.
-            let npcs = bot
-                .interface
-                .get_nearby_npcs(crate::config::get().nearby_scan_range, 0x200);
+            let npcs = bot.interface.get_nearby_npcs(
+                crate::config::get().nearby_scan_range,
+                crate::npc_flags::FLIGHTMASTER,
+            );
             if let Some(&npc) = npcs.first() {
                 bot.interface.interact_npc(npc);
             }
@@ -2753,10 +2754,10 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         }
         BotCommand::Bank => {
             // PB2 "bank"/"gb" — interact with nearest banker.
-            // NPC flag 0x20 = BANKER.
-            let npcs = bot
-                .interface
-                .get_nearby_npcs(crate::config::get().nearby_scan_range, 0x20);
+            let npcs = bot.interface.get_nearby_npcs(
+                crate::config::get().nearby_scan_range,
+                crate::npc_flags::BANKER,
+            );
             if let Some(&npc) = npcs.first() {
                 bot.interface.interact_npc(npc);
             }
@@ -2781,10 +2782,10 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
         }
         BotCommand::AuctionHouse(_args) => {
             // PB2 "ah" — interact with nearest auctioneer.
-            // NPC flag 0x40000 = AUCTIONEER.
-            let npcs = bot
-                .interface
-                .get_nearby_npcs(crate::config::get().nearby_scan_range, 0x40000);
+            let npcs = bot.interface.get_nearby_npcs(
+                crate::config::get().nearby_scan_range,
+                crate::npc_flags::AUCTIONEER,
+            );
             if let Some(&npc) = npcs.first() {
                 bot.interface.interact_npc(npc);
             }
@@ -2828,18 +2829,20 @@ fn apply_command(bot: &mut BotState, pc: &PendingCommand) {
 
         BotCommand::Buy => {
             // PB2 "b" — buy from targeted vendor. Interact with nearest vendor NPC.
-            let npcs = bot
-                .interface
-                .get_nearby_npcs(crate::config::get().nearby_scan_range, 0x80); // UNIT_NPC_FLAG_VENDOR
+            let npcs = bot.interface.get_nearby_npcs(
+                crate::config::get().nearby_scan_range,
+                crate::npc_flags::VENDOR,
+            );
             if let Some(&npc) = npcs.first() {
                 bot.interface.interact_npc(npc);
             }
         }
         BotCommand::Buyback => {
             // PB2 "bb" — buyback from vendor. Same NPC interaction as buy.
-            let npcs = bot
-                .interface
-                .get_nearby_npcs(crate::config::get().nearby_scan_range, 0x80);
+            let npcs = bot.interface.get_nearby_npcs(
+                crate::config::get().nearby_scan_range,
+                crate::npc_flags::VENDOR,
+            );
             if let Some(&npc) = npcs.first() {
                 bot.interface.interact_npc(npc);
             }
