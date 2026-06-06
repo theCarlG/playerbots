@@ -12,8 +12,11 @@ pub fn rpg_subtree() -> Bt {
             Bt::throttle(30_000, RpgInteractNpc),
             // Emote occasionally.
             Bt::throttle(60_000, RpgEmote),
-            // Wander to a random nearby point.
-            Bt::throttle(10_000, RpgWander),
+            // Wander to a random nearby point. Short re-roll gap (a few
+            // seconds, not 10) so the bot strings legs together and walks
+            // around continuously like a player, instead of taking one short
+            // hop then standing still for ages (reads as "tapping W").
+            Bt::throttle(3_000, RpgWander),
             // Stand still if nothing to do.
             StopMoving,
         ),

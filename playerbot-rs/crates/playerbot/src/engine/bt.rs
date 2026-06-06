@@ -4974,8 +4974,10 @@ fn tick_rpg_wander(ctx: &mut TickContext<'_>) -> BtResult {
         return BtResult::Failure;
     }
 
-    // No saved destination — pick a new one.
-    if let Some(pos) = ctx.interface.get_random_point_nearby(20.0)
+    // No saved destination — pick a new one. A longer leg (40y, not 20)
+    // means the bot covers ground in one continuous walk rather than a stop-
+    // start shuffle, which is what a real player looks like when travelling.
+    if let Some(pos) = ctx.interface.get_random_point_nearby(40.0)
         && ctx.interface.move_to(pos.x, pos.y, pos.z)
     {
         ctx.blackboard.set(Key::RpgWanderDestX, Value::F32(pos.x));

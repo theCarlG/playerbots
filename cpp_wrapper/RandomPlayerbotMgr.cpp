@@ -310,7 +310,7 @@ void RandomPlayerbotMgr::UpdateAIInternal(uint32 elapsed, bool minimal)
     if (s_activityAccum >= 60000)
     {
         s_activityAccum = 0;
-        uint32 bots = 0, inCombat = 0, moving = 0, dead = 0;
+        uint32 bots = 0, inCombat = 0, moving = 0, dead = 0, mounted = 0;
         {
             HashMapHolder<Player>::ReadGuard g(HashMapHolder<Player>::GetLock());
             for (auto const& it : sObjectAccessor.GetPlayers())
@@ -327,11 +327,13 @@ void RandomPlayerbotMgr::UpdateAIInternal(uint32 elapsed, bool minimal)
                         ++inCombat;
                     if (p->IsMoving())
                         ++moving;
+                    if (p->IsMounted())
+                        ++mounted;
                 }
             }
         }
-        sLog.outString("[BotActivity] online=%u inCombat=%u moving=%u dead=%u",
-                       bots, inCombat, moving, dead);
+        sLog.outString("[BotActivity] online=%u inCombat=%u moving=%u mounted=%u dead=%u",
+                       bots, inCombat, moving, mounted, dead);
     }
 
     SetAIInternalUpdateDelay(playerbot_config_random_bot_update_interval());

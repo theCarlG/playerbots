@@ -2246,37 +2246,55 @@ bool BotBridge::CB_MountUp(BotHandle bot)
     if (!b || b->IsMounted() || b->IsInCombat())
         return false;
 
-    // Find the best mount spell the bot knows.
-    // Epic mounts (level 60 riding): 23228 (Swift Palomino), etc.
-    // Regular mounts (level 40 riding).
-    // We look for any mount aura the bot can cast.
-    static const uint32_t mountSpells[] = {
-        // Epic mounts (60% → 100% speed)
-        23228, 23229, 23227, 23338, 23219, 23221, 23246, 23247, 23248, 23249,
-        23250, 23251, 23252, 23338, 23509, 23510,
-        // Regular mounts (40 → 60% speed)
-        6898, 6899, 6648, 458, 470, 580, 8394, 8395, 10793, 10796, 10969,
-        17229, 17450, 17459, 17460, 17461, 17462, 17463, 17464, 17465,
-        // Catch-all: Summon Charger / Warhorse (Paladin), Felsteed (Warlock)
-        13819, 23214, 34767, 34769, 5784, 23161,
-        0
-    };
-
-    for (int i = 0; mountSpells[i] != 0; ++i)
+    // Scan the bot's spellbook for the fastest mount it actually knows, rather
+    // than matching a hardcoded ID list. That list had drifted out of sync with
+    // the factory's per-race mount pools (all Dwarf/Gnome/Troll fast mounts,
+    // both Tauren slow mounts, Orc 6653/6654, several others were missing), so
+    // those bots learned a mount they could never ride. A mount spell applies
+    // SPELL_AURA_MOUNTED; the speed bonus rides on a separate
+    // SPELL_AURA_MOD_INCREASE_MOUNTED_SPEED effect, which we use to prefer the
+    // epic (fast) mount when the bot owns several. Works for any race/class/
+    // expansion automatically and never goes stale.
+    uint32_t bestSpell = 0;
+    int32_t  bestSpeed = -1;
+    PlayerSpellMap const& spells = b->GetSpellMap();
+    for (PlayerSpellMap::const_iterator it = spells.begin(); it != spells.end(); ++it)
     {
-        if (b->HasSpell(mountSpells[i]) && b->IsSpellReady(mountSpells[i]))
+        if (it->second.state == PLAYERSPELL_REMOVED || it->second.disabled)
+            continue;
+
+        uint32_t spellId = it->first;
+        SpellEntry const* info = sSpellTemplate.LookupEntry<SpellEntry>(spellId);
+        if (!info)
+            continue;
+
+        bool    isMount = false;
+        int32_t speed   = 0;
+        for (int e = 0; e < MAX_EFFECT_INDEX; ++e)
         {
-            SpellEntry const* info = sSpellTemplate.LookupEntry<SpellEntry>(mountSpells[i]);
-            if (!info)
-                continue;
-            Spell* spell = new Spell(b, info, false);
-            SpellCastTargets targets;
-            targets.setUnitTarget(b);
-            spell->SpellStart(&targets);
-            return true;
+            if (info->EffectApplyAuraName[e] == SPELL_AURA_MOUNTED)
+                isMount = true;
+            else if (info->EffectApplyAuraName[e] == SPELL_AURA_MOD_INCREASE_MOUNTED_SPEED)
+                speed = info->EffectBasePoints[e];
+        }
+        if (!isMount || !b->IsSpellReady(spellId))
+            continue;
+
+        if (speed > bestSpeed)
+        {
+            bestSpeed = speed;
+            bestSpell = spellId;
         }
     }
-    return false;
+    if (!bestSpell)
+        return false;
+
+    SpellEntry const* info = sSpellTemplate.LookupEntry<SpellEntry>(bestSpell);
+    Spell* spell = new Spell(b, info, false);
+    SpellCastTargets targets;
+    targets.setUnitTarget(b);
+    spell->SpellStart(&targets);
+    return true;
 }
 
 bool BotBridge::CB_Dismount(BotHandle bot)
