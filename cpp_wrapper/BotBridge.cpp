@@ -2757,7 +2757,11 @@ bool BotBridge::CB_NpcHasAvailableQuest(BotHandle bot, UnitHandle npc)
     for (auto it = bounds.first; it != bounds.second; ++it)
     {
         Quest const* quest = sObjectMgr.GetQuestTemplate(it->second);
-        if (quest && b->CanTakeQuest(quest, false) && b->CanAddQuest(quest, false))
+        // Only quests the bot hasn't touched yet (status NONE) and can take/hold
+        // count as "available" — a quest already in the log (in progress) must
+        // NOT make the giver look available, or the bot keeps walking back to it.
+        if (quest && b->GetQuestStatus(it->second) == QUEST_STATUS_NONE
+            && b->CanTakeQuest(quest, false) && b->CanAddQuest(quest, false))
             return true;
     }
     return false;

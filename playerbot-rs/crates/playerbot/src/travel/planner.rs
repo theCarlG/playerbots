@@ -78,16 +78,19 @@ pub fn evaluate_needs(
         needs.push((TravelPurpose::QUEST_TAKER, 6.85));
     }
 
-    // Quest giver — when quest log has free slots.
-    if free_quest_slots > 0 {
-        needs.push((TravelPurpose::QUEST_GIVER, 6.84));
-    }
-
     // Quest objective — route to where the incomplete quests' required mobs
     // are (resolved via FindCreatureData on the C++ side), instead of
-    // grinding wherever the bot happens to be standing.
+    // grinding wherever the bot happens to be standing. Ranked ABOVE the quest
+    // giver: do the quests we already hold before collecting more. Otherwise a
+    // bot with free log slots keeps walking back to the (now exhausted) giver
+    // and never works its objective — it just oscillates.
     if has_incomplete_quests {
-        needs.push((TravelPurpose::QUEST_ALL_OBJ, 6.83));
+        needs.push((TravelPurpose::QUEST_ALL_OBJ, 6.84));
+    }
+
+    // Quest giver — when quest log has free slots (and nothing more pressing).
+    if free_quest_slots > 0 {
+        needs.push((TravelPurpose::QUEST_GIVER, 6.83));
     }
 
     // Grind — always available as fallback.
