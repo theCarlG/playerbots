@@ -473,14 +473,22 @@ fn mode_dispatch() -> Bt {
                 // (Starting a cast still happens in rpg, only when nothing to
                 // grind; this just keeps an in-progress one alive.)
                 Bt::ContinueFishing,
-                // Fight first: a masterless bot grinds nearby level-appropriate
-                // mobs before wandering off. This was LAST, so travel and
-                // especially rpg's RpgWander always preempted it — bots roamed
-                // (~30% moving) but were almost never in combat (0-3 of ~989).
-                // With grind ahead, they actually kill mobs, loot, and level;
-                // travel/rpg only fire when there's nothing nearby to fight.
-                world::grind::grind_subtree(),
+                // Quest like a real player: accept quests from nearby givers,
+                // work objectives (kill quest mobs / use quest objects), and
+                // hand in finished ones. Self-gates to Failure when there's no
+                // quest work in reach, so it's transparent for bots with nothing
+                // to do. Ahead of grind so a questing bot fights its QUEST mobs
+                // rather than grinding whatever's underfoot to death.
+                world::quest::quest_subtree(),
+                // Travel to a purpose — quest giver / objective / turn-in, or a
+                // repair/vendor/grind destination (planner picks by need). Ahead
+                // of grind so the bot walks to its quests instead of grinding in
+                // place; the nearby grind below is the fallback when there's no
+                // destination to travel to.
                 crate::strategies::travel::build(),
+                // Grind nearby level-appropriate mobs when there's nothing to
+                // quest or travel toward — still better than idle wandering.
+                world::grind::grind_subtree(),
                 world::rpg::rpg_subtree(),
             ),
         ),

@@ -310,6 +310,8 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.get_corpse_position = CB_GetCorpsePosition;
     cbs.use_spirit_healer   = CB_UseSpiritHealer;
     cbs.resurrect_self      = CB_ResurrectSelf;
+    cbs.release_spirit      = CB_ReleaseSpirit;
+    cbs.reclaim_corpse      = CB_ReclaimCorpse;
 
     // Mount
     cbs.is_mounted          = CB_IsMounted;
@@ -2247,6 +2249,42 @@ bool BotBridge::CB_ResurrectSelf(BotHandle bot)
     return true;
 }
 
+bool BotBridge::CB_ReleaseSpirit(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b || b->IsAlive())
+        return false;
+    // Already released (ghost)? Nothing to do — the corpse run handles the rest.
+    if (b->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_GHOST))
+        return false;
+
+    // Release: spawn the corpse at the death spot and teleport the ghost to the
+    // nearest graveyard, exactly like a player clicking "Release Spirit". The
+    // bot then runs back to its corpse and reclaims it (CB_ReclaimCorpse).
+    b->BuildPlayerRepop();
+    b->RepopAtGraveyard();
+    return true;
+}
+
+bool BotBridge::CB_ReclaimCorpse(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b || b->IsAlive())
+        return false;
+    if (!b->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_GHOST))
+        return false; // must release first
+
+    Corpse* corpse = b->GetCorpse();
+    if (!corpse || !b->IsWithinDistInMap(corpse, 11.0f))
+        return false; // not standing on the corpse yet — keep corpse-running
+
+    // Reclaim: resurrect on the spot at full HP, no resurrection sickness
+    // (a normal corpse-run reclaim, not a spirit-healer revive).
+    b->ResurrectPlayer(1.0f, false);
+    b->SpawnCorpseBones();
+    return true;
+}
+
 // ── Mount ─────────────────────────────────────────────────────────────────
 
 bool BotBridge::CB_IsMounted(BotHandle bot)
@@ -2678,6 +2716,12 @@ bool BotBridge::CB_AcceptAllQuests(BotHandle bot, UnitHandle npc)
         uint32_t questId = it->second;
         Quest const* quest = sObjectMgr.GetQuestTemplate(questId);
         if (!quest || !b->CanTakeQuest(quest, false))
+            continue;
+
+        // Guard the 20-slot quest-log limit: AddQuest asserts if the log is
+        // full (and CanTakeQuest doesn't check that here). CanAddQuest also
+        // verifies bag room for any quest-provided items.
+        if (!b->CanAddQuest(quest, false))
             continue;
 
         b->AddQuest(quest, creature);

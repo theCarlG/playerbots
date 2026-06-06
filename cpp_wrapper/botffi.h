@@ -431,6 +431,14 @@ typedef struct BotCallbacks {
      * already alive or cannot be safely revived. */
     bool        (*resurrect_self)(BotHandle bot);
 
+    /* Release the spirit: become a ghost at the nearest graveyard (the corpse
+     * stays at the death spot). Returns true if it released this call, false if
+     * already a ghost / still alive. The bot then corpse-runs back. */
+    bool        (*release_spirit)(BotHandle bot);
+    /* Reclaim the corpse: if a ghost standing on (within reclaim range of) its
+     * own corpse, resurrect there with no sickness. Returns true if reclaimed. */
+    bool        (*reclaim_corpse)(BotHandle bot);
+
     /* ── Mount ───────────────────────────────────────────────────────── */
     bool (*is_mounted)(BotHandle bot);
     bool (*mount_up)(BotHandle bot);

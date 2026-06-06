@@ -281,6 +281,19 @@ pub trait World: Send {
         false
     }
 
+    /// Release the spirit — become a ghost at the nearest graveyard so the bot
+    /// can corpse-run back. Returns true if it released this call (false if
+    /// already a ghost or still alive).
+    fn release_spirit(&self) -> bool {
+        false
+    }
+
+    /// Reclaim the corpse — if a ghost standing on its own corpse, resurrect
+    /// there (no sickness). Returns true if it reclaimed.
+    fn reclaim_corpse(&self) -> bool {
+        false
+    }
+
     /* ── Mount ──────────────────────────────────────────────────────── */
 
     fn is_mounted(&self) -> bool {

@@ -687,6 +687,13 @@ pub enum Bt {
     // ── World actions ────────────────────────────────────────────────────
     /// Accept a pending resurrect from another player.
     AcceptResurrect,
+    /// Release the spirit (become a ghost at the graveyard) so the bot can
+    /// corpse-run. Success when it releases this tick, Failure if already a
+    /// ghost (so the death tree falls through to the corpse run).
+    ReleaseSpirit,
+    /// Reclaim the corpse — resurrect when the ghost is standing on its body.
+    /// Failure when not yet there, so the corpse run keeps moving.
+    ReclaimCorpse,
     /// Move toward corpse position (ghost run).
     CorpseRun,
     /// Use spirit healer as last resort.
@@ -1987,6 +1994,8 @@ impl BtNode for Bt {
                     BtResult::Failure
                 }
             }
+            Bt::ReleaseSpirit => ok(ctx.interface.release_spirit()),
+            Bt::ReclaimCorpse => ok(ctx.interface.reclaim_corpse()),
             Bt::CorpseRun => {
                 if let Some(pos) = ctx.interface.get_corpse_position()
                     && ctx.interface.move_to(pos.x, pos.y, pos.z)

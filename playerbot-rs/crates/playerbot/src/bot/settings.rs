@@ -641,8 +641,13 @@ impl StrategySet {
     /// population module under Part 5 Step 5 follow-ups.
     pub fn pb2_defaults() -> Self {
         let mut s = Self::default();
+        // TRAVEL is on by default so a masterless bot will walk to a purpose —
+        // quest givers / objectives / turn-ins (and repair/vendor/grind spots) —
+        // via the travel planner, instead of only acting on whatever happens to
+        // be within 15-60y. This is what lets idle bots actually quest and level.
         s.slots[BotStateKind::NonCombat as usize] =
-            StrategyFlags(StrategyFlags::RETURN.0 | StrategyFlags::DELAYED_ROLL.0, 0);
+            StrategyFlags(StrategyFlags::RETURN.0 | StrategyFlags::DELAYED_ROLL.0, 0)
+                | StrategyFlags::TRAVEL;
         s
     }
 
@@ -1393,12 +1398,14 @@ mod tests {
 
     #[test]
     fn pb2_default_strategies_match_aiconfig_cpp() {
-        // PB2 AiFactory defaults: only NonCombat has `+return,+delayed roll`.
+        // PB2 AiFactory defaults: NonCombat has `+return,+delayed roll`, plus
+        // TRAVEL (added so masterless bots quest/travel to a purpose by default).
         let s = StrategySet::pb2_defaults();
         assert_eq!(s.get(BotStateKind::Combat), StrategyFlags::NONE);
         assert_eq!(
             s.get(BotStateKind::NonCombat),
             StrategyFlags(StrategyFlags::RETURN.0 | StrategyFlags::DELAYED_ROLL.0, 0)
+                | StrategyFlags::TRAVEL
         );
         assert_eq!(s.get(BotStateKind::Reaction), StrategyFlags::NONE);
         assert_eq!(s.get(BotStateKind::Dead), StrategyFlags::NONE);

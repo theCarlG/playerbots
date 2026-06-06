@@ -347,6 +347,14 @@ impl World for VtableWorld {
         unsafe { (self.cbs.resurrect_self.unwrap())(self.handle) }
     }
 
+    fn release_spirit(&self) -> bool {
+        unsafe { (self.cbs.release_spirit.unwrap())(self.handle) }
+    }
+
+    fn reclaim_corpse(&self) -> bool {
+        unsafe { (self.cbs.reclaim_corpse.unwrap())(self.handle) }
+    }
+
     /* ── Mount ──────────────────────────────────────────────────────── */
 
     fn is_mounted(&self) -> bool {

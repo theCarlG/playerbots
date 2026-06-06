@@ -107,6 +107,8 @@ namespace BotBridge
     BotPosition CB_GetCorpsePosition(BotHandle bot);
     bool        CB_UseSpiritHealer(BotHandle bot);
     bool        CB_ResurrectSelf(BotHandle bot);
+    bool        CB_ReleaseSpirit(BotHandle bot);
+    bool        CB_ReclaimCorpse(BotHandle bot);
 
     // ── Mount ──────────────────────────────────────────────────────────────
     bool CB_IsMounted(BotHandle bot);
