@@ -645,9 +645,11 @@ BotWorldSnapshot BotBridge::CB_GetSnapshot(BotHandle bot)
     if (!b)
         return snap;
 
-    // If the bot stowed its weapon to fish and is now fighting or on the move,
-    // swap the real weapon back before anything else this tick.
-    if (b->IsInCombat() || b->IsMoving())
+    // If the bot stowed its weapon to fish and is now fighting, swap the real
+    // weapon back before anything else this tick. (Not gated on movement —
+    // that would interrupt the fishing cast mid-channel; CB_UpdateFishing's
+    // time window handles the normal "done fishing" weapon restore.)
+    if (b->IsInCombat())
         RestoreFishingWeapon(b, bot);
 
     snap.self = FillUnitSnapshot(b);
@@ -7964,6 +7966,13 @@ static std::unordered_map<BotHandle, uint64_t> s_fishSavedWeapon;
 // bites reeled in). Read via extern from RandomPlayerbotMgr.
 std::atomic<uint64_t> g_botFishCasts{0};
 std::atomic<uint64_t> g_botFishCatches{0};
+std::atomic<uint64_t> g_botFishBobbers{0}; // ticks a bobber GO was actually out
+
+// When the bot's current fishing attempt should be given up on (unix seconds).
+// `SpellStart` queues the cast, so the channel/bobber aren't live on the very
+// next tick — keying stickiness on a time window holds the bot still through
+// that gap (and the whole ~20s cast) so it doesn't wander off and cancel itself.
+static std::unordered_map<BotHandle, time_t> s_fishingUntil;
 
 static bool IsFishingPole(Item* it)
 {
@@ -8067,20 +8076,20 @@ bool BotBridge::CB_StartFishing(BotHandle bot)
 
     const float bx = b->GetPositionX();
     const float by = b->GetPositionY();
-    const float bz = b->GetPositionZ();
+    // Match the spell's own water test height (caster Z + 1) so a direction we
+    // accept here also passes the spell's check when it places the bobber.
+    const float wz = b->GetPositionZ() + 1.0f;
     bool found = false;
-    float fx = 0.0f, fy = 0.0f, fz = bz, faceO = b->GetOrientation();
+    float faceO = b->GetOrientation();
     for (int r = 0; r < 16 && !found; ++r)
     {
         const float ang = b->GetOrientation() + (6.2831853f / 16.0f) * r;
-        for (float d = 4.0f; d <= 15.0f && !found; d += 3.0f)
+        for (float d = 5.0f; d <= 17.0f && !found; d += 3.0f)
         {
             const float px = bx + d * cosf(ang);
             const float py = by + d * sinf(ang);
-            if (terrain->IsInWater(px, py, bz))
+            if (terrain->IsInWater(px, py, wz))
             {
-                fx = px;
-                fy = py;
                 faceO = ang;
                 found = true;
             }
@@ -8109,17 +8118,33 @@ bool BotBridge::CB_StartFishing(BotHandle bot)
                     uint16((INVENTORY_SLOT_BAG_0 << 8) | EQUIPMENT_SLOT_MAINHAND));
     }
 
-    // Face the water, hold still, and cast.
+    // Face the water, hold still, and cast. Orientation is set directly (not
+    // just SetFacingTo, which only schedules a turn) because the fishing spell
+    // places its bobber from the caster's CURRENT orientation.
+    b->SetOrientation(faceO);
     b->SetFacingTo(faceO);
     b->GetMotionMaster()->Clear();
     b->GetMotionMaster()->MoveIdle();
 
+    // Cast with NO destination on purpose: the fishing spell effect only runs
+    // its bobber-on-water logic (water check + snap the bobber to the liquid
+    // surface) when the cast has no TARGET_FLAG_DEST_LOCATION. Passing a
+    // destination made the spell place the bobber at our raw point and skip all
+    // of that, so no usable bobber ever spawned (fishBobbers stayed 0). We've
+    // already faced real water above, so the spell's own check passes.
     Spell* spell = new Spell(b, spellInfo, false);
     SpellCastTargets targets;
-    targets.setDestination(fx, fy, fz);
     bool ok = spell->SpellStart(&targets) == SPELL_CAST_OK;
     if (ok)
+    {
         g_botFishCasts.fetch_add(1, std::memory_order_relaxed);
+        // Hold briefly at first — just long enough for the bobber to appear. If
+        // it does (real, fishable water) CB_UpdateFishing extends this to the
+        // full cast window; if it doesn't (cast bounced / not really fishable),
+        // the bot gives up after a few seconds and goes do something else
+        // instead of standing idle by the water looking like it's doing nothing.
+        s_fishingUntil[bot] = time(nullptr) + 4;
+    }
     return ok;
 }
 
@@ -8129,18 +8154,23 @@ uint32_t BotBridge::CB_UpdateFishing(BotHandle bot)
     if (!b)
         return 0;
 
-    // Fighting ends fishing — put the real weapon back. (Movement is NOT a
-    // stop signal here: the bot holds still while a line is out, and the
-    // channel itself breaks server-side if it does move.)
+    // Fighting ends fishing — put the real weapon back.
     if (b->IsInCombat())
     {
         RestoreFishingWeapon(b, bot);
+        s_fishingUntil.erase(bot);
         return 0;
     }
 
-    // A fish on the line? Reel it in — this resolves the catch server-side,
-    // granting the fishing skill-up (and loot), the whole point of fishing.
+    // A fish on the line? Reel it in — resolves the catch server-side, granting
+    // the fishing skill-up (and loot), the whole point of fishing.
     GameObject* bobber = b->GetGameObject(7731);
+    if (bobber)
+    {
+        g_botFishBobbers.fetch_add(1, std::memory_order_relaxed);
+        // Real line in the water — hold for the full bite window.
+        s_fishingUntil[bot] = time(nullptr) + 25;
+    }
     if (bobber && bobber->GetLootState() == GO_READY)
     {
         bobber->Use(b);
@@ -8148,18 +8178,17 @@ uint32_t BotBridge::CB_UpdateFishing(BotHandle bot)
         return 2;
     }
 
-    // Still fishing? Stay "running" so the bot holds position instead of
-    // wandering off and cancelling its own cast. The bobber GO spawns a moment
-    // AFTER the cast and the bite takes several seconds, so we key stickiness on
-    // the channelled fishing spell, not on the bobber being present yet — that
-    // bobber-only check made every bot recast on the first tick and never
-    // survive to a bite (fishCasts climbed, fishCatches stayed 0).
-    Spell* ch = b->GetCurrentSpell(CURRENT_CHANNELED_SPELL);
-    if ((ch && ch->m_spellInfo && ch->m_spellInfo->Id == 7731) || bobber)
+    // Within the cast window → stay "running" so the bot holds position. Keyed
+    // on a time window, not the channel/bobber: SpellStart queues the cast, so
+    // neither is live on the first tick, and keying on them made the bot give
+    // up immediately and recast forever (casts climbed, catches stayed 0).
+    auto it = s_fishingUntil.find(bot);
+    if (it != s_fishingUntil.end() && time(nullptr) < it->second)
         return 1;
 
-    // Not fishing anymore — restore the weapon.
+    // Window elapsed (no bite) or never fishing — restore the weapon and stop.
     RestoreFishingWeapon(b, bot);
+    s_fishingUntil.erase(bot);
     return 0;
 }
 

@@ -335,10 +335,12 @@ void RandomPlayerbotMgr::UpdateAIInternal(uint32 elapsed, bool minimal)
         }
         extern std::atomic<uint64_t> g_botFishCasts;
         extern std::atomic<uint64_t> g_botFishCatches;
+        extern std::atomic<uint64_t> g_botFishBobbers;
         sLog.outString(
-            "[BotActivity] online=%u inCombat=%u moving=%u mounted=%u dead=%u fishCasts=%llu fishCatches=%llu",
+            "[BotActivity] online=%u inCombat=%u moving=%u mounted=%u dead=%u fishCasts=%llu fishBobbers=%llu fishCatches=%llu",
             bots, inCombat, moving, mounted, dead,
             (unsigned long long)g_botFishCasts.load(std::memory_order_relaxed),
+            (unsigned long long)g_botFishBobbers.load(std::memory_order_relaxed),
             (unsigned long long)g_botFishCatches.load(std::memory_order_relaxed));
     }
 
