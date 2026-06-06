@@ -8129,27 +8129,38 @@ uint32_t BotBridge::CB_UpdateFishing(BotHandle bot)
     if (!b)
         return 0;
 
-    // Done fishing (fighting or walked off) — put the real weapon back.
-    if (b->IsInCombat() || b->IsMoving())
+    // Fighting ends fishing — put the real weapon back. (Movement is NOT a
+    // stop signal here: the bot holds still while a line is out, and the
+    // channel itself breaks server-side if it does move.)
+    if (b->IsInCombat())
     {
         RestoreFishingWeapon(b, bot);
         return 0;
     }
 
+    // A fish on the line? Reel it in — this resolves the catch server-side,
+    // granting the fishing skill-up (and loot), the whole point of fishing.
     GameObject* bobber = b->GetGameObject(7731);
-    if (!bobber)
-        return 0; // cast ended (timed out or already caught) — caller recasts
-
-    // GO_READY on a fishing bobber == a fish is biting. Use it to reel in:
-    // this resolves the catch server-side, granting the fishing skill-up
-    // (and the loot), which is the whole point of fishing.
-    if (bobber->GetLootState() == GO_READY)
+    if (bobber && bobber->GetLootState() == GO_READY)
     {
         bobber->Use(b);
         g_botFishCatches.fetch_add(1, std::memory_order_relaxed);
         return 2;
     }
-    return 1; // bobber out, still waiting for a bite
+
+    // Still fishing? Stay "running" so the bot holds position instead of
+    // wandering off and cancelling its own cast. The bobber GO spawns a moment
+    // AFTER the cast and the bite takes several seconds, so we key stickiness on
+    // the channelled fishing spell, not on the bobber being present yet — that
+    // bobber-only check made every bot recast on the first tick and never
+    // survive to a bite (fishCasts climbed, fishCatches stayed 0).
+    Spell* ch = b->GetCurrentSpell(CURRENT_CHANNELED_SPELL);
+    if ((ch && ch->m_spellInfo && ch->m_spellInfo->Id == 7731) || bobber)
+        return 1;
+
+    // Not fishing anymore — restore the weapon.
+    RestoreFishingWeapon(b, bot);
+    return 0;
 }
 
 // ── Battleground ─────────────────────────────────────────────────────────────
