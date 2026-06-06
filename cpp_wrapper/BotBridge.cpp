@@ -7300,6 +7300,28 @@ namespace
         }
         return sources;
     }
+
+    // quest id -> a creature entry that accepts its turn-in (involved relation),
+    // built once from the DB. Needed to route a bot to the right turn-in NPC:
+    // many quests (e.g. "report to X" intro quests) complete on accept and must
+    // be handed in at a SPECIFIC npc, not just any quest giver.
+    std::unordered_map<uint32_t, uint32_t> s_questTurnInCreature;
+    bool s_questTurnInLoaded = false;
+
+    void EnsureQuestTurnInIndex()
+    {
+        if (s_questTurnInLoaded)
+            return;
+        s_questTurnInLoaded = true;
+        auto result = WorldDatabase.Query("SELECT quest, id FROM creature_involvedrelation");
+        if (!result)
+            return;
+        do
+        {
+            Field* f = result->Fetch();
+            s_questTurnInCreature[f[0].GetUInt32()] = f[1].GetUInt32();
+        } while (result->NextRow());
+    }
 }
 
 BotTravelDest* BotBridge::CB_BotFindTravelDests(
@@ -7494,6 +7516,42 @@ BotTravelDest* BotBridge::CB_BotFindTravelDests(
                     break; // one routable loot source is enough for this item
                 }
             }
+        }
+    }
+
+    // Quest taker (TravelPurpose QUEST_TAKER = bit 5): route to the NPC that
+    // accepts a COMPLETE quest's turn-in. The NPC-flag grid search can't do
+    // this — the turn-in is a specific creature, and many quests (e.g. the
+    // undead "Rude Awakening" report quest) complete the instant they're
+    // accepted and must be handed in at a particular NPC, not the giver.
+    constexpr uint32_t QUEST_TAKER = 1u << 5;
+    if (purpose_flags & QUEST_TAKER)
+    {
+        EnsureQuestTurnInIndex();
+        for (auto const& qs : b->getQuestStatusMap())
+        {
+            if (qs.second.m_status != QUEST_STATUS_COMPLETE)
+                continue;
+            auto found = s_questTurnInCreature.find(qs.first);
+            if (found == s_questTurnInCreature.end())
+                continue;
+
+            FindCreatureData worker(found->second, b);
+            sObjectMgr.DoCreatureData(worker);
+            CreatureDataPair const* dp = worker.GetResult();
+            if (!dp)
+                continue;
+
+            const float dx = b->GetPositionX() - dp->second.posX;
+            const float dy = b->GetPositionY() - dp->second.posY;
+            candidates.push_back({
+                static_cast<int32_t>(found->second),
+                qs.first,
+                QUEST_TAKER,
+                dp->second.mapid,
+                dp->second.posX, dp->second.posY, dp->second.posZ,
+                dx * dx + dy * dy
+            });
         }
     }
 
