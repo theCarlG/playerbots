@@ -43,6 +43,7 @@
 #include "Maps/Map.h"
 #include "Maps/GridMap.h"
 #include <atomic>
+#include <unordered_set>
 #include "MotionGenerators/MotionMaster.h"
 #include "MotionGenerators/PathFinder.h"
 #include "Globals/ObjectMgr.h"
@@ -1416,19 +1417,20 @@ bool BotBridge::CB_MoveTo(BotHandle bot, float x, float y, float z)
     if (!b)
         return false;
 
-    // Ensure run mode — bots default to walking without this.
-    bool wasWalking = b->IsWalking();
-    if (wasWalking)
-        b->m_movementInfo.RemoveMovementFlag(MOVEFLAG_WALK_MODE);
-
     auto& st = s_moveState[bot];
-    // Skip if already heading to the same point AND not transitioning
-    // from walk to run (the existing spline was started in walk mode
-    // and needs to be replaced with a run-speed spline).
-    if (st.kind == MoveState::POINT && sameDest(st, x, y, z) && b->IsMoving() && !wasWalking)
-        return true; // already heading there at run speed
+    // Already heading to the same point — do NOT re-issue. Re-issuing MovePoint
+    // every tick restarts the spline: that's the "stagger" / pressing-W look on
+    // every bot, and on a self-bot it spams the real client a fresh spline each
+    // tick and desyncs it through the floor ("walks under the map").
+    if (st.kind == MoveState::POINT && sameDest(st, x, y, z) && b->IsMoving())
+        return true;
 
-    b->GetMotionMaster()->MovePoint(0, x, y, z);
+    // FORCED_MOVEMENT_RUN gives a proper run-speed spline (bots default to
+    // walk). This replaces the old hand-poke of MOVEFLAG_WALK_MODE, which was
+    // the actual bug: the manual flag didn't stick (the spline replayed in walk
+    // mode), so IsWalking stayed true and the old `!wasWalking` de-dup failed,
+    // re-issuing MovePoint every single tick.
+    b->GetMotionMaster()->MovePoint(0, x, y, z, FORCED_MOVEMENT_RUN);
     st.x = x; st.y = y; st.z = z;
     st.followTarget = 0; st.followDist = 0; st.followAngle = 0;
     st.kind = MoveState::POINT;
@@ -1462,16 +1464,16 @@ bool BotBridge::CB_Follow(BotHandle bot, UnitHandle target, float dist, float an
         return false;
 
     // Ensure run mode — bots default to walking without this.
-    bool wasWalking = b->IsWalking();
-    if (wasWalking)
+    if (b->IsWalking())
         b->m_movementInfo.RemoveMovementFlag(MOVEFLAG_WALK_MODE);
 
     auto& st = s_moveState[bot];
-    // Skip if already following the same target with the same params AND
-    // not transitioning from walk to run.
+    // Skip if already following the same target with the same params. Do NOT
+    // gate on walk-state: re-issuing MoveFollow every tick restarts the spline
+    // and staggers the bot (the same per-tick re-issue bug as CB_MoveTo).
     if (st.kind == MoveState::FOLLOW && st.followTarget == target
-        && sameFollowParams(st.followDist, dist, st.followAngle, angle) && !wasWalking)
-        return true; // already following at run speed
+        && sameFollowParams(st.followDist, dist, st.followAngle, angle))
+        return true; // already following
 
     b->GetMotionMaster()->MoveFollow(t, dist, angle);
     st.x = 0; st.y = 0; st.z = 0;
@@ -7975,6 +7977,9 @@ std::atomic<uint64_t> g_botFishBobbers{0}; // ticks a bobber GO was actually out
 // that gap (and the whole ~20s cast) so it doesn't wander off and cancel itself.
 static std::unordered_map<BotHandle, time_t> s_fishingUntil;
 
+// Bots with a fishing line out, polled fast by PollFishing() every world tick.
+static std::unordered_set<BotHandle> s_fishingBots;
+
 static bool IsFishingPole(Item* it)
 {
     return it && it->GetProto()->Class == ITEM_CLASS_WEAPON &&
@@ -8152,6 +8157,7 @@ bool BotBridge::CB_StartFishing(BotHandle bot)
         // the bot gives up after a few seconds and goes do something else
         // instead of standing idle by the water looking like it's doing nothing.
         s_fishingUntil[bot] = time(nullptr) + 4;
+        s_fishingBots.insert(bot); // PollFishing() reels in the bite for us
     }
     return ok;
 }
@@ -8167,23 +8173,19 @@ uint32_t BotBridge::CB_UpdateFishing(BotHandle bot)
     {
         RestoreFishingWeapon(b, bot);
         s_fishingUntil.erase(bot);
+        s_fishingBots.erase(bot);
         return 0;
     }
 
-    // A fish on the line? Reel it in — resolves the catch server-side, granting
-    // the fishing skill-up (and loot), the whole point of fishing.
+    // Hold while a line is out. The actual catch (reeling in a GO_READY bobber)
+    // is done by PollFishing() every world tick — the bite window is only a few
+    // seconds and the bot's own AI tick is far too slow (LOD) to catch it.
     GameObject* bobber = b->GetGameObject(7731);
     if (bobber)
     {
         g_botFishBobbers.fetch_add(1, std::memory_order_relaxed);
         // Real line in the water — hold for the full bite window.
         s_fishingUntil[bot] = time(nullptr) + 25;
-    }
-    if (bobber && bobber->GetLootState() == GO_READY)
-    {
-        bobber->Use(b);
-        g_botFishCatches.fetch_add(1, std::memory_order_relaxed);
-        return 2;
     }
 
     // Within the cast window → stay "running" so the bot holds position. Keyed
@@ -8197,7 +8199,34 @@ uint32_t BotBridge::CB_UpdateFishing(BotHandle bot)
     // Window elapsed (no bite) or never fishing — restore the weapon and stop.
     RestoreFishingWeapon(b, bot);
     s_fishingUntil.erase(bot);
+    s_fishingBots.erase(bot);
     return 0;
+}
+
+// Reel in any biting bobbers for bots that are fishing. Called every world tick
+// from the manager (PollFishing in RandomPlayerbotMgr), so the brief GO_READY
+// bite window is caught regardless of the bot's slow LOD AI tick — the AI tick
+// only holds the bot in place; the catch happens here.
+void BotBridge::PollFishing()
+{
+    for (auto it = s_fishingBots.begin(); it != s_fishingBots.end();)
+    {
+        Player* b = FindBot(*it);
+        if (!b)
+        {
+            it = s_fishingBots.erase(it); // bot gone (logged out)
+            continue;
+        }
+        if (GameObject* bobber = b->GetGameObject(7731))
+        {
+            if (bobber->GetLootState() == GO_READY)
+            {
+                bobber->Use(b); // resolves catch + fishing skill-up server-side
+                g_botFishCatches.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        ++it;
+    }
 }
 
 // Hand-placed fishing spots (FISH_LOCATION_* in ai_playerbot_named_location),

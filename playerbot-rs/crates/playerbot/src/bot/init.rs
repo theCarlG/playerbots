@@ -467,6 +467,12 @@ fn mode_dispatch() -> Bt {
                 // sticks with the raid rather than falling through to
                 // travel/grind — otherwise after a fight it wanders off.
                 Seq!(Bt::InInstance, Follow),
+                // Already fishing? Hold the line — ahead of grind so a nearby
+                // mob (or wander) doesn't move the bot and cancel its own cast.
+                // Returns Failure when not fishing, so it's transparent then.
+                // (Starting a cast still happens in rpg, only when nothing to
+                // grind; this just keeps an in-progress one alive.)
+                Bt::ContinueFishing,
                 // Fight first: a masterless bot grinds nearby level-appropriate
                 // mobs before wandering off. This was LAST, so travel and
                 // especially rpg's RpgWander always preempted it — bots roamed

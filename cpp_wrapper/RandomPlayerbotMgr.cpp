@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include "playerbot.h"
+#include "BotBridge.h"
 #include "BotConfig.h"
 #include "Accounts/AccountMgr.h"
 #include "Globals/ObjectMgr.h"
@@ -301,6 +302,11 @@ void RandomPlayerbotMgr::UpdateAIInternal(uint32 elapsed, bool minimal)
     // the legacy body that used to live here has been retired and the
     // worker dispatches per-bot actions back to C++ through the bridge.
     PlayerbotRust::WorldUpdate(static_cast<uint32_t>(elapsed));
+
+    // Reel in biting fishing bobbers every tick — the bite window is only a few
+    // seconds, far shorter than a fishing bot's slow LOD AI tick, so the catch
+    // is serviced here on the world thread instead of from the bot's own tick.
+    BotBridge::PollFishing();
 
     // Activity telemetry: every ~60s, count what the bots are actually doing.
     // Lets a headless run be judged on real engagement (combat / movement)

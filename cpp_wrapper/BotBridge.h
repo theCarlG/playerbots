@@ -460,6 +460,11 @@ namespace BotBridge
     static uint32_t CB_GetSpellCraftItem(uint32_t spell_id);
     static bool CB_GetItemInfo(uint32_t item_id, char* name_buf, uint32_t name_buf_len, uint8_t* out_quality);
 
+    // Poll active fishing bots and reel in any biting bobbers. Called every
+    // world tick from the manager so the short GO_READY bite window is caught
+    // regardless of the bot's (slow) AI LOD tick rate.
+    void PollFishing();
+
     // ── Internal helpers ────────────────────────────────────────────────────
     Player* FindBot(BotHandle bot);
     Unit*   FindUnit(BotHandle bot, UnitHandle handle);
