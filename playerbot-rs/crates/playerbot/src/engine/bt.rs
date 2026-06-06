@@ -3821,6 +3821,13 @@ fn tick_travel(ctx: &mut TickContext<'_>) -> BtResult {
     if ctx.interface.move_to(dx, dy, dz) {
         BtResult::Running
     } else {
+        // Couldn't path there (unreachable / no navmesh route). Drop the
+        // destination so ChooseTravelTarget re-plans next tick instead of the
+        // bot standing here retrying the same bad spot forever (which looked
+        // like "stuck wandering at one place").
+        ctx.blackboard.clear(Key::TravelDestX);
+        ctx.blackboard.clear(Key::TravelDestY);
+        ctx.blackboard.clear(Key::TravelDestZ);
         BtResult::Failure
     }
 }
