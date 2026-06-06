@@ -357,6 +357,12 @@ pub trait World: Send {
     fn npc_has_available_quest(&self, _npc: UnitHandle) -> bool {
         false
     }
+
+    /// True if `npc` accepts the turn-in for `quest_id` — so the AI hands a
+    /// completed quest in at the RIGHT npc instead of the nearest quest giver.
+    fn npc_can_turn_in_quest(&self, _npc: UnitHandle, _quest_id: u32) -> bool {
+        false
+    }
     fn turn_in_quest(&self, _npc: UnitHandle, _quest_id: u32) -> bool {
         false
     }

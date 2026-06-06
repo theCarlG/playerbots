@@ -3602,12 +3602,20 @@ fn tick_restock_ammo(ctx: &mut TickContext<'_>) -> BtResult {
 }
 
 fn tick_turn_in_quest(ctx: &mut TickContext<'_>) -> BtResult {
-    let quests = ctx.interface.get_quest_log();
-    let completed = quests.iter().find(|q| q.complete);
-    if let Some(quest) = completed {
-        let quest_id = quest.quest_id;
-        let npcs = ctx.interface.get_nearby_npcs(30.0, NPC_FLAG_QUESTGIVER);
-        if let Some(&npc) = npcs.first() {
+    let quest_id = {
+        let quests = ctx.interface.get_quest_log();
+        quests.iter().find(|q| q.complete).map(|q| q.quest_id)
+    };
+    if let Some(quest_id) = quest_id {
+        let npcs = ctx.interface.get_nearby_npcs(ERRAND_RANGE, NPC_FLAG_QUESTGIVER);
+        // Only walk to the npc that actually ACCEPTS this quest's turn-in — not
+        // the nearest quest giver. Otherwise the bot walks to the wrong giver
+        // (often the one that gave the quest), fails to hand in, and oscillates.
+        let target = npcs
+            .iter()
+            .copied()
+            .find(|&n| ctx.interface.npc_can_turn_in_quest(n, quest_id));
+        if let Some(npc) = target {
             return approach_and_interact(ctx, npc, |ctx| {
                 if ctx.interface.turn_in_quest(npc, quest_id) {
                     say_quest_done(ctx, quest_id);

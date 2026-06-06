@@ -479,6 +479,10 @@ typedef struct BotCallbacks {
        (eligible + room in the log). Lets the AI avoid walking to an exhausted
        quest giver. */
     bool          (*npc_has_available_quest)(BotHandle bot, UnitHandle npc);
+    /* True if this NPC accepts the turn-in for quest_id (it's in the NPC's
+       involved relations). Lets the AI hand a quest in at the RIGHT npc instead
+       of walking to the nearest quest giver and failing. */
+    bool          (*npc_can_turn_in_quest)(BotHandle bot, UnitHandle npc, uint32_t quest_id);
     bool          (*turn_in_quest)(BotHandle bot, UnitHandle npc, uint32_t quest_id);
     /* Use a nearby gameobject that satisfies a "use object" objective of one
      * of the bot's incomplete quests (go->Use grants the credit). Returns

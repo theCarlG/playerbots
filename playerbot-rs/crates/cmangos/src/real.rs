@@ -436,6 +436,10 @@ impl World for VtableWorld {
         unsafe { (self.cbs.npc_has_available_quest.unwrap())(self.handle, npc) }
     }
 
+    fn npc_can_turn_in_quest(&self, npc: UnitHandle, quest_id: u32) -> bool {
+        unsafe { (self.cbs.npc_can_turn_in_quest.unwrap())(self.handle, npc, quest_id) }
+    }
+
     fn turn_in_quest(&self, npc: UnitHandle, quest_id: u32) -> bool {
         unsafe { (self.cbs.turn_in_quest.unwrap())(self.handle, npc, quest_id) }
     }

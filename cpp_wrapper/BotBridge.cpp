@@ -337,6 +337,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.free_quest_log      = CB_FreeQuestLog;
     cbs.accept_all_quests   = CB_AcceptAllQuests;
     cbs.npc_has_available_quest = CB_NpcHasAvailableQuest;
+    cbs.npc_can_turn_in_quest   = CB_NpcCanTurnInQuest;
     cbs.turn_in_quest       = CB_TurnInQuest;
 
     // Unit queries (extended)
@@ -2764,6 +2765,28 @@ bool BotBridge::CB_NpcHasAvailableQuest(BotHandle bot, UnitHandle npc)
             && b->CanTakeQuest(quest, false) && b->CanAddQuest(quest, false))
             return true;
     }
+    return false;
+}
+
+bool BotBridge::CB_NpcCanTurnInQuest(BotHandle bot, UnitHandle npc, uint32_t quest_id)
+{
+    Player* b = FindBot(bot);
+    Unit* t   = FindUnit(bot, npc);
+    if (!b || !t)
+        return false;
+
+    Creature* creature = dynamic_cast<Creature*>(t);
+    if (!creature)
+        return false;
+
+    // Is quest_id in this creature's INVOLVED relations (i.e. it's the turn-in
+    // NPC for that quest)? Without this the bot tries to hand a quest in at the
+    // nearest quest giver — usually the wrong one — and ping-pongs.
+    QuestRelationsMapBounds bounds =
+        sObjectMgr.GetCreatureQuestInvolvedRelationsMapBounds(creature->GetEntry());
+    for (auto it = bounds.first; it != bounds.second; ++it)
+        if (it->second == quest_id)
+            return true;
     return false;
 }
 

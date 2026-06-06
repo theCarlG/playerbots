@@ -135,6 +135,7 @@ namespace BotBridge
     void          CB_FreeQuestLog(BotQuestInfo* list);
     bool          CB_AcceptAllQuests(BotHandle bot, UnitHandle npc);
     bool          CB_NpcHasAvailableQuest(BotHandle bot, UnitHandle npc);
+    bool          CB_NpcCanTurnInQuest(BotHandle bot, UnitHandle npc, uint32_t quest_id);
     bool          CB_TurnInQuest(BotHandle bot, UnitHandle npc, uint32_t quest_id);
 
     // ── Unit queries (extended) ────────────────────────────────────────────
