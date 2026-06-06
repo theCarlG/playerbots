@@ -1428,18 +1428,19 @@ bool BotBridge::CB_MoveTo(BotHandle bot, float x, float y, float z)
     if (st.kind == MoveState::POINT && sameDest(st, x, y, z) && b->IsMoving())
         return true;
 
-    // Follow a NAVMESH PATH, don't bare-MovePoint. MovePoint straight-lines to
-    // the target when it can't reach it, which sent bots clipping THROUGH WALLS
-    // and off the map (always toward the unreachable point). PathFinder finds a
-    // route that respects geometry; MovePath walks it (FORCED_MOVEMENT_RUN for
-    // run speed, cyclic=false so it doesn't loop). If there's no path at all,
-    // refuse the move rather than clip through the world.
+    // Reachability gate, then MovePoint. A bare MovePoint straight-lines to an
+    // UNREACHABLE target (the through-the-wall / off-map bug), so first run
+    // PathFinder and refuse the move if there's no route (PATHFIND_NOPATH).
+    // But do the actual move with MovePoint, NOT MovePath: MovePoint pathfinds
+    // internally AND splits the result into valid splines, whereas feeding the
+    // raw PathFinder path to MovePath produced out-of-bounds splines
+    // (MoveSplineInitArgs::_checkPathBounds failed) that stalled all movement.
     PathFinder pathfinder(b);
     pathfinder.calculate(x, y, z, false);
     if (pathfinder.getPathType() & PATHFIND_NOPATH)
         return false;
 
-    b->GetMotionMaster()->MovePath(pathfinder.getPath(), FORCED_MOVEMENT_RUN, false, false);
+    b->GetMotionMaster()->MovePoint(0, x, y, z, FORCED_MOVEMENT_RUN);
     st.x = x; st.y = y; st.z = z;
     st.followTarget = 0; st.followDist = 0; st.followAngle = 0;
     st.kind = MoveState::POINT;
