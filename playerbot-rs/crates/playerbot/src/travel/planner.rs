@@ -55,7 +55,7 @@ pub fn pick_nearest_reachable(
 /// Returns (purpose, relevance) sorted by relevance descending.
 pub fn evaluate_needs(
     durability_pct: f32,
-    has_sellable: bool,
+    bags_full: bool,
     free_quest_slots: u8,
     has_complete_quests: bool,
     has_incomplete_quests: bool,
@@ -63,13 +63,21 @@ pub fn evaluate_needs(
 ) -> Vec<(TravelPurpose, f32)> {
     let mut needs = Vec::with_capacity(8);
 
-    // Repair — high priority when durability is low.
-    if durability_pct < 0.3 {
-        needs.push((TravelPurpose::REPAIR, 6.93));
+    // Questing is the PRIMARY activity. Maintenance only outranks it when it's
+    // genuinely blocking — gear actually failing, or bags actually full — so a
+    // single grey item or a bit of armor wear doesn't keep yanking the bot off
+    // its quests (the old has_sellable/0.3-durability rules ranked vendor/repair
+    // above every quest and made the bot look like it couldn't decide what to do).
+    // Routine selling/repair still happens opportunistically at any vendor the
+    // bot passes (maintenance tree); these travel needs are the "must go now" case.
+
+    // Repair — only when gear is nearly broken.
+    if durability_pct < 0.25 {
+        needs.push((TravelPurpose::REPAIR, 6.95));
     }
 
-    // Vendor — when bags have sellable items.
-    if has_sellable {
+    // Vendor — only when bags are full (can't loot/collect any more).
+    if bags_full {
         needs.push((TravelPurpose::VENDOR, 6.94));
     }
 

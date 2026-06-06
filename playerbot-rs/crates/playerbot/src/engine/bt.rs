@@ -3846,9 +3846,11 @@ fn tick_choose_travel_target(ctx: &mut TickContext<'_>) -> BtResult {
         return BtResult::Failure;
     }
 
-    // Evaluate needs — PB2 TravelStrategy priority table.
+    // Evaluate needs — PB2 TravelStrategy priority table. Vendoring is gated on
+    // bags being full (not just having a grey), so questing stays primary and
+    // the bot only makes a vendor run when it actually can't carry more.
     let durability = ctx.interface.get_durability_pct();
-    let has_sellable = ctx.interface.has_sellable_items();
+    let bags_full = ctx.interface.bot_empty_bag_slot_count() < 4;
     let quest_log = ctx.interface.get_quest_log();
     let free_quest_slots = 25u8.saturating_sub(quest_log.len() as u8);
     let has_complete_quests = quest_log.iter().any(|q| q.complete);
@@ -3857,7 +3859,7 @@ fn tick_choose_travel_target(ctx: &mut TickContext<'_>) -> BtResult {
 
     let needs = crate::travel::planner::evaluate_needs(
         durability,
-        has_sellable,
+        bags_full,
         free_quest_slots,
         has_complete_quests,
         has_incomplete_quests,
