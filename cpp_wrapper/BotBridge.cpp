@@ -2401,7 +2401,10 @@ UnitHandle* BotBridge::CB_GetNearbyLootable(BotHandle bot, float range, uint32_t
     {
         if (!c || c->IsAlive())
             continue;
-        if (c->HasFlag(UNIT_DYNAMIC_FLAGS, UNIT_DYNFLAG_LOOTABLE))
+        // Only corpses this bot (or its group) actually tapped — otherwise it
+        // tries to loot someone else's kill and the core rejects it, spamming
+        // "trying to open a loot without credential".
+        if (c->HasFlag(UNIT_DYNAMIC_FLAGS, UNIT_DYNFLAG_LOOTABLE) && c->IsTappedBy(b))
             handles.push_back(c->GetObjectGuid().GetRawValue());
     }
 
