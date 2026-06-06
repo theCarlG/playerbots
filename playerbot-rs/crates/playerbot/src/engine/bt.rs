@@ -3639,8 +3639,16 @@ fn say_quest_done(ctx: &mut TickContext<'_>, quest_id: u32) {
 }
 
 fn tick_accept_quests(ctx: &mut TickContext<'_>) -> BtResult {
-    let npcs = ctx.interface.get_nearby_npcs(15.0, NPC_FLAG_QUESTGIVER);
-    if let Some(&npc) = npcs.first() {
+    let npcs = ctx.interface.get_nearby_npcs(ERRAND_RANGE, NPC_FLAG_QUESTGIVER);
+    // Only walk to a quest giver that actually has a quest we can take. Without
+    // this, the bot walks to ANY nearby giver — including ones it's already
+    // exhausted — gets nothing, and ends up oscillating between the giver and
+    // its quest objective, never doing the objective.
+    let target = npcs
+        .iter()
+        .copied()
+        .find(|&n| ctx.interface.npc_has_available_quest(n));
+    if let Some(npc) = target {
         return approach_and_interact(ctx, npc, |ctx| {
             if ctx.interface.accept_all_quests(npc) {
                 BtResult::Success

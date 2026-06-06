@@ -475,6 +475,10 @@ typedef struct BotCallbacks {
     BotQuestInfo* (*get_quest_log)(BotHandle bot, uint32_t* out_count);
     void          (*free_quest_log)(BotQuestInfo* list);
     bool          (*accept_all_quests)(BotHandle bot, UnitHandle npc);
+    /* True if this NPC has at least one quest the bot can accept right now
+       (eligible + room in the log). Lets the AI avoid walking to an exhausted
+       quest giver. */
+    bool          (*npc_has_available_quest)(BotHandle bot, UnitHandle npc);
     bool          (*turn_in_quest)(BotHandle bot, UnitHandle npc, uint32_t quest_id);
     /* Use a nearby gameobject that satisfies a "use object" objective of one
      * of the bot's incomplete quests (go->Use grants the credit). Returns

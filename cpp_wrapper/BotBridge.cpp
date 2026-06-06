@@ -336,6 +336,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.get_quest_log       = CB_GetQuestLog;
     cbs.free_quest_log      = CB_FreeQuestLog;
     cbs.accept_all_quests   = CB_AcceptAllQuests;
+    cbs.npc_has_available_quest = CB_NpcHasAvailableQuest;
     cbs.turn_in_quest       = CB_TurnInQuest;
 
     // Unit queries (extended)
@@ -2735,6 +2736,31 @@ bool BotBridge::CB_AcceptAllQuests(BotHandle bot, UnitHandle npc)
         accepted = true;
     }
     return accepted;
+}
+
+bool BotBridge::CB_NpcHasAvailableQuest(BotHandle bot, UnitHandle npc)
+{
+    Player* b = FindBot(bot);
+    Unit* t   = FindUnit(bot, npc);
+    if (!b || !t)
+        return false;
+
+    Creature* creature = dynamic_cast<Creature*>(t);
+    if (!creature)
+        return false;
+
+    // Same eligibility check as CB_AcceptAllQuests, but read-only: does this NPC
+    // offer at least one quest the bot could take right now? Used so the AI
+    // won't keep walking to a quest giver it has already exhausted.
+    QuestRelationsMapBounds bounds =
+        sObjectMgr.GetCreatureQuestRelationsMapBounds(creature->GetEntry());
+    for (auto it = bounds.first; it != bounds.second; ++it)
+    {
+        Quest const* quest = sObjectMgr.GetQuestTemplate(it->second);
+        if (quest && b->CanTakeQuest(quest, false) && b->CanAddQuest(quest, false))
+            return true;
+    }
+    return false;
 }
 
 // Pick the best reward-choice index for a quest with a choice of rewards.

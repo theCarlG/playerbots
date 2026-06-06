@@ -350,6 +350,13 @@ pub trait World: Send {
     fn accept_all_quests(&self, _npc: UnitHandle) -> bool {
         false
     }
+
+    /// True if `npc` has at least one quest the bot can accept right now
+    /// (eligible + room in the log) — so the AI doesn't walk to an exhausted
+    /// quest giver.
+    fn npc_has_available_quest(&self, _npc: UnitHandle) -> bool {
+        false
+    }
     fn turn_in_quest(&self, _npc: UnitHandle, _quest_id: u32) -> bool {
         false
     }
