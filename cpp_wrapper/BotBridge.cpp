@@ -1420,19 +1420,24 @@ bool BotBridge::CB_MoveTo(BotHandle bot, float x, float y, float z)
         return false;
 
     auto& st = s_moveState[bot];
-    // Already heading to the same point — do NOT re-issue. Re-issuing MovePoint
-    // every tick restarts the spline: that's the "stagger" / pressing-W look on
-    // every bot, and on a self-bot it spams the real client a fresh spline each
-    // tick and desyncs it through the floor ("walks under the map").
+    // Already heading to the same point — do NOT re-issue. Re-issuing every tick
+    // restarts the spline: the "stagger" / pressing-W look, and on a self-bot it
+    // spams the real client a fresh spline each tick.
     if (st.kind == MoveState::POINT && sameDest(st, x, y, z) && b->IsMoving())
         return true;
 
-    // FORCED_MOVEMENT_RUN gives a proper run-speed spline (bots default to
-    // walk). This replaces the old hand-poke of MOVEFLAG_WALK_MODE, which was
-    // the actual bug: the manual flag didn't stick (the spline replayed in walk
-    // mode), so IsWalking stayed true and the old `!wasWalking` de-dup failed,
-    // re-issuing MovePoint every single tick.
-    b->GetMotionMaster()->MovePoint(0, x, y, z, FORCED_MOVEMENT_RUN);
+    // Follow a NAVMESH PATH, don't bare-MovePoint. MovePoint straight-lines to
+    // the target when it can't reach it, which sent bots clipping THROUGH WALLS
+    // and off the map (always toward the unreachable point). PathFinder finds a
+    // route that respects geometry; MovePath walks it (FORCED_MOVEMENT_RUN for
+    // run speed, cyclic=false so it doesn't loop). If there's no path at all,
+    // refuse the move rather than clip through the world.
+    PathFinder pathfinder(b);
+    pathfinder.calculate(x, y, z, false);
+    if (pathfinder.getPathType() & PATHFIND_NOPATH)
+        return false;
+
+    b->GetMotionMaster()->MovePath(pathfinder.getPath(), FORCED_MOVEMENT_RUN, false, false);
     st.x = x; st.y = y; st.z = z;
     st.followTarget = 0; st.followDist = 0; st.followAngle = 0;
     st.kind = MoveState::POINT;
