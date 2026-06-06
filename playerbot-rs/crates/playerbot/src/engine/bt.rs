@@ -998,6 +998,11 @@ pub enum Bt {
     /// recast. Running while a bobber is out, Failure when not fishing. Placed
     /// ahead of other idle behaviour so a fishing bot isn't yanked off mid-cast.
     ContinueFishing,
+    /// Walk to the nearest known fishing spot and fish there. Random shoreline
+    /// doesn't satisfy the fishing spell; the hand-placed `FISH_LOCATION` spots
+    /// are real open water. Running while travelling/casting, Failure if the bot
+    /// can't fish or no spot is in range.
+    GoFishing,
     /// Play a random emote (non-RPG context — e.g. idle chatter).
     RandomEmote,
     /// Say a random message (RP phrases, idle chatter).
@@ -2259,6 +2264,7 @@ impl BtNode for Bt {
             Bt::AhBid => tick_ah_bid(ctx),
             Bt::Fish => tick_fish(ctx),
             Bt::ContinueFishing => tick_fish_continue(ctx),
+            Bt::GoFishing => tick_go_fishing(ctx),
             Bt::LfgJoin => tick_lfg_join(ctx),
             Bt::LfgAccept => tick_lfg_accept(ctx),
             Bt::AcceptBgInvite => tick_accept_bg_invite(ctx),
@@ -4032,6 +4038,63 @@ fn tick_fish_continue(ctx: &mut TickContext<'_>) -> BtResult {
         1 => BtResult::Running,
         // 0 = not fishing (cast ended / never started).
         _ => BtResult::Failure,
+    }
+}
+
+/// How far a bot will walk to reach a fishing spot. Real fishable water (the
+/// hand-placed `FISH_LOCATION` data) is needed because the fishing spell rejects
+/// random shoreline; a few hundred yards keeps the trip believable.
+const FISH_SPOT_RANGE: f32 = 250.0;
+
+/// `Bt::GoFishing` — walk to the nearest known fishing spot, then cast there.
+/// The chosen spot is held on the blackboard so the bot walks to it in one line
+/// (and we don't re-scan the spot list every tick).
+fn tick_go_fishing(ctx: &mut TickContext<'_>) -> BtResult {
+    use crate::engine::blackboard::{Key, Value};
+
+    if ctx.interface.bot_get_skill_value(SKILL_FISHING) == 0 {
+        return BtResult::Failure;
+    }
+
+    const ARRIVAL_SQ: f32 = 4.0 * 4.0;
+
+    // Walking to a committed spot?
+    if let (Some(sx), Some(sy), Some(sz)) = (
+        ctx.blackboard.get_f32(Key::FishSpotX),
+        ctx.blackboard.get_f32(Key::FishSpotY),
+        ctx.blackboard.get_f32(Key::FishSpotZ),
+    ) {
+        let pos = &ctx.snap.self_.pos;
+        let dist_sq = (pos.x - sx).powi(2) + (pos.y - sy).powi(2);
+        if dist_sq <= ARRIVAL_SQ {
+            // At the spot — cast. `start_fishing` finds the open water here and
+            // faces it; `ContinueFishing` then drives the bite/recast loop.
+            ctx.blackboard.clear(Key::FishSpotX);
+            ctx.blackboard.clear(Key::FishSpotY);
+            ctx.blackboard.clear(Key::FishSpotZ);
+            if ctx.interface.start_fishing() {
+                return BtResult::Running;
+            }
+            return BtResult::Failure;
+        }
+        if ctx.interface.move_to(sx, sy, sz) {
+            return BtResult::Running;
+        }
+        ctx.blackboard.clear(Key::FishSpotX);
+        ctx.blackboard.clear(Key::FishSpotY);
+        ctx.blackboard.clear(Key::FishSpotZ);
+        return BtResult::Failure;
+    }
+
+    // No committed spot — find the nearest one and head for it.
+    match ctx.interface.nearest_fishing_spot(FISH_SPOT_RANGE) {
+        Some(spot) => {
+            ctx.blackboard.set(Key::FishSpotX, Value::F32(spot.x));
+            ctx.blackboard.set(Key::FishSpotY, Value::F32(spot.y));
+            ctx.blackboard.set(Key::FishSpotZ, Value::F32(spot.z));
+            BtResult::Running
+        }
+        None => BtResult::Failure,
     }
 }
 

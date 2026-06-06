@@ -41,6 +41,9 @@ pub enum Key {
     RpgVisitDestX, // f32: town NPC the bot is strolling over to visit, held until reached
     RpgVisitDestY,
     RpgVisitDestZ,
+    FishSpotX, // f32: fishing spot the bot is walking to, held until reached
+    FishSpotY,
+    FishSpotZ,
 
     // ── Formation (chaos) persistence ───────────────────────────────
     // Per-bot state for the `chaos` follow-formation jitter. Rerolled

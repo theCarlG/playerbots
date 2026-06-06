@@ -595,6 +595,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     // Fishing
     cbs.start_fishing                       = CB_StartFishing;
     cbs.update_fishing                      = CB_UpdateFishing;
+    cbs.get_nearest_fishing_spot            = CB_GetNearestFishingSpot;
 
     // BG/Arena
     cbs.queue_bg                            = CB_QueueBg;
@@ -8079,23 +8080,30 @@ bool BotBridge::CB_StartFishing(BotHandle bot)
     // Match the spell's own water test height (caster Z + 1) so a direction we
     // accept here also passes the spell's check when it places the bobber.
     const float wz = b->GetPositionZ() + 1.0f;
-    bool found = false;
+
+    // Find the direction with the most water across the bobber's whole possible
+    // landing range. The fishing spell drops the bobber at a RANDOM distance
+    // (and slightly random angle) in front of the caster, then fails the cast
+    // if that exact point isn't liquid. A single water hit (a shoreline sliver)
+    // therefore isn't enough — we need a solid body of water in the faced
+    // direction so wherever the spell's randomized point lands, it's wet.
+    int bestHits = 0;
     float faceO = b->GetOrientation();
-    for (int r = 0; r < 16 && !found; ++r)
+    for (int a = 0; a < 24; ++a)
     {
-        const float ang = b->GetOrientation() + (6.2831853f / 16.0f) * r;
-        for (float d = 5.0f; d <= 17.0f && !found; d += 3.0f)
+        const float ang = (6.2831853f / 24.0f) * a;
+        int hits = 0;
+        for (float d = 4.0f; d <= 20.0f; d += 4.0f) // 4,8,12,16,20
+            if (terrain->IsInWater(bx + d * cosf(ang), by + d * sinf(ang), wz))
+                ++hits;
+        if (hits > bestHits)
         {
-            const float px = bx + d * cosf(ang);
-            const float py = by + d * sinf(ang);
-            if (terrain->IsInWater(px, py, wz))
-            {
-                faceO = ang;
-                found = true;
-            }
+            bestHits = hits;
+            faceO = ang;
         }
     }
-    if (!found)
+    // Require a real body of water in front (>=3 of 5 samples), not a sliver.
+    if (bestHits < 3)
         return false;
 
     // Fishing requires a pole equipped — swap one in, stowing the real weapon
@@ -8190,6 +8198,78 @@ uint32_t BotBridge::CB_UpdateFishing(BotHandle bot)
     RestoreFishingWeapon(b, bot);
     s_fishingUntil.erase(bot);
     return 0;
+}
+
+// Hand-placed fishing spots (FISH_LOCATION_* in ai_playerbot_named_location),
+// grouped by map and loaded once on first use. These are at genuinely open,
+// fishable water — unlike a random shoreline, which the fishing spell's
+// wide-angle bobber placement rejects. Bots travel here to fish reliably.
+struct FishSpot
+{
+    float x, y, z;
+};
+static std::unordered_map<uint32_t, std::vector<FishSpot>> s_fishSpots;
+static bool s_fishSpotsLoaded = false;
+
+static void EnsureFishSpotsLoaded()
+{
+    if (s_fishSpotsLoaded)
+        return;
+    s_fishSpotsLoaded = true;
+    auto result = WorldDatabase.Query(
+        "SELECT map_id, position_x, position_y, position_z "
+        "FROM ai_playerbot_named_location WHERE name LIKE 'FISH_LOCATION%'");
+    if (!result)
+        return;
+    uint32_t loaded = 0;
+    do
+    {
+        Field* f = result->Fetch();
+        s_fishSpots[f[0].GetUInt32()].push_back(
+            FishSpot{f[1].GetFloat(), f[2].GetFloat(), f[3].GetFloat()});
+        ++loaded;
+    } while (result->NextRow());
+    sLog.outString("Playerbots: loaded %u fishing spots across %zu maps", loaded,
+                   s_fishSpots.size());
+}
+
+BotSafePosition BotBridge::CB_GetNearestFishingSpot(BotHandle bot, float max_range)
+{
+    BotSafePosition out{};
+    out.found = false;
+
+    EnsureFishSpotsLoaded();
+    Player* b = FindBot(bot);
+    if (!b)
+        return out;
+
+    auto it = s_fishSpots.find(b->GetMapId());
+    if (it == s_fishSpots.end())
+        return out;
+
+    const float bx = b->GetPositionX();
+    const float by = b->GetPositionY();
+    float bestD2 = max_range * max_range;
+    const FishSpot* best = nullptr;
+    for (const FishSpot& s : it->second)
+    {
+        const float dx = s.x - bx;
+        const float dy = s.y - by;
+        const float d2 = dx * dx + dy * dy;
+        if (d2 < bestD2)
+        {
+            bestD2 = d2;
+            best = &s;
+        }
+    }
+    if (!best)
+        return out;
+
+    out.x = best->x;
+    out.y = best->y;
+    out.z = best->z;
+    out.found = true;
+    return out;
 }
 
 // ── Battleground ─────────────────────────────────────────────────────────────

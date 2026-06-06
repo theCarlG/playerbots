@@ -1486,6 +1486,22 @@ impl World for VtableWorld {
         unsafe { (self.cbs.update_fishing.unwrap())(self.handle) }
     }
 
+    fn nearest_fishing_spot(&self, max_range: f32) -> Option<BotPosition> {
+        let r =
+            unsafe { (self.cbs.get_nearest_fishing_spot.unwrap())(self.handle, max_range) };
+        if r.found {
+            Some(BotPosition {
+                x: r.x,
+                y: r.y,
+                z: r.z,
+                o: 0.0,
+                map_id: 0,
+            })
+        } else {
+            None
+        }
+    }
+
     fn queue_bg(&self) -> bool {
         unsafe { (self.cbs.queue_bg.unwrap())(self.handle) }
     }

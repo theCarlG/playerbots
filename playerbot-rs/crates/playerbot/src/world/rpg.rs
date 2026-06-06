@@ -3,7 +3,8 @@
 /// — repairing, selling junk, handing in quests, strolling between NPCs — and
 /// only falls back to aimless wandering when there's nothing to do.
 use crate::engine::bt::Bt::{
-    self, ContinueFishing, Fish, InCombat, RpgEmote, RpgErrands, RpgVisitNpc, RpgWander, StopMoving,
+    self, ContinueFishing, GoFishing, InCombat, RpgEmote, RpgErrands, RpgVisitNpc, RpgWander,
+    StopMoving,
 };
 use crate::{Sel, Seq};
 
@@ -23,10 +24,11 @@ pub fn rpg_subtree() -> Bt {
             // and human. Holds its target until reached, so it's a continuous
             // walk, not a dither.
             Bt::throttle(12_000, RpgVisitNpc),
-            // Every so often, if we're a fisher by some water, cast a line.
-            // Throttled so bots don't all stand fishing constantly — they fish
-            // a while (sticky above), then go do other things, then fish again.
-            Bt::throttle(30_000, Fish),
+            // Every so often, if we're a fisher with a known fishing spot in
+            // reach, walk over and fish. Throttled so bots don't all drop
+            // everything to fish — they fish a while (sticky above), then go do
+            // other things, then fish again.
+            Bt::throttle(30_000, GoFishing),
             // Occasional emote.
             Bt::throttle(60_000, RpgEmote),
             // Last resort: wander to a random nearby point. Short re-roll gap

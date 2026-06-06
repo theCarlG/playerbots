@@ -425,6 +425,7 @@ namespace BotBridge
     // ── Fishing ───────────────────────────────────────────────────────────
     bool CB_StartFishing(BotHandle bot);
     uint32_t CB_UpdateFishing(BotHandle bot);
+    BotSafePosition CB_GetNearestFishingSpot(BotHandle bot, float max_range);
 
     // ── BG/Arena ──────────────────────────────────────────────────────────
     bool        CB_QueueBg(BotHandle bot);

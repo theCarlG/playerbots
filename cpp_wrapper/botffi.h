@@ -1307,6 +1307,12 @@ typedef struct BotCallbacks {
        2 = bite caught this call (skill/loot resolved — recast). */
     uint32_t (*update_fishing)(BotHandle bot);
 
+    /* Nearest known fishing spot on the bot's map within max_range (yards),
+       from the hand-placed FISH_LOCATION data. `found` = false if none in
+       range. Bots travel here to fish — open water the fishing spell accepts,
+       unlike random shoreline. */
+    BotSafePosition (*get_nearest_fishing_spot)(BotHandle bot, float max_range);
+
     /* ── BG/Arena ────────────────────────────────────────────────────── */
 
     /* Queue the bot for a random battleground. */

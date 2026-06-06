@@ -1580,6 +1580,13 @@ pub trait World: Send {
         0
     }
 
+    /// Nearest hand-placed fishing spot on the bot's map within `max_range`
+    /// yards (open, fishable water the fishing spell accepts), or `None` if
+    /// there isn't one in range. Bots travel here to fish reliably.
+    fn nearest_fishing_spot(&self, _max_range: f32) -> Option<BotPosition> {
+        None
+    }
+
     /* ── BG/Arena ────────────────────────────────────────────────────── */
 
     /// Queue the bot for a random battleground.
