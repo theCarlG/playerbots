@@ -191,10 +191,52 @@ Open / not yet working (roughly in priority order):
 - **Profession/identity-driven sticky purpose** — the big new system (all the
   sections above): pick a purpose from class/race/professions, hold it a long
   while, drive gathering/crafting/questing behaviour from it.
+- **Runtime profession behaviour (train / craft / use)** — the factory assigns
+  professions + the three secondary skills (First Aid, Cooking, Fishing) to
+  GENERATED bots, but there is currently NO runtime behaviour to actually *use*
+  them, and `.bot self` characters never ran the factory so they may lack the
+  skills entirely. This is why e.g. a bot carries unused linen cloth. Needs:
+  - **Train** — when near a profession/First Aid/Cooking trainer, learn the
+    skill, its recipes, and rank it up (reuse the factory's trainer FFI loop at
+    runtime).
+  - **Craft** — cast the recipe to make goods from materials: First Aid turns
+    cloth into bandages (e.g. Linen Bandage), Cooking turns raw meat/fish into
+    food (SPELL_EFFECT_CREATE_ITEM; `CB_CastSpell` already casts the recipe if
+    known).
+  - **Use** — bandage to heal between fights (OOC, hp low, has a bandage, no
+    "Recently Bandaged" debuff); eat cooked food; fish at real fishing spots
+    (the spot index is already loaded).
+  - **Keep vs sell mats** — once a bot can craft, KEEP materials for skills it
+    actually has; until then, idle crafting mats are sold (already implemented in
+    the vendor sweep). Flip that exemption on when crafting lands.
 - **Full-bags → town trip** trigger and return-to-purpose afterwards.
 - **Realistic mount gating** while travelling (mount only when far enough).
 - **Quest-to-60 loop** — accept/complete/turn-in quests, change zone when
   outleveled; and **group quest sharing** when grouped with a human.
+- **Cross-continent transport (boats / zeppelins)** — bots travel between
+  continents *by themselves, the immersive way*: walk to the correct dock, wait,
+  board the boat/zeppelin when it arrives, ride it across, disembark at the far
+  dock, and resume questing. NO teleporting. Today bots can't change continents
+  at all — travel works within the current map only, and the no-glide rule means
+  they can't cross water, so a cross-continent objective is simply skipped. What
+  it takes:
+  - **Route data** — a small table of each transport: the GO, its two docks (map
+    + position at each end), and the continents it connects. First target case:
+    the **Undercity ↔ Orgrimmar zeppelin** (Forsaken), then the EK↔Kalimdor boats
+    (Booty Bay↔Ratchet, Menethil↔Theramore/Auberdine).
+  - **Need detection** — when the next goal (quest hub / objective) is on another
+    continent, form a "cross to continent X" intention and route to its dock.
+  - **Board / ride / disembark** — wait at the dock; step onto the transport when
+    it's docked; the core attaches the bot so it rides along; step off at the far
+    dock.
+  - **Tricky bits (don't undersell):** transports usually aren't navmeshed, so
+    boarding needs a short board-hop that bypasses no-glide just for that step,
+    timed to the transport being docked; and while riding, the bot's world
+    position jumps as the platform moves — the anti-deadlock watchdog and the
+    gap-bridge/travel-blacklist must be **suspended by an "on transport" state**
+    or they'll misread it as gliding/stuck and fight it.
+  - Substantial multi-part feature (route data + boarding/riding/disembark
+    behaviour + on-transport state); build after the server is confirmed stable.
 - **Fishing skill-up:** bots equip a pole and cast, but the bobber rarely/never
   spawns — the fishing spell's fishing-spot water check (`SpellEffects.cpp`,
   target type 39) is strict and few bots are near genuinely fishable water.

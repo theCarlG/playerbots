@@ -215,6 +215,7 @@ pub mod mage {
     pub const EVOCATION: SpellId = SpellId(12051);
     pub const ARCANE_INTELLECT: SpellId = SpellId(10157); // rank 5
     pub const ARCANE_BRILLIANCE: SpellId = SpellId(23028);
+    pub const FROST_ARMOR: SpellId = SpellId(7301); // rank 3 (downranks to 168)
     // Burst cooldowns (BOOST combat order)
     pub const COMBUSTION: SpellId = SpellId(11129);
     pub const ARCANE_POWER: SpellId = SpellId(12042);

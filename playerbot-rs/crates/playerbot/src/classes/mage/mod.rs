@@ -7,22 +7,24 @@ use crate::{
     bot::settings::StrategyFlags,
     bot::state::PlayerSpec,
     data::spells::vanilla::mage::{
-        ARCANE_BRILLIANCE, ARCANE_POWER, COMBUSTION, PRESENCE_OF_MIND,
+        ARCANE_BRILLIANCE, ARCANE_POWER, COMBUSTION, FROST_ARMOR, PRESENCE_OF_MIND,
     },
     engine::{
-        aura_helpers::ARCANE_INTELLECT_RANKS,
+        aura_helpers::{ARCANE_INTELLECT_RANKS, MAGE_ARMOR_RANKS},
         bt::Bt::{self, CastOnSelf, InCombat, StrategyEnabled},
         macro_fsm::ActiveFsm,
     },
     noncombat::GroupBuff,
 };
 
-// Cast Arcane Brilliance to apply Arcane Intellect aura to whole party.
-// Check all AI ranks + Arcane Brilliance itself.
-const BUFFS: &[GroupBuff] = &[GroupBuff::on_party_aura(
-    ARCANE_BRILLIANCE,
-    ARCANE_INTELLECT_RANKS,
-)];
+// Mage upkeep buffs: Arcane Intellect (party, via Arcane Brilliance) AND a
+// self armor (Frost Armor — downranks to the rank the bot knows; skipped if it
+// already has any Frost/Ice/Mage Armor up). Without the armor the mage was
+// running around unbuffed.
+const BUFFS: &[GroupBuff] = &[
+    GroupBuff::on_party_aura(ARCANE_BRILLIANCE, ARCANE_INTELLECT_RANKS),
+    GroupBuff::on_self(FROST_ARMOR, MAGE_ARMOR_RANKS),
+];
 
 /// `co +boost` burst subtree — mage offensive cooldowns.
 pub fn boost() -> Bt {

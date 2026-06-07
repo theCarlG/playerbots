@@ -7,7 +7,10 @@ use crate::{Sel, Seq};
 use crate::{
     data::spells::vanilla::mage::*,
     engine::bt::{
-        Bt::{self, Cmp, CastOnSelf, CastAoEOnTarget, InCombat, TargetIsCasting, CastOnTarget},
+        Bt::{
+            self, Cmp, CastOnSelf, CastAoEOnTarget, InCombat, TargetIsCasting, CastOnTarget,
+            HasFocusTarget,
+        },
         Op::{Below, AtLeast},
         Resource::{SelfHealthPct, SelfManaPct, TargetHealthPct, AttackerCount},
     },
@@ -33,7 +36,9 @@ fn combat_tree() -> Bt {
         // Positioning handled by reactive::ranged_subtree().
         Seq!(Cmp(SelfHealthPct, Below(20)), CastOnSelf(ICE_BLOCK)),
         Seq!(
-            InCombat,
+            // InCombat OR a deliberate focus target — opens with a cast on a
+            // neutral quest mob (see frost.rs for the full rationale).
+            Sel!(InCombat, HasFocusTarget),
             Sel!(
                 // Evocation: low mana, channeled — only when not moving.
                 Seq!(

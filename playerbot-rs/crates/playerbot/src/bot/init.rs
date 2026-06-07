@@ -322,6 +322,22 @@ fn combat_wrapper(class_rotation: Bt) -> Bt {
     Sel!(
         // ── A) Reactive — any one short-circuits the rest ────────────
         reactive::flee_subtree(),
+        // Emergency potion: drink a health/mana potion when critical. Allowed to
+        // fire even mid-cast (like flee) — surviving beats finishing a Frostbolt.
+        // Self-fails when not critical or no usable potion, so it's transparent.
+        Bt::UseEmergencyPotion,
+        // WHILE CASTING, DO NOTHING ELSE — just let the cast finish. Flee (above)
+        // is the ONLY thing allowed to interrupt our own cast, and it does so
+        // explicitly (cancels it to escape). Without this gate, every reactive
+        // subtree AND the whole target→position→rotation pipeline below kept
+        // running each tick DURING the cast (re-targeting, repositioning, CC,
+        // auto-shoot, etc.); any of those disrupts a cast-time spell so it never
+        // completes — the bot "interrupts its own cast", mana never drops, the
+        // mob never dies. A casting bot holds still and finishes the cast. The
+        // snapshot's is_casting is authoritative (set from IsNonMeleeSpellCasted
+        // each tick), so there is no lag: the tick after a cast starts, this
+        // gate engages.
+        Seq!(Bt::IsCasting, Bt::Noop),
         reactive::interrupt_subtree(),
         reactive::heal_interrupt_subtree(),
         reactive::dispel_subtree(),
@@ -383,6 +399,13 @@ fn combat_wrapper(class_rotation: Bt) -> Bt {
             //        Only ONE of these fires per tick. Suppressed in Stay.
             Bt::Optional(Box::new(Seq!(
                 ModeIs(BehaviorMode::Stay).not(),
+                // Don't reposition while mid-cast/channel: chase/face/maintain-
+                // range all issue movement orders, and any movement cancels a
+                // cast-time spell server-side. This was the "bot starts casting
+                // then immediately cancels" loop — FaceTarget re-issued chase()
+                // every tick. Between casts (not casting) positioning resumes,
+                // so kiting still works.
+                Bt::IsCasting.not(),
                 Sel!(
                     // BEHIND melee (rogues, feral cat): position behind.
                     // MoveBehind returns Running while moving, Failure
@@ -553,7 +576,17 @@ fn maintenance_subtree(buffs: &'static [GroupBuff]) -> Bt {
         Bt::throttle(60_000, Bt::LearnTrainerSpells),
         Bt::throttle(60_000, Bt::ApplyTalentBuild),
         world::pet::pet_subtree(),
+        // Put looted bags to use: equip any container bigger than what's in a
+        // bag slot (empty slots first), so the bot stops cramming its small
+        // starter bags and then failing to loot — including quest items, which
+        // tick_loot skips once bags are nearly full. Out of combat, throttled.
+        Seq!(InCombat.not(), Bt::throttle(15_000, Bt::EquipBetterBags)),
         world::loot::loot_subtree(),
+        // Equip any looted gear that's a proper upgrade (white over grey, green
+        // over white, …). Runs out of combat, right after looting, so the bot
+        // gears up from its kills and frees the bag slots those items occupied
+        // before the vendor pass below sells the leftovers.
+        Seq!(InCombat.not(), Bt::throttle(5_000, Bt::AutoEquipUpgrades)),
         world::gather::gather_subtree(),
         world::mount::mount_subtree(),
         world::vendor::vendor_subtree(),

@@ -33,11 +33,79 @@ pub enum Key {
     GrindTargetHandle, // handle: current grind target
     LastVendorVisitMs, // u64: when we last vendored
     LastRepairMs,      // u64: when we last repaired
+    LastConsumeMs,     // u64: when we last used a food/drink item (eat/drink throttle)
+    TravelFailStreak,  // u32: consecutive TravelToBlackboard move_to failures
+    PreferNearUntilMs, // u64: until this time, skip far quest-routing (anti-freeze)
+    EngageTargetHandle, // u64: quest-objective mob the bot wants to fight; the
+    // tick loop promotes it to focus_target so the combat FSM engages it
+    // (handles NEUTRAL quest mobs that never trigger combat on their own)
+    FocusProgressMs,  // u64: last time the bot made combat progress on its focus
+    // (in combat / moving / casting). Used to abandon an unreachable focus.
+    BadTargetHandle,  // u64: a focus target abandoned as unreachable...
+    BadTargetUntilMs, // u64: ...skip re-picking it until this time
+    // Anti-deadlock watchdog anchor: the last time/place/HP/mana the bot made
+    // real PROGRESS (moved, fought, cast, or recovered). If none of that happens
+    // for too long the bot is deadlocked — the watchdog force-breaks its stuck
+    // state so it never just freezes with no purpose.
+    WedgeAnchorX,     // f32: position at last progress
+    WedgeAnchorY,     // f32
+    WedgeAnchorMs,    // u64: time of last progress
+    IdleAnchorHp,     // f32: hp% at last progress (rising hp = recovering = progress)
+    IdleAnchorMana,   // f32: mana% at last progress (rising mana = drinking = progress)
+    TownErrandUntilMs, // u64: while > now the bot is on a "town visit" — batch ALL
+    // town errands (turn in quests, sell, repair) before returning to questing,
+    // so a trip to town feels intentional instead of one-need-then-leave
+    RecoverActiveMs,  // u64: last tick the eat/drink behavior was actively recovering
+    // (purposeful drink/eat) — distinguishes it from passive idle mana regen so
+    // the anti-deadlock watchdog doesn't treat idle regen as "making progress"
+    QuestTakerFutileUntilMs, // u64: while > now, DON'T travel to quest turn-ins.
+    // Set when the bot is already within turn-in range of a turn-in dest but
+    // quest_subtree's TurnInQuest couldn't hand anything in (the NPC there
+    // doesn't accept the bot's complete quest(s)). Stops the bot bouncing
+    // between unactionable turn-in spots in town instead of working objectives.
+
+    // ── Travel progress tracking + unreachable-dest blacklist ───────
+    // Detect a travel dest the bot can't actually reach (e.g. a quest objective
+    // just past the navmesh edge): move_to keeps returning true as it re-paths
+    // to the mesh edge, so the bot never arrives and never bails — it circles
+    // forever ~30y short. We track the closest distance reached toward the
+    // CURRENT dest; if it doesn't improve for ~12s the dest is unreachable, so
+    // we blacklist its location and pick a different one.
+    TravelTrackX,      // f32: dest we're tracking progress toward
+    TravelTrackY,      // f32
+    TravelMinDistSq,   // f32: closest dist^2 reached toward the tracked dest
+    TravelProgressMs,  // u64: last time that closest distance improved
+    // Small ring of recently-failed (unreachable/unactionable) dest locations.
+    // ChooseTravelTarget skips candidates within ~12y of a non-expired entry so
+    // the bot tries a DIFFERENT objective/service instead of re-picking the same
+    // bad spot. 3 slots so a couple of bad dests can be held at once.
+    BlDestX0, BlDestY0, BlDestMs0,
+    BlDestX1, BlDestY1, BlDestMs1,
+    BlDestX2, BlDestY2, BlDestMs2,
+    BlDestIdx, // u32: next ring slot to overwrite
+
+    // Per-quest turn-in cooldown ring: a quest whose hand-in the core rejects at
+    // the NPC (CanRewardQuest false — e.g. a deliver-item the bot no longer has,
+    // or a script-completed quest) is parked here so the bot stops spamming that
+    // turn-in (and bouncing between the inn's NPCs) and works other quests.
+    TurnInCdQ0, TurnInCdMs0,
+    TurnInCdQ1, TurnInCdMs1,
+    TurnInCdQ2, TurnInCdMs2,
+    TurnInCdIdx, // u32: next ring slot to overwrite
+    // Which complete quest the bot is currently trying to hand in, and since
+    // when — so a turn-in that's stuck APPROACHING an unreachable NPC (never
+    // arrives to actually fail) still gets parked after a few seconds.
+    TurnInTryQ,  // u32
+    TurnInTryMs, // u64
 
     // ── RPG mode keys ───────────────────────────────────────────────
     RpgWanderDestX, // f32: current wander destination, held until arrival
     RpgWanderDestY,
     RpgWanderDestZ,
+    // f32: where the bot STARTED the current wander leg, so the next leg avoids
+    // backtracking straight to it (stops the "paces between two points" look).
+    RpgWanderFromX,
+    RpgWanderFromY,
     RpgVisitDestX, // f32: town NPC the bot is strolling over to visit, held until reached
     RpgVisitDestY,
     RpgVisitDestZ,

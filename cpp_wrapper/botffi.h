@@ -377,6 +377,12 @@ typedef struct BotCallbacks {
      * requester's ObjectGuid (used only for the whisper fallback). */
     bool (*tell_player)(BotHandle bot, uint64_t target_guid, const char* msg);
     bool (*use_item)(BotHandle bot, uint32_t item_id, UnitHandle target);
+    /* Drink a HEALTH (want_mana=false) or MANA (want_mana=true) potion from the
+     * bags when hp/mana is critical. True if one was used. */
+    bool (*bot_use_emergency_potion)(BotHandle bot, bool want_mana);
+    /* Equip larger bags sitting in the backpack into empty/smaller bag slots.
+     * True if any bag was equipped. */
+    bool (*bot_equip_better_bags)(BotHandle bot);
     /* Find the best food or drink in the bot's bags for its level.
      * category: 11 = food (HP regen), 59 = drink (mana regen).
      * Returns the item_id, or 0 if nothing suitable found. */
@@ -488,6 +494,22 @@ typedef struct BotCallbacks {
      * of the bot's incomplete quests (go->Use grants the credit). Returns
      * true if one was used. */
     bool          (*use_nearby_quest_object)(BotHandle bot, float range);
+    /* Nearest gameobject container (chest/box) within `range` whose loot holds a
+     * still-needed quest item ("collect from container", e.g. Scavenging
+     * Deathknell boxes). Writes its position to out_x/y/z and returns its guid,
+     * or 0 if none. */
+    uint64_t      (*nearest_quest_container)(BotHandle bot, float range,
+                                             float* out_x, float* out_y, float* out_z);
+    /* Loot a gameobject container by guid (must be within interaction range):
+     * grants the bot the still-needed quest items it can drop and deactivates
+     * it. Returns true if anything was looted. */
+    bool          (*loot_gameobject)(BotHandle bot, uint64_t go_guid);
+    /* Talk to a nearby FRIENDLY creature that satisfies a "speak to" objective
+     * of one of the bot's incomplete quests (grants the talk credit via
+     * Player::TalkedToCreature). Only friendly objective NPCs are talked to —
+     * attackable kill objectives go through the attack path. Returns true if
+     * one was talked to. */
+    bool          (*talk_to_nearby_quest_npc)(BotHandle bot, float range);
     /* True if `entry` is a creature the bot still needs to kill for an
      * incomplete quest objective — lets the attacker prefer the right mob. */
     bool          (*is_quest_objective_creature)(BotHandle bot, uint32_t entry);
@@ -504,7 +526,14 @@ typedef struct BotCallbacks {
     bool          (*bot_greet_nearby_player)(BotHandle bot);
 
     /* ── Unit queries (extended) ─────────────────────────────────────── */
+    /* True when `target` is hostile (red) AND the bot may attack it. Used by
+     * reactive/grind targeting that should only engage things already hostile. */
     bool    (*is_attackable)(BotHandle bot, UnitHandle target);
+    /* True when the bot is *allowed* to attack `target` (alive + `CanAttack`),
+     * regardless of current hostility — so it also covers NEUTRAL (yellow)
+     * mobs. Used to engage quest-objective creatures, which are frequently
+     * neutral until provoked (e.g. the undead "Mindless Ones" zombies). */
+    bool    (*can_attack)(BotHandle bot, UnitHandle target);
     uint8_t (*get_unit_level)(BotHandle bot, UnitHandle target);
     bool    (*is_casting_interruptible)(BotHandle bot, UnitHandle target);
     /* Coarse unit category used by BT condition leaves that need to
@@ -1126,6 +1155,10 @@ typedef struct BotCallbacks {
      * true if the quest was found and removed. */
     bool            (*bot_quest_abandon)(BotHandle bot, uint32_t quest_id);
 
+    /* True if the quest is grey (trivial / no meaningful XP) for the bot — its
+     * level is at/below the player's grey threshold. Drives AbandonGreyQuests. */
+    bool            (*bot_quest_is_grey)(BotHandle bot, uint32_t quest_id);
+
     /* ── Chat-command helpers (Wave 3: mail + guild) ────────────────── */
     /* Summary of the bot's current mailbox — totals only, no per-mail
      * details. Useful for the `mail` chat-command reply. */
@@ -1228,6 +1261,12 @@ typedef struct BotCallbacks {
      * Returns true if the item was successfully equipped. */
     bool (*equip_item)(BotHandle bot, uint32_t item_id);
 
+    /* Scan the bot's bags and equip every item that is a proper upgrade over
+     * what's currently worn (higher quality tier, item level as tiebreaker;
+     * empty slots count as score 0). Replaces the weaker of paired slots
+     * (rings/trinkets/weapons). Returns the number of items equipped. */
+    uint32_t (*auto_equip_upgrades)(BotHandle bot);
+
     /* ── Group management ──────────────────────────────────────────── */
     /* Transfer group/raid leadership from the bot to `target_guid`.
      * Returns true if the bot was the leader and the transfer succeeded. */
@@ -1285,6 +1324,9 @@ typedef struct BotCallbacks {
     /* Buy `qty` of `item_id` from a nearby vendor. Returns true on
      * success. */
     bool (*buy_from_vendor)(BotHandle bot, uint32_t item_id, uint32_t qty);
+    /* Buy any still-needed quest items the nearby vendor sells (e.g. Coarse
+     * Thread). True if anything was bought. */
+    bool (*bot_buy_quest_items)(BotHandle bot);
 
     /* ── Mail ────────────────────────────────────────────────────────── */
 

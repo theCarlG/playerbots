@@ -85,6 +85,8 @@ namespace BotBridge
     bool CB_TellAddon(BotHandle bot, uint64_t target_guid, const char* msg);
     bool CB_SendGroupAddonMessage(BotHandle bot, const char* prefix, const char* msg);
     bool CB_UseItem(BotHandle bot, uint32_t item_id, UnitHandle target);
+    bool CB_BotUseEmergencyPotion(BotHandle bot, bool want_mana);
+    bool CB_BotEquipBetterBags(BotHandle bot);
     uint32_t CB_FindFoodDrinkInBags(BotHandle bot, uint32_t category);
     bool CB_Taunt(BotHandle bot, UnitHandle target);
     bool CB_TeleportTo(BotHandle bot, uint32_t map_id, float x, float y, float z, float o);
@@ -140,6 +142,7 @@ namespace BotBridge
 
     // ── Unit queries (extended) ────────────────────────────────────────────
     bool    CB_IsAttackable(BotHandle bot, UnitHandle target);
+    bool    CB_CanAttack(BotHandle bot, UnitHandle target);
     uint8_t CB_GetUnitLevel(BotHandle bot, UnitHandle target);
     bool    CB_IsCastingInterruptible(BotHandle bot, UnitHandle target);
     uint8_t CB_UnitKind(BotHandle bot, UnitHandle target);
@@ -201,6 +204,10 @@ namespace BotBridge
     uint64_t    CB_NearbyGameObjectByEntry(BotHandle bot, uint32_t entry, float range);
     bool        CB_UseGameObject(BotHandle bot, uint64_t handle);
     bool        CB_UseNearbyQuestObject(BotHandle bot, float range);
+    uint64_t    CB_NearestQuestContainer(BotHandle bot, float range,
+                                         float* out_x, float* out_y, float* out_z);
+    bool        CB_LootGameObject(BotHandle bot, uint64_t go_guid);
+    bool        CB_TalkToNearbyQuestNpc(BotHandle bot, float range);
     bool        CB_IsQuestObjectiveCreature(BotHandle bot, uint32_t entry);
     uint64_t    CB_GetActiveEscortNpc(BotHandle bot);
     bool        CB_BotBroadcastRandom(BotHandle bot);
@@ -241,6 +248,7 @@ namespace BotBridge
     uint32_t     CB_ResolveSpellByName(BotHandle bot, const char* name);
     uint32_t     CB_ResolveItemByName(BotHandle bot, const char* name);
     bool         CB_EquipItem(BotHandle bot, uint32_t item_id);
+    uint32_t     CB_AutoEquipUpgrades(BotHandle bot);
     bool         CB_GiveLeader(BotHandle bot, uint64_t target_guid);
     uint64_t     CB_ResolvePlayerByName(BotHandle bot, const char* name);
     bool         CB_UnequipItem(BotHandle bot, uint32_t item_id);
@@ -382,6 +390,7 @@ namespace BotBridge
     void                CB_BotFreeSkillList(BotSkillEntry* list);
     bool                CB_BotQuestAcceptFrom(BotHandle bot, UnitHandle npc);
     bool                CB_BotQuestAbandon(BotHandle bot, uint32_t quest_id);
+    bool                CB_BotQuestIsGrey(BotHandle bot, uint32_t quest_id);
 
     // ── Chat-command helpers (Wave 3: mail + guild) ────────────────────────
     BotMailSummary      CB_BotMailSummary(BotHandle bot);
@@ -414,6 +423,7 @@ namespace BotBridge
     // ── NPC interaction ───────────────────────────────────────────────────
     bool CB_GossipHello(BotHandle bot, uint32_t npc_entry);
     bool CB_BuyFromVendor(BotHandle bot, uint32_t item_id, uint32_t qty);
+    bool CB_BotBuyQuestItems(BotHandle bot);
 
     // ── Mail ──────────────────────────────────────────────────────────────
     bool CB_MailItemToMaster(BotHandle bot);

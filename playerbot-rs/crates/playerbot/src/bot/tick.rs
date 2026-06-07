@@ -194,8 +194,229 @@ pub fn tick(bot: &mut BotState, elapsed_ms: u32, minimal: bool) {
     // cleared here because TickContext only has a shared ref to settings
     // and can't mutate it. Without this, the bot gets stuck in Combat
     // FSM forever with a non-attackable focus target.
+    // Autonomous bots (no master, or a self-bot that is its own master)
+    // promote a quest-objective mob chosen last tick (EngageTargetHandle, set
+    // by tick_attack_quest_mob) to focus_target, so the combat FSM engages it
+    // with the full class rotation. Quest kill mobs are routinely NEUTRAL and
+    // never trip the combat FSM on their own — this is what lets a questing
+    // bot actually fight (and a mage cast, not flail in melee). Commanded bots
+    // (a different player's master) keep player-directed targeting.
+    {
+        use crate::engine::blackboard::Key;
+        let autonomous = !matches!(bot.master_guid, Some(m) if m != bot.handle);
+        if let Some(engage) = bot.blackboard.get_u64(Key::EngageTargetHandle) {
+            bot.blackboard.clear(Key::EngageTargetHandle);
+            // NOTE: deliberately NOT gated on `!in_combat`. The melee
+            // auto-attack attempt from the World-tree tick can flag the bot
+            // in-combat before this promotion runs; gating on `!in_combat`
+            // then left it in the Combat FSM with no focus and a hostile-only
+            // fallback that rejects the neutral quest mob — so it just held a
+            // melee order it couldn't land. Promote regardless of in_combat;
+            // `attackers.is_empty()` still defers to genuine defense.
+            if autonomous
+                && bot.settings.focus_target.is_none()
+                && bot.attackers.is_empty()
+                && bot.snap.self_.is_alive
+                && bot.interface.can_attack(engage)
+                // Don't re-pick a target we just abandoned as unreachable.
+                && !matches!(
+                    bot.blackboard.get_u64(Key::BadTargetHandle),
+                    Some(bad) if bad == engage
+                        && bot.snap.server_time_ms
+                            < bot.blackboard.get_u64(Key::BadTargetUntilMs).unwrap_or(0)
+                )
+            {
+                bot.settings.focus_target = Some(engage);
+            }
+        }
+    }
+
+    // NOTE: the anti-wedge TELEPORT was removed. A server-side bot teleporting
+    // to its goal sounds clean but in practice it repeatedly went wrong —
+    // teleporting bots under the map to their deaths, into caves, and out of
+    // vendor buildings. Bots now WALK everywhere via normal pathfinding; a bot
+    // that genuinely can't path somewhere re-plans rather than blinking. Hard
+    // pathing cases (mob in a cave) are to be solved by better walk-pathing, not
+    // teleport-to-coords.
+
+    // Abandon a focus the bot can't make progress on. "Progress" = actually
+    // fighting it (in_combat), walking toward it (is_moving), or casting at it
+    // (is_casting). If a focus stops being progressable for 4s the bot is stuck
+    // on it — either it's invalid (dead/evaded), OR it drifted out of reach (a
+    // quest mob that wandered 60y away, out of cast range and unreachable by
+    // path: cast=false, los=false, mov=false forever). Now that there's no
+    // teleport rescue, an unreachable focus would freeze the bot in the Combat
+    // FSM, ignoring the quest mobs right next to it. Drop it and briefly
+    // blacklist it so the bot re-targets something it can actually engage.
+    {
+        use crate::engine::blackboard::{Key, Value};
+        let now = bot.snap.server_time_ms;
+        let progressing = bot.snap.self_.in_combat
+            || bot.snap.self_.is_moving
+            || bot.snap.self_.is_casting;
+        // Autonomous (self/solo) bots only — a grouped bot's focus is set by
+        // command (e.g. told to wait on a target) and must not be auto-dropped.
+        let autonomous = !matches!(bot.master_guid, Some(m) if m != bot.handle);
+        match bot.settings.focus_target {
+            Some(focus) if !progressing && autonomous => {
+                // Unreachable NOW: the focus is invalid (dead/evaded) OR it has
+                // drifted beyond cast+chase range (a quest mob that wandered off:
+                // e.g. focusDist 52, los=false, the bot can't path to it) while
+                // the bot isn't even moving toward it. Quest-objective mobs are
+                // only ever picked from the ~40y nearby scan, so a focus past 45y
+                // that the bot isn't chasing is a drifted lock — drop it at once
+                // (don't wait the 4s) so the bot engages a reachable mob instead
+                // of freezing. The 4s grace still covers in-range stalls (e.g. a
+                // mob behind a wall 20y away).
+                let dist = bot.interface.unit_distance(focus);
+                let fs = bot.interface.get_unit_snapshot(focus);
+                let unreachable = !bot.interface.can_attack(focus)
+                    || dist > 45.0
+                    // No navmesh route to it (e.g. a caged rattlecage mob 28y
+                    // away the bot can't walk to). Drop it at once so the bot
+                    // engages a reachable mob or travels, instead of freezing.
+                    || (!bot.snap.self_.is_moving
+                        && !bot.interface.can_pathfind_to(fs.pos.x, fs.pos.y, fs.pos.z));
+                let last = bot.blackboard.get_u64(Key::FocusProgressMs).unwrap_or(now);
+                if unreachable || now.saturating_sub(last) > 4_000 {
+                    bot.settings.focus_target = None;
+                    bot.blackboard.clear(Key::EngageTargetHandle);
+                    bot.blackboard.set(Key::BadTargetHandle, Value::U64(focus));
+                    bot.blackboard
+                        // Short cooldown: a mob abandoned as momentarily
+                        // unreachable (LOS/path) should be RE-TRIED soon, not
+                        // locked out for 30s — otherwise the bot blacklists every
+                        // nearby quest mob one by one and ends up standing among
+                        // them with nothing left to target.
+                        .set(Key::BadTargetUntilMs, Value::U64(now.saturating_add(6_000)));
+                }
+            }
+            // Progressing (fighting/chasing/casting) or no focus — reset clock.
+            _ => bot.blackboard.set(Key::FocusProgressMs, Value::U64(now)),
+        }
+    }
+
+    // ── Anti-deadlock watchdog ──────────────────────────────────────────────
+    // A bot must NEVER just freeze with no purpose. Standing still is only OK
+    // when it has a reason: commanded Stay, in combat, casting/channeling
+    // (incl. drinking), recovering HP/mana, or physically moving. We track the
+    // last time the bot made real PROGRESS — moved >5y, fought, cast, or its
+    // hp/mana rose (eating/drinking). If NONE of that happens for 12s the bot is
+    // deadlocked: force-break every state that can pin it (focus, engage /
+    // blacklist target handles, travel destination) so it drops back through
+    // travel → grind → rpg-wander and moves again. This is the safety net under
+    // every specific stuck-fix: whatever new way a bot finds to wedge, it
+    // un-wedges within 12s instead of standing forever.
+    //
+    // ONLY while ALIVE. A dead bot/ghost has its own purpose — the death FSM
+    // (release spirit → corpse run → reclaim). Running the watchdog on a ghost
+    // force-relocated it to random wander points whenever its corpse-run move
+    // hitched for a moment, making the ghost "glide around everywhere" instead
+    // of going to its body.
+    if bot.snap.self_.is_alive {
+        use crate::engine::blackboard::{Key, Value};
+        let now = bot.snap.server_time_ms;
+        let pos = bot.snap.self_.pos;
+        let hp = bot.snap.self_.health as f32 / bot.snap.self_.max_health.max(1) as f32;
+        let mana = bot.snap.self_.mana as f32 / bot.snap.self_.max_mana.max(1) as f32;
+        let ax = bot.blackboard.get_f32(Key::WedgeAnchorX);
+        let ay = bot.blackboard.get_f32(Key::WedgeAnchorY);
+        let ams = bot.blackboard.get_u64(Key::WedgeAnchorMs).unwrap_or(now);
+        let ahp = bot.blackboard.get_f32(Key::IdleAnchorHp).unwrap_or(hp);
+        let amana = bot.blackboard.get_f32(Key::IdleAnchorMana).unwrap_or(mana);
+        let moved = match (ax, ay) {
+            (Some(x), Some(y)) => (pos.x - x).powi(2) + (pos.y - y).powi(2) > 5.0 * 5.0,
+            _ => true,
+        };
+        let _ = (ahp, amana);
+        // PURPOSEFUL recovery only — set by the eat/drink behavior when it's
+        // actively drinking/eating. Passive idle mana regen must NOT count
+        // (otherwise a bot just standing while mana ticks up looks "busy" and
+        // never trips the watchdog — exactly what happened post-fight).
+        let recovering = bot
+            .blackboard
+            .get_u64(Key::RecoverActiveMs)
+            .is_some_and(|t| now.saturating_sub(t) < 8_000);
+        // Commanded Stay / Guard etc. are purposeful stands (only Follow roams).
+        let purposeful_stand =
+            !matches!(bot.settings.mode, crate::bot::settings::BehaviorMode::Follow);
+        // In-combat counts as progress ONLY when the bot can actually SEE its
+        // target. A bot fighting normally (meleeing or casting) has LOS to its
+        // focus; a bot wedged inside geometry — taking hits but unable to reach
+        // or see the mob — does NOT, and previously `in_combat` alone marked it
+        // "busy" forever, so it sat there getting hit and doing nothing (never
+        // rescued). Now that wedged-in-combat state trips the watchdog after 10s.
+        let fighting_with_los = bot.snap.self_.in_combat
+            && bot
+                .settings
+                .focus_target
+                .is_some_and(|f| bot.interface.has_los(f));
+        let progressing = moved
+            || fighting_with_los
+            || bot.snap.self_.is_moving
+            || bot.snap.self_.is_casting
+            || bot.snap.self_.is_channeling
+            || recovering
+            || purposeful_stand;
+        if progressing {
+            bot.blackboard.set(Key::WedgeAnchorX, Value::F32(pos.x));
+            bot.blackboard.set(Key::WedgeAnchorY, Value::F32(pos.y));
+            bot.blackboard.set(Key::WedgeAnchorMs, Value::U64(now));
+            bot.blackboard.set(Key::IdleAnchorHp, Value::F32(hp));
+            bot.blackboard.set(Key::IdleAnchorMana, Value::F32(mana));
+        } else if now.saturating_sub(ams) > 10_000 {
+            // Deadlocked. Clearing state isn't enough — the same unreachable
+            // objective just gets re-picked (e.g. all remaining quest mobs are
+            // caged/unreachable from here). So PHYSICALLY RELOCATE: walk to a
+            // reachable point ~30y away. From a new position a different/closer
+            // objective becomes available, or it can re-approach. Guarantees the
+            // bot is never frozen.
+            bot.settings.focus_target = None;
+            bot.blackboard.clear(Key::EngageTargetHandle);
+            bot.blackboard.clear(Key::BadTargetHandle);
+            bot.blackboard.clear(Key::BadTargetUntilMs);
+            // Pick a reachable wander point (vary direction by handle+time).
+            let seed = now.wrapping_add(bot.handle.rotate_left(11));
+            let mut chosen: Option<(f32, f32)> = None;
+            for i in 0..8u64 {
+                let ang = ((seed.wrapping_add(i.wrapping_mul(2_654_435_761)) >> 8) % 360) as f32
+                    * std::f32::consts::PI
+                    / 180.0;
+                let wx = pos.x + ang.cos() * 30.0;
+                let wy = pos.y + ang.sin() * 30.0;
+                if bot.interface.can_pathfind_to(wx, wy, pos.z) {
+                    chosen = Some((wx, wy));
+                    break;
+                }
+            }
+            if let Some((wx, wy)) = chosen {
+                bot.blackboard.set(Key::TravelDestX, Value::F32(wx));
+                bot.blackboard.set(Key::TravelDestY, Value::F32(wy));
+                bot.blackboard.set(Key::TravelDestZ, Value::F32(pos.z));
+                bot.blackboard
+                    .set(Key::TravelDestMap, Value::U32(pos.map_id));
+            } else {
+                // Nothing reachable nearby — clear dest so it re-plans freely.
+                bot.blackboard.clear(Key::TravelDestX);
+                bot.blackboard.clear(Key::TravelDestY);
+                bot.blackboard.clear(Key::TravelDestZ);
+            }
+            // Re-anchor so the next window starts fresh after the break.
+            bot.blackboard.set(Key::WedgeAnchorX, Value::F32(pos.x));
+            bot.blackboard.set(Key::WedgeAnchorY, Value::F32(pos.y));
+            bot.blackboard.set(Key::WedgeAnchorMs, Value::U64(now));
+            bot.blackboard.set(Key::IdleAnchorHp, Value::F32(hp));
+            bot.blackboard.set(Key::IdleAnchorMana, Value::F32(mana));
+            if bot.master_guid == Some(bot.handle) {
+                crate::log_warn!(
+                    "[QTrace][SELF] anti-deadlock: 10s no progress — relocating to a reachable point"
+                );
+            }
+        }
+    }
+
     if let Some(focus) = bot.settings.focus_target
-        && !bot.interface.is_attackable(focus) {
+        && !bot.interface.can_attack(focus) {
             bot.settings.focus_target = None;
             // If the forced intention targeted this unit, clear it too.
             if bot.bdi.forced_intention.is_some_and(|fi| fi.target() == Some(focus)) {
@@ -749,7 +970,6 @@ fn process_events(bot: &mut BotState, _now_ms: u64) {
 ///   `TravelToBlackboard` can navigate there.
 /// - Clearing the blackboard when the target is no longer active.
 fn update_travel_target(bot: &mut BotState, now_ms: u64) {
-    use crate::engine::blackboard::Key;
     use crate::travel::destination::TravelStatus;
     use crate::travel::planner;
 
@@ -757,11 +977,17 @@ fn update_travel_target(bot: &mut BotState, now_ms: u64) {
     let tt = &mut bot.travel_target;
 
     // Skip if no active target.
+    //
+    // IMPORTANT: the `TravelTarget` FSM is currently never populated — the
+    // active travel system is the BT (`ChooseTravelTarget` writes the
+    // blackboard destination directly, and `TravelToBlackboard`/`tick_travel`
+    // owns arrival, replanning, and clearing). This sync function must NOT
+    // clear the blackboard destination when the FSM is inactive: doing so wiped
+    // the destination the BT set on the previous tick (this runs first each
+    // tick), so the bot never kept a travel goal — `dest=none` forever — and
+    // could never reach a quest objective or turn-in. Just return and let the
+    // BT own the blackboard destination.
     if !tt.is_active() {
-        // Make sure blackboard is clear if target is gone.
-        if bot.blackboard.get_f32(Key::TravelDestX).is_some() {
-            planner::clear_travel_dest(&mut bot.blackboard);
-        }
         return;
     }
 

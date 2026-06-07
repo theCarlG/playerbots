@@ -285,6 +285,14 @@ impl World for VtableWorld {
         unsafe { (self.cbs.use_item.unwrap())(self.handle, item_id.raw(), target) }
     }
 
+    fn use_emergency_potion(&self, want_mana: bool) -> bool {
+        unsafe { (self.cbs.bot_use_emergency_potion.unwrap())(self.handle, want_mana) }
+    }
+
+    fn equip_better_bags(&self) -> bool {
+        unsafe { (self.cbs.bot_equip_better_bags.unwrap())(self.handle) }
+    }
+
     fn taunt(&self, target: UnitHandle) -> bool {
         unsafe { (self.cbs.taunt.unwrap())(self.handle, target) }
     }
@@ -448,6 +456,26 @@ impl World for VtableWorld {
         unsafe { (self.cbs.use_nearby_quest_object.unwrap())(self.handle, range) }
     }
 
+    fn nearest_quest_container(&self, range: f32) -> Option<(u64, f32, f32, f32)> {
+        let (mut x, mut y, mut z) = (0.0f32, 0.0f32, 0.0f32);
+        let guid = unsafe {
+            (self.cbs.nearest_quest_container.unwrap())(self.handle, range, &mut x, &mut y, &mut z)
+        };
+        if guid == 0 {
+            None
+        } else {
+            Some((guid, x, y, z))
+        }
+    }
+
+    fn loot_gameobject(&self, go_guid: u64) -> bool {
+        unsafe { (self.cbs.loot_gameobject.unwrap())(self.handle, go_guid) }
+    }
+
+    fn talk_to_nearby_quest_npc(&self, range: f32) -> bool {
+        unsafe { (self.cbs.talk_to_nearby_quest_npc.unwrap())(self.handle, range) }
+    }
+
     fn is_quest_objective_creature(&self, entry: u32) -> bool {
         unsafe { (self.cbs.is_quest_objective_creature.unwrap())(self.handle, entry) }
     }
@@ -468,6 +496,10 @@ impl World for VtableWorld {
 
     fn is_attackable(&self, target: UnitHandle) -> bool {
         unsafe { (self.cbs.is_attackable.unwrap())(self.handle, target) }
+    }
+
+    fn can_attack(&self, target: UnitHandle) -> bool {
+        unsafe { (self.cbs.can_attack.unwrap())(self.handle, target) }
     }
 
     fn get_unit_level(&self, target: UnitHandle) -> u8 {
@@ -802,6 +834,10 @@ impl World for VtableWorld {
 
     fn equip_item(&self, item_id: ItemId) -> bool {
         unsafe { (self.cbs.equip_item.unwrap())(self.handle, item_id.raw()) }
+    }
+
+    fn auto_equip_upgrades(&self) -> u32 {
+        unsafe { (self.cbs.auto_equip_upgrades.unwrap())(self.handle) }
     }
 
     fn give_leader(&self, target_guid: UnitHandle) -> bool {
@@ -1255,6 +1291,10 @@ impl World for VtableWorld {
         unsafe { (self.cbs.bot_quest_abandon.unwrap())(self.handle, quest_id) }
     }
 
+    fn bot_quest_is_grey(&self, quest_id: u32) -> bool {
+        unsafe { (self.cbs.bot_quest_is_grey.unwrap())(self.handle, quest_id) }
+    }
+
     /* ── Chat-command helpers (Wave 3: mail + guild) ─────────────────── */
 
     fn bot_mail_summary(&self) -> BotMailSummary {
@@ -1401,6 +1441,10 @@ impl World for VtableWorld {
 
     fn buy_from_vendor(&self, item_id: u32, qty: u32) -> bool {
         unsafe { (self.cbs.buy_from_vendor.unwrap())(self.handle, item_id, qty) }
+    }
+
+    fn buy_quest_items(&self) -> bool {
+        unsafe { (self.cbs.bot_buy_quest_items.unwrap())(self.handle) }
     }
 
     fn mail_item_to_master(&self) -> bool {

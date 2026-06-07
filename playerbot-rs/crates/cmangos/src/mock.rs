@@ -1708,6 +1708,31 @@ impl World for MockWorld {
         boxed(self.0.borrow().equipped_items.clone())
     }
 
+    fn auto_equip_upgrades(&self) -> u32 {
+        // Simplified in-memory model of the C++ slot/ilvl logic: a bag item is an
+        // upgrade when its quality strictly exceeds the lowest-quality equipped
+        // item (or nothing is equipped). Move such items from bags to equipped
+        // and return the count.
+        let mut s = self.0.borrow_mut();
+        let min_equipped_q = s.equipped_items.iter().map(|i| i.quality).min();
+        let mut equipped = 0u32;
+        let mut i = 0;
+        while i < s.inventory_items.len() {
+            let is_upgrade = match min_equipped_q {
+                Some(m) => s.inventory_items[i].quality > m,
+                None => true,
+            };
+            if is_upgrade {
+                let item = s.inventory_items.remove(i);
+                s.equipped_items.push(item);
+                equipped += 1;
+            } else {
+                i += 1;
+            }
+        }
+        equipped
+    }
+
     fn bot_get_bank_items(&self) -> InventoryList<'_> {
         boxed(self.0.borrow().bank_items.clone())
     }
@@ -2372,6 +2397,26 @@ mod tests {
         );
         w.clear_events();
         assert!(w.events().is_empty());
+    }
+
+    #[test]
+    fn auto_equip_upgrades_moves_higher_quality_bag_items() {
+        // Equipped: a white (q1). Bags: a green (q2, upgrade) and a grey (q0, not).
+        let equipped = vec![BotInventoryItem { item_id: 10, quality: 1, ..Default::default() }];
+        let bags = vec![
+            BotInventoryItem { item_id: 20, quality: 2, ..Default::default() },
+            BotInventoryItem { item_id: 30, quality: 0, ..Default::default() },
+        ];
+        let w = MockWorld::builder()
+            .equipped_items(equipped)
+            .inventory_items(bags)
+            .build();
+        // Only the green is a proper upgrade over the white.
+        assert_eq!(w.auto_equip_upgrades(), 1);
+        // The green is now equipped; the grey stays in bags.
+        assert!(w.bot_get_equipped().iter().any(|i| i.item_id == 20));
+        assert!(w.bot_get_inventory().iter().all(|i| i.item_id != 20));
+        assert!(w.bot_get_inventory().iter().any(|i| i.item_id == 30));
     }
 
     #[test]

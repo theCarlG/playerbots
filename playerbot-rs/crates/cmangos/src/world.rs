@@ -210,6 +210,16 @@ pub trait World: Send {
         false
     }
     fn use_item(&self, item_id: ItemId, target: UnitHandle) -> bool;
+    /// Drink a health (`want_mana=false`) or mana (`want_mana=true`) potion from
+    /// the bags when critical. Returns true if one was used.
+    fn use_emergency_potion(&self, _want_mana: bool) -> bool {
+        false
+    }
+    /// Equip larger bags from the backpack into empty/smaller bag slots.
+    /// Returns true if any bag was equipped.
+    fn equip_better_bags(&self) -> bool {
+        false
+    }
     fn taunt(&self, target: UnitHandle) -> bool;
 
     /// Teleport the bot to an absolute world position. Used by the
@@ -371,6 +381,22 @@ pub trait World: Send {
     fn use_nearby_quest_object(&self, _range: f32) -> bool {
         false
     }
+    /// Nearest gameobject container (chest/box) within `range` whose loot holds
+    /// a still-needed quest item ("collect from container"). Returns
+    /// `Some((guid, x, y, z))` or `None`.
+    fn nearest_quest_container(&self, _range: f32) -> Option<(u64, f32, f32, f32)> {
+        None
+    }
+    /// Loot a gameobject container by guid (must be in interaction range):
+    /// grants the still-needed quest items it can drop and deactivates it.
+    fn loot_gameobject(&self, _go_guid: u64) -> bool {
+        false
+    }
+    /// Talk to a nearby friendly creature that satisfies a "speak to" objective
+    /// of one of the bot's incomplete quests. Returns true if one was talked to.
+    fn talk_to_nearby_quest_npc(&self, _range: f32) -> bool {
+        false
+    }
     /// True if `entry` is a creature the bot still needs to kill for an
     /// incomplete quest objective.
     fn is_quest_objective_creature(&self, _entry: u32) -> bool {
@@ -401,6 +427,12 @@ pub trait World: Send {
     /* ── Unit queries (extended) ────────────────────────────────────── */
 
     fn is_attackable(&self, _target: UnitHandle) -> bool {
+        false
+    }
+    /// Whether the bot is *allowed* to attack `target` (alive + `CanAttack`),
+    /// including neutral mobs — unlike [`is_attackable`], which also requires
+    /// the target to be hostile. Used to engage neutral quest-objective mobs.
+    fn can_attack(&self, _target: UnitHandle) -> bool {
         false
     }
     fn get_unit_level(&self, _target: UnitHandle) -> u8 {
@@ -772,6 +804,13 @@ pub trait World: Send {
     /// Returns true if the item was successfully equipped.
     fn equip_item(&self, _item_id: ItemId) -> bool {
         false
+    }
+
+    /// Scan the bot's bags and equip every item that is a proper upgrade over
+    /// what's currently worn (higher quality tier, item level as tiebreaker;
+    /// empty slots count as 0). Returns the number of items equipped.
+    fn auto_equip_upgrades(&self) -> u32 {
+        0
     }
 
     /// Transfer group/raid leadership from the bot to `target_guid`.
@@ -1378,6 +1417,11 @@ pub trait World: Send {
         false
     }
 
+    /// True if the quest is grey (trivial / no meaningful XP) for the bot.
+    fn bot_quest_is_grey(&self, _quest_id: u32) -> bool {
+        false
+    }
+
     /* ── Chat-command helpers (Wave 3: mail + guild) ─────────────────── */
 
     /// Mailbox summary — totals only, no per-mail details.
@@ -1494,6 +1538,12 @@ pub trait World: Send {
 
     /// Buy `qty` of `item_id` from a nearby vendor.
     fn buy_from_vendor(&self, _item_id: u32, _qty: u32) -> bool {
+        false
+    }
+
+    /// Buy any still-needed quest items a nearby vendor sells (e.g. Coarse
+    /// Thread). Returns true if anything was bought.
+    fn buy_quest_items(&self) -> bool {
         false
     }
 

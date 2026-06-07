@@ -312,6 +312,13 @@ pub enum Bt {
     /// engagement via attackers list). For FSM-aware combat checks, use
     /// `InCombatFsm` which is true whenever the tick's `ActiveFsm` is Combat.
     InCombat,
+    /// Bot is mid-cast or channeling a spell. Used to suppress repositioning
+    /// (chase/face/maintain-range) while a cast-time spell is in progress —
+    /// re-issuing a movement order cancels the cast server-side.
+    IsCasting,
+    /// Bot has line of sight to its current target. `.not()` lets a caster
+    /// walk closer to clear an obstacle instead of standing unable to cast.
+    TargetInLos,
     /// True when the bot's active FSM state is `Combat`. Unlike `InCombat`
     /// (which only checks the server combat flag), this also covers cases
     /// where the bot has attackers but the server hasn't set the flag yet.
@@ -606,6 +613,10 @@ pub enum Bt {
     /// distinguish "not started" from "in progress").
     QuestInLogComplete(u32),
 
+    /// Drink a health/mana potion from bags when hp/mana is critical.
+    UseEmergencyPotion,
+    /// Equip larger bags sitting in the backpack into bag slots.
+    EquipBetterBags,
     // ── Movement — encounter ─────────────────────────────────────────────
     /// Dodge an area effect — move to nearest safe position.
     FleeToSafe(f32),
@@ -710,8 +721,17 @@ pub enum Bt {
     Dismount,
     /// Find and loot nearby corpses.
     LootNearest,
+    /// Walk to and loot a nearby gameobject container (chest/box) that holds a
+    /// still-needed quest item — e.g. Scavenging Deathknell's Equipment Boxes.
+    LootQuestContainer,
+    /// Buy still-needed quest items a nearby vendor sells (e.g. Coarse Thread).
+    BuyQuestItems,
     /// Find vendor NPC, approach, sell grey items.
     VendorSellGrey,
+    /// Equip any bag item that's a proper upgrade over what's worn (higher
+    /// quality tier, item level tiebreaker). Returns Success if anything was
+    /// equipped. Cheap to tick when nothing to do (returns Failure).
+    AutoEquipUpgrades,
     /// Find repair NPC, approach, repair equipment.
     RepairEquipment,
     /// When low on ammo, find a vendor that stocks the right ammo, approach,
@@ -722,10 +742,16 @@ pub enum Bt {
     TurnInQuest,
     /// Accept available quests from nearby NPC.
     AcceptQuests,
+    /// Drop grey (trivial / no-XP) quests from the log so the bot stops
+    /// carrying and trying to work quests that no longer reward anything.
+    AbandonGreyQuests,
     /// Attack a quest-relevant mob.
     AttackQuestMob,
     /// Use a nearby gameobject that satisfies a "use object" quest objective.
     UseQuestObject,
+    /// Talk to a nearby friendly NPC that satisfies a "speak to" quest
+    /// objective (grants the talk credit). Failure when none is in reach.
+    TalkToQuestNpc,
     /// Follow the NPC currently escorting the bot (escort quests), so the
     /// escort keeps progressing. Failure when no escort is active.
     EscortQuestNpc,
@@ -1458,6 +1484,10 @@ impl BtNode for Bt {
             // ── Conditions — general ─────────────────────────────────────
             Bt::Noop => BtResult::Success,
             Bt::InCombat => ok(ctx.in_combat()),
+            Bt::IsCasting => ok(ctx.snap.self_.is_casting || ctx.snap.self_.is_channeling),
+            Bt::TargetInLos => ok(ctx
+                .current_target()
+                .is_some_and(|t| ctx.interface.has_los(t))),
             Bt::InInstance => ok(ctx.in_instance()),
             Bt::InCombatFsm => ok(ctx.active_fsm == crate::engine::macro_fsm::ActiveFsm::Combat),
             Bt::IsAlive => ok(ctx.snap.self_.is_alive),
@@ -1696,6 +1726,14 @@ impl BtNode for Bt {
             }
 
             // ── Movement — encounter ─────────────────────────────────────
+            Bt::UseEmergencyPotion => tick_use_emergency_potion(ctx),
+            Bt::EquipBetterBags => {
+                if ctx.interface.equip_better_bags() {
+                    BtResult::Success
+                } else {
+                    BtResult::Failure
+                }
+            }
             Bt::FleeToSafe(radius) => move_to_safe(ctx, *radius),
             Bt::MoveAwayFromRaid(dist) => move_to_safe(ctx, *dist),
             Bt::MaintainRange(min_range) => {
@@ -2053,18 +2091,52 @@ impl BtNode for Bt {
                 }
             }
             Bt::LootNearest => tick_loot(ctx),
+            Bt::LootQuestContainer => tick_loot_quest_container(ctx),
+            Bt::BuyQuestItems => {
+                if ctx.interface.buy_quest_items() {
+                    BtResult::Success
+                } else {
+                    BtResult::Failure
+                }
+            }
             Bt::LootRoll => tick_loot_roll(ctx),
             Bt::AutoLootRoll => tick_auto_loot_roll(ctx),
             Bt::CheckMail => tick_check_mail(ctx),
             Bt::VendorSellGrey => tick_vendor(ctx),
+            Bt::AutoEquipUpgrades => ok(ctx.interface.auto_equip_upgrades() > 0),
             Bt::RepairEquipment => tick_repair(ctx),
             Bt::RestockAmmo => tick_restock_ammo(ctx),
             Bt::TurnInQuest => tick_turn_in_quest(ctx),
             Bt::AcceptQuests => tick_accept_quests(ctx),
+            Bt::AbandonGreyQuests => tick_abandon_grey_quests(ctx),
             Bt::AttackQuestMob => tick_attack_quest_mob(ctx),
             Bt::UseQuestObject => {
                 if ctx.interface.use_nearby_quest_object(crate::config::get().nearby_scan_range) {
                     BtResult::Success
+                } else {
+                    BtResult::Failure
+                }
+            }
+            Bt::TalkToQuestNpc => {
+                // A "speak to" objective NPC is a FRIENDLY creature (can't be
+                // attacked) that's a quest objective. Approach to interaction
+                // range, then talk to grant the credit. The travel system
+                // already routes the bot to it (it's a ReqCreatureOrGOId).
+                if let Some(npc) = ctx.nearby.iter().copied().find(|&u| {
+                    !ctx.interface.can_attack(u)
+                        && ctx.interface.is_quest_objective_creature(
+                            ctx.interface.get_unit_snapshot(u).npc_entry,
+                        )
+                }) {
+                    let dist = ctx.interface.unit_distance(npc);
+                    if dist > 5.0 {
+                        let s = ctx.interface.get_unit_snapshot(npc);
+                        if ctx.interface.move_to(s.pos.x, s.pos.y, s.pos.z) {
+                            return BtResult::Running;
+                        }
+                        return BtResult::Failure;
+                    }
+                    ok(ctx.interface.talk_to_nearby_quest_npc(0.0))
                 } else {
                     BtResult::Failure
                 }
@@ -2128,11 +2200,18 @@ impl BtNode for Bt {
             Bt::CloseToTarget(dist) => tick_close_to_target(ctx, *dist),
             Bt::EngageTarget => tick_engage_target(ctx),
             Bt::FaceTarget => {
-                // Face current target after movement. Chase with the
-                // current distance so the bot doesn't move, just rotates.
+                // Rotate to face the current target WITHOUT issuing a movement
+                // order. The old impl called `chase(target, current_dist, 0)`
+                // to "rotate in place", but chase is a movement command — re-
+                // issued every tick it cancelled the bot's own cast-time spells
+                // (a caster started Fireball, FaceTarget chased, the cast was
+                // cancelled, repeat forever). A pure facing (set_facing) sets
+                // orientation via a heartbeat and never interrupts a cast.
                 if let Some(target) = ctx.current_target() {
-                    let dist = ctx.interface.unit_distance(target);
-                    ctx.interface.chase(target, dist.max(0.5), 0.0);
+                    let tgt = ctx.interface.get_unit_snapshot(target);
+                    let bot = ctx.snap.self_.pos;
+                    let angle = (tgt.pos.y - bot.y).atan2(tgt.pos.x - bot.x);
+                    ctx.interface.set_facing(angle);
                 }
                 BtResult::Success
             }
@@ -2455,7 +2534,34 @@ fn eval_cmp(ctx: &TickContext<'_>, res: Resource, op: Op) -> bool {
     }
 }
 
+/// Drink a health potion when HP is critical, or a mana potion when a mana user
+/// is nearly dry. The C++ side finds the right potion in bags and respects the
+/// shared potion cooldown (returns false if none usable). Returns Success only
+/// when a potion was actually drunk.
+fn tick_use_emergency_potion(ctx: &mut TickContext<'_>) -> BtResult {
+    const HP_POTION_PCT: f32 = 0.30;
+    const MANA_POTION_PCT: f32 = 0.20;
+    if ctx.self_hp_pct() < HP_POTION_PCT && ctx.interface.use_emergency_potion(false) {
+        return BtResult::Success;
+    }
+    let uses_mana = ctx.snap.self_.power_type == 0;
+    if uses_mana
+        && ctx.self_mana_pct() < MANA_POTION_PCT
+        && ctx.interface.use_emergency_potion(true)
+    {
+        return BtResult::Success;
+    }
+    BtResult::Failure
+}
+
 fn move_to_safe(ctx: &mut TickContext<'_>, radius: f32) -> BtResult {
+    // Fleeing is an EMERGENCY: abandon any in-progress cast so the cast-movement
+    // guard (which blocks moves mid-cast to protect casts) lets the bot actually
+    // run. A caster pinned by a pack has its cast pushed back to death by the
+    // incoming hits — if it also can't move because "it's casting", it just
+    // stands and dies. Survival beats the cast here. Harmless no-op when not
+    // casting; cancelling our OWN cast is exactly what a fleeing player does.
+    ctx.interface.interrupt_own_cast();
     match ctx.interface.get_safe_position(radius) {
         Some(pos) if ctx.interface.move_to(pos.x, pos.y, pos.z) => BtResult::Running,
         _ => BtResult::Failure,
@@ -2522,10 +2628,26 @@ fn cast(ctx: &mut TickContext<'_>, spell: SpellId, target: u64) -> BtResult {
             "CAST {name} on 0x{target:X}: SKIP (already casting spell={})",
             ctx.snap.self_.casting_spell_id,
         ));
+        if is_self_bot(ctx) {
+            qtrace(ctx, "cast SKIP: already casting");
+        }
         return BtResult::Failure;
     }
     if ctx.timers.gcd_active(ctx.server_time_ms) {
-        // GCD is too spammy for chat/monitor - only log when explicitly asked
+        // GCD is too spammy for chat/monitor - only log when explicitly asked.
+        // DIAGNOSTIC: print the GCD remaining + the server clock. If `now` keeps
+        // advancing but `rem` stays pinned near 1500, something re-arms the GCD
+        // every tick; if `now` is frozen, the snapshot clock isn't advancing.
+        if is_self_bot(ctx) {
+            qtrace(
+                ctx,
+                &format!(
+                    "cast SKIP: GCD active rem={}ms now={}",
+                    ctx.timers.gcd_remaining_ms(ctx.server_time_ms),
+                    ctx.server_time_ms,
+                ),
+            );
+        }
         return BtResult::Failure;
     }
     if ctx.timers.spell_on_cooldown(spell, ctx.server_time_ms) {
@@ -2536,10 +2658,27 @@ fn cast(ctx: &mut TickContext<'_>, spell: SpellId, target: u64) -> BtResult {
         ));
         return BtResult::Failure;
     }
+    // Don't even ATTEMPT a cast at a target we have no line of sight to. This is
+    // the deadlock that pinned bots in place (e.g. stuck inside a house staring
+    // at a mob outside): a cast-time spell calls StopMoving() server-side BEFORE
+    // the LOS check rejects it, so the rotation's per-tick cast attempt kept
+    // cancelling the positioning's walk-to-LOS — the bot could never close the
+    // gap. Skipping here lets it WALK to line of sight, then cast. (Self-casts
+    // always have LOS to self, so they're unaffected.)
+    if target != ctx.bot_handle && !ctx.interface.has_los(target) {
+        return BtResult::Failure;
+    }
     if ctx.interface.cast_spell(spell, target) {
         ctx.timers.on_spell_cast(spell, ctx.server_time_ms);
         let name = ctx.spell_name(spell);
         ctx.monitor(format_args!("CAST {name} on 0x{target:X}: OK"));
+        // DIAGNOSTIC: prove a cast was actually SENT (cast_spell returned true)
+        // and which spell armed the GCD. If we see this for Frostbolt but the
+        // next tick's snapshot is_casting=false, the cast isn't persisting
+        // server-side (started then cancelled, or it's instant).
+        if is_self_bot(ctx) {
+            qtrace(ctx, &format!("cast {name} SENT (gcd armed, now={})", ctx.server_time_ms));
+        }
         BtResult::Success
     } else {
         let dist = ctx.interface.unit_distance(target);
@@ -2548,19 +2687,33 @@ fn cast(ctx: &mut TickContext<'_>, spell: SpellId, target: u64) -> BtResult {
         let can = ctx.interface.can_cast(spell, target);
         let name = ctx.spell_name(spell);
         let los = ctx.interface.has_los(target);
-        // Build a human-readable reason string.
-        let reason = if !has_spell {
-            "not learned"
+        // Build a human-readable reason string. NOTE: base it on `can_cast`
+        // (which downranks), NOT `knows_spell` of the max-rank id — a low-level
+        // bot never "knows" the rank-12 id the rotation references but can still
+        // cast a lower rank, so keying the reason on knows_spell mislabeled every
+        // failure "not learned".
+        let reason = if !can {
+            "can't cast (no known rank / range / mana / stance)"
         } else if !los {
             "no line of sight"
-        } else if !can {
-            "can't cast (range/mana/stance?)"
         } else {
-            "server rejected"
+            "server rejected (already casting / GCD / facing)"
         };
         ctx.monitor(format_args!(
             "CAST {name} on 0x{target:X}: FAIL ({reason}) dist={dist:.1}y los={los} knows={has_spell} can_cast={can} moving={moving}",
         ));
+        // Only surface the INTERESTING failures: the spell is castable in
+        // principle (known rank, off cooldown, enough mana, in range — `can` is
+        // true) yet the server refused it (LOS / facing / already-casting). The
+        // `!can` cases (doesn't know it, OOM, out of range) are expected churn —
+        // a low-level mage's rotation lists Combustion/Frost Nova/etc. it simply
+        // hasn't learned — so don't spam them; they're harmless no-ops that fall
+        // through to the next spell the same tick.
+        if is_self_bot(ctx) && can {
+            crate::log_warn!(
+                "[QTrace][SELF] cast {name} FAIL: {reason} (dist={dist:.0} los={los} mov={moving})"
+            );
+        }
         BtResult::Failure
     }
 }
@@ -2722,6 +2875,14 @@ fn tick_follow(ctx: &mut TickContext<'_>) -> BtResult {
 /// pulls they run to the mob and back; the raid should stay with the
 /// master, not chase the tank.
 fn pick_follow_target(ctx: &TickContext<'_>) -> Option<UnitHandle> {
+    // The player's own character running on AI (`.bot self`) is its OWN master
+    // (master_guid == bot_handle). It is the leader, not a follower — it must
+    // never trail a groupmate (real player or bot). Returning None makes the
+    // Follow leaf fail so mode_dispatch falls through to autonomous questing
+    // instead of milling around whoever it's grouped with.
+    if ctx.master_guid == Some(ctx.bot_handle) {
+        return None;
+    }
     if let Some(master) = ctx.master_guid
         && master != 0
         && master != ctx.bot_handle
@@ -2853,9 +3014,11 @@ fn tick_guard_return(ctx: &mut TickContext<'_>) -> BtResult {
 // ── Consumables ─────────────────────────────────────────────────────────────
 
 const HP_EAT_THRESHOLD: f32 = 0.70;
-const HP_FULL_THRESHOLD: f32 = 0.90;
+const HP_FULL_THRESHOLD: f32 = 0.95;
 const MANA_DRINK_THRESHOLD: f32 = 0.40;
-const MANA_FULL_THRESHOLD: f32 = 0.80;
+// Drink to (near) full before getting up — stopping at 80% left the bot
+// perpetually low and looking like it "didn't finish" its drink.
+const MANA_FULL_THRESHOLD: f32 = 0.95;
 
 /// Food category constants matching `WoW`'s `SpellCategory` field on
 /// consumable item spells.
@@ -2864,19 +3027,50 @@ const FOOD_CATEGORY_DRINK: u32 = 59;
 
 fn tick_consumables(ctx: &mut TickContext<'_>) -> BtResult {
     let uses_mana = ctx.snap.self_.power_type == 0;
-    let hp_low = ctx.self_hp_pct() < HP_EAT_THRESHOLD;
-    let mana_low = uses_mana && ctx.self_mana_pct() < MANA_DRINK_THRESHOLD;
+    let hp_pct = ctx.self_hp_pct();
+    let mana_pct = ctx.self_mana_pct();
+    let now = ctx.snap.server_time_ms;
 
-    if !hp_low && !mana_low {
+    let hp_low = hp_pct < HP_EAT_THRESHOLD;
+    let mana_low = uses_mana && mana_pct < MANA_DRINK_THRESHOLD;
+    let hp_full = hp_pct >= HP_FULL_THRESHOLD;
+    let mana_full = !uses_mana || mana_pct >= MANA_FULL_THRESHOLD;
+
+    // HYSTERESIS — this was the "gets up at ~40% mana / perpetually OOM" bug.
+    // Entry threshold (start at <40% mana / <70% hp) and the FULL target (95%)
+    // are DIFFERENT. The old code returned Failure the instant mana climbed back
+    // over the 40% entry line, so the bot stood up still nearly empty and went
+    // OOM in the very next fight. Now: once recovery starts, keep eating/drinking
+    // until genuinely FULL. "Recovering" is tracked via RecoverActiveMs (refreshed
+    // each tick we hold), so passing the entry line doesn't abort the recovery.
+    let recovering = ctx
+        .blackboard
+        .get_u64(crate::engine::blackboard::Key::RecoverActiveMs)
+        .is_some_and(|t| now.saturating_sub(t) < 2_000);
+
+    // Fully topped up → done. (Returning without refreshing RecoverActiveMs lets
+    // the marker go stale so the watchdog/other logic see recovery has ended.)
+    if hp_full && mana_full {
+        return if recovering {
+            BtResult::Success
+        } else {
+            BtResult::Failure
+        };
+    }
+
+    // Not low enough to START, and not already mid-recovery → nothing to do.
+    if !hp_low && !mana_low && !recovering {
         return BtResult::Failure;
     }
 
-    let hp_full = ctx.self_hp_pct() >= HP_FULL_THRESHOLD;
-    let mana_full = !uses_mana || ctx.self_mana_pct() >= MANA_FULL_THRESHOLD;
-
-    if hp_full && mana_full {
-        return BtResult::Success;
-    }
+    // Mark that the bot is PURPOSEFULLY recovering (about to / mid eat-drink), so
+    // the anti-deadlock watchdog treats this stand as intentional. Passive idle
+    // mana regen does NOT set this, so a bot merely standing while mana ticks up
+    // still counts as deadlocked.
+    ctx.blackboard.set(
+        crate::engine::blackboard::Key::RecoverActiveMs,
+        crate::engine::blackboard::Value::U64(now),
+    );
 
     ctx.interface.stop_moving();
 
@@ -2885,10 +3079,27 @@ fn tick_consumables(ctx: &mut TickContext<'_>) -> BtResult {
         return BtResult::Running;
     }
 
+    // Already eating/drinking: do NOT re-use the item every tick. Food/drink
+    // applies a sit-and-regen aura (not a channel on this core), and re-casting
+    // it each tick refreshes the aura and RESETS its ~2s periodic regen tick —
+    // so mana/health never actually climbs and the bot sits forever, never
+    // "getting up". Use once, then let the regen run; only re-use after the
+    // aura would have lapsed (throttle), or if it got interrupted.
+    use crate::engine::blackboard::{Key as ConsumeKey, Value as ConsumeVal};
+    const CONSUME_THROTTLE_MS: u64 = 6_000;
+    let last = ctx.blackboard.get_u64(ConsumeKey::LastConsumeMs).unwrap_or(0);
+    if now.saturating_sub(last) < CONSUME_THROTTLE_MS {
+        // Mid-regen — hold and keep waiting for hp/mana to fill.
+        return BtResult::Running;
+    }
+    ctx.blackboard
+        .set(ConsumeKey::LastConsumeMs, ConsumeVal::U64(now));
+
     // Intelligently pick and use the best food/drink from bags.
     // The C++ side scans bags and returns the highest-level consumable
     // matching the requested category, so we always use the best available.
-    if hp_low {
+    // Gate on "not FULL" (not "low") so we keep topping up to full once started.
+    if !hp_full {
         let food = ctx.interface.find_food_drink_in_bags(FOOD_CATEGORY_FOOD);
         if food.0 != 0 {
             ctx.interface.use_item(food, ctx.bot_handle);
@@ -2900,7 +3111,7 @@ fn tick_consumables(ctx: &mut TickContext<'_>) -> BtResult {
             }
         }
     }
-    if mana_low {
+    if uses_mana && !mana_full {
         let drink = ctx.interface.find_food_drink_in_bags(FOOD_CATEGORY_DRINK);
         if drink.0 != 0 {
             ctx.interface.use_item(drink, ctx.bot_handle);
@@ -3209,8 +3420,10 @@ fn tick_focus_attack(ctx: &mut TickContext<'_>) -> BtResult {
     if let Some(focus) = ctx.settings.focus_target {
         // Validate the focus target is actually attackable — a stale or
         // incorrectly-set focus (e.g. friendly player from "focus heal")
-        // should not block the targeting pipeline every tick.
-        if !ctx.interface.is_attackable(focus) {
+        // should not block the targeting pipeline every tick. Use `can_attack`
+        // (not `is_attackable`) so NEUTRAL quest mobs the bot deliberately
+        // engages aren't rejected as "not attackable".
+        if !ctx.interface.can_attack(focus) {
             ctx.monitor(format_args!(
                 "TARGET: FocusAttack -> 0x{focus:X} not attackable, clearing",
             ));
@@ -3218,6 +3431,30 @@ fn tick_focus_attack(ctx: &mut TickContext<'_>) -> BtResult {
             // will clean up focus_target when combat drops. Return
             // Failure so targeting falls through to other subtrees.
             return BtResult::Failure;
+        }
+        if is_self_bot(ctx) {
+            // Distance to the FOCUS itself (the old trace measured current_target,
+            // which is None for a caster, so it always printed -1). focusDist
+            // tells us far (>30 = needs to close / pathing problem) vs near
+            // (<30 but not casting = line-of-sight / facing).
+            let focus_dist = ctx.interface.unit_distance(focus);
+            let los = ctx.interface.has_los(focus);
+            let can = ctx.interface.can_cast(crate::data::spells::vanilla::mage::FIREBALL, focus);
+            qtrace(
+                ctx,
+                &format!(
+                    "FocusAttack focus=0x{focus:X} focusDist={focus_dist:.0} los={los} canCastFB={can} casting={}",
+                    ctx.snap.self_.is_casting
+                ),
+            );
+        }
+        // Caster/ranged: just make the focus the rotation's target. The actual
+        // attack decision (hold at range and cast / auto-shoot / OOM-melee) is
+        // owned by EngageTarget, which runs right after targeting — so don't
+        // touch auto-attack here (doing both would start/stop it every tick).
+        if ctx.is_ranged_or_healer() {
+            ctx.pending_target.set(Some(focus));
+            return BtResult::Success;
         }
         if ctx.current_target() == Some(focus) {
             ctx.pending_target.set(Some(focus));
@@ -3427,7 +3664,19 @@ const NPC_FLAG_REPAIR: u32 = crate::npc_flags::REPAIR;
 const NPC_FLAG_QUESTGIVER: u32 = crate::npc_flags::QUESTGIVER;
 
 fn tick_loot(ctx: &mut TickContext<'_>) -> BtResult {
-    let lootable = ctx.interface.get_nearby_lootable(15.0);
+    // Bags full → do NOT loot. With no free space the loot never fits, the
+    // corpse stays lootable, and the bot loops walking-to / opening it forever —
+    // which BLOCKS the fall-through to vendor travel, so a full bot just stands
+    // on a corpse instead of going to sell. Bail here (same <4-slot threshold
+    // that turns on the VENDOR travel need) so the bot heads to a vendor.
+    if ctx.interface.bot_empty_bag_slot_count() < 4 {
+        return BtResult::Failure;
+    }
+    // Wide scan: a caster kills at range (Fireball ~30y), so its own corpses
+    // sit well beyond the old 15y radius and were never looted. The C++ side
+    // filters to corpses the bot has loot rights on (IsTappedBy), so a generous
+    // radius only ever picks up the bot's own kills.
+    let lootable = ctx.interface.get_nearby_lootable(40.0);
     if let Some(&corpse) = lootable.first() {
         let dist = ctx.interface.unit_distance(corpse);
         if dist > 5.0 {
@@ -3441,6 +3690,27 @@ fn tick_loot(ctx: &mut TickContext<'_>) -> BtResult {
         }
     }
     BtResult::Failure
+}
+
+/// `Bt::LootQuestContainer`. Walk to and loot a nearby gameobject container
+/// (chest/box) that holds a still-needed quest item — e.g. the Equipment Boxes
+/// for "Scavenging Deathknell" (item drops from GOs, not mobs). Returns Running
+/// while walking to the box, Success when it loots one, Failure when there's no
+/// such container nearby (so the rest of the quest tree runs).
+fn tick_loot_quest_container(ctx: &mut TickContext<'_>) -> BtResult {
+    let Some((guid, x, y, z)) = ctx.interface.nearest_quest_container(40.0) else {
+        return BtResult::Failure;
+    };
+    let pos = &ctx.snap.self_.pos;
+    let dist_sq = (pos.x - x).powi(2) + (pos.y - y).powi(2);
+    if dist_sq > 5.0 * 5.0 {
+        return if ctx.interface.move_to(x, y, z) {
+            BtResult::Running
+        } else {
+            BtResult::Failure
+        };
+    }
+    ok(ctx.interface.loot_gameobject(guid))
 }
 
 /// `Bt::LootRoll`. Vote on the next pending loot roll using the bot's
@@ -3601,31 +3871,126 @@ fn tick_restock_ammo(ctx: &mut TickContext<'_>) -> BtResult {
     BtResult::Failure
 }
 
-fn tick_turn_in_quest(ctx: &mut TickContext<'_>) -> BtResult {
-    let quest_id = {
-        let quests = ctx.interface.get_quest_log();
-        quests.iter().find(|q| q.complete).map(|q| q.quest_id)
+/// Park a quest whose turn-in the NPC keeps rejecting, so the bot stops looping.
+fn turn_in_cooldown(ctx: &mut TickContext<'_>, quest_id: u32, now: u64) {
+    use crate::engine::blackboard::{Key, Value};
+    let idx = ctx.blackboard.get_u32(Key::TurnInCdIdx).unwrap_or(0) % 3;
+    let (kq, km) = match idx {
+        0 => (Key::TurnInCdQ0, Key::TurnInCdMs0),
+        1 => (Key::TurnInCdQ1, Key::TurnInCdMs1),
+        _ => (Key::TurnInCdQ2, Key::TurnInCdMs2),
     };
-    if let Some(quest_id) = quest_id {
-        let npcs = ctx.interface.get_nearby_npcs(ERRAND_RANGE, NPC_FLAG_QUESTGIVER);
-        // Only walk to the npc that actually ACCEPTS this quest's turn-in — not
-        // the nearest quest giver. Otherwise the bot walks to the wrong giver
-        // (often the one that gave the quest), fails to hand in, and oscillates.
-        let target = npcs
+    ctx.blackboard.set(kq, Value::U32(quest_id));
+    ctx.blackboard.set(km, Value::U64(now.saturating_add(120_000)));
+    ctx.blackboard.set(Key::TurnInCdIdx, Value::U32((idx + 1) % 3));
+}
+
+/// True if `quest_id` is in a non-expired turn-in cooldown slot.
+fn turn_in_on_cooldown(ctx: &TickContext<'_>, quest_id: u32, now: u64) -> bool {
+    use crate::engine::blackboard::Key;
+    const SLOTS: [(Key, Key); 3] = [
+        (Key::TurnInCdQ0, Key::TurnInCdMs0),
+        (Key::TurnInCdQ1, Key::TurnInCdMs1),
+        (Key::TurnInCdQ2, Key::TurnInCdMs2),
+    ];
+    SLOTS.iter().any(|&(kq, km)| {
+        matches!(
+            (ctx.blackboard.get_u32(kq), ctx.blackboard.get_u64(km)),
+            (Some(q), Some(until)) if q == quest_id && now < until
+        )
+    })
+}
+
+fn tick_turn_in_quest(ctx: &mut TickContext<'_>) -> BtResult {
+    let now = ctx.snap.server_time_ms;
+    let complete: Vec<u32> = {
+        let quests = ctx.interface.get_quest_log();
+        quests
+            .iter()
+            .filter(|q| q.complete && !turn_in_on_cooldown(ctx, q.quest_id, now))
+            .map(|q| q.quest_id)
+            .collect()
+    };
+    if complete.is_empty() {
+        return BtResult::Failure;
+    }
+    QDBG_TI_HASQ.fetch_add(1, Ordering::Relaxed);
+
+    let npcs = ctx.interface.get_nearby_npcs(ERRAND_RANGE, NPC_FLAG_QUESTGIVER);
+    if !npcs.is_empty() {
+        QDBG_TI_NEARNPC.fetch_add(1, Ordering::Relaxed);
+    }
+    // Find ANY (nearby npc, complete quest) pair where the npc actually accepts
+    // that quest's turn-in — not just the first complete quest, and not the
+    // nearest giver. A bot often holds several completed quests whose turn-in
+    // NPCs are scattered; checking only the first one means standing right next
+    // to a valid turn-in NPC for a *different* completed quest never fires, and
+    // the bot oscillates. Match the right (npc, quest) so it always hands in.
+    let pair = npcs.iter().copied().find_map(|n| {
+        complete
             .iter()
             .copied()
-            .find(|&n| ctx.interface.npc_can_turn_in_quest(n, quest_id));
-        if let Some(npc) = target {
-            return approach_and_interact(ctx, npc, |ctx| {
-                if ctx.interface.turn_in_quest(npc, quest_id) {
-                    say_quest_done(ctx, quest_id);
-                    BtResult::Success
-                } else {
-                    BtResult::Failure
-                }
-            });
+            .find(|&q| ctx.interface.npc_can_turn_in_quest(n, q))
+            .map(|q| (n, q))
+    });
+    if let Some((npc, quest_id)) = pair {
+        use crate::engine::blackboard::{Key, Value};
+        QDBG_TURNIN.fetch_add(1, Ordering::Relaxed);
+        qtrace(ctx, &format!("turning in quest {quest_id} at nearby npc"));
+
+        // Hand in from a RELAXED range with line-of-sight. Some turn-in NPCs are
+        // unreachable within the strict 5y interact range — most notably "Captured"
+        // prisoners behind bars (e.g. the Scarlet Zealot in the Gallow's End
+        // cellar for quest 407): a player turns them in THROUGH the bars, but the
+        // bot can't path inside the cage, so the old approach_and_interact (move
+        // to <5y, then interact) oscillated forever and never handed in.
+        // CB_TurnInQuest needs neither an open gossip nor a hard 5y, so a direct
+        // hand-in at <=10y with LOS works and matches what the player does.
+        const TURN_IN_RANGE: f32 = 10.0;
+        let dist = ctx.interface.unit_distance(npc);
+        if dist <= TURN_IN_RANGE && ctx.interface.has_los(npc) {
+            ctx.blackboard.clear(Key::TurnInTryQ);
+            if ctx.interface.turn_in_quest(npc, quest_id) {
+                say_quest_done(ctx, quest_id);
+                return BtResult::Success;
+            }
+            // Reached it but the core rejected the hand-in (CanRewardQuest false,
+            // e.g. a deliver-item it no longer has) — park it and move on.
+            turn_in_cooldown(ctx, quest_id, now);
+            return BtResult::Failure;
         }
+
+        // Out of range / no LOS — walk toward the NPC, but PARK the quest if we
+        // can't get there within ~10s (genuinely unreachable) so the bot stops
+        // looping and works its other quests.
+        let snap = ctx.interface.get_unit_snapshot(npc);
+        if ctx.interface.move_to(snap.pos.x, snap.pos.y, snap.pos.z) {
+            let same = ctx.blackboard.get_u32(Key::TurnInTryQ) == Some(quest_id);
+            let since = ctx.blackboard.get_u64(Key::TurnInTryMs).unwrap_or(now);
+            if same && now.saturating_sub(since) > 10_000 {
+                turn_in_cooldown(ctx, quest_id, now);
+                ctx.blackboard.clear(Key::TurnInTryQ);
+                return BtResult::Failure;
+            }
+            if !same {
+                ctx.blackboard.set(Key::TurnInTryQ, Value::U32(quest_id));
+                ctx.blackboard.set(Key::TurnInTryMs, Value::U64(now));
+            }
+            return BtResult::Running;
+        }
+        // Can't path there at all — park and move on.
+        turn_in_cooldown(ctx, quest_id, now);
+        ctx.blackboard.clear(Key::TurnInTryQ);
+        return BtResult::Failure;
     }
+    qtrace(
+        ctx,
+        &format!(
+            "have {} complete quest(s), {} nearby questgiver(s), none can turn in",
+            complete.len(),
+            npcs.len()
+        ),
+    );
     BtResult::Failure
 }
 
@@ -3646,7 +4011,26 @@ fn say_quest_done(ctx: &mut TickContext<'_>, quest_id: u32) {
     let _ = ctx.interface.say(PHRASES[idx], 0);
 }
 
+/// Stop collecting MORE quests once the bot is carrying a healthy batch — go
+/// WORK them instead. Without this, at a hub like Brill (20+ quest givers, all
+/// with quests the bot hasn't taken yet) the bot walks from giver to giver
+/// forever, never leaving to do the quests it already holds. A real player
+/// grabs a handful and heads out. ~8 active quests is a full, workable plate.
+const MAX_ACTIVE_QUESTS: usize = 8;
+
 fn tick_accept_quests(ctx: &mut TickContext<'_>) -> BtResult {
+    let incomplete = ctx
+        .interface
+        .get_quest_log()
+        .iter()
+        .filter(|q| !q.complete)
+        .count();
+    if incomplete >= MAX_ACTIVE_QUESTS {
+        // Carrying enough — fall through so the bot turns in / works objectives
+        // (and travels OUT of the hub to do so) instead of grabbing more.
+        return BtResult::Failure;
+    }
+
     let npcs = ctx.interface.get_nearby_npcs(ERRAND_RANGE, NPC_FLAG_QUESTGIVER);
     // Only walk to a quest giver that actually has a quest we can take. Without
     // this, the bot walks to ANY nearby giver — including ones it's already
@@ -3657,6 +4041,7 @@ fn tick_accept_quests(ctx: &mut TickContext<'_>) -> BtResult {
         .copied()
         .find(|&n| ctx.interface.npc_has_available_quest(n));
     if let Some(npc) = target {
+        QDBG_ACCEPT.fetch_add(1, Ordering::Relaxed);
         return approach_and_interact(ctx, npc, |ctx| {
             if ctx.interface.accept_all_quests(npc) {
                 BtResult::Success
@@ -3668,36 +4053,157 @@ fn tick_accept_quests(ctx: &mut TickContext<'_>) -> BtResult {
     BtResult::Failure
 }
 
+/// Drop grey (trivial / no-XP) quests. A bot that out-levels a zone otherwise
+/// keeps low-level quests forever — trying to travel to / work objectives that
+/// reward nothing, and (at a hub) milling among the givers that offer them.
+/// Only INCOMPLETE quests are dropped; a complete grey quest is still turned in
+/// for its item/money reward.
+fn tick_abandon_grey_quests(ctx: &mut TickContext<'_>) -> BtResult {
+    let ids: Vec<u32> = {
+        let log = ctx.interface.get_quest_log();
+        log.iter()
+            .filter(|q| !q.complete)
+            .map(|q| q.quest_id)
+            .collect()
+    };
+    let grey: Vec<u32> = ids
+        .into_iter()
+        .filter(|&id| ctx.interface.bot_quest_is_grey(id))
+        .collect();
+    if grey.is_empty() {
+        return BtResult::Failure;
+    }
+    for id in grey {
+        ctx.interface.bot_quest_abandon(id);
+        qtrace(ctx, &format!("abandoned grey quest {id}"));
+    }
+    BtResult::Success
+}
+
 fn tick_attack_quest_mob(ctx: &mut TickContext<'_>) -> BtResult {
     let quests = ctx.interface.get_quest_log();
     let has_active = quests.iter().any(|q| !q.complete);
     if !has_active {
+        if is_traced_bot(ctx) {
+            qtrace(ctx, "AttackQuestMob: no incomplete quests");
+        }
         return BtResult::Failure;
+    }
+    if is_traced_bot(ctx) {
+        let attackable = ctx
+            .nearby
+            .iter()
+            .filter(|&&u| ctx.interface.is_attackable(u))
+            .count();
+        let obj_mobs = ctx
+            .nearby
+            .iter()
+            .filter(|&&u| {
+                ctx.interface
+                    .is_quest_objective_creature(ctx.interface.get_unit_snapshot(u).npc_entry)
+            })
+            .count();
+        let can_atk = ctx
+            .nearby
+            .iter()
+            .filter(|&&u| ctx.interface.can_attack(u))
+            .count();
+        qtrace(
+            ctx,
+            &format!(
+                "AttackQuestMob: near={} attackable={attackable} canAttack={can_atk} objMobs={obj_mobs}",
+                ctx.nearby.len()
+            ),
+        );
     }
     // Prefer a nearby unit that is actually a kill objective for an incomplete
     // quest (the *right* mob), and only fall back to any attackable unit once
     // the bot is in the objective area. Without the preference the bot would
     // grind whatever is nearest, ignoring which mobs give quest credit.
-    let target = ctx
+    // For the quest objective itself, use `can_attack` (allowed-to-attack,
+    // incl. NEUTRAL mobs) — not `is_attackable` (hostile only). Quest kill
+    // targets are routinely neutral/yellow until provoked (e.g. the undead
+    // "Mindless Ones" zombies), so the hostile gate left the bot standing
+    // among its objective mobs unable to engage any of them. The generic
+    // fallback stays `is_attackable`: outside its objective the bot should
+    // only grind things already hostile, not pull random neutral wildlife.
+    // Skip a target recently abandoned as unreachable (no LOS / can't path),
+    // so the bot picks a DIFFERENT objective mob instead of re-locking onto
+    // the one it just gave up on.
+    let bad_target = {
+        use crate::engine::blackboard::Key;
+        match ctx.blackboard.get_u64(Key::BadTargetHandle) {
+            Some(h)
+                if ctx.snap.server_time_ms
+                    < ctx.blackboard.get_u64(Key::BadTargetUntilMs).unwrap_or(0) =>
+            {
+                h
+            }
+            _ => 0,
+        }
+    };
+    // Pick the nearest objective mob the bot can actually WALK TO. Collect the
+    // valid objective mobs, sort by distance, and take the first one that's
+    // pathfind-reachable. This is the fix for the bot freezing among quest mobs
+    // it can't reach: rattlecage / caged mobs sit ~28y away with no LOS and no
+    // navmesh route, so locking onto the nearest one left the bot unable to walk
+    // there, unable to cast, cycling focuses forever. Skipping unreachable mobs
+    // means: if a nearby objective mob is reachable it engages it; if NONE are
+    // reachable it returns Failure so travel takes over (re-approach the spawn,
+    // or move on to another quest) instead of standing frozen.
+    let mut obj_candidates: Vec<u64> = ctx
         .nearby
         .iter()
         .copied()
-        .find(|&u| {
-            ctx.interface.is_attackable(u)
+        .filter(|&u| {
+            u != bad_target
+                && ctx.interface.can_attack(u)
                 && ctx
                     .interface
                     .is_quest_objective_creature(ctx.interface.get_unit_snapshot(u).npc_entry)
         })
-        .or_else(|| {
-            ctx.nearby
-                .iter()
-                .copied()
-                .find(|&u| ctx.interface.is_attackable(u))
-        });
-    if let Some(target) = target
-        && ctx.attack(target)
-    {
-        return BtResult::Success;
+        .collect();
+    obj_candidates.sort_by(|&a, &b| {
+        ctx.interface
+            .unit_distance(a)
+            .partial_cmp(&ctx.interface.unit_distance(b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let obj_target = obj_candidates.into_iter().find(|&u| {
+        let s = ctx.interface.get_unit_snapshot(u);
+        ctx.interface.can_pathfind_to(s.pos.x, s.pos.y, s.pos.z)
+    });
+    // Only engage an actual quest-objective mob here. Do NOT grab a random
+    // nearby mob as a fallback — that pins the bot in the Combat FSM and stops
+    // it from TRAVELLING to where its real objective is (the DB-resolved mob /
+    // item drop-source spawn). When there's no reachable objective mob, this
+    // returns Failure so travel (and then grind) take over.
+    let target = obj_target;
+    // Hand the objective mob to the tick loop, which promotes it to focus_target
+    // so the combat FSM engages it with the full class rotation (positioning +
+    // casts). Quest mobs are routinely NEUTRAL, so they never trip the combat
+    // FSM on their own — without this the bot just held a melee order it
+    // couldn't land (a mage "meleeing" at range, never casting).
+    if let Some(target) = target {
+        ctx.blackboard.set(
+            crate::engine::blackboard::Key::EngageTargetHandle,
+            crate::engine::blackboard::Value::U64(target),
+        );
+        // Caster/ranged: don't melee in the world tree. The objective mob was
+        // handed to the tick loop (EngageTargetHandle) which promotes it to
+        // focus_target → Combat FSM → the rotation casts. Meleeing here would
+        // start a server melee-chase that cancels those casts. Just mark the
+        // target and stop any lingering swing.
+        if ctx.is_ranged_or_healer() {
+            ctx.interface.auto_attack(false);
+            ctx.pending_target.set(Some(target));
+            QDBG_KILL.fetch_add(1, Ordering::Relaxed);
+            return BtResult::Success;
+        }
+        if ctx.attack(target) {
+            QDBG_KILL.fetch_add(1, Ordering::Relaxed);
+            return BtResult::Success;
+        }
     }
     BtResult::Failure
 }
@@ -3710,9 +4216,13 @@ fn tick_attack_quest_mob(ctx: &mut TickContext<'_>) -> BtResult {
 fn tick_take_taxi(ctx: &mut TickContext<'_>) -> BtResult {
     use crate::engine::blackboard::Key;
 
-    // Already on a flight — let the server fly the bot; don't interfere.
+    // Already on a flight — let the server fly the bot. Return RUNNING (not
+    // Failure) so the travel Sel stops here and does NOT fall through to
+    // TravelToBlackboard: a `move_to` issued mid-flight fights the taxi spline
+    // and the bot "glides" along the ground / through the air off-path. The
+    // server owns movement until the flight ends and `on_taxi` clears.
     if ctx.snap.self_.on_taxi {
-        return BtResult::Failure;
+        return BtResult::Running;
     }
 
     let Some(dx) = ctx.blackboard.get_f32(Key::TravelDestX) else {
@@ -3721,9 +4231,11 @@ fn tick_take_taxi(ctx: &mut TickContext<'_>) -> BtResult {
     let dy = ctx.blackboard.get_f32(Key::TravelDestY).unwrap_or(0.0);
     let dz = ctx.blackboard.get_f32(Key::TravelDestZ).unwrap_or(0.0);
 
-    // Only fly for genuinely long journeys — the detour to a flight master and
-    // the fare aren't worth it for short hops, which walking handles.
-    const TAXI_MIN_DIST: f32 = 600.0;
+    // Only fly for genuinely long journeys (multiple zones). Short hops like
+    // Deathknell→Brill (~1000y) should be WALKED — flying them looks wrong and
+    // isn't worth the flight-master detour. The fare/detour only pays off over
+    // long hauls.
+    const TAXI_MIN_DIST: f32 = 2500.0;
     let pos = ctx.snap.self_.pos;
     let dest_dist_sq = (pos.x - dx).powi(2) + (pos.y - dy).powi(2);
     if dest_dist_sq < TAXI_MIN_DIST * TAXI_MIN_DIST {
@@ -3801,8 +4313,53 @@ fn tick_cross_continent(ctx: &mut TickContext<'_>) -> BtResult {
     }
 }
 
-fn tick_travel(ctx: &mut TickContext<'_>) -> BtResult {
+/// Record a travel dest location as recently UNREACHABLE/unactionable so the
+/// chooser skips it for a couple of minutes. Small 3-slot ring.
+fn blacklist_dest(ctx: &mut TickContext<'_>, x: f32, y: f32, now: u64) {
+    use crate::engine::blackboard::{Key, Value};
+    let idx = ctx.blackboard.get_u32(Key::BlDestIdx).unwrap_or(0) % 3;
+    let (kx, ky, km) = match idx {
+        0 => (Key::BlDestX0, Key::BlDestY0, Key::BlDestMs0),
+        1 => (Key::BlDestX1, Key::BlDestY1, Key::BlDestMs1),
+        _ => (Key::BlDestX2, Key::BlDestY2, Key::BlDestMs2),
+    };
+    ctx.blackboard.set(kx, Value::F32(x));
+    ctx.blackboard.set(ky, Value::F32(y));
+    ctx.blackboard.set(km, Value::U64(now.saturating_add(120_000)));
+    ctx.blackboard.set(Key::BlDestIdx, Value::U32((idx + 1) % 3));
+}
+
+/// True if `(x,y)` is within ~12y of a non-expired blacklisted dest.
+fn dest_blacklisted(ctx: &TickContext<'_>, x: f32, y: f32, now: u64) -> bool {
     use crate::engine::blackboard::Key;
+    const SLOTS: [(Key, Key, Key); 3] = [
+        (Key::BlDestX0, Key::BlDestY0, Key::BlDestMs0),
+        (Key::BlDestX1, Key::BlDestY1, Key::BlDestMs1),
+        (Key::BlDestX2, Key::BlDestY2, Key::BlDestMs2),
+    ];
+    SLOTS.iter().any(|&(kx, ky, km)| {
+        match (
+            ctx.blackboard.get_f32(kx),
+            ctx.blackboard.get_f32(ky),
+            ctx.blackboard.get_u64(km),
+        ) {
+            (Some(bx), Some(by), Some(until)) => {
+                now < until && (bx - x).powi(2) + (by - y).powi(2) < 12.0 * 12.0
+            }
+            _ => false,
+        }
+    })
+}
+
+fn clear_travel_tracking(ctx: &mut TickContext<'_>) {
+    use crate::engine::blackboard::Key;
+    ctx.blackboard.clear(Key::TravelTrackX);
+    ctx.blackboard.clear(Key::TravelTrackY);
+    ctx.blackboard.clear(Key::TravelMinDistSq);
+}
+
+fn tick_travel(ctx: &mut TickContext<'_>) -> BtResult {
+    use crate::engine::blackboard::{Key, Value};
 
     let dx = ctx.blackboard.get_f32(Key::TravelDestX).unwrap_or(0.0);
     let dy = ctx.blackboard.get_f32(Key::TravelDestY).unwrap_or(0.0);
@@ -3815,21 +4372,85 @@ fn tick_travel(ctx: &mut TickContext<'_>) -> BtResult {
         ctx.blackboard.clear(Key::TravelDestX);
         ctx.blackboard.clear(Key::TravelDestY);
         ctx.blackboard.clear(Key::TravelDestZ);
+        ctx.blackboard.set(Key::TravelFailStreak, Value::U32(0));
+        clear_travel_tracking(ctx);
         return BtResult::Success;
     }
 
-    if ctx.interface.move_to(dx, dy, dz) {
-        BtResult::Running
-    } else {
-        // Couldn't path there (unreachable / no navmesh route). Drop the
-        // destination so ChooseTravelTarget re-plans next tick instead of the
-        // bot standing here retrying the same bad spot forever (which looked
-        // like "stuck wandering at one place").
+    // Progress-toward-dest tracking. `move_to` returns true even when it can only
+    // reach the navmesh EDGE (re-pathing to the same partial endpoint), so a dest
+    // just past the mesh (an off-mesh quest objective) never arrives and never
+    // bails — the bot circles ~30y short forever. So if the closest distance to
+    // THIS dest hasn't improved for 12s, treat it as unreachable: blacklist it
+    // and drop it so ChooseTravelTarget picks a DIFFERENT objective/service.
+    let now = ctx.snap.server_time_ms;
+    let same_dest = matches!(
+        (
+            ctx.blackboard.get_f32(Key::TravelTrackX),
+            ctx.blackboard.get_f32(Key::TravelTrackY),
+        ),
+        (Some(tx), Some(ty)) if (tx - dx).abs() < 1.0 && (ty - dy).abs() < 1.0
+    );
+    let prev_min = ctx.blackboard.get_f32(Key::TravelMinDistSq);
+    if !same_dest || prev_min.is_none() {
+        ctx.blackboard.set(Key::TravelTrackX, Value::F32(dx));
+        ctx.blackboard.set(Key::TravelTrackY, Value::F32(dy));
+        ctx.blackboard.set(Key::TravelMinDistSq, Value::F32(dist_sq));
+        ctx.blackboard.set(Key::TravelProgressMs, Value::U64(now));
+    } else if dist_sq + 16.0 < prev_min.unwrap_or(f32::MAX) {
+        // Got >4y closer — real progress.
+        ctx.blackboard.set(Key::TravelMinDistSq, Value::F32(dist_sq));
+        ctx.blackboard.set(Key::TravelProgressMs, Value::U64(now));
+    } else if now.saturating_sub(ctx.blackboard.get_u64(Key::TravelProgressMs).unwrap_or(now))
+        > 12_000
+    {
+        blacklist_dest(ctx, dx, dy, now);
         ctx.blackboard.clear(Key::TravelDestX);
         ctx.blackboard.clear(Key::TravelDestY);
         ctx.blackboard.clear(Key::TravelDestZ);
-        BtResult::Failure
+        clear_travel_tracking(ctx);
+        if is_self_bot(ctx) {
+            qtrace(ctx, "travel: no progress to dest for 12s — blacklisting, replanning");
+        }
+        return BtResult::Failure;
     }
+
+    if ctx.interface.move_to(dx, dy, dz) {
+        // Making progress — clear the stuck streak.
+        ctx.blackboard.set(Key::TravelFailStreak, Value::U32(0));
+        return BtResult::Running;
+    }
+
+    // Couldn't path there (unreachable / no navmesh route). Blacklist it and drop
+    // the destination so ChooseTravelTarget re-plans next tick (a DIFFERENT spot)
+    // instead of retrying the same bad one forever.
+    blacklist_dest(ctx, dx, dy, now);
+    clear_travel_tracking(ctx);
+    //
+    // NOTE: do NOT teleport here. An earlier attempt to teleport autonomous bots
+    // to a NOPATH destination sent the whole population under the map to their
+    // deaths — blackboard travel-dest coordinates are not guaranteed to be a
+    // safe on-ground position (a NOPATH is often exactly a bad/below-terrain
+    // target), so teleporting to them is unsafe. The conservative anti-wedge
+    // teleport in bot/tick.rs (gated on a live unit snapshot's position) is the
+    // only place allowed to teleport.
+    ctx.blackboard.clear(Key::TravelDestX);
+    ctx.blackboard.clear(Key::TravelDestY);
+    ctx.blackboard.clear(Key::TravelDestZ);
+    let streak = ctx
+        .blackboard
+        .get_u32(Key::TravelFailStreak)
+        .unwrap_or(0)
+        .saturating_add(1);
+    ctx.blackboard.set(Key::TravelFailStreak, Value::U32(streak));
+    if streak >= 3 {
+        ctx.blackboard.set(
+            Key::PreferNearUntilMs,
+            Value::U64(ctx.snap.server_time_ms.saturating_add(30_000)),
+        );
+        ctx.blackboard.set(Key::TravelFailStreak, Value::U32(0));
+    }
+    BtResult::Failure
 }
 
 /// `Bt::ChooseTravelTarget`. Evaluate the bot's needs (repair, vendor,
@@ -3853,28 +4474,120 @@ fn tick_choose_travel_target(ctx: &mut TickContext<'_>) -> BtResult {
         return BtResult::Failure;
     }
 
+    QDBG_TRAVEL_REACHED.fetch_add(1, Ordering::Relaxed);
+    maybe_flush_grind_stats(ctx.snap.server_time_ms);
+
     // Evaluate needs — PB2 TravelStrategy priority table. Vendoring is gated on
     // bags being full (not just having a grey), so questing stays primary and
     // the bot only makes a vendor run when it actually can't carry more.
     let durability = ctx.interface.get_durability_pct();
     let bags_full = ctx.interface.bot_empty_bag_slot_count() < 4;
     let quest_log = ctx.interface.get_quest_log();
-    let free_quest_slots = 25u8.saturating_sub(quest_log.len() as u8);
+    let incomplete_count = quest_log.iter().filter(|q| !q.complete).count();
+    // Treat the log as "full" for travel purposes once we're carrying a healthy
+    // batch — so the bot stops routing to quest GIVERS to collect more and goes
+    // to turn in / work objectives (mirrors the accept cap; stops hub milling).
+    let free_quest_slots = if incomplete_count >= MAX_ACTIVE_QUESTS {
+        0
+    } else {
+        25u8.saturating_sub(quest_log.len() as u8)
+    };
     let has_complete_quests = quest_log.iter().any(|q| q.complete);
     let has_incomplete_quests = quest_log.iter().any(|q| !q.complete);
+    if has_complete_quests {
+        QDBG_HAS_COMPLETE.fetch_add(1, Ordering::Relaxed);
+    }
+    if has_incomplete_quests {
+        QDBG_HAS_INCOMPLETE.fetch_add(1, Ordering::Relaxed);
+    }
     let level = ctx.snap.self_.level;
+    let has_sellable = ctx.interface.has_sellable_items();
+    // "Town visit in progress" — set when the bot heads to any town NPC, kept
+    // alive while it still has town chores, so it batches turn-in + sell + repair
+    // before resuming questing.
+    let town_errand = ctx
+        .blackboard
+        .get_u64(Key::TownErrandUntilMs)
+        .is_some_and(|t| ctx.snap.server_time_ms < t);
 
     let needs = crate::travel::planner::evaluate_needs(
         durability,
         bags_full,
+        has_sellable,
         free_quest_slots,
         has_complete_quests,
         has_incomplete_quests,
+        town_errand,
         level,
     );
 
+    // (Removed the old "prefer near" suppression that dropped QUEST_TAKER /
+    // QUEST_ALL_OBJ after travel failures — it made the bot WANDER instead of
+    // turning in a completed quest or pursuing its objectives. Unreachable
+    // goals are now handled by the anti-wedge teleport in bot/tick.rs, which
+    // brings the bot to the goal instead of abandoning quest travel.)
+
     // Try each need in priority order — query FFI for destinations.
+    if is_self_bot(ctx) {
+        let summary: Vec<String> = needs
+            .iter()
+            .map(|(p, _)| {
+                let n = ctx.interface.find_travel_dests(p.bits(), 1000.0, 5).len();
+                format!("{}={}", p.short_name(), n)
+            })
+            .collect();
+        crate::log_warn!("[QTrace][SELF] ChooseTravel needs: [{}]", summary.join(" "));
+    }
+    let now = ctx.snap.server_time_ms;
     for (purpose, _relevance) in &needs {
+        // IN-TOWN SERVICE futility guard (turn-in / repair / vendor / trainer).
+        // The matching action runs every tick and scans for the service NPC:
+        // TurnInQuest (quest_subtree, 60y) and tick_repair / tick_vendor
+        // (maintenance, 30y). If the bot is ALREADY within range of a resolved
+        // service dest but the service STILL hasn't happened, the resolved spawn
+        // has no usable NPC (absent / wrong entry — the service-NPC & turn-in
+        // INDEXES return DB spawn points that may be empty). Travelling there just
+        // bounces the bot between in-town service spots forever ("paces Brill,
+        // won't quest" — for turn-in AND, once gear wears down, repair). Suppress
+        // in-town services for a cooldown so the chooser falls through to
+        // QUEST_ALL_OBJ and the bot goes and WORKS its objectives instead of
+        // oscillating. (It retries after the cooldown.)
+        if purpose.intersects(
+            TravelPurpose::QUEST_TAKER
+                | TravelPurpose::REPAIR
+                | TravelPurpose::VENDOR
+                | TravelPurpose::TRAINER,
+        ) {
+            if ctx
+                .blackboard
+                .get_u64(Key::QuestTakerFutileUntilMs)
+                .is_some_and(|t| now < t)
+            {
+                continue; // recently found futile — keep working objectives
+            }
+            let p = &ctx.snap.self_.pos;
+            let near_unactionable = ctx
+                .interface
+                .find_travel_dests(purpose.bits(), 1000.0, 5)
+                .iter()
+                .any(|d| {
+                    d.map_id == p.map_id
+                        && (d.x - p.x).powi(2) + (d.y - p.y).powi(2)
+                            <= ERRAND_RANGE * ERRAND_RANGE
+                });
+            if near_unactionable {
+                ctx.blackboard.set(
+                    Key::QuestTakerFutileUntilMs,
+                    crate::engine::blackboard::Value::U64(now.saturating_add(180_000)),
+                );
+                qtrace(
+                    ctx,
+                    "in-town service unactionable at range — suppressing services, working objectives",
+                );
+                continue;
+            }
+        }
+
         let dests = ctx.interface.find_travel_dests(purpose.bits(), 1000.0, 5);
         if dests.is_empty() {
             continue;
@@ -3884,9 +4597,29 @@ fn tick_choose_travel_target(ctx: &mut TickContext<'_>) -> BtResult {
         // one (reached via boat/zeppelin) when nothing is on the current map.
         let current_map = ctx.snap.self_.pos.map_id;
         let pos = &ctx.snap.self_.pos;
+        // Skip destinations the bot is ALREADY standing on (within arrival
+        // range). Such a "travel target" is a no-op: TravelToBlackboard clears
+        // it on arrival (<5y) and the chooser just re-picks the same spot every
+        // few seconds, pinning the bot in place — exactly the "paces the Brill
+        // inn" bug, where the top-priority turn-in dest for a complete quest
+        // resolved to an NPC location ~2y away that the bot can't actually turn
+        // in to. When the action at a spot IS doable (turn in / kill / use) it's
+        // handled by quest_subtree's nearby-scan leaves BEFORE travel runs; when
+        // it isn't, travelling there forever just traps the bot. Skipping
+        // at-feet dests lets the chooser fall through to the next need (the
+        // bot's real objectives, which are out in the world).
+        const ARRIVAL_SKIP_SQ: f32 = 8.0 * 8.0;
         let best = dests
             .iter()
-            .filter(|d| d.map_id == current_map)
+            .filter(|d| {
+                d.map_id == current_map
+                    && (d.x - pos.x).powi(2) + (d.y - pos.y).powi(2) > ARRIVAL_SKIP_SQ
+                    // Skip dests we recently failed to reach/action (blacklisted
+                    // by tick_travel after 12s of no progress, e.g. an objective
+                    // past the navmesh edge) — pick a DIFFERENT one instead of
+                    // bouncing back to the same unreachable spot.
+                    && !dest_blacklisted(ctx, d.x, d.y, now)
+            })
             .min_by(|a, b| {
                 let da = (a.x - pos.x).powi(2) + (a.y - pos.y).powi(2);
                 let db = (b.x - pos.x).powi(2) + (b.y - pos.y).powi(2);
@@ -3911,10 +4644,42 @@ fn tick_choose_travel_target(ctx: &mut TickContext<'_>) -> BtResult {
                 .with_entry(best.entry);
 
             crate::travel::planner::set_travel_dest(ctx.blackboard, &dest);
+            // Heading to a town NPC (turn-in / vendor / repair / trainer) →
+            // (re)open the "town visit" window so the bot batches all town chores
+            // before going back to questing, instead of leaving after one errand.
+            if purpose.intersects(
+                TravelPurpose::QUEST_TAKER
+                    | TravelPurpose::VENDOR
+                    | TravelPurpose::REPAIR
+                    | TravelPurpose::TRAINER,
+            ) {
+                ctx.blackboard.set(
+                    Key::TownErrandUntilMs,
+                    crate::engine::blackboard::Value::U64(
+                        ctx.snap.server_time_ms.saturating_add(60_000),
+                    ),
+                );
+            }
+            qtrace(
+                ctx,
+                &format!(
+                    "chose {:?} dest ({:.0},{:.0}) map{}",
+                    *purpose, best.x, best.y, best.map_id
+                ),
+            );
+            if purpose.contains(TravelPurpose::QUEST_TAKER) {
+                QDBG_TAKER_DEST.fetch_add(1, Ordering::Relaxed);
+            } else if purpose.intersects(TravelPurpose::QUEST_GIVER | TravelPurpose::QUEST_ALL_OBJ) {
+                QDBG_QUEST_DEST.fetch_add(1, Ordering::Relaxed);
+            } else {
+                QDBG_OTHER_DEST.fetch_add(1, Ordering::Relaxed);
+            }
             return BtResult::Success;
         }
     }
 
+    QDBG_NODEST.fetch_add(1, Ordering::Relaxed);
+    qtrace(ctx, "no travel dest resolved (will fall through)");
     BtResult::Failure
 }
 
@@ -4281,6 +5046,21 @@ static GRIND_HAD_TARGET: AtomicU64 = AtomicU64::new(0);
 static GRIND_ATTACKED: AtomicU64 = AtomicU64::new(0);
 static GRIND_LAST_FLUSH_MS: AtomicU64 = AtomicU64::new(0);
 
+// Quest/travel decision telemetry — to see WHY idle bots aren't questing.
+static QDBG_TRAVEL_REACHED: AtomicU64 = AtomicU64::new(0); // ChooseTravelTarget ran (TRAVEL on, reached)
+static QDBG_QUEST_DEST: AtomicU64 = AtomicU64::new(0); // picked a quest giver/objective dest
+static QDBG_TAKER_DEST: AtomicU64 = AtomicU64::new(0); // picked a quest turn-in (taker) dest
+static QDBG_OTHER_DEST: AtomicU64 = AtomicU64::new(0); // picked a non-quest dest
+static QDBG_NODEST: AtomicU64 = AtomicU64::new(0); // found no dest for any need
+static QDBG_WANDER: AtomicU64 = AtomicU64::new(0); // fell through to RpgWander
+static QDBG_ACCEPT: AtomicU64 = AtomicU64::new(0); // AcceptQuests approached a giver
+static QDBG_TURNIN: AtomicU64 = AtomicU64::new(0); // TurnInQuest approached a turn-in npc
+static QDBG_TI_HASQ: AtomicU64 = AtomicU64::new(0); // TurnInQuest: had a complete quest this tick
+static QDBG_TI_NEARNPC: AtomicU64 = AtomicU64::new(0); // TurnInQuest: >=1 nearby questgiver this tick
+static QDBG_KILL: AtomicU64 = AtomicU64::new(0); // AttackQuestMob attacked
+static QDBG_HAS_COMPLETE: AtomicU64 = AtomicU64::new(0); // ticks where bot had a COMPLETE quest
+static QDBG_HAS_INCOMPLETE: AtomicU64 = AtomicU64::new(0); // ticks where bot had an incomplete quest
+
 fn maybe_flush_grind_stats(now_ms: u64) {
     let last = GRIND_LAST_FLUSH_MS.load(Ordering::Relaxed);
     if now_ms.saturating_sub(last) < 60_000 {
@@ -4305,6 +5085,24 @@ fn maybe_flush_grind_stats(now_ms: u64) {
     crate::log_warn!(
         "[GrindStat] calls={calls} hadNearby={nearby} hadTarget={target} attacked={attacked} \
          lod[full={full} active={active} bg={bg} dormant={dormant}] (last 60s)"
+    );
+    let tr = QDBG_TRAVEL_REACHED.swap(0, Ordering::Relaxed);
+    let qd = QDBG_QUEST_DEST.swap(0, Ordering::Relaxed);
+    let td = QDBG_TAKER_DEST.swap(0, Ordering::Relaxed);
+    let od = QDBG_OTHER_DEST.swap(0, Ordering::Relaxed);
+    let nd = QDBG_NODEST.swap(0, Ordering::Relaxed);
+    let wn = QDBG_WANDER.swap(0, Ordering::Relaxed);
+    let ac = QDBG_ACCEPT.swap(0, Ordering::Relaxed);
+    let ti = QDBG_TURNIN.swap(0, Ordering::Relaxed);
+    let tihq = QDBG_TI_HASQ.swap(0, Ordering::Relaxed);
+    let tinn = QDBG_TI_NEARNPC.swap(0, Ordering::Relaxed);
+    let kl = QDBG_KILL.swap(0, Ordering::Relaxed);
+    let hc = QDBG_HAS_COMPLETE.swap(0, Ordering::Relaxed);
+    let hi = QDBG_HAS_INCOMPLETE.swap(0, Ordering::Relaxed);
+    crate::log_warn!(
+        "[QuestDbg] travelReached={tr} questDest={qd} takerDest={td} otherDest={od} noDest={nd} \
+         wander={wn} | accept={ac} turnin={ti} tiHasQ={tihq} tiNearNpc={tinn} kill={kl} | \
+         hasComplete={hc} hasIncomplete={hi} (last 60s)"
     );
 }
 
@@ -4415,6 +5213,24 @@ fn tick_close_to_target(ctx: &mut TickContext<'_>, dist: f32) -> BtResult {
     if cur_dist <= dist {
         return BtResult::Failure;
     }
+    // No line of sight → pathfind-WALK to the target's position rather than
+    // chase it. `chase`/MoveChase silently reports success even when it can't
+    // route (so the bot "decides" it's repositioning while standing still, e.g.
+    // beside caged mobs it can't path straight to), whereas `move_to` runs the
+    // PathFinder, walks the real route around obstacles, and returns false when
+    // there genuinely is no path — letting the focus-abandon take over instead
+    // of freezing. This is what lets the bot actually reach LOS and then cast.
+    if !ctx.interface.has_los(target) {
+        let snap = ctx.interface.get_unit_snapshot(target);
+        ctx.monitor(format_args!(
+            "MOVE: CloseToTarget({dist}) no-LOS -> walk to 0x{target:X}",
+        ));
+        return if ctx.interface.move_to(snap.pos.x, snap.pos.y, snap.pos.z) {
+            BtResult::Running
+        } else {
+            BtResult::Failure
+        };
+    }
     ctx.monitor(format_args!(
         "MOVE: CloseToTarget({dist}) cur={cur_dist:.1}y -> chase 0x{target:X}",
     ));
@@ -4435,6 +5251,9 @@ fn tick_close_to_target(ctx: &mut TickContext<'_>, dist: f32) -> BtResult {
 /// For ranged-equipped bots, tries `auto_shoot` first (Auto Shot for
 /// bow/gun/crossbow, Shoot for wand). Falls back to melee `auto_attack`.
 /// Always returns Success so the combat Seq continues.
+/// Mana % at/below which a caster gives up casting and melees in combat.
+const OOM_MELEE_PCT: u64 = 10;
+
 fn tick_engage_target(ctx: &mut TickContext<'_>) -> BtResult {
     let Some(target) = ctx.current_target() else {
         ctx.monitor(format_args!("ENGAGE: no target — pass-through"));
@@ -4451,16 +5270,34 @@ fn tick_engage_target(ctx: &mut TickContext<'_>) -> BtResult {
     // *pulls*, handled separately in `tick_pull_target`), but in a normal
     // engage they must close and melee. Without this gate a rogue with a
     // crossbow auto-shoots forever and never reaches its energy rotation.
-    if ctx.is_ranged_or_healer() && ctx.interface.auto_shoot(target) {
-        ctx.monitor(format_args!("ENGAGE: auto_shoot on 0x{target:X}"));
+    if ctx.is_ranged_or_healer() {
+        // Ranged/caster: auto-shoot with a wand/gun if one is equipped.
+        // Otherwise do NOTHING and let the class rotation deal damage with
+        // spells — a caster must NEVER melee: `Unit::Attack(.., true)` makes
+        // the server chase the bot into melee range, and that movement cancels
+        // every cast-time spell (the "mage runs in and melees, cast cancels"
+        // loop). Stop any lingering melee swing so the bot holds at range.
+        //
+        // EXCEPTION — out of mana mid-fight: a drained caster has nothing to
+        // cast, so it melees (wand or fists) to keep contributing instead of
+        // standing idle. There's no cast to cancel when OOM, so the melee
+        // chase is harmless here.
+        let max_mana = ctx.snap.self_.max_mana;
+        let oom = ctx.in_combat()
+            && max_mana > 0
+            && u64::from(ctx.snap.self_.mana) * 100 < u64::from(max_mana) * OOM_MELEE_PCT;
+        if oom {
+            ctx.interface.attack(target);
+            ctx.monitor(format_args!("ENGAGE: OOM melee on 0x{target:X}"));
+        } else if ctx.interface.auto_shoot(target) {
+            ctx.monitor(format_args!("ENGAGE: auto_shoot on 0x{target:X}"));
+        } else {
+            ctx.interface.auto_attack(false);
+        }
     } else {
-        // Melee bot, or no ranged weapon / shoot refused — start (or keep)
-        // the melee swing on the target. Go through `attack` (→ Unit::Attack,
-        // which is idempotent: a no-op when already swinging the same victim,
-        // so it never resets the swing timer) rather than the `auto_attack`
-        // enable path, whose C++ side never actually begins the swing — that
-        // left melee bots "starting and stopping" forever without landing a
-        // hit.
+        // Melee bot — start (or keep) the melee swing on the target. Go through
+        // `attack` (→ Unit::Attack, idempotent: a no-op when already swinging
+        // the same victim, so it never resets the swing timer).
         ctx.interface.attack(target);
         ctx.monitor(format_args!("ENGAGE: melee attack on 0x{target:X}"));
     }
@@ -4779,9 +5616,30 @@ fn tick_cc_cast_on_rti(ctx: &mut TickContext<'_>, spell: SpellId) -> BtResult {
 /// (line-of-sight, facing, aura-stack caps) doesn't disturb the
 /// existing reactive code path.
 fn tick_cc_cast_on_nearest(ctx: &mut TickContext<'_>, spell: SpellId) -> BtResult {
+    // NEVER crowd-control the mob we're actually killing. A caster nukes via
+    // `focus_target` and has NO `current_target`, so excluding only
+    // current_target let the bot Polymorph the very mob it was Frostbolting.
+    // Exclude BOTH the unit target AND the focus. CC is for EXTRA adds only — and
+    // with the kill target excluded, a single-mob pull has no CC candidate, so
+    // the bot won't poly when there's only one mob (exactly the reported bug).
     let current = ctx.current_target().unwrap_or(0);
+    let focus = ctx.settings.focus_target.unwrap_or(0);
+    // Cap active CC at ONE add. If any nearby mob already carries our CC, do NOT
+    // sheep another — go DPS the kill target instead. Without this, a pull of 3+
+    // mobs made the bot polymorph a DIFFERENT add every cycle (sheep A, then B,
+    // then C, re-sheep as they break) and it never dealt damage. CC is meant to
+    // neutralise ONE extra while the bot kills the rest one at a time.
+    let already_cc = ctx
+        .nearby
+        .iter()
+        .copied()
+        .any(|u| u != current && u != focus && ctx.interface.has_aura(u, spell));
+    if already_cc {
+        return BtResult::Failure;
+    }
     let victim = ctx.nearby.iter().copied().find(|&u| {
         u != current
+            && u != focus
             && ctx.interface.is_attackable(u)
             && cc_spell_targets_type(spell, ctx.interface.get_unit_snapshot(u).creature_type)
             && !ctx.interface.has_aura(u, spell)
@@ -5087,6 +5945,9 @@ fn tick_bg_attack(ctx: &mut TickContext<'_>) -> BtResult {
 fn tick_rpg_wander(ctx: &mut TickContext<'_>) -> BtResult {
     use crate::engine::blackboard::{Key, Value};
 
+    QDBG_WANDER.fetch_add(1, Ordering::Relaxed);
+    maybe_flush_grind_stats(ctx.snap.server_time_ms);
+
     const ARRIVAL_SQ: f32 = 3.0 * 3.0;
 
     // Resume an in-progress destination if one is saved.
@@ -5115,16 +5976,37 @@ fn tick_rpg_wander(ctx: &mut TickContext<'_>) -> BtResult {
         return BtResult::Failure;
     }
 
-    // No saved destination — pick a new one. A longer leg (40y, not 20)
-    // means the bot covers ground in one continuous walk rather than a stop-
-    // start shuffle, which is what a real player looks like when travelling.
-    if let Some(pos) = ctx.interface.get_random_point_nearby(40.0)
-        && ctx.interface.move_to(pos.x, pos.y, pos.z)
-    {
-        ctx.blackboard.set(Key::RpgWanderDestX, Value::F32(pos.x));
-        ctx.blackboard.set(Key::RpgWanderDestY, Value::F32(pos.y));
-        ctx.blackboard.set(Key::RpgWanderDestZ, Value::F32(pos.z));
-        return BtResult::Running;
+    // No saved destination — pick a new one. Longer legs (45y) read like a real
+    // player travelling rather than a stop-start shuffle. Reject a candidate that
+    // would send the bot BACK toward where the current leg started, so it strolls
+    // onward instead of ping-ponging between two points. Try a few candidates
+    // (the C++ picker already samples many reachable spots per call).
+    let from = (
+        ctx.blackboard.get_f32(Key::RpgWanderFromX),
+        ctx.blackboard.get_f32(Key::RpgWanderFromY),
+    );
+    let here = (ctx.snap.self_.pos.x, ctx.snap.self_.pos.y);
+    for _ in 0..5 {
+        let Some(p) = ctx.interface.get_random_point_nearby(45.0) else {
+            continue;
+        };
+        // Avoid backtracking toward the start of the leg we just finished.
+        let backtracks = match from {
+            (Some(fx), Some(fy)) => (p.x - fx).powi(2) + (p.y - fy).powi(2) < 25.0 * 25.0,
+            _ => false,
+        };
+        if backtracks {
+            continue;
+        }
+        if ctx.interface.move_to(p.x, p.y, p.z) {
+            ctx.blackboard.set(Key::RpgWanderDestX, Value::F32(p.x));
+            ctx.blackboard.set(Key::RpgWanderDestY, Value::F32(p.y));
+            ctx.blackboard.set(Key::RpgWanderDestZ, Value::F32(p.z));
+            // Remember this leg's start so the NEXT leg won't double back here.
+            ctx.blackboard.set(Key::RpgWanderFromX, Value::F32(here.0));
+            ctx.blackboard.set(Key::RpgWanderFromY, Value::F32(here.1));
+            return BtResult::Running;
+        }
     }
     BtResult::Failure
 }
@@ -5148,6 +6030,97 @@ const EMOTES: &[u32] = &[
     78,  // HELLO
     101, // POINT
 ];
+
+/// Temporary focused trace: is this a low-level bot in/near Deathknell (the
+/// undead starting zone the user tests with `.bot self`)? Lets us isolate the
+/// starting-zone questing loop from the noise of ~200 random bots of all levels
+/// carrying stale completed quests they'll never logically return to turn in.
+/// A `.bot self` bot is claimed as its own master, so `master_guid` equals the
+/// bot handle. Trace these regardless of level — it's the exact bot the user
+/// watches in-client.
+fn is_self_bot(ctx: &TickContext<'_>) -> bool {
+    ctx.master_guid == Some(ctx.bot_handle)
+}
+
+fn is_traced_bot(ctx: &TickContext<'_>) -> bool {
+    // Any low-level bot OR the player's self-bot (any level): the random-bot
+    // population has almost no fresh starting-zone bots, so widen the net.
+    ctx.snap.self_.level <= 12 || is_self_bot(ctx)
+}
+
+static QTRACE_LAST_MS: AtomicU64 = AtomicU64::new(0);
+static SELF_TRACE_LAST_MS: AtomicU64 = AtomicU64::new(0);
+
+/// Emit a throttled trace line for a traced bot. Self-bots get their own
+/// ~500ms throttle so the player's bot is captured reliably instead of losing
+/// the shared 1/sec slot to other low-level bots.
+fn qtrace(ctx: &TickContext<'_>, what: &str) {
+    if !is_traced_bot(ctx) {
+        return;
+    }
+    let now = ctx.server_time_ms;
+    let (slot, min_gap) = if is_self_bot(ctx) {
+        (&SELF_TRACE_LAST_MS, 500)
+    } else {
+        (&QTRACE_LAST_MS, 1000)
+    };
+    let last = slot.load(Ordering::Relaxed);
+    if now.saturating_sub(last) < min_gap {
+        return;
+    }
+    slot.store(now, Ordering::Relaxed);
+    let p = &ctx.snap.self_.pos;
+    let dest = match ctx
+        .blackboard
+        .get_f32(crate::engine::blackboard::Key::TravelDestX)
+    {
+        Some(dx) => {
+            let dy = ctx
+                .blackboard
+                .get_f32(crate::engine::blackboard::Key::TravelDestY)
+                .unwrap_or(0.0);
+            let dm = ctx
+                .blackboard
+                .get_u32(crate::engine::blackboard::Key::TravelDestMap)
+                .unwrap_or(0);
+            format!("dest=({dx:.0},{dy:.0})map{dm}")
+        }
+        None => "dest=none".to_string(),
+    };
+    crate::log_warn!(
+        "[QTrace]{} lvl{} map{} ({:.0},{:.0}) mov={} comb={} hp={:.0}% mana={:.0}% mode={:?} grp={} master={} follow={} near={} {} | {} | {}",
+        if is_self_bot(ctx) { "[SELF]" } else { "" },
+        ctx.snap.self_.level,
+        p.map_id,
+        p.x,
+        p.y,
+        ctx.snap.self_.is_moving,
+        ctx.in_combat(),
+        ctx.self_hp_pct() * 100.0,
+        ctx.self_mana_pct() * 100.0,
+        ctx.settings.mode,
+        ctx.snap.group_size,
+        // master: 0 = none, S = self (`.bot self`), H = an external handle.
+        match ctx.master_guid {
+            None => "0".to_string(),
+            Some(m) if m == ctx.bot_handle => "S".to_string(),
+            Some(m) => format!("{m:X}"),
+        },
+        // What the bot would follow right now (0x0 = nothing → autonomous).
+        format_args!("0x{:X}", pick_follow_target(ctx).unwrap_or(0)),
+        ctx.nearby.len(),
+        dest,
+        what,
+        {
+            let log = ctx.interface.get_quest_log();
+            let qs: Vec<String> = log
+                .iter()
+                .map(|q| format!("{}{}", q.quest_id, if q.complete { "C" } else { "i" }))
+                .collect();
+            format!("quests=[{}]", qs.join(","))
+        }
+    );
+}
 
 fn tick_rpg_emote(ctx: &mut TickContext<'_>) -> BtResult {
     // Pick a pseudo-random emote based on server time.
@@ -5654,9 +6627,11 @@ mod tests {
         owned.snap.self_.in_combat = false;
         assert_eq!(tree.tick(&mut owned.ctx()), BtResult::Running);
 
-        // Full HP → Failure (nothing to do).
+        // Reaching full WHILE recovering → Success (recovery just completed). The
+        // hysteresis keeps the "recovering" marker live ~2s, so the first tick at
+        // full reports completion rather than "nothing to do".
         owned.snap.self_.health = 1000;
-        assert_eq!(tree.tick(&mut owned.ctx()), BtResult::Failure);
+        assert_eq!(tree.tick(&mut owned.ctx()), BtResult::Success);
     }
 
     #[test]
@@ -7312,7 +8287,7 @@ mod tests {
         let iface = MockWorld::new().with_taxi(Some(fm), true);
         let mut owned = TestCtxOwned::new();
         owned.snap.self_.pos = cmangos::BotPosition { x: 0.0, y: 0.0, z: 0.0, o: 0.0, map_id: 0 };
-        set_taxi_dest(&mut owned, 2000.0, 0.0); // far → fly; not at master yet
+        set_taxi_dest(&mut owned, 3000.0, 0.0); // far → fly; not at master yet
         let mut ctx = ctx_with_iface(&mut owned, &iface);
         assert_eq!(Bt::TakeTaxi.tick(&mut ctx), BtResult::Running);
     }
@@ -7323,7 +8298,7 @@ mod tests {
         let iface = MockWorld::new().with_taxi(Some(fm), true);
         let mut owned = TestCtxOwned::new();
         owned.snap.self_.pos = cmangos::BotPosition { x: 0.0, y: 0.0, z: 0.0, o: 0.0, map_id: 0 };
-        set_taxi_dest(&mut owned, 2000.0, 0.0); // far + standing at master → fly
+        set_taxi_dest(&mut owned, 3000.0, 0.0); // far + standing at master → fly
         let mut ctx = ctx_with_iface(&mut owned, &iface);
         assert_eq!(Bt::TakeTaxi.tick(&mut ctx), BtResult::Success);
     }
@@ -7333,7 +8308,7 @@ mod tests {
         let iface = MockWorld::new().with_taxi(None, false);
         let mut owned = TestCtxOwned::new();
         owned.snap.self_.pos = cmangos::BotPosition { x: 0.0, y: 0.0, z: 0.0, o: 0.0, map_id: 0 };
-        set_taxi_dest(&mut owned, 2000.0, 0.0); // far but no taxi network → walk
+        set_taxi_dest(&mut owned, 3000.0, 0.0); // far but no taxi network → walk
         let mut ctx = ctx_with_iface(&mut owned, &iface);
         assert_eq!(Bt::TakeTaxi.tick(&mut ctx), BtResult::Failure);
     }

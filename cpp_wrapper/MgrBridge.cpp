@@ -1229,7 +1229,19 @@ std::list<std::string> PlayerbotHolder::HandleSelf(Player* master, const std::st
     if (master->GetPlayerbotAI())
     {
         DisablePlayerBot(master->GetGUIDLow(), false);
-       
+        // Hand movement control back to the player's client. While the self-bot
+        // was active the client had relinquished control (below) so the server
+        // could drive the character; restore it now or the player can't move.
+        //
+        // forced=TRUE is REQUIRED here: UpdateClientControl(.., true, false) only
+        // sends the enable packet when the target is ALREADY client-controlled —
+        // but the self-bot just took control away, so IsClientControlled() is
+        // false and without forcing, the re-enable packet is silently dropped and
+        // the player can never move their character again. Also stop any movement
+        // the bot left mid-spline so it doesn't keep dragging the character.
+        master->StopMoving();
+        master->UpdateClientControl(master, true, true);
+
         if (sRandomPlayerbotMgr.GetValue(master->GetObjectGuid().GetCounter(), "selfbot"))
         {
             messages.push_back("Disable player ai (on login)");
@@ -1245,6 +1257,15 @@ std::list<std::string> PlayerbotHolder::HandleSelf(Player* master, const std::st
     else
     {
         OnBotLogin(master);
+        // `.bot self` = the player's OWN character is now AI-driven. Take
+        // movement control AWAY from the player's client so the server can move
+        // the character cleanly. Without this the client still thinks IT owns the
+        // character: it fights every server MovePoint (the "runs fast as hell"
+        // rubber-band the user sees) and, on disable, snaps the character back to
+        // the client's last-known position ("runs back to old position"). The
+        // server-side movement itself is normal speed — this is purely the
+        // client/server control handoff. Restored on disable (above).
+        master->UpdateClientControl(master, false);
 
         if (!param.empty() && param == "login")
         {

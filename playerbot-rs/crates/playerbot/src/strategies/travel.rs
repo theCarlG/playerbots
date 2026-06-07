@@ -20,7 +20,11 @@ pub fn build() -> Bt {
             // through for same-continent destinations.
             Seq!(Bt::HasTravelDest, Bt::CrossContinentTravel),
             // Far same-continent destination → fly: walk to the nearest flight
-            // master, then take a taxi. Falls through for near dests.
+            // master, then take a taxi. While the flight is in progress TakeTaxi
+            // returns Running so it does NOT fall through to TravelToBlackboard
+            // (a `move_to` issued during a taxi flight fights the flight spline —
+            // the bot "glides on the ground at high speed" / clips under the
+            // map). Falls through to walking only for near dests / no route.
             Seq!(Bt::HasTravelDest, Bt::TakeTaxi),
             // If we already have a travel destination, keep walking.
             Seq!(Bt::HasTravelDest, Bt::TravelToBlackboard,),

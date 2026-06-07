@@ -185,6 +185,24 @@ pub const DEMON_ARMOR_RANKS: &[SpellId] = &[
     SpellId(11735), // rank 5
 ];
 
+/// Mage armor self-buffs — Frost Armor + Ice Armor + Mage Armor ranks. Used to
+/// check whether the mage already has ANY armor up before recasting Frost Armor.
+pub const MAGE_ARMOR_RANKS: &[SpellId] = &[
+    // Frost Armor
+    SpellId(168),
+    SpellId(7300),
+    SpellId(7301),
+    // Ice Armor (replaces Frost Armor at higher level)
+    SpellId(7302),
+    SpellId(7320),
+    SpellId(10219),
+    SpellId(10220),
+    // Mage Armor
+    SpellId(6117),
+    SpellId(22782),
+    SpellId(22783),
+];
+
 /// Lightning Shield (Shaman): ranks 1-7
 pub const LIGHTNING_SHIELD_RANKS: &[SpellId] = &[
     SpellId(324),

@@ -163,6 +163,18 @@ void PlayerbotRust::UpdateAIInternal(uint32 elapsed, bool minimal)
     AutoAcceptGroupInvite();
     RefreshMaster();
 
+    // The AI is actively playing this character, so it must never be treated as
+    // idle. A `.bot self` (or master-controlled) character has a REAL client that
+    // auto-flags AFK after a few minutes without keyboard/mouse input — and the
+    // core then trips its hardcoded 15-minute AFK auto-disconnect
+    // (WorldSession::ShouldAfkDisconnect) and kicks the player mid-session. There
+    // is no config knob for that timer, so clear the AFK flag here: ToggleAFK()
+    // also calls AfkStateChange(false), which zeroes m_afkTime and resets the
+    // disconnect countdown. Result: a bot-driven session is never dropped and
+    // doesn't show the [AFK] tag.
+    if (m_bot->isAFK())
+        m_bot->ToggleAFK();
+
     playerbot_update(m_rustState.get(), static_cast<uint32_t>(elapsed), minimal);
 }
 

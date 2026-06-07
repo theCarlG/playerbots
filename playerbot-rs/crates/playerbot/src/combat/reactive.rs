@@ -10,7 +10,7 @@
 /// selector containing both `Bt` enum nodes and the class rotation.
 use crate::bot::settings::StrategyFlags;
 use crate::bot::state::PlayerClass;
-use crate::engine::bt::Bt::{self, ShouldFlee, FleeToSafe, TargetCastingInterruptible, Interrupt, IsClass, DispelParty, ResurrectParty, IsTank, InCombat, PullingAggro, ThreatDump, StrategyEnabled, PullBack, PreHeal, HealInterrupt, KiteFromTarget, CloseToTarget, MaintainRange, MoveBehind, MarkRtiPreferred, HasFocusTarget, FocusAttack, TankPickupAdds, AttackRtiPriority, AssistLeader, ProtectAttacker, ReactivityIs, AttackNearest, HasAttackers};
+use crate::engine::bt::Bt::{self, ShouldFlee, FleeToSafe, TargetCastingInterruptible, Interrupt, IsClass, DispelParty, ResurrectParty, IsTank, InCombat, PullingAggro, ThreatDump, StrategyEnabled, PullBack, PreHeal, HealInterrupt, KiteFromTarget, CloseToTarget, MoveBehind, MarkRtiPreferred, HasFocusTarget, FocusAttack, TankPickupAdds, AttackRtiPriority, AssistLeader, ProtectAttacker, ReactivityIs, AttackNearest, HasAttackers};
 use crate::{Sel, Seq};
 
 /// Flee on an explicit `flee` command or when HP drops below the bot's
@@ -125,12 +125,35 @@ pub fn close_subtree() -> Bt {
     Seq!(StrategyEnabled(StrategyFlags::CLOSE), CloseToTarget(5.0),)
 }
 
-/// Maintain ranged distance. Gated on the RANGED strategy flag.
-/// Two behaviors: flee when too close (< 8y), chase when too far (> 30y).
+/// Ranged combat positioning. Gated on the RANGED strategy flag.
+/// Behaviors: walk closer to clear an obstacle when there's no line of sight,
+/// chase when too far to cast (> 30y). When in range WITH line of sight it
+/// returns Failure so the caller falls through to `FaceTarget` (turn-only, no
+/// movement) and the bot PLANTS to cast.
+///
+/// NOTE: this deliberately does NOT kite (retreat) from a mob that closes to
+/// melee. A retreat issues `move_to`, and ANY movement cancels a cast-time
+/// spell server-side — so a `MaintainRange(8)` here made a low-level caster
+/// back-pedal from every melee mob, cancel its Frostbolt every tick, and kite
+/// the mob until it de-aggroed without ever landing a spell. Casters now hold
+/// their ground and nuke. Real kiting is situational and belongs to the flee /
+/// explicit-kite paths, not the default rotation positioning.
 pub fn ranged_subtree() -> Bt {
     Seq!(
         StrategyEnabled(StrategyFlags::RANGED),
-        Sel!(MaintainRange(8.0), CloseToTarget(30.0),),
+        Sel!(
+            // No line of sight → approach to CAST RANGE first (~18y), not all the
+            // way to melee. A caster should "run until range and then attack",
+            // not run onto the mob and stand there getting hit. Open terrain
+            // (most quest mobs) gains LOS well before 18y, so the bot stops at
+            // range and nukes.
+            Seq!(Bt::TargetInLos.not(), CloseToTarget(18.0)),
+            // Still no LOS even at 18y (a real obstacle: wall/cave) → close to
+            // adjacent so it can clear the obstacle and cast.
+            Seq!(Bt::TargetInLos.not(), CloseToTarget(5.0)),
+            // In LOS but too far to cast → close to 30y, then hold and nuke.
+            CloseToTarget(30.0),
+        ),
     )
 }
 

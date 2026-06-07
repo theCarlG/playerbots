@@ -42,6 +42,7 @@
 #include "Spells/SpellAuras.h"
 #include "Maps/Map.h"
 #include "Maps/GridMap.h"
+#include "Tools/Formulas.h"
 #include <atomic>
 #include <unordered_set>
 #include "MotionGenerators/MotionMaster.h"
@@ -292,6 +293,8 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.tell_player         = CB_TellPlayer;
     cbs.whisper             = CB_Whisper;
     cbs.use_item            = CB_UseItem;
+    cbs.bot_use_emergency_potion = CB_BotUseEmergencyPotion;
+    cbs.bot_equip_better_bags = CB_BotEquipBetterBags;
     cbs.find_food_drink_in_bags = CB_FindFoodDrinkInBags;
     cbs.taunt               = CB_Taunt;
     cbs.teleport_to         = CB_TeleportTo;
@@ -342,6 +345,7 @@ BotCallbacks BotBridge::MakeCallbacks()
 
     // Unit queries (extended)
     cbs.is_attackable       = CB_IsAttackable;
+    cbs.can_attack          = CB_CanAttack;
     cbs.get_unit_level      = CB_GetUnitLevel;
     cbs.is_casting_interruptible = CB_IsCastingInterruptible;
     cbs.unit_kind           = CB_UnitKind;
@@ -397,6 +401,9 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.nearby_gameobject_by_entry = CB_NearbyGameObjectByEntry;
     cbs.use_gameobject             = CB_UseGameObject;
     cbs.use_nearby_quest_object    = CB_UseNearbyQuestObject;
+    cbs.nearest_quest_container    = CB_NearestQuestContainer;
+    cbs.loot_gameobject            = CB_LootGameObject;
+    cbs.talk_to_nearby_quest_npc   = CB_TalkToNearbyQuestNpc;
     cbs.is_quest_objective_creature = CB_IsQuestObjectiveCreature;
     cbs.get_active_escort_npc      = CB_GetActiveEscortNpc;
     cbs.bot_broadcast_random       = CB_BotBroadcastRandom;
@@ -531,6 +538,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     cbs.bot_free_skill_list                 = CB_BotFreeSkillList;
     cbs.bot_quest_accept_from               = CB_BotQuestAcceptFrom;
     cbs.bot_quest_abandon                   = CB_BotQuestAbandon;
+    cbs.bot_quest_is_grey                   = CB_BotQuestIsGrey;
 
     // Chat-command helpers (Wave 3: mail + guild)
     cbs.bot_mail_summary                    = CB_BotMailSummary;
@@ -565,6 +573,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     // Item name resolution + equip
     cbs.resolve_item_by_name                = CB_ResolveItemByName;
     cbs.equip_item                          = CB_EquipItem;
+    cbs.auto_equip_upgrades                  = CB_AutoEquipUpgrades;
 
     // Group management
     cbs.give_leader                         = CB_GiveLeader;
@@ -585,6 +594,7 @@ BotCallbacks BotBridge::MakeCallbacks()
     // NPC interaction
     cbs.gossip_hello                        = CB_GossipHello;
     cbs.buy_from_vendor                     = CB_BuyFromVendor;
+    cbs.bot_buy_quest_items                 = CB_BotBuyQuestItems;
 
     // Mail
     cbs.mail_item_to_master                 = CB_MailItemToMaster;
@@ -1041,9 +1051,22 @@ bool BotBridge::CB_CanCast(BotHandle bot, uint32_t spell_id, UnitHandle target)
     if (!spellInfo)
         return false;
 
-    // Check if player has the spell
+    // Downrank to the highest rank the bot actually knows — IDENTICAL to
+    // CB_CastSpell. The Rust rotations reference MAX-RANK spell ids (e.g.
+    // Fireball r12 = lvl 60); a low-level bot only knows a lower rank. Without
+    // this, CB_CanCast(maxRankId) returned false for any sub-60 caster, the
+    // rotation's can_cast gate failed, and the bot stood next to its target
+    // doing nothing — never reaching CB_CastSpell's own downrank. Walk the rank
+    // chain so the check agrees with the cast.
     if (!b->HasSpell(spell_id))
-        return false;
+    {
+        uint32_t rank = sSpellMgr.GetPrevSpellInChain(spell_id);
+        while (rank && !b->HasSpell(rank))
+            rank = sSpellMgr.GetPrevSpellInChain(rank);
+        if (!rank)
+            return false;
+        spell_id = rank;
+    }
 
     // Check cooldown
     if (!b->IsSpellReady(spell_id))
@@ -1053,6 +1076,19 @@ bool BotBridge::CB_CanCast(BotHandle bot, uint32_t spell_id, UnitHandle target)
     (void)t;
     if (!b->IsSpellFitByClassAndRace(spell_id))
         return false;
+
+    // Power (mana) check — mirror CheckCast in CB_CastSpell. Without this,
+    // can_cast returned true even at ~3% mana, so a drained caster's rotation
+    // kept "trying" Frostbolt/Fireball every tick; the server rejected each one
+    // for NO_POWER and the bot stood there doing nothing instead of falling
+    // through to its OOM wand/melee. Use the (possibly downranked) spell's cost.
+    SpellEntry const* castInfo = sSpellTemplate.LookupEntry<SpellEntry>(spell_id);
+    if (castInfo && castInfo->powerType == POWER_MANA)
+    {
+        uint32 cost = Spell::CalculatePowerCost(castInfo, b);
+        if (b->GetPower(POWER_MANA) < cost)
+            return false;
+    }
 
     return true;
 }
@@ -1245,7 +1281,13 @@ bool BotBridge::CB_CanPathfindTo(BotHandle bot, float x, float y, float z)
 
     PathFinder pathfinder(b);
     pathfinder.calculate(x, y, z, false);
-    return (pathfinder.getPathType() & PATHFIND_NORMAL) != 0;
+    // Reachable = the pathfinder found ANY usable route, not only PATHFIND_NORMAL.
+    // A close target on flat ground often resolves to PATHFIND_SHORTCUT (straight
+    // line, no navmesh hops) — requiring NORMAL wrongly rejected quest mobs
+    // standing right next to the bot. Treat only an explicit NOPATH (and the
+    // not-using-navmesh fallback) as unreachable; mirror CB_MoveTo, which moves on
+    // anything that isn't NOPATH.
+    return (pathfinder.getPathType() & PATHFIND_NOPATH) == 0;
 }
 
 // ── Movement de-duplication state (used by CB_CastSpell and movement callbacks) ──
@@ -1272,6 +1314,21 @@ bool BotBridge::CB_CastSpell(BotHandle bot, uint32_t spell_id, UnitHandle target
     if (!b)
         return false;
 
+    // Don't restart an in-progress cast-time spell. The Rust rotation calls
+    // CastSpell every tick; re-issuing SpellStart on a spell already being cast
+    // cancels and restarts it, so the bot never finishes ("cancels its frostbolt
+    // all the time"). ONLY the generic cast-time slot gates here:
+    //  - NOT autorepeat (wand auto-shot) — it coexists with casting; counting it
+    //    blocked every Frostbolt/Fireball on any mage holding a wand.
+    //  - NOT channeled.
+    // And we return FALSE, never true: returning success makes the Rust side
+    // believe the cast landed and arm a GCD, so the bot soft-locks into a
+    // phantom cast it never actually performs (the "just sits, can't cast"
+    // stall). Returning false just declines this tick's re-issue; the real cast
+    // already in flight completes on its own.
+    if (b->GetCurrentSpell(CURRENT_GENERIC_SPELL))
+        return false;
+
     SpellEntry const* spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(spell_id);
     if (!spellInfo)
         return false;
@@ -1280,12 +1337,28 @@ bool BotBridge::CB_CastSpell(BotHandle bot, uint32_t spell_id, UnitHandle target
     if (!t)
         t = b; // fallback to self
 
-    // Check that the spell is ready and known
+    // Downrank to the highest rank the bot actually knows. The Rust rotations
+    // reference MAX-RANK spell ids (e.g. Frostbolt r12 = lvl 60); any bot below
+    // that level only knows a lower rank — or, at very low levels, no rank of a
+    // talent/higher-level spell at all. Walk down the rank chain so a level-12
+    // mage casts Frostbolt r2, etc. If no rank is known (e.g. a lvl-1 mage has
+    // no Frostbolt at all), fail so the rotation falls through to a spell it
+    // does know (Fireball r1). Mirrors PB2's rank selection.
     if (!b->HasSpell(spell_id))
     {
-        sLog.outDebug("[BotBridge] CastSpell: bot=0x%llX spell=%u NOT KNOWN",
-                      (unsigned long long)bot, spell_id);
-        return false;
+        uint32_t rank = sSpellMgr.GetPrevSpellInChain(spell_id);
+        while (rank && !b->HasSpell(rank))
+            rank = sSpellMgr.GetPrevSpellInChain(rank);
+        if (!rank)
+        {
+            sLog.outDebug("[BotBridge] CastSpell: bot=0x%llX spell=%u NOT KNOWN (no rank)",
+                          (unsigned long long)bot, spell_id);
+            return false;
+        }
+        spell_id = rank;
+        spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(spell_id);
+        if (!spellInfo)
+            return false;
     }
     if (!b->IsSpellReady(spell_id))
     {
@@ -1293,6 +1366,16 @@ bool BotBridge::CB_CastSpell(BotHandle bot, uint32_t spell_id, UnitHandle target
                       (unsigned long long)bot, spell_id);
         return false;
     }
+
+    // Already mid a cast-time / channeled spell → REFUSE. Starting another spell
+    // (or even the StopMoving/re-face below) cancels the in-progress cast. The
+    // Rust snapshot's is_casting lags a tick, so the rotation re-enters here while
+    // the previous cast is still running; without this it would SpellStart() again
+    // and the cast would never complete — the bot "interrupting its own cast"
+    // (mana never drops, mob never dies). Engine state is authoritative, no lag.
+    if (b->IsNonMeleeSpellCasted(false /*withDelayed*/, false /*skipChanneled*/,
+                                 true /*skipAutorepeat*/))
+        return false;
 
     // Stop moving before casting spells that require it. Cast-time and
     // channeled spells obviously need the bot to stand still. Melee
@@ -1312,9 +1395,16 @@ bool BotBridge::CB_CastSpell(BotHandle bot, uint32_t spell_id, UnitHandle target
     // Face the target before casting. PB2 always called SetFacingTo before
     // spell casts — without this the server rejects most spells because the
     // bot isn't oriented toward the target (SPELL_FAILED_UNIT_NOT_INFRONT).
-    if (t != b && !b->HasInArc(t, M_PI))
+    //
+    // ALWAYS re-face (not only when outside the 180° arc): a melee mob circling
+    // the bot at point-blank stays within 180° yet drifts off precise-front, and
+    // CheckCast's facing requirement is tighter than M_PI — so the old gate let
+    // the bot "skip" facing and every cast got rejected on facing, the caster
+    // never fired a spell and got beaten to death at melee range. Re-facing
+    // unconditionally + SetInFront makes the cast pass.
+    if (t != b)
     {
-        float angle = b->GetAngle(t);
+        const float angle = b->GetAngle(t);
         if (b->IsStopped())
         {
             b->SetOrientation(angle);
@@ -1336,8 +1426,21 @@ bool BotBridge::CB_CastSpell(BotHandle bot, uint32_t spell_id, UnitHandle target
     SpellCastResult result = spell->CheckCast(true);
     if (result != SPELL_CAST_OK)
     {
-        sLog.outDebug("[BotBridge] CastSpell REJECTED: bot=0x%llX spell=%u target=0x%llX CheckCast=%d",
-                      (unsigned long long)bot, spell_id, (unsigned long long)target, (int)result);
+        // Surface the ACTUAL CheckCast reject code so the recurring "server
+        // rejected" caster stalls can be diagnosed. Logged to Server.log (NOT
+        // console) at a low rate. IMPORTANT: bot updates run on MULTIPLE worker
+        // threads, so this must use no shared mutable container — a plain 32-bit
+        // counter's torn `++` only miscounts (benign); a std::unordered_map here
+        // raced across threads, corrupted its buckets, and span the server into
+        // an infinite loop at startup. Keep it a bare int. SPELL_FAILED_* codes
+        // are in core SharedDefines.h (NOT_INFRONT, LINE_OF_SIGHT, OUT_OF_RANGE,
+        // SPELL_IN_PROGRESS, NOT_READY, …).
+        static uint32 s_castRejectThrottle = 0;
+        if ((s_castRejectThrottle++ % 500) == 0)
+        {
+            sLog.outString("[BotBridge] CastSpell REJECTED spell=%u CheckCast=%d",
+                           spell_id, (int)result);
+        }
         delete spell;
         return false;
     }
@@ -1415,11 +1518,35 @@ static bool sameFollowParams(float d0, float d1, float a0, float a1)
     return dd * dd < 0.05f * 0.05f && da * da < 0.02f * 0.02f;
 }
 
+// ── Cast-movement safety: THE single source of truth ─────────────────────────
+// A cast-time or channeled spell is cancelled server-side the instant the caster
+// moves (or is stopped / re-faced via a movement order). The Rust AI's snapshot
+// of "is casting" lags up to a tick, so guarding each behavior-tree leaf there
+// always left a one-tick window that slipped through and cancelled the cast —
+// which is why this same bug kept coming back no matter how many leaves were
+// patched. So it is enforced ONCE, here, at the movement chokepoint, using the
+// ENGINE's authoritative, lag-free cast state. Every per-tick movement callback
+// (MoveTo/Chase/Follow/SetFacing/StopMoving) consults this and becomes a no-op
+// while a movement-breakable cast is in progress. After this, NO AI code path —
+// existing or future — can interrupt a cast by moving, regardless of what the
+// behavior tree decides. `IsNonMeleeSpellCasted(forMovement=true)` is the core's
+// own "would movement break this spell?" predicate (covers cast-time + channeled,
+// ignores auto-shot).
+static bool BotMovementWouldBreakCast(Player* b)
+{
+    return b && b->IsNonMeleeSpellCasted(false /*withDelayed*/, false /*skipChanneled*/,
+                                         true /*skipAutorepeat*/, true /*forMovement*/);
+}
+
 bool BotBridge::CB_MoveTo(BotHandle bot, float x, float y, float z)
 {
     Player* b = FindBot(bot);
     if (!b)
         return false;
+    // Casting → don't move (would cancel the cast). No-op success so the caller
+    // holds position instead of treating it as a path failure and abandoning.
+    if (BotMovementWouldBreakCast(b))
+        return true;
 
     auto& st = s_moveState[bot];
     // Already heading to the same point — do NOT re-issue. Re-issuing every tick
@@ -1428,19 +1555,66 @@ bool BotBridge::CB_MoveTo(BotHandle bot, float x, float y, float z)
     if (st.kind == MoveState::POINT && sameDest(st, x, y, z) && b->IsMoving())
         return true;
 
-    // Reachability gate, then MovePoint. A bare MovePoint straight-lines to an
-    // UNREACHABLE target (the through-the-wall / off-map bug), so first run
-    // PathFinder and refuse the move if there's no route (PATHFIND_NOPATH).
-    // But do the actual move with MovePoint, NOT MovePath: MovePoint pathfinds
-    // internally AND splits the result into valid splines, whereas feeding the
-    // raw PathFinder path to MovePath produced out-of-bounds splines
-    // (MoveSplineInitArgs::_checkPathBounds failed) that stalled all movement.
+    // NO-GLIDE gate. A bot/ghost must NEVER slide in a straight line through the
+    // world. Move ONLY along a real navmesh path:
+    //   PATHFIND_NORMAL     — full ground path.
+    //   PATHFIND_INCOMPLETE — partial ground path toward the dest (far targets;
+    //                         re-paths each chunk as tiles stream in).
+    // Anything else is rejected outright:
+    //   PATHFIND_SHORTCUT / NOT_USING_PATH — a straight line through terrain/air
+    //     (this is the "ghost / bot glides everywhere like a speedhacker" bug),
+    //   PATHFIND_NOPATH — no route at all.
+    // On refusal we return false so the caller falls back gracefully (a ghost
+    // gives up the corpse run and uses the spirit healer; travel re-routes)
+    // instead of straight-lining. We then move toward getActualEndPosition() —
+    // the farthest point the navmesh actually reaches — so a far dest walks the
+    // mesh in chunks rather than being flung across the map.
     PathFinder pathfinder(b);
     pathfinder.calculate(x, y, z, false);
-    if (pathfinder.getPathType() & PATHFIND_NOPATH)
+    auto pt = pathfinder.getPathType();
+    if (!(pt & (PATHFIND_NORMAL | PATHFIND_INCOMPLETE)))
         return false;
 
-    b->GetMotionMaster()->MovePoint(0, x, y, z, FORCED_MOVEMENT_RUN);
+    auto end = pathfinder.getActualEndPosition();
+    float gx = end.x, gy = end.y, gz = end.z;
+
+    // Bridge a SHORT missing-mmap gap. Some perfectly walkable terrain simply has
+    // no navmesh tiles generated, so PathFinder returns INCOMPLETE and dead-ends
+    // at the mesh edge short of a reachable dest — the bot then stalls / paces
+    // there (the "runs between two spots ~70y short of the quest objective"
+    // report; on foot a player walks straight there). If the mesh can no longer
+    // advance (its endpoint is essentially where we already stand) yet the real
+    // dest is a short hop away, step DIRECTLY onto it (generatePath=false).
+    //
+    // CRITICAL GUARD: only bridge when there's clear LINE OF SIGHT to the dest.
+    // The navmesh also dead-ends at real WALLS/objects (not just missing tiles);
+    // straight-lining toward one of those wedged the bot INSIDE the geometry
+    // ("stuck inside something, getting hit, doing nothing"). An LOS check means
+    // we only hop across open, walkable gaps — never through a wall. Hard-bounded
+    // by kBridgeMax so it can never become a cross-map glide either.
+    const float kBridgeMax = 50.0f;
+    const float pdx = b->GetPositionX() - gx, pdy = b->GetPositionY() - gy;
+    const float progressSq = pdx * pdx + pdy * pdy;
+    const float rdx = x - gx, rdy = y - gy;
+    const float remainingSq = rdx * rdx + rdy * rdy;
+    if ((pt & PATHFIND_INCOMPLETE) && progressSq < 25.0f
+        && remainingSq > 16.0f && remainingSq <= kBridgeMax * kBridgeMax
+        && b->GetMap()
+        && b->GetMap()->IsInLineOfSight(
+               b->GetPositionX(), b->GetPositionY(), b->GetPositionZ() + 2.0f,
+               x, y, z + 2.0f, true))
+    {
+        b->GetMotionMaster()->MovePoint(0, x, y, z, FORCED_MOVEMENT_RUN, false);
+        st.x = x; st.y = y; st.z = z;
+        st.followTarget = 0; st.followDist = 0; st.followAngle = 0;
+        st.kind = MoveState::POINT;
+        return true;
+    }
+
+    b->GetMotionMaster()->MovePoint(0, gx, gy, gz, FORCED_MOVEMENT_RUN);
+    // Remember the FINAL dest (not the chunk sub-target) so the per-tick
+    // same-dest guard above doesn't restart the spline; the chunk advances
+    // naturally as each spline completes.
     st.x = x; st.y = y; st.z = z;
     st.followTarget = 0; st.followDist = 0; st.followAngle = 0;
     st.kind = MoveState::POINT;
@@ -1451,6 +1625,10 @@ void BotBridge::CB_SetFacing(BotHandle bot, float angle)
 {
     Player* b = FindBot(bot);
     if (!b)
+        return;
+    // Casting → leave facing alone. The cast set the bot's facing when it began
+    // (CB_CastSpell), and re-facing here issues StopMoving/Clear which cancels it.
+    if (BotMovementWouldBreakCast(b))
         return;
 
     // Stop movement so the facing takes effect immediately.
@@ -1472,6 +1650,9 @@ bool BotBridge::CB_Follow(BotHandle bot, UnitHandle target, float dist, float an
     Unit* t   = FindUnit(bot, target);
     if (!b || !t)
         return false;
+    // Casting → don't re-issue follow movement (would cancel the cast).
+    if (BotMovementWouldBreakCast(b))
+        return true;
 
     // Ensure run mode — bots default to walking without this.
     if (b->IsWalking())
@@ -1498,6 +1679,9 @@ bool BotBridge::CB_Chase(BotHandle bot, UnitHandle target, float dist, float ang
     Unit* t   = FindUnit(bot, target);
     if (!b || !t)
         return false;
+    // Casting → don't chase (would cancel the cast). Hold and let it finish.
+    if (BotMovementWouldBreakCast(b))
+        return true;
 
     // Ensure run mode.
     if (b->IsWalking())
@@ -1521,6 +1705,10 @@ bool BotBridge::CB_StopMoving(BotHandle bot)
     Player* b = FindBot(bot);
     if (!b)
         return false;
+    // Casting → already standing still to cast; a Clear()/StopMoving() here only
+    // serves to cancel the in-progress cast. No-op (report stopped, which it is).
+    if (BotMovementWouldBreakCast(b))
+        return true;
     b->GetMotionMaster()->Clear(false);
     b->StopMoving();
     s_moveState.erase(bot);
@@ -1584,6 +1772,15 @@ bool BotBridge::CB_AutoShoot(BotHandle bot, UnitHandle target)
     Unit* t   = FindUnit(bot, target);
     if (!b || !t)
         return false;
+
+    // Mid a cast-time/channeled spell? Do NOT start a wand/ranged shot — Shoot
+    // (5019) is itself a cast and cancels the in-progress one. This is the mage
+    // "wanding away its own Frostbolt": the engage step calls auto_shoot during
+    // the one-tick is_casting snapshot lag. No-op success so the caller holds the
+    // cast instead of falling through to melee.
+    if (b->IsNonMeleeSpellCasted(false /*withDelayed*/, false /*skipChanneled*/,
+                                 true /*skipAutorepeat*/))
+        return true;
 
     Item* ranged = b->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_RANGED);
     if (!ranged)
@@ -1804,6 +2001,154 @@ bool BotBridge::CB_UseItem(BotHandle bot, uint32_t item_id, UnitHandle target)
     targets.setUnitTarget(t ? t : static_cast<Unit*>(b));
     spell->SpellStart(&targets);
     return true;
+}
+
+// Auto-equip larger bags. A bot loots bags but, with no runtime equip logic,
+// leaves them unequipped while its small starter bags (or empty slots) stay —
+// so it fills up and then can't loot quest items (tick_loot bails when nearly
+// full). For each bag slot, find the LARGEST unequipped container anywhere in
+// the bot's inventory (backpack general slots OR inside an already-equipped bag,
+// because looted bags routinely land there — that's the bag the bot "still has
+// in inventory but never equips") and put it in the slot. Returns true if
+// anything was equipped.
+//
+// `b->SwapItem` is the same call the client uses; for a bag dest it equips the
+// bag, and the empty-bag-unequip rule is bypassed for swaps. We only displace an
+// EMPTY equipped bag (so items are never stranded), and only when the incoming
+// bag comes from a backpack GENERAL slot (so the displaced bag has a valid spot
+// to land — a bag can sit in the backpack but not inside another equipped bag).
+bool BotBridge::CB_BotEquipBetterBags(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    auto isBackpackGeneralPos = [](uint16 pos) -> bool {
+        const uint8 container = pos >> 8;
+        const uint8 slot = pos & 0xFF;
+        return container == INVENTORY_SLOT_BAG_0
+            && slot >= INVENTORY_SLOT_ITEM_START && slot < INVENTORY_SLOT_ITEM_END;
+    };
+
+    bool changed = false;
+    for (uint8 slot = INVENTORY_SLOT_BAG_START; slot < INVENTORY_SLOT_BAG_END; ++slot)
+    {
+        uint32 curSize = 0;
+        bool slotOccupied = false;
+        if (Item* cur = b->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+        {
+            Bag* curBag = cur->IsBag() ? static_cast<Bag*>(cur) : nullptr;
+            if (!curBag)
+                continue;
+            // Don't displace a bag that still holds items.
+            if (curBag->GetFreeSlots() != curBag->GetBagSize())
+                continue;
+            curSize = curBag->GetProto()->ContainerSlots;
+            slotOccupied = true;
+        }
+
+        // Scan ALL inventory for the largest unequipped container bigger than
+        // what's in this slot: the backpack general slots AND inside every
+        // equipped bag (where looted bags often end up).
+        Item* best = nullptr;
+        uint32 bestSize = curSize;
+        auto consider = [&](Item* it) {
+            if (!it || it == best)
+                return;
+            ItemPrototype const* p = it->GetProto();
+            if (!p || p->Class != ITEM_CLASS_CONTAINER || p->ContainerSlots == 0)
+                return;
+            if (p->ContainerSlots <= bestSize)
+                return;
+            // Replacing an occupied (empty) bag means the displaced bag must
+            // land somewhere valid — only a backpack general slot qualifies, so
+            // require the incoming bag to come from there. Filling an EMPTY slot
+            // has no displacement, so the bag may come from anywhere.
+            if (slotOccupied && !isBackpackGeneralPos(it->GetPos()))
+                return;
+            best = it;
+            bestSize = p->ContainerSlots;
+        };
+
+        for (uint8 s = INVENTORY_SLOT_ITEM_START; s < INVENTORY_SLOT_ITEM_END; ++s)
+            consider(b->GetItemByPos(INVENTORY_SLOT_BAG_0, s));
+        for (uint8 bs = INVENTORY_SLOT_BAG_START; bs < INVENTORY_SLOT_BAG_END; ++bs)
+        {
+            Bag* bag = static_cast<Bag*>(b->GetItemByPos(INVENTORY_SLOT_BAG_0, bs));
+            if (!bag || !bag->IsBag())
+                continue;
+            for (uint32 i = 0; i < bag->GetBagSize(); ++i)
+                consider(b->GetItemByPos(bs, i));
+        }
+        if (!best)
+            continue;
+
+        const uint16 dst = (static_cast<uint16>(INVENTORY_SLOT_BAG_0) << 8) | slot;
+        b->SwapItem(best->GetPos(), dst);
+        changed = true;
+    }
+    return changed;
+}
+
+// Emergency consumable: find a HEALTH (want_mana=false) or MANA (want_mana=true)
+// potion in the bags and drink it. A health/mana potion is a CONSUMABLE whose
+// ON-USE spell has an instant SPELL_EFFECT_HEAL / SPELL_EFFECT_ENERGIZE effect
+// (food/drink use a periodic aura instead, so they aren't matched here). Gated on
+// IsSpellReady so the shared potion cooldown is respected. Returns true if one
+// was drunk. Driven by the Rust combat reactive tree when hp/mana goes critical.
+bool BotBridge::CB_BotUseEmergencyPotion(BotHandle bot, bool want_mana)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    const uint32 wantEffect = want_mana ? SPELL_EFFECT_ENERGIZE : SPELL_EFFECT_HEAL;
+
+    auto tryItem = [&](Item* item) -> bool {
+        if (!item)
+            return false;
+        ItemPrototype const* proto = item->GetProto();
+        if (!proto || proto->Class != ITEM_CLASS_CONSUMABLE)
+            return false;
+        for (int i = 0; i < MAX_ITEM_PROTO_SPELLS; ++i)
+        {
+            uint32 spellId = proto->Spells[i].SpellId;
+            if (!spellId)
+                continue;
+            SpellEntry const* info = sSpellTemplate.LookupEntry<SpellEntry>(spellId);
+            if (!info)
+                continue;
+            bool match = false;
+            for (int e = 0; e < MAX_EFFECT_INDEX; ++e)
+                if (info->Effect[e] == wantEffect)
+                {
+                    match = true;
+                    break;
+                }
+            if (!match || !b->IsSpellReady(spellId))
+                continue;
+            Spell* spell = new Spell(b, info, false);
+            SpellCastTargets targets;
+            targets.setUnitTarget(b);
+            spell->SpellStart(&targets);
+            return true;
+        }
+        return false;
+    };
+
+    for (uint8 s = INVENTORY_SLOT_ITEM_START; s < INVENTORY_SLOT_ITEM_END; ++s)
+        if (tryItem(b->GetItemByPos(INVENTORY_SLOT_BAG_0, s)))
+            return true;
+    for (uint8 bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
+    {
+        Bag* pBag = reinterpret_cast<Bag*>(b->GetItemByPos(INVENTORY_SLOT_BAG_0, bag));
+        if (!pBag || !pBag->IsBag())
+            continue;
+        for (uint32 slot = 0; slot < pBag->GetBagSize(); ++slot)
+            if (tryItem(b->GetItemByPos(bag, slot)))
+                return true;
+    }
+    return false;
 }
 
 uint32_t BotBridge::CB_FindFoodDrinkInBags(BotHandle bot, uint32_t category)
@@ -2401,11 +2746,32 @@ UnitHandle* BotBridge::CB_GetNearbyLootable(BotHandle bot, float range, uint32_t
     {
         if (!c || c->IsAlive())
             continue;
-        // Only corpses this bot (or its group) actually tapped — otherwise it
-        // tries to loot someone else's kill and the core rejects it, spamming
-        // "trying to open a loot without credential".
-        if (c->HasFlag(UNIT_DYNAMIC_FLAGS, UNIT_DYNFLAG_LOOTABLE) && c->IsTappedBy(b))
-            handles.push_back(c->GetObjectGuid().GetRawValue());
+        if (!c->HasFlag(UNIT_DYNAMIC_FLAGS, UNIT_DYNFLAG_LOOTABLE))
+            continue;
+        // Filter by the EXACT permission the core enforces when the loot window
+        // opens (Loot::CanLoot), not the looser IsTappedBy. IsTappedBy let
+        // through corpses the bot tapped but isn't actually allowed to loot
+        // (group-loot assignment, FFA already taken, master loot, etc.); the
+        // bot then re-tried that same corpse every tick, the core rejected each
+        // attempt, and it spammed "open a loot without credential" forever.
+        // GetLoot returns the corpse's existing m_loot at scan time (no open
+        // needed), so CanLoot can be checked up front.
+        Loot* loot = sLootMgr.GetLoot(b, c->GetObjectGuid());
+        if (!loot || !loot->CanLoot(b))
+            continue;
+        // Only count the corpse lootable if there's something the bot can
+        // actually TAKE: gold, or an item allowed for THIS player. A corpse can
+        // stay flagged lootable while holding only loot the bot can't take —
+        // most commonly a quest item for a quest the bot has already completed
+        // (e.g. murloc eyes once it has all 5/5). GetLootItemsListFor filters by
+        // LootItem::IsAllowed, which excludes those. Without this the bot walks
+        // to the corpse, can take nothing, the corpse stays lootable, and it
+        // re-targets it forever (the "stuck looting items it can't loot" loop).
+        LootItemList takeable;
+        loot->GetLootItemsListFor(b, takeable);
+        if (takeable.empty() && loot->GetGoldAmount() == 0)
+            continue;
+        handles.push_back(c->GetObjectGuid().GetRawValue());
     }
 
     if (handles.empty())
@@ -2452,12 +2818,14 @@ bool BotBridge::CB_OpenLoot(BotHandle bot, UnitHandle target)
     if (!loot)
         return false;
 
-    // 2. Grab any gold.
+    // 2. Grab any gold — directly off the loot we already hold. The old path
+    //    routed through HandleLootMoneyOpcode, which re-fetches the loot via the
+    //    player's *open-loot guid*; that guid isn't reliably set by the faked
+    //    CMSG_LOOT above, so the handler failed ("Cannot retrieve loot"), the
+    //    gold was never taken, the corpse stayed lootable, and the bot re-tried
+    //    it every tick (spam). SendGold is exactly what the opcode handler calls.
     if (loot->GetGoldAmount() > 0)
-    {
-        WorldPacket moneyPacket(CMSG_LOOT_MONEY, 0);
-        b->GetSession()->HandleLootMoneyOpcode(moneyPacket);
-    }
+        loot->SendGold(b);
 
     // Before AutoStore consumes the list, note the best rare-or-better item
     // for a loot reaction (a bit of life in /say). Greens/greys are too common
@@ -2569,6 +2937,113 @@ bool BotBridge::CB_RepairAll(BotHandle bot)
     return true;
 }
 
+namespace
+{
+    // True if `itemId` is referenced by ANY of the bot's active quests (a
+    // collect objective, a provided source item, or the quest's start item) —
+    // for an incomplete OR a complete-not-yet-turned-in quest. Used to KEEP quest
+    // reagents (incl. vendor-bought ones like Coarse Thread) out of the vendor
+    // sweep, and to drive vendor-buying of needed quest items.
+    bool BotItemNeededForQuest(Player* b, uint32 itemId)
+    {
+        if (!b || !itemId)
+            return false;
+        for (auto const& qs : b->getQuestStatusMap())
+        {
+            if (qs.second.m_status != QUEST_STATUS_INCOMPLETE
+                && qs.second.m_status != QUEST_STATUS_COMPLETE)
+                continue;
+            Quest const* quest = sObjectMgr.GetQuestTemplate(qs.first);
+            if (!quest)
+                continue;
+            if (quest->GetSrcItemId() == itemId)
+                return true;
+            for (int j = 0; j < QUEST_ITEM_OBJECTIVES_COUNT; ++j)
+                if (quest->ReqItemId[j] == itemId)
+                    return true;
+            for (int j = 0; j < QUEST_SOURCE_ITEM_IDS_COUNT; ++j)
+                if (quest->ReqSourceId[j] == itemId)
+                    return true;
+        }
+        return false;
+    }
+
+    // What a leveling bot should vendor to keep its bags clear:
+    //  - GREY (poor) of any kind — always trash.
+    //  - WHITE (normal) WEAPON/ARMOR — leveling gear trash once upgrades are
+    //    auto-equipped.
+    //  - WEAPON/ARMOR (<= rare) the class/race can't use at all.
+    //  - TRADE GOODS not needed for a quest — there is no runtime crafting yet,
+    //    so crafting mats just clog bags ("if it's not gonna use items for
+    //    crafting then they should be sold"). Quest reagents are kept.
+    // NEVER consumables (food/water/potions/bandages), quest items, bags, or
+    // green+ usable gear (kept for use / value).
+    inline bool BotItemIsVendorJunk(Player* b, ItemPrototype const* p)
+    {
+        if (!p || p->SellPrice == 0)
+            return false;
+        // Grey junk — always.
+        if (p->Quality == ITEM_QUALITY_POOR)
+            return true;
+        if (p->Class == ITEM_CLASS_WEAPON || p->Class == ITEM_CLASS_ARMOR)
+        {
+            // White weapon/armor: junk (real upgrades are equipped by the
+            // AutoEquipUpgrades pass before the vendor run, so leftovers are
+            // surplus).
+            if (p->Quality == ITEM_QUALITY_NORMAL)
+                return true;
+            // ANY weapon/armor the bot can't actually use for its class/race/
+            // proficiency (e.g. plate on a mage, an axe a mage can't wield) is
+            // dead weight — sell it. Capped at RARE so a valuable BoE epic isn't
+            // vendored for coppers. CanUseItem checks class/race/required skill.
+            if (p->Quality <= ITEM_QUALITY_RARE && b
+                && b->CanUseItem(p) != EQUIP_ERR_OK)
+                return true;
+        }
+        // Crafting materials the bot won't use (no runtime crafting yet) and
+        // that no active quest needs — sell to free bag space. When professions
+        // get runtime crafting, exempt mats for skills the bot actually has.
+        if (p->Class == ITEM_CLASS_TRADE_GOODS && !BotItemNeededForQuest(b, p->ItemId))
+            return true;
+        return false;
+    }
+
+    // A surplus BAG: an unequipped, EMPTY container the bot won't use — i.e. it's
+    // not bigger than the smallest bag already equipped, so EquipBetterBags would
+    // never want it (when a bigger bag is found it's equipped and the displaced
+    // smaller one becomes surplus here → sold). Needs the Item (not just proto)
+    // to verify the bag is empty so its contents are never destroyed. The sell
+    // loops only ever see UNEQUIPPED items, so any bag here is a spare.
+    bool BotBagIsSurplus(Player* b, Item* item)
+    {
+        if (!b || !item)
+            return false;
+        ItemPrototype const* p = item->GetProto();
+        if (!p || p->Class != ITEM_CLASS_CONTAINER || p->SellPrice == 0)
+            return false;
+        if (BotItemNeededForQuest(b, p->ItemId))
+            return false;
+        Bag* bag = item->IsBag() ? static_cast<Bag*>(item) : nullptr;
+        if (!bag || bag->GetFreeSlots() != bag->GetBagSize())
+            return false; // non-empty — never destroy its contents
+        // Smallest currently-equipped bag (an EMPTY slot counts as 0, so any bag
+        // is "bigger" → kept and equipped rather than sold).
+        uint32 smallestEquipped = 0xFFFFFFFFu;
+        for (uint8 s = INVENTORY_SLOT_BAG_START; s < INVENTORY_SLOT_BAG_END; ++s)
+        {
+            Item* eq = b->GetItemByPos(INVENTORY_SLOT_BAG_0, s);
+            uint32 size = (eq && eq->IsBag())
+                ? static_cast<Bag*>(eq)->GetProto()->ContainerSlots : 0u;
+            if (size < smallestEquipped)
+                smallestEquipped = size;
+        }
+        if (smallestEquipped == 0xFFFFFFFFu)
+            smallestEquipped = 0;
+        // Surplus when it's NOT an upgrade over the smallest equipped bag.
+        return p->ContainerSlots <= smallestEquipped;
+    }
+}
+
 bool BotBridge::CB_SellGreyItems(BotHandle bot)
 {
     Player* b = FindBot(bot);
@@ -2582,7 +3057,7 @@ bool BotBridge::CB_SellGreyItems(BotHandle bot)
         if (!item)
             continue;
         ItemPrototype const* proto = item->GetProto();
-        if (!proto || proto->Quality != ITEM_QUALITY_POOR)
+        if (!BotItemIsVendorJunk(b, proto) && !BotBagIsSurplus(b, item))
             continue;
 
         uint32_t count = item->GetCount();
@@ -2604,7 +3079,7 @@ bool BotBridge::CB_SellGreyItems(BotHandle bot)
             if (!item)
                 continue;
             ItemPrototype const* proto = item->GetProto();
-            if (!proto || proto->Quality != ITEM_QUALITY_POOR)
+            if (!BotItemIsVendorJunk(b, proto) && !BotBagIsSurplus(b, item))
                 continue;
 
             uint32_t count = item->GetCount();
@@ -2629,7 +3104,7 @@ bool BotBridge::CB_HasSellableItems(BotHandle bot)
         if (!item)
             continue;
         ItemPrototype const* proto = item->GetProto();
-        if (proto && proto->Quality == ITEM_QUALITY_POOR && proto->SellPrice > 0)
+        if (BotItemIsVendorJunk(b, proto) || BotBagIsSurplus(b, item))
             return true;
     }
 
@@ -2708,6 +3183,31 @@ void BotBridge::CB_FreeQuestLog(BotQuestInfo* list)
     delete[] list;
 }
 
+// A quest is "grey" (trivial — gives effectively no XP) when its level is at or
+// below the player's grey threshold, the same rule that colours it grey in the
+// quest log. Scaling quests (QuestLevel <= 0 or the -1 sentinel stored large)
+// always reward XP, so they're never grey.
+static bool IsQuestGreyFor(Player* b, Quest const* quest)
+{
+    if (!b || !quest)
+        return false;
+    uint32 qLevel = quest->GetQuestLevel();
+    if (qLevel == 0 || qLevel > 100)
+        return false;
+    return qLevel <= MaNGOS::XP::GetGrayLevel(b->GetLevel());
+}
+
+// FFI: is this quest grey (trivial / no XP) for the bot? Used by the Rust
+// AbandonGreyQuests behavior to drop quests that are no longer worth doing.
+bool BotBridge::CB_BotQuestIsGrey(BotHandle bot, uint32_t quest_id)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    Quest const* quest = sObjectMgr.GetQuestTemplate(quest_id);
+    return IsQuestGreyFor(b, quest);
+}
+
 bool BotBridge::CB_AcceptAllQuests(BotHandle bot, UnitHandle npc)
 {
     Player* b = FindBot(bot);
@@ -2727,6 +3227,11 @@ bool BotBridge::CB_AcceptAllQuests(BotHandle bot, UnitHandle npc)
         uint32_t questId = it->second;
         Quest const* quest = sObjectMgr.GetQuestTemplate(questId);
         if (!quest || !b->CanTakeQuest(quest, false))
+            continue;
+
+        // Don't pick up grey (trivial / no-XP) quests — the bot would just
+        // re-accept what AbandonGreyQuests drops and mill at low-level hubs.
+        if (IsQuestGreyFor(b, quest))
             continue;
 
         // Guard the 20-slot quest-log limit: AddQuest asserts if the log is
@@ -2766,7 +3271,8 @@ bool BotBridge::CB_NpcHasAvailableQuest(BotHandle bot, UnitHandle npc)
         // count as "available" — a quest already in the log (in progress) must
         // NOT make the giver look available, or the bot keeps walking back to it.
         if (quest && b->GetQuestStatus(it->second) == QUEST_STATUS_NONE
-            && b->CanTakeQuest(quest, false) && b->CanAddQuest(quest, false))
+            && b->CanTakeQuest(quest, false) && b->CanAddQuest(quest, false)
+            && !IsQuestGreyFor(b, quest))
             return true;
     }
     return false;
@@ -2843,7 +3349,20 @@ bool BotBridge::CB_TurnInQuest(BotHandle bot, UnitHandle npc, uint32_t quest_id)
     if (!quest)
         return false;
 
+    // Report / talk-to quests (no kill or collect objective) never receive a
+    // credit event to flip their stored status to COMPLETE — but the moment
+    // they're accepted CanCompleteQuest() is already true. The real client
+    // sends CMSG_QUESTGIVER_COMPLETE_QUEST to flip the status before the reward
+    // step; the bot has no such packet, so flip it here. (CompleteQuest is a
+    // no-op safety for kill/collect quests, which the core already flips.)
     if (b->GetQuestStatus(quest_id) != QUEST_STATUS_COMPLETE)
+    {
+        if (!b->CanCompleteQuest(quest_id))
+            return false;
+        b->CompleteQuest(quest_id);
+    }
+
+    if (b->GetQuestStatus(quest_id) != QUEST_STATUS_COMPLETE || !b->CanRewardQuest(quest, false))
         return false;
 
     b->RewardQuest(quest, PickBestRewardChoice(b, quest), creature, true);
@@ -2863,6 +3382,22 @@ bool BotBridge::CB_IsAttackable(BotHandle bot, UnitHandle target)
         return false;
 
     return b->IsHostileTo(t) && b->CanAttack(t);
+}
+
+bool BotBridge::CB_CanAttack(BotHandle bot, UnitHandle target)
+{
+    Player* b = FindBot(bot);
+    Unit* t   = FindUnit(bot, target);
+    if (!b || !t)
+        return false;
+
+    if (!t->IsAlive())
+        return false;
+
+    // No IsHostileTo gate: a neutral (yellow) mob the bot is allowed to attack
+    // is a valid target — quest-objective creatures are commonly neutral until
+    // provoked, and a bot must be able to start the fight to get kill credit.
+    return b->CanAttack(t);
 }
 
 uint8_t BotBridge::CB_GetUnitLevel(BotHandle bot, UnitHandle target)
@@ -3707,25 +4242,35 @@ BotSafePosition BotBridge::CB_GetRandomPointNearby(BotHandle bot, float range)
     if (!b)
         return result;
 
-    // Pick a random angle and distance
-    float angle = frand(0.0f, 2.0f * static_cast<float>(M_PI));
-    float dist  = frand(range * 0.3f, range);
-    float x = b->GetPositionX() + std::cos(angle) * dist;
-    float y = b->GetPositionY() + std::sin(angle) * dist;
-    float z = b->GetPositionZ();
-
-    b->UpdateGroundPositionZ(x, y, z);
-
-    // Validate with navmesh pathfinding — LoS alone passes through
-    // thin dungeon walls, causing bots to walk through geometry.
-    PathFinder pathfinder(b);
-    pathfinder.calculate(x, y, z, false);
-    if (pathfinder.getPathType() & PATHFIND_NORMAL)
+    // Try several random candidates and return the first FULLY navmesh-reachable
+    // one. The old single-shot version gave up whenever its one random point
+    // wasn't PATHFIND_NORMAL — in a constrained spot only 2-3 points pass, so the
+    // bot bounced between the same couple of reachable points and looked like it
+    // was pacing back and forth doing nothing. Sampling many candidates (varying
+    // BOTH angle and distance) almost always yields a fresh, reachable spot, so
+    // idle bots actually roam instead of ping-ponging.
+    for (int attempt = 0; attempt < 16; ++attempt)
     {
-        result.x = x;
-        result.y = y;
-        result.z = z;
-        result.found = true;
+        const float angle = frand(0.0f, 2.0f * static_cast<float>(M_PI));
+        const float dist  = frand(range * 0.3f, range);
+        float x = b->GetPositionX() + std::cos(angle) * dist;
+        float y = b->GetPositionY() + std::sin(angle) * dist;
+        float z = b->GetPositionZ();
+
+        b->UpdateGroundPositionZ(x, y, z);
+
+        // Validate with navmesh pathfinding — LoS alone passes through thin walls,
+        // making bots walk through geometry.
+        PathFinder pathfinder(b);
+        pathfinder.calculate(x, y, z, false);
+        if (pathfinder.getPathType() & PATHFIND_NORMAL)
+        {
+            result.x = x;
+            result.y = y;
+            result.z = z;
+            result.found = true;
+            return result;
+        }
     }
     return result;
 }
@@ -4008,8 +4553,13 @@ bool BotBridge::CB_UseNearbyQuestObject(BotHandle bot, float range)
         range = INTERACTION_DISTANCE;
 
     // Collect the gameobject entries the bot still needs to use for its
-    // incomplete quests (GO objectives are stored as negative ReqCreatureOrGOId).
-    std::unordered_set<uint32> wanted;
+    // incomplete quests (GO objectives are stored as negative ReqCreatureOrGOId),
+    // mapping each GO entry to the objective's required cast spell. Plain
+    // "use object" objectives have ReqSpell == 0; "cast a spell on this object"
+    // objectives (e.g. quest 6395 "Marla's Last Wish", which has the player use
+    // a quest item to cast spell 20364 on Marla's Grave) carry a non-zero
+    // ReqSpell that the credit must match.
+    std::unordered_map<uint32, uint32> wanted; // GO entry -> required cast spell
     for (auto const& qs : b->getQuestStatusMap())
     {
         if (qs.second.m_status != QUEST_STATUS_INCOMPLETE)
@@ -4025,7 +4575,7 @@ bool BotBridge::CB_UseNearbyQuestObject(BotHandle bot, float range)
                 continue;
             if (b->GetReqKillOrCastCurrentCount(qs.first, reqEntry) >= reqCount)
                 continue;
-            wanted.insert(static_cast<uint32>(-reqEntry));
+            wanted.emplace(static_cast<uint32>(-reqEntry), quest->ReqSpell[j]);
         }
     }
     if (wanted.empty())
@@ -4041,14 +4591,82 @@ bool BotBridge::CB_UseNearbyQuestObject(BotHandle bot, float range)
     {
         if (!go || !go->IsSpawned())
             continue;
-        if (!wanted.count(go->GetEntry()))
+        auto it = wanted.find(go->GetEntry());
+        if (it == wanted.end())
             continue;
-        // Use() triggers the quest credit for "use object" objectives.
-        go->Use(b);
+        // Server-side credit: this is a cheating-by-design bot, so rather than
+        // depend on go->Use() (which for a locked/quest-item goober silently
+        // does nothing for a bot that lacks the source item / lock key), grant
+        // the GO objective directly. CastedCreatureOrGO matches the objective by
+        // the GO entry + the objective's ReqSpell, so this credits both plain
+        // "use object" (spell 0) and "cast-spell-on-object" objectives.
+        b->CastedCreatureOrGO(go->GetEntry(), go->GetObjectGuid(), it->second);
         return true;
     }
     return false;
 }
+
+bool BotBridge::CB_TalkToNearbyQuestNpc(BotHandle bot, float range)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+    if (range <= 0.0f)
+        range = INTERACTION_DISTANCE;
+
+    // Creature entries that are still-needed creature objectives (kill OR talk
+    // are both stored as positive ReqCreatureOrGOId).
+    std::unordered_set<uint32> wanted;
+    for (auto const& qs : b->getQuestStatusMap())
+    {
+        if (qs.second.m_status != QUEST_STATUS_INCOMPLETE)
+            continue;
+        Quest const* quest = sObjectMgr.GetQuestTemplate(qs.first);
+        if (!quest)
+            continue;
+        for (int j = 0; j < QUEST_OBJECTIVES_COUNT; ++j)
+        {
+            const int32 reqEntry = quest->ReqCreatureOrGOId[j];
+            const uint32 reqCount = quest->ReqCreatureOrGOCount[j];
+            if (reqEntry <= 0 || reqCount == 0)
+                continue;
+            if (b->GetReqKillOrCastCurrentCount(qs.first, reqEntry) >= reqCount)
+                continue;
+            wanted.insert(static_cast<uint32>(reqEntry));
+        }
+    }
+    if (wanted.empty())
+        return false;
+
+    UnitList nearby;
+    MaNGOS::AnyUnitInObjectRangeCheck check(b, range);
+    MaNGOS::UnitListSearcher<MaNGOS::AnyUnitInObjectRangeCheck> searcher(nearby, check);
+    Cell::VisitAllObjects(b, searcher, range);
+
+    for (Unit* u : nearby)
+    {
+        Creature* c = dynamic_cast<Creature*>(u);
+        if (!c || !c->IsAlive())
+            continue;
+        if (!wanted.count(c->GetEntry()))
+            continue;
+        // Only TALK to a FRIENDLY objective NPC (a "speak to" target). A kill
+        // objective is attackable and is handled by the attack path — and
+        // TalkedToCreature would wrongly grant kill credit for it, so it must
+        // be excluded here. TalkedToCreature itself only credits quests flagged
+        // SPEAKTO/KILL_OR_CAST, so this is a no-op for unrelated friendly NPCs.
+        if (b->CanAttack(c))
+            continue;
+        b->TalkedToCreature(c->GetEntry(), c->GetObjectGuid());
+        return true;
+    }
+    return false;
+}
+
+// Forward declaration — defined later in the anonymous namespace block with
+// the other travel-destination helpers. Lets CB_IsQuestObjectiveCreature reuse
+// the same loot-source reverse lookup for item-collect objectives.
+namespace { std::vector<uint32> const& ItemDropSources(uint32 itemId); }
 
 bool BotBridge::CB_IsQuestObjectiveCreature(BotHandle bot, uint32_t entry)
 {
@@ -4075,6 +4693,24 @@ bool BotBridge::CB_IsQuestObjectiveCreature(BotHandle bot, uint32_t entry)
             if (b->GetReqKillOrCastCurrentCount(qs.first, reqEntry) < reqCount)
                 return true;
         }
+        // Item-collect objective: a creature that DROPS an item the bot still
+        // needs is just as much a "kill this" target as a kill objective. Many
+        // starter quests are collect quests (e.g. undead 376 "The Damned" —
+        // the items drop from Scavengers/Duskbats, which have no kill
+        // objective entry). Without this the bot stands in a pack of the exact
+        // mobs it needs and ignores them.
+        for (int j = 0; j < QUEST_ITEM_OBJECTIVES_COUNT; ++j)
+        {
+            const uint32 itemId = quest->ReqItemId[j];
+            const uint32 itemCount = quest->ReqItemCount[j];
+            if (!itemId || !itemCount)
+                continue;
+            if (b->GetItemCount(itemId, true) >= itemCount)
+                continue; // already have enough of this item
+            for (uint32 src : ItemDropSources(itemId))
+                if (src == entry)
+                    return true;
+        }
     }
     return false;
 }
@@ -4086,7 +4722,10 @@ namespace
     // broadcast never hits the DB.
     std::vector<std::string> const& BotChatterTexts(std::string const& category)
     {
-        static std::unordered_map<std::string, std::vector<std::string>> cache;
+        // thread_local: built lazily during multi-threaded ticking, so a shared
+        // static map would be corrupted by concurrent inserts from bots on
+        // different map threads (heap corruption → random crashes).
+        static thread_local std::unordered_map<std::string, std::vector<std::string>> cache;
         auto it = cache.find(category);
         if (it != cache.end())
             return it->second;
@@ -4777,6 +5416,97 @@ bool BotBridge::CB_EquipItem(BotHandle bot, uint32_t item_id)
     return true;
 }
 
+uint32_t BotBridge::CB_AutoEquipUpgrades(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+
+    // Score an item the way the user describes upgrades: quality tier first
+    // ("white over grey, green over white, blue over green"), item level as the
+    // tiebreaker within a tier. An empty slot scores 0, so any equippable item
+    // fills it.
+    auto scoreOf = [](ItemPrototype const* p) -> uint32_t {
+        return p ? (uint32_t(p->Quality) * 100000u + p->ItemLevel) : 0u;
+    };
+
+    // Collect every item currently sitting in BAGS (backpack + equipped bags).
+    // We gather pointers first, then equip, so we never mutate a container we're
+    // iterating. Item* pointers stay valid across SwapItem (slots move, objects
+    // persist).
+    std::vector<Item*> bagItems;
+    for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+        if (Item* it = b->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+            bagItems.push_back(it);
+    for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
+    {
+        Bag* bag = (Bag*)b->GetItemByPos(INVENTORY_SLOT_BAG_0, bagSlot);
+        if (!bag)
+            continue;
+        for (uint32 j = 0; j < bag->GetBagSize(); ++j)
+            if (Item* it = b->GetItemByPos(bagSlot, j))
+                bagItems.push_back(it);
+    }
+
+    // Equip the strongest candidates first so a single pass converges (a better
+    // item displaces a worse one into bags, which we won't re-process).
+    std::sort(bagItems.begin(), bagItems.end(), [&](Item* a, Item* c) {
+        return scoreOf(a->GetProto()) > scoreOf(c->GetProto());
+    });
+
+    uint32_t equippedCount = 0;
+    for (Item* item : bagItems)
+    {
+        ItemPrototype const* proto = item->GetProto();
+        if (!proto || proto->InventoryType == INVTYPE_NON_EQUIP)
+            continue;
+
+        // Bags: equip a looted bag into an empty bag slot so it ADDS inventory
+        // space (otherwise it just sits in the backpack and the bot's bags stay
+        // full → "inventory is full" spam). CanEquipItem(NULL_SLOT, ...) finds an
+        // empty bag-equip slot for an INVTYPE_BAG item; dest is the packed
+        // position to swap it into. (Upgrading a bag that already holds items is
+        // left out — that needs the contents relocated first.)
+        if (proto->InventoryType == INVTYPE_BAG)
+        {
+            uint16 bagDest = 0;
+            if (b->CanEquipItem(NULL_SLOT, bagDest, item, false) == EQUIP_ERR_OK)
+            {
+                b->SwapItem(item->GetPos(), bagDest);
+                ++equippedCount;
+            }
+            continue;
+        }
+
+        const uint32_t newScore = scoreOf(proto);
+
+        // Find the equippable slot that benefits most (lowest current score):
+        // handles empty slots, and for ring/trinket/weapon pairs replaces the
+        // weaker of the two.
+        uint16 dest = 0;
+        uint8 bestSlot = EQUIPMENT_SLOT_END;
+        uint32_t bestCurScore = newScore; // must strictly beat the occupant
+        for (uint8 es = EQUIPMENT_SLOT_START; es < EQUIPMENT_SLOT_END; ++es)
+        {
+            if (b->CanEquipItem(es, dest, item, false) != EQUIP_ERR_OK)
+                continue;
+            Item* cur = b->GetItemByPos(INVENTORY_SLOT_BAG_0, es);
+            const uint32_t curScore = cur ? scoreOf(cur->GetProto()) : 0u;
+            if (curScore < bestCurScore)
+            {
+                bestCurScore = curScore;
+                bestSlot = es;
+            }
+        }
+        if (bestSlot == EQUIPMENT_SLOT_END)
+            continue; // not equippable anywhere, or no upgrade
+
+        b->SwapItem(item->GetPos(), uint16((INVENTORY_SLOT_BAG_0 << 8) | bestSlot));
+        ++equippedCount;
+    }
+    return equippedCount;
+}
+
 bool BotBridge::CB_GiveLeader(BotHandle bot, uint64_t target_guid)
 {
     Player* b = FindBot(bot);
@@ -4960,11 +5690,22 @@ uint32_t BotBridge::CB_BotEmptyBagSlotCount(BotHandle bot)
 {
     Player* b = FindBot(bot);
     if (!b) return 0;
+    // Count FREE INVENTORY SPACE (where loot/quest items can go), not the bag
+    // EQUIP slots. The old code iterated INVENTORY_SLOT_BAG_START..END (the four
+    // slots a bag is equipped INTO), so it reported ~4 for a bot with no extra
+    // bags and the "bags_full = empty < 4" check never triggered — the bot never
+    // ran to a vendor no matter how full it actually was. Real free space is the
+    // empty backpack item slots plus the free slots inside every equipped bag.
     uint32_t empty = 0;
-    for (uint8 slot = INVENTORY_SLOT_BAG_START; slot < INVENTORY_SLOT_BAG_END; ++slot)
+    for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
     {
         if (!b->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
             ++empty;
+    }
+    for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
+    {
+        if (Bag* bag = (Bag*)b->GetItemByPos(INVENTORY_SLOT_BAG_0, bagSlot))
+            empty += bag->GetFreeSlots();
     }
     return empty;
 }
@@ -6709,6 +7450,15 @@ uint32_t BotBridge::CB_BotPickSpecNo(BotHandle bot, bool incremental)
     uint32 p2 = p1 + playerbot_config_spec_probability(cls, 1);
 
     uint32 picked = (point < p1 ? 0u : (point < p2 ? 1u : 2u));
+
+    // Mages default to FROST (talent tab 2). Frostbolt is the reliable
+    // single-target nuke at every level and the frost survival kit (Frost Nova /
+    // Cone of Cold / Blink / Ice Block) keeps a solo bot alive — the standard
+    // leveling spec. Arcane/Fire have no comparable self-sufficient leveling
+    // kit, so a frost default is what "a normal mage" plays.
+    if (cls == CLASS_MAGE)
+        picked = 2u;
+
     sRandomPlayerbotMgr.SetValue(b, "specNo", picked + 1);
     return picked;
 }
@@ -7308,7 +8058,7 @@ namespace
     // query per distinct quest item is the cheapest reverse lookup.
     std::vector<uint32> const& ItemDropSources(uint32 itemId)
     {
-        static std::unordered_map<uint32, std::vector<uint32>> cache;
+        static thread_local std::unordered_map<uint32, std::vector<uint32>> cache;
         auto it = cache.find(itemId);
         if (it != cache.end())
             return it->second;
@@ -7318,6 +8068,67 @@ namespace
                 "SELECT ct.entry FROM creature_template ct "
                 "JOIN creature_loot_template clt ON ct.LootId = clt.entry "
                 "WHERE clt.item = %u LIMIT 20",
+                itemId))
+        {
+            do
+            {
+                sources.push_back(result->Fetch()[0].GetUInt32());
+            } while (result->NextRow());
+        }
+        return sources;
+    }
+
+    // GAMEOBJECT entries whose loot contains `itemId` — for "collect item from
+    // container" quest objectives (e.g. Scavenging Deathknell: item 11127 from
+    // the "Equipment Boxes" GO 164662). gameobject_template.data1 is the
+    // gameobject_loot_template entry for CHEST-type GOs.
+    std::vector<uint32> const& ItemDropSourcesGO(uint32 itemId)
+    {
+        static thread_local std::unordered_map<uint32, std::vector<uint32>> cache;
+        auto it = cache.find(itemId);
+        if (it != cache.end())
+            return it->second;
+
+        std::vector<uint32>& sources = cache[itemId];
+        if (auto result = WorldDatabase.PQuery(
+                "SELECT gt.entry FROM gameobject_template gt "
+                "JOIN gameobject_loot_template glt ON gt.data1 = glt.entry "
+                "WHERE glt.item = %u LIMIT 40",
+                itemId))
+        {
+            do
+            {
+                sources.push_back(result->Fetch()[0].GetUInt32());
+            } while (result->NextRow());
+        }
+        return sources;
+    }
+
+    // Reverse index: vendor creature entries that SELL `itemId` (npc_vendor).
+    // Used to route a bot to a vendor for quest items it must BUY (e.g. Coarse
+    // Thread) and let it purchase them on arrival. Built once per item, cached.
+    std::vector<uint32> const& ItemVendorSources(uint32 itemId)
+    {
+        static thread_local std::unordered_map<uint32, std::vector<uint32>> cache;
+        auto it = cache.find(itemId);
+        if (it != cache.end())
+            return it->second;
+
+        std::vector<uint32>& sources = cache[itemId];
+        if (auto result = WorldDatabase.PQuery(
+                "SELECT entry FROM npc_vendor WHERE item = %u LIMIT 40", itemId))
+        {
+            do
+            {
+                sources.push_back(result->Fetch()[0].GetUInt32());
+            } while (result->NextRow());
+        }
+        // Some vendors sell via a shared vendor template (npc_vendor_template,
+        // referenced by creature_template.VendorTemplateId) — include those too.
+        if (auto result = WorldDatabase.PQuery(
+                "SELECT ct.entry FROM creature_template ct "
+                "JOIN npc_vendor_template nvt ON ct.VendorTemplateId = nvt.entry "
+                "WHERE nvt.item = %u AND ct.VendorTemplateId <> 0 LIMIT 40",
                 itemId))
         {
             do
@@ -7348,6 +8159,94 @@ namespace
             Field* f = result->Fetch();
             s_questTurnInCreature[f[0].GetUInt32()] = f[1].GetUInt32();
         } while (result->NextRow());
+        sLog.outString("Playerbots: loaded %zu quest turn-in relations",
+                       s_questTurnInCreature.size());
+    }
+
+    // Service NPCs (vendor / repair / trainer) the bot may need to reach from
+    // ANYWHERE — including far from any loaded grid. The grid search in
+    // find_travel_dests only sees loaded cells, so a bot out questing in the
+    // wild could never resolve a vendor and would fall through to its quest
+    // objective with full bags (the "full inventory but it goes to fight
+    // instead of selling" bug). This DB index gives a map-wide nearest-vendor
+    // lookup, mirroring how quest objectives use FindCreatureData.
+    struct ServiceNpcSpawn { uint32_t map; float x, y, z; uint32_t flags; uint32_t entry; };
+    std::vector<ServiceNpcSpawn> s_serviceNpcSpawns;
+    bool s_serviceNpcLoaded = false;
+
+    void EnsureServiceNpcIndex()
+    {
+        if (s_serviceNpcLoaded)
+            return;
+        s_serviceNpcLoaded = true;
+        const uint32_t wanted = UNIT_NPC_FLAG_VENDOR | UNIT_NPC_FLAG_REPAIR
+                              | UNIT_NPC_FLAG_TRAINER;
+        if (auto result = WorldDatabase.PQuery(
+                "SELECT c.map, c.position_x, c.position_y, c.position_z, "
+                "ct.NpcFlags, c.id "
+                "FROM creature c JOIN creature_template ct ON c.id = ct.entry "
+                "WHERE (ct.NpcFlags & %u) <> 0",
+                wanted))
+        {
+            do
+            {
+                Field* f = result->Fetch();
+                ServiceNpcSpawn s;
+                s.map   = f[0].GetUInt32();
+                s.x     = f[1].GetFloat();
+                s.y     = f[2].GetFloat();
+                s.z     = f[3].GetFloat();
+                s.flags = f[4].GetUInt32();
+                s.entry = f[5].GetUInt32();
+                s_serviceNpcSpawns.push_back(s);
+            } while (result->NextRow());
+        }
+        sLog.outString("Playerbots: loaded %zu service-NPC spawns (vendor/repair/trainer)",
+                       s_serviceNpcSpawns.size());
+    }
+
+    // Quest-giver spawns the bot may need to reach from ANYWHERE on its map —
+    // including the NEXT zone hub once the current zone's quests are exhausted.
+    // The grid search in find_travel_dests only sees loaded cells and (worse)
+    // returns ANY questgiver flag regardless of whether it still has a quest the
+    // bot can accept, so a bot that finished Deathknell kept "travelling" to the
+    // now-empty local givers and never progressed to Brill. This map-wide index
+    // + a live CanTakeQuest check lets the chooser route to the nearest giver
+    // that ACTUALLY has an acceptable quest, so the bot leaves the starter zone.
+    struct QuestGiverSpawn { uint32_t map; float x, y, z; uint32_t entry; };
+
+    // Thread-safe lazy index. Bots on different maps tick on different threads
+    // (see file header), so the FIRST concurrent callers would race a plain
+    // bool+vector lazy-init and corrupt the vector. A function-local static
+    // ("magic static") is guaranteed initialized exactly once even under
+    // concurrent first calls — no mutex/include needed.
+    const std::vector<QuestGiverSpawn>& GetQuestGiverSpawns()
+    {
+        static const std::vector<QuestGiverSpawn> spawns = []
+        {
+            std::vector<QuestGiverSpawn> v;
+            if (auto result = WorldDatabase.PQuery(
+                    "SELECT c.map, c.position_x, c.position_y, c.position_z, c.id "
+                    "FROM creature c JOIN creature_template ct ON c.id = ct.entry "
+                    "WHERE (ct.NpcFlags & %u) <> 0",
+                    UNIT_NPC_FLAG_QUESTGIVER))
+            {
+                do
+                {
+                    Field* f = result->Fetch();
+                    QuestGiverSpawn s;
+                    s.map   = f[0].GetUInt32();
+                    s.x     = f[1].GetFloat();
+                    s.y     = f[2].GetFloat();
+                    s.z     = f[3].GetFloat();
+                    s.entry = f[4].GetUInt32();
+                    v.push_back(s);
+                } while (result->NextRow());
+            }
+            sLog.outString("Playerbots: loaded %zu quest-giver spawns", v.size());
+            return v;
+        }();
+        return spawns;
     }
 }
 
@@ -7425,12 +8324,105 @@ BotTravelDest* BotBridge::CB_BotFindTravelDests(
     check_npc_flag(1 << 9, UNIT_NPC_FLAG_VENDOR);    // Vendor
     check_npc_flag(1 << 8, UNIT_NPC_FLAG_REPAIR);    // Repair
     check_npc_flag(1 << 7, UNIT_NPC_FLAG_TRAINER);   // Trainer
-    check_npc_flag(1 << 0, UNIT_NPC_FLAG_QUESTGIVER); // Quest giver
     check_npc_flag(1 << 10, UNIT_NPC_FLAG_AUCTIONEER); // AH
+    // NOTE: quest givers are NOT resolved by the NPC-flag grid search — it would
+    // return any giver in range whether or not it still has a quest the bot can
+    // take, trapping a bot that finished the local zone at the now-empty local
+    // givers. They are resolved below by the map-wide acceptable-giver index so
+    // the bot routes to the NEXT hub.
     // Flight master
     if (purpose_flags & (1 << 7)) // Trainer also covers flight master for now
     {
         check_npc_flag(1 << 7, UNIT_NPC_FLAG_FLIGHTMASTER);
+    }
+
+    // Map-wide nearest service NPC (vendor/repair/trainer) from the DB index, so
+    // a bot far from any loaded grid still resolves a vendor and actually goes
+    // to SELL when its bags are full, instead of falling through to its quest
+    // objective. The grid search above handles the in-town case (and may add a
+    // closer one); the chooser picks the nearest overall. The travel layer
+    // teleports there if no walkable route exists.
+    auto check_npc_db = [&](uint32_t purpose_bit, uint32_t npc_flag) {
+        if (!(purpose_flags & purpose_bit))
+            return;
+        EnsureServiceNpcIndex();
+        const uint32 bmap = b->GetMapId();
+        const float bx = b->GetPositionX();
+        const float by = b->GetPositionY();
+        ServiceNpcSpawn const* best = nullptr;
+        float bestDsq = 0.0f;
+        for (auto const& s : s_serviceNpcSpawns)
+        {
+            if (s.map != bmap || !(s.flags & npc_flag))
+                continue;
+            const float dx = bx - s.x;
+            const float dy = by - s.y;
+            const float dsq = dx * dx + dy * dy;
+            if (!best || dsq < bestDsq)
+            {
+                best = &s;
+                bestDsq = dsq;
+            }
+        }
+        if (best)
+            candidates.push_back({ static_cast<int32_t>(best->entry), 0, purpose_bit,
+                                   best->map, best->x, best->y, best->z, bestDsq });
+    };
+    check_npc_db(1 << 9, UNIT_NPC_FLAG_VENDOR);
+    check_npc_db(1 << 8, UNIT_NPC_FLAG_REPAIR);
+    check_npc_db(1 << 7, UNIT_NPC_FLAG_TRAINER);
+
+    // Quest giver (TravelPurpose QUEST_GIVER = bit 0): the nearest spawn on the
+    // bot's map that has at least one quest the bot can accept RIGHT NOW
+    // (CanTakeQuest: level/race/class/prereq/not-already-done). This is what
+    // moves a bot on to the next zone hub once it has cleared the starter zone,
+    // instead of oscillating between exhausted local givers.
+    if (purpose_flags & (1 << 0))
+    {
+        const uint32 bmap = b->GetMapId();
+        const float bx = b->GetPositionX();
+        const float by = b->GetPositionY();
+
+        // CanTakeQuest is relatively expensive and there can be ~1000s of
+        // questgiver spawns on a continent — checking EVERY one, for EVERY bot,
+        // every choose-cycle (and bots tick on multiple map threads) pegs the
+        // CPU. We only need the NEAREST acceptable giver, so: collect the map's
+        // spawns sorted by distance, then check acceptability nearest-first and
+        // STOP at the first hit (push only that one — the chooser picks nearest
+        // anyway). Typical cost is a handful of CanTakeQuest calls, not thousands.
+        std::vector<const QuestGiverSpawn*> mapSpawns;
+        for (auto const& s : GetQuestGiverSpawns())
+            if (s.map == bmap)
+                mapSpawns.push_back(&s);
+        std::sort(mapSpawns.begin(), mapSpawns.end(),
+            [&](const QuestGiverSpawn* a, const QuestGiverSpawn* c)
+            {
+                const float da = (bx - a->x) * (bx - a->x) + (by - a->y) * (by - a->y);
+                const float dc = (bx - c->x) * (bx - c->x) + (by - c->y) * (by - c->y);
+                return da < dc;
+            });
+        for (const QuestGiverSpawn* s : mapSpawns)
+        {
+            QuestRelationsMapBounds bounds =
+                sObjectMgr.GetCreatureQuestRelationsMapBounds(s->entry);
+            bool acceptable = false;
+            for (auto it = bounds.first; it != bounds.second; ++it)
+            {
+                Quest const* quest = sObjectMgr.GetQuestTemplate(it->second);
+                if (quest && b->CanTakeQuest(quest, false) && b->CanAddQuest(quest, false))
+                {
+                    acceptable = true;
+                    break;
+                }
+            }
+            if (!acceptable)
+                continue;
+            const float dx = bx - s->x;
+            const float dy = by - s->y;
+            candidates.push_back({ static_cast<int32_t>(s->entry), 0, (1u << 0),
+                                   s->map, s->x, s->y, s->z, dx * dx + dy * dy });
+            break; // nearest acceptable giver is enough
+        }
     }
 
     // Quest objectives (TravelPurpose QUEST_OBJECTIVE1..4 = bits 1..4). The
@@ -7440,8 +8432,8 @@ BotTravelDest* BotBridge::CB_BotFindTravelDests(
     // objectives that still need progress to a spawn location via
     // FindCreatureData / FindGOData (map-aware, not range-limited), so the bot
     // travels to the objective area instead of grinding wherever it stands.
-    // (Pure item-collect objectives whose item only drops from mobs need a
-    // loot-source reverse index — a separate precomputed-relations subsystem.)
+    // Item-collect objectives are resolved below to their loot source — a
+    // creature (ItemDropSources) or a container gameobject (ItemDropSourcesGO).
     constexpr uint32_t QUEST_ALL_OBJ = (1u << 1) | (1u << 2) | (1u << 3) | (1u << 4);
     if (purpose_flags & QUEST_ALL_OBJ)
     {
@@ -7542,6 +8534,57 @@ BotTravelDest* BotBridge::CB_BotFindTravelDests(
                     });
                     break; // one routable loot source is enough for this item
                 }
+
+                // Also route to a GAMEOBJECT that drops the required item — i.e.
+                // gather-from-container quests like 365 "Fields of Grief" (item
+                // 2846 "Stolen Pumpkin" comes from GO 375 "Tirisfal Pumpkin", not
+                // a creature). Creature loot sources are handled just above; these
+                // container GOs were previously unresolved, so the bot never
+                // routed to the field and the quest stalled. Once it arrives,
+                // LootQuestContainer (40y) loots the pumpkins to completion.
+                for (uint32 goEntry : ItemDropSourcesGO(itemId))
+                {
+                    FindGOData worker(goEntry, b);
+                    sObjectMgr.DoGOData(worker);
+                    GameObjectDataPair const* dp = worker.GetResult();
+                    if (!dp)
+                        continue;
+                    const float dx = b->GetPositionX() - dp->second.posX;
+                    const float dy = b->GetPositionY() - dp->second.posY;
+                    candidates.push_back({
+                        static_cast<int32_t>(goEntry),
+                        questId,
+                        static_cast<uint32_t>(1u << (1 + j)), // QUEST_OBJECTIVE(j+1)
+                        dp->second.mapid,
+                        dp->second.posX, dp->second.posY, dp->second.posZ,
+                        dx * dx + dy * dy
+                    });
+                    break; // one routable GO source is enough for this item
+                }
+
+                // Vendor-bought quest items: some required items are SOLD by
+                // vendors (e.g. quest 5848-style "buy Coarse Thread"), not
+                // dropped. Route to the nearest vendor that sells it; the
+                // BuyQuestItems leaf purchases it on arrival.
+                for (uint32 vendorEntry : ItemVendorSources(itemId))
+                {
+                    FindCreatureData worker(vendorEntry, b);
+                    sObjectMgr.DoCreatureData(worker);
+                    CreatureDataPair const* dp = worker.GetResult();
+                    if (!dp)
+                        continue;
+                    const float dx = b->GetPositionX() - dp->second.posX;
+                    const float dy = b->GetPositionY() - dp->second.posY;
+                    candidates.push_back({
+                        static_cast<int32_t>(vendorEntry),
+                        questId,
+                        static_cast<uint32_t>(1u << (1 + j)), // QUEST_OBJECTIVE(j+1)
+                        dp->second.mapid,
+                        dp->second.posX, dp->second.posY, dp->second.posZ,
+                        dx * dx + dy * dy
+                    });
+                    break; // one routable vendor source is enough for this item
+                }
             }
         }
     }
@@ -7622,6 +8665,115 @@ BotTravelDest* BotBridge::CB_BotFindTravelDests(
 
     *out_count = static_cast<uint32_t>(unique.size());
     return result;
+}
+
+uint64_t BotBridge::CB_NearestQuestContainer(BotHandle bot, float range,
+                                             float* out_x, float* out_y, float* out_z)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return 0;
+    if (range <= 0.0f)
+        range = 40.0f;
+
+    // GO entries that still hold a needed quest item ("collect from container").
+    std::unordered_set<uint32> wanted;
+    for (auto const& qs : b->getQuestStatusMap())
+    {
+        if (qs.second.m_status != QUEST_STATUS_INCOMPLETE)
+            continue;
+        Quest const* quest = sObjectMgr.GetQuestTemplate(qs.first);
+        if (!quest)
+            continue;
+        for (int j = 0; j < QUEST_ITEM_OBJECTIVES_COUNT; ++j)
+        {
+            const uint32 itemId = quest->ReqItemId[j];
+            const uint32 itemCount = quest->ReqItemCount[j];
+            if (itemId == 0 || itemCount == 0)
+                continue;
+            if (b->GetItemCount(itemId, true) >= itemCount)
+                continue;
+            for (uint32 goEntry : ItemDropSourcesGO(itemId))
+                wanted.insert(goEntry);
+        }
+    }
+    if (wanted.empty())
+        return 0;
+
+    GameObjectList gameObjects;
+    MaNGOS::GameObjectInPosRangeCheck check(*b,
+        b->GetPositionX(), b->GetPositionY(), b->GetPositionZ(), range);
+    MaNGOS::GameObjectListSearcher<MaNGOS::GameObjectInPosRangeCheck> searcher(gameObjects, check);
+    Cell::VisitAllObjects(b, searcher, range);
+
+    GameObject* best = nullptr;
+    float bestDsq = 0.0f;
+    for (GameObject* go : gameObjects)
+    {
+        if (!go || !go->IsSpawned())
+            continue;
+        if (!wanted.count(go->GetEntry()))
+            continue;
+        const float dx = b->GetPositionX() - go->GetPositionX();
+        const float dy = b->GetPositionY() - go->GetPositionY();
+        const float dsq = dx * dx + dy * dy;
+        if (!best || dsq < bestDsq)
+        {
+            best = go;
+            bestDsq = dsq;
+        }
+    }
+    if (!best)
+        return 0;
+    if (out_x) *out_x = best->GetPositionX();
+    if (out_y) *out_y = best->GetPositionY();
+    if (out_z) *out_z = best->GetPositionZ();
+    return best->GetObjectGuid().GetRawValue();
+}
+
+bool BotBridge::CB_LootGameObject(BotHandle bot, uint64_t go_guid)
+{
+    Player* b = FindBot(bot);
+    if (!b || go_guid == 0)
+        return false;
+    GameObject* go = b->GetMap()->GetGameObject(ObjectGuid(go_guid));
+    if (!go || !go->IsSpawned())
+        return false;
+    if (b->GetDistance(go) > INTERACTION_DISTANCE)
+        return false;
+
+    // Cheating-by-design container loot: give the bot any still-needed quest
+    // items THIS container can drop, then deactivate it. Bypasses lock/skill
+    // requirements and loot RNG so scavenge quests reliably progress. Adding the
+    // item runs the core's quest-item check, which credits / completes the quest.
+    bool gave = false;
+    for (auto const& qs : b->getQuestStatusMap())
+    {
+        if (qs.second.m_status != QUEST_STATUS_INCOMPLETE)
+            continue;
+        Quest const* quest = sObjectMgr.GetQuestTemplate(qs.first);
+        if (!quest)
+            continue;
+        for (int j = 0; j < QUEST_ITEM_OBJECTIVES_COUNT; ++j)
+        {
+            const uint32 itemId = quest->ReqItemId[j];
+            const uint32 need = quest->ReqItemCount[j];
+            if (itemId == 0 || need == 0)
+                continue;
+            if (b->GetItemCount(itemId, true) >= need)
+                continue;
+            bool fromThis = false;
+            for (uint32 e : ItemDropSourcesGO(itemId))
+                if (e == go->GetEntry()) { fromThis = true; break; }
+            if (!fromThis)
+                continue;
+            if (b->StoreNewItemInBestSlots(itemId, 1))
+                gave = true;
+        }
+    }
+    if (gave)
+        go->SetLootState(GO_JUST_DEACTIVATED);
+    return gave;
 }
 
 void BotBridge::CB_BotFreeTravelDests(BotTravelDest* list)
@@ -7858,6 +9010,42 @@ bool BotBridge::CB_BuyFromVendor(BotHandle bot, uint32_t item_id, uint32_t qty)
     }
 
     return false;
+}
+
+// Buy any still-needed quest items the NEARBY vendor sells (e.g. Coarse Thread).
+// CB_BuyFromVendor no-ops unless a vendor in range actually stocks the item, so
+// this only ever purchases vendor-sold quest reagents — mob/GO-drop items are
+// untouched. Driven by the quest subtree's BuyQuestItems leaf once the bot has
+// travelled to the vendor (routed there by the objective resolver's vendor
+// source). Returns true if anything was bought.
+bool BotBridge::CB_BotBuyQuestItems(BotHandle bot)
+{
+    Player* b = FindBot(bot);
+    if (!b)
+        return false;
+
+    bool bought = false;
+    for (auto const& qs : b->getQuestStatusMap())
+    {
+        if (qs.second.m_status != QUEST_STATUS_INCOMPLETE)
+            continue;
+        Quest const* quest = sObjectMgr.GetQuestTemplate(qs.first);
+        if (!quest)
+            continue;
+        for (int j = 0; j < QUEST_ITEM_OBJECTIVES_COUNT; ++j)
+        {
+            const uint32 itemId = quest->ReqItemId[j];
+            const uint32 need = quest->ReqItemCount[j];
+            if (!itemId || !need)
+                continue;
+            const uint32 have = b->GetItemCount(itemId, true);
+            if (have >= need)
+                continue;
+            if (CB_BuyFromVendor(bot, itemId, need - have))
+                bought = true;
+        }
+    }
+    return bought;
 }
 
 // ── Mail ─────────────────────────────────────────────────────────────────────
