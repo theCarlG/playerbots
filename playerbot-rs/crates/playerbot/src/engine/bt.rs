@@ -3684,9 +3684,19 @@ fn tick_loot(ctx: &mut TickContext<'_>) -> BtResult {
             if ctx.interface.move_to(snap.pos.x, snap.pos.y, snap.pos.z) {
                 return BtResult::Running;
             }
-        } else if ctx.interface.open_loot(corpse) {
-            ctx.interface.take_all_loot();
-            return BtResult::Success;
+        } else {
+            // Looting takes a moment — hold ~1.5s at the corpse before taking,
+            // like a real player with a loot window open, instead of vacuuming
+            // it instantly.
+            const LOOT_DWELL_MS: u64 = 1_500;
+            if !interaction_dwell_done(ctx, corpse, LOOT_DWELL_MS) {
+                ctx.interface.stop_moving();
+                return BtResult::Running;
+            }
+            if ctx.interface.open_loot(corpse) {
+                ctx.interface.take_all_loot();
+                return BtResult::Success;
+            }
         }
     }
     BtResult::Failure
@@ -3709,6 +3719,13 @@ fn tick_loot_quest_container(ctx: &mut TickContext<'_>) -> BtResult {
         } else {
             BtResult::Failure
         };
+    }
+    // Opening a chest/looting a container has a cast/channel in-game — hold a
+    // beat instead of popping it instantly.
+    const CONTAINER_DWELL_MS: u64 = 1_500;
+    if !interaction_dwell_done(ctx, guid, CONTAINER_DWELL_MS) {
+        ctx.interface.stop_moving();
+        return BtResult::Running;
     }
     ok(ctx.interface.loot_gameobject(guid))
 }
@@ -3949,6 +3966,11 @@ fn tick_turn_in_quest(ctx: &mut TickContext<'_>) -> BtResult {
         const TURN_IN_RANGE: f32 = 10.0;
         let dist = ctx.interface.unit_distance(npc);
         if dist <= TURN_IN_RANGE && ctx.interface.has_los(npc) {
+            // Pause a beat at the NPC before handing in, like a real player.
+            if !interaction_dwell_done(ctx, npc, NPC_INTERACT_DWELL_MS) {
+                ctx.interface.stop_moving();
+                return BtResult::Running;
+            }
             ctx.blackboard.clear(Key::TurnInTryQ);
             if ctx.interface.turn_in_quest(npc, quest_id) {
                 say_quest_done(ctx, quest_id);
@@ -5158,6 +5180,26 @@ fn tick_grind(ctx: &mut TickContext<'_>) -> BtResult {
 }
 
 /// Approach an NPC and interact when close enough.
+/// Make an interaction feel human: once the bot reaches `target`, hold for
+/// `delay_ms` before completing the action (talk/loot/use). Returns true when
+/// the dwell has elapsed; while it returns false the caller should hold still
+/// and return Running. Keyed on the target GUID, so moving to a new target
+/// restarts the beat.
+fn interaction_dwell_done(ctx: &mut TickContext<'_>, target: u64, delay_ms: u64) -> bool {
+    use crate::engine::blackboard::{Key, Value};
+    let now = ctx.snap.server_time_ms;
+    if ctx.blackboard.get_u64(Key::ActionDwellTarget) != Some(target) {
+        ctx.blackboard.set(Key::ActionDwellTarget, Value::U64(target));
+        ctx.blackboard.set(Key::ActionDwellSince, Value::U64(now));
+        return false;
+    }
+    let since = ctx.blackboard.get_u64(Key::ActionDwellSince).unwrap_or(now);
+    now.saturating_sub(since) >= delay_ms
+}
+
+/// Default beat for "talking to" an NPC (vendor / trainer / quest giver).
+const NPC_INTERACT_DWELL_MS: u64 = 1_200;
+
 fn approach_and_interact(
     ctx: &mut TickContext<'_>,
     npc: u64,
@@ -5169,7 +5211,15 @@ fn approach_and_interact(
         if ctx.interface.move_to(snap.pos.x, snap.pos.y, snap.pos.z) {
             return BtResult::Running;
         }
-    } else if ctx.interface.interact_npc(npc) {
+        return BtResult::Failure;
+    }
+    // Arrived — pause a beat so it looks like a player reading the gossip, not a
+    // bot instantly transacting.
+    if !interaction_dwell_done(ctx, npc, NPC_INTERACT_DWELL_MS) {
+        ctx.interface.stop_moving();
+        return BtResult::Running;
+    }
+    if ctx.interface.interact_npc(npc) {
         return on_interact(ctx);
     }
     BtResult::Failure

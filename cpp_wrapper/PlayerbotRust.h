@@ -239,6 +239,10 @@ private:
     Player*      m_bot;           // the CMaNGOS Player this AI drives
     ObjectGuid   m_masterGuid;    // the player that commands this bot (if any)
     BotCallbacks m_callbacks;     // the vtable passed to playerbot_create
+    // Detect a stopped transport (no public IsMoving): track the passenger's
+    // world position; when it stops changing the boat/zeppelin has docked.
+    float        m_lastTransX = 0.0f, m_lastTransY = 0.0f;
+    uint32       m_transportStillMs = 0;
     std::unique_ptr<void, RustStateDeleter> m_rustState;  // opaque BotState* from playerbot_create
 
     /// Compute the chat-command security tier for `sender`. Mirrors PB2's

@@ -7,6 +7,8 @@
 
 #include "Entities/Player.h"
 #include "Entities/Item.h"
+#include "Entities/Transports.h"
+#include <cmath>
 #include "Server/SQLStorages.h"
 #include "Globals/ObjectAccessor.h"
 #include "Groups/Group.h"
@@ -149,6 +151,64 @@ void PlayerbotRust::UpdateAIInternal(uint32 elapsed, bool minimal)
 {
     if (!m_rustState || !m_bot || !m_bot->IsInWorld())
         return;
+
+    // The bot has NO transport behaviour, but the CORE auto-attaches any player
+    // standing on a moving transport (boat/zeppelin) as a passenger. The bot's AI
+    // doesn't know it's aboard, so if it keeps issuing its own movement it fights
+    // the transport's per-tick passenger relocation and CORRUPTS the grid object
+    // lists — the map thread's visibility scan then infinite-loops on the broken
+    // list and the server freezes/crashes.
+    if (GenericTransport* gt = m_bot->GetTransport())
+    {
+        const float bx = m_bot->GetPositionX();
+        const float by = m_bot->GetPositionY();
+        const float bz = m_bot->GetPositionZ();
+        // Detect "docked": the passenger's world position stops changing (the
+        // transport isn't relocating it). IsMoving() is private, so track stillness
+        // ourselves. While the boat moves, bx/by change every tick → still timer
+        // resets → bot stays frozen.
+        const float movedSq = (bx - m_lastTransX) * (bx - m_lastTransX)
+                            + (by - m_lastTransY) * (by - m_lastTransY);
+        m_lastTransX = bx;
+        m_lastTransY = by;
+        if (movedSq < 0.25f)
+            m_transportStillMs += elapsed;
+        else
+            m_transportStillMs = 0;
+
+        // Docked (still ~1.5s) → get the bot OFF. It can't WALK off (the transport
+        // isn't navmeshed; no-glide), so detach and short-hop to the adjacent dock:
+        // a ring point whose terrain/WMO ground sits at ~the platform height is the
+        // dock (over water, UpdateGroundPositionZ returns the far-below seafloor,
+        // which we reject). Safe: a stopped transport doesn't relocate passengers.
+        if (m_transportStillMs >= 1500)
+        {
+            for (int i = 0; i < 16; ++i)
+            {
+                const float ang = float(i) / 16.0f * 2.0f * float(M_PI);
+                for (float dist : { 7.0f, 13.0f, 20.0f })
+                {
+                    float gx = bx + std::cos(ang) * dist;
+                    float gy = by + std::sin(ang) * dist;
+                    float gz = bz;
+                    m_bot->UpdateGroundPositionZ(gx, gy, gz);
+                    if (std::fabs(gz - bz) > 8.0f)
+                        continue; // not the dock (water/seafloor or a big drop)
+                    gt->RemovePassenger(m_bot);
+                    m_bot->TeleportTo(m_bot->GetMapId(), gx, gy, gz, m_bot->GetOrientation());
+                    return;
+                }
+            }
+            // No dock ground found this tick — hold and retry next tick.
+            m_bot->StopMoving();
+            return;
+        }
+        // Moving (or a non-stop transport like an elevator) → freeze the AI so it
+        // can't fight the relocation. The transport carries the bot to the next
+        // stop, where the disembark above runs.
+        m_bot->StopMoving();
+        return;
+    }
 
     // Per-tick housekeeping that the Rust side can't do because it lives
     // behind the FFI. These three blocks mirror PB2's DoNextAction prelude

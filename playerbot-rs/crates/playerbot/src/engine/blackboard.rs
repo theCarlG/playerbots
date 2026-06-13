@@ -98,6 +98,13 @@ pub enum Key {
     TurnInTryQ,  // u32
     TurnInTryMs, // u64
 
+    // Interaction "dwell": a real player takes a moment to talk to an NPC, open
+    // a corpse, or use a quest object — bots did it instantly. We hold at the
+    // target for a short beat before completing the action. Keyed on the target
+    // GUID so switching targets restarts the timer.
+    ActionDwellTarget, // u64
+    ActionDwellSince,  // u64
+
     // ── RPG mode keys ───────────────────────────────────────────────
     RpgWanderDestX, // f32: current wander destination, held until arrival
     RpgWanderDestY,

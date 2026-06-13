@@ -1578,39 +1578,17 @@ bool BotBridge::CB_MoveTo(BotHandle bot, float x, float y, float z)
     auto end = pathfinder.getActualEndPosition();
     float gx = end.x, gy = end.y, gz = end.z;
 
-    // Bridge a SHORT missing-mmap gap. Some perfectly walkable terrain simply has
-    // no navmesh tiles generated, so PathFinder returns INCOMPLETE and dead-ends
-    // at the mesh edge short of a reachable dest — the bot then stalls / paces
-    // there (the "runs between two spots ~70y short of the quest objective"
-    // report; on foot a player walks straight there). If the mesh can no longer
-    // advance (its endpoint is essentially where we already stand) yet the real
-    // dest is a short hop away, step DIRECTLY onto it (generatePath=false).
-    //
-    // CRITICAL GUARD: only bridge when there's clear LINE OF SIGHT to the dest.
-    // The navmesh also dead-ends at real WALLS/objects (not just missing tiles);
-    // straight-lining toward one of those wedged the bot INSIDE the geometry
-    // ("stuck inside something, getting hit, doing nothing"). An LOS check means
-    // we only hop across open, walkable gaps — never through a wall. Hard-bounded
-    // by kBridgeMax so it can never become a cross-map glide either.
-    const float kBridgeMax = 50.0f;
-    const float pdx = b->GetPositionX() - gx, pdy = b->GetPositionY() - gy;
-    const float progressSq = pdx * pdx + pdy * pdy;
-    const float rdx = x - gx, rdy = y - gy;
-    const float remainingSq = rdx * rdx + rdy * rdy;
-    if ((pt & PATHFIND_INCOMPLETE) && progressSq < 25.0f
-        && remainingSq > 16.0f && remainingSq <= kBridgeMax * kBridgeMax
-        && b->GetMap()
-        && b->GetMap()->IsInLineOfSight(
-               b->GetPositionX(), b->GetPositionY(), b->GetPositionZ() + 2.0f,
-               x, y, z + 2.0f, true))
-    {
-        b->GetMotionMaster()->MovePoint(0, x, y, z, FORCED_MOVEMENT_RUN, false);
-        st.x = x; st.y = y; st.z = z;
-        st.followTarget = 0; st.followDist = 0; st.followAngle = 0;
-        st.kind = MoveState::POINT;
-        return true;
-    }
-
+    // NOTE: a straight-line "gap-bridge" (generatePath=false MovePoint toward an
+    // off-mesh dest) was REMOVED here. It correlated with recurring server
+    // crashes: the straight hop walked bots off the navmesh onto things they
+    // should never be on — most damningly a docked boat/zeppelin near a quest
+    // dock — and once a bot is a transport passenger the core's
+    // Transport::UpdatePassengerPositions → PlayerRelocation → visibility update
+    // for an AI player hangs the map thread (freeze-detector abort). It also
+    // wedged bots inside geometry. Bots now move ONLY along the real navmesh; an
+    // off-mesh objective is left short (the 12s no-progress blacklist then skips
+    // it and picks another), which is the safe trade vs crashing. The proper fix
+    // for off-mesh travel AND transports is the TravelNode/transport system.
     b->GetMotionMaster()->MovePoint(0, gx, gy, gz, FORCED_MOVEMENT_RUN);
     // Remember the FINAL dest (not the chunk sub-target) so the per-tick
     // same-dest guard above doesn't restart the spline; the chunk advances
@@ -2131,6 +2109,12 @@ bool BotBridge::CB_BotUseEmergencyPotion(BotHandle bot, bool want_mana)
             SpellCastTargets targets;
             targets.setUnitTarget(b);
             spell->SpellStart(&targets);
+            // Apply the potion's cooldown. We cast the spell directly (no
+            // CastItem), so the core never starts the ITEM's cooldown and the bot
+            // would chug potions every tick. AddCooldown(spell, itemProto) applies
+            // the item's spell + category cooldown (the usual ~2 min potion CD),
+            // so IsSpellReady gates re-use just like a real player.
+            b->AddCooldown(*info, proto, false);
             return true;
         }
         return false;
